@@ -1,3 +1,97 @@
+# WIP (2026-08-19, end of session) — READ THIS FIRST
+
+Everything below is on `origin/jit` (HEAD `260692fa` + two follow-ups). 30
+commits today. Working tree clean, nothing unpushed.
+
+## The one VM defect found and fixed today
+
+**arm64 JIT SIGBUS — fixed.** `jm->isSpliceTarget = true` in
+`JITRuntime::tryExecute` writes the JITMethod header, which is bump-allocated
+INSIDE the MAP_JIT code zone. Apple Silicon keeps those pages read-only while
+the thread is in execute mode, and `tryExecute` is ENTERED in execute mode —
+its own header comment wrongly asserted the 2026-04-26 W^X audit had moved
+every such write out. Six-line reproducer, arm64 rc=139 / x86_64 rc=0.
+Both that store and its twin in `noteMethodEntry` now use
+`ScopedPatchWriteAccess`. 11 of 23 nearby variants crashed before; all pass now.
+Regression pair back on baseline (Pass 49 / Fail 4 / Error 0 of 55).
+
+Two leads that look compelling and are WRONG: the fault address is not a
+tagged immediate (`jm` is 64-byte aligned, `jm+45` is just
+`offsetof(isSpliceTarget)`), and it is not an alignment fault (a `strb`
+cannot be misaligned). Signal 10 is SIGBUS on macOS; the handler prints
+`[SIGSEGV]` for every fatal memory signal.
+
+## Where the three tiers stand
+
+    VM C++ tests   green both arches. NOTE: run without an image argument they
+                   exit rc=1 with a usage line that reads exactly like failure.
+    SUnit          arm 98.81% raw / 98.78% ex-Cairo
+                   x86 97.85% raw / 98.74% ex-Cairo  -> PARITY once Cairo is out
+    packages       arm 9383 pass / 16 fail / 17 err
+                   x86 9377 pass / 16 fail / 23 err
+
+**No VM defects among the residual test failures.** A 9-agent adversarial
+investigation classified all of them: Pharo 13 API removals, a tightened
+`Float DefaultComparisonPrecision` (1e-4 -> 1.49e-8), `DateAndTime` accepting
+only `y-mm-dd`, a package's own O(n^2) generator, an intentional SMark demo
+fixture, and SUnit watchdog timeouts. Raising `TestCase defaultTimeLimit`
+10s -> 600s takes PolyMath from 8 F+E to 2.
+
+## Two host gaps, one decision (NOT done — needs you)
+
+    libcairo.2.dylib   arm64 only  -> 260 of x86's 287 SUnit errors
+    libgit2.dylib      arm64 only  -> ALL x86_64 Metacello package loads
+    /usr/local/lib     absent      -> no Intel Homebrew to supply either
+
+Installing an Intel-prefix Homebrew with cairo, freetype and libgit2 closes
+both. That changes your machine, so it was left for you. Meanwhile x86 package
+tests run against arm64-loaded images via the new `REUSE_FROM=<dir>` option
+(Spur images are architecture-neutral). The arm64 VM loads `github://` fine —
+the libgit2 failure is scoped to the x86_64 BINARY, not the host.
+
+## Highest-leverage open work, in order
+
+1. **The JIT stops compiling ~1-3% into a run and never resumes.** Verified in
+   source: `useAsmjitT1` is the default path, `JITCompiler.cpp:1589` returns at
+   ~1678, and the fully-implemented `evictLRU` at `:2456` sits after
+   `// Stencil compile path follows` — unreachable. `AsmjitT1.cpp:12026` gives
+   up on allocation failure with no retry. `Incremental evict` appears ZERO
+   times in both sweep logs. Consequence: arm's zone fills at 160M
+   method-entries (22,057 compiled) and the run continues to 12.4 BILLION with
+   the count frozen at 22,060 — 98.7% of the run interpreted. This is a
+   RE-ROUTE of existing code, not a new subsystem. Magnitude unmeasured; do not
+   quote a speedup yet.
+2. **Bit-60 J2J precedence makes five inline-return specs dead on arm64.**
+   `AsmjitT1.cpp:6487` emits the bit-60 `tbnz` BEFORE the extras dispatch at
+   6498/6506/6512/6525/6540. Derived upside ~3.9% on a real 356 ms workload.
+   The fix is the REORDER; `PHARO_NO_J2J=1` alone makes things slower.
+3. **T2 (asmjit) cannot be reached safely** — lifting all three gates hangs the
+   VM during image startup. `T2_LIMIT` bisects it (fails between #201 and #300).
+   Either bisect or delete (4,146 lines).
+
+## Traps that cost time today — do not re-pay them
+
+  * `EVAL-RESULT=a SnapshotOperation` is startup noise. Only the LAST
+    EVAL-RESULT is real; if it is the only one, your expression never ran.
+  * A zero from a run with rc!=0 (especially 124=timeout) is ABSENT DATA, not
+    a result. Record rc beside every count.
+  * `bash -n` passing does not mean the script works: a Smalltalk `"comment"`
+    inside the double-quoted eval string terminates it. Smoke-test.
+  * Verify any setting you change by READING IT BACK. `t timeLimit:` exists,
+    does not throw, has no getter, and has no effect — it produced a confident
+    wrong answer today. Only the class-side setter works.
+  * JIT stats lines are periodic checkpoints every 64K method entries, NOT
+    totals. Two such samples were mistaken for an arm-vs-x86 structural gap;
+    real end-of-run totals are 0.56% apart.
+  * A truncated selector can itself be a real selector. `#which` exists (SDL
+    joystick structs); the actual one was `#whichCategoryIncludesSelector:`.
+
+## In flight at session end
+
+Full SUnit sweeps on both arches against the crash-fixed binaries
+(`$MY/fullsweep2.sh` -> `sweep-arm-wx`, `sweep-x86-wx`), validating the W^X
+fix at scale. Compare against arm F+E=45 / x86 F+E=313 from the pre-fix run.
+
 # WIP (2026-08-19) — JIT stops compiling ~1-3% into a run; the eviction fix is already written but unreachable
 
 Independently re-verified in source by me, not taken on the workflow's word:
