@@ -150,6 +150,12 @@ for entry in "${PACKAGES[@]}"; do
     # needed: it is already present, the diff is empty, and only the pattern
     # finds its 19 tests.
     #
+    # Failing SELECTORS are listed under each class line. TestResult printString
+    # reports COUNTS ONLY, and that alone left two real questions unanswerable
+    # after the fact on 2026-08-19: which 5th XMLParserTest case errored on x86,
+    # and which of PMGeneralFunctionFitTest's two slow tests produced its single
+    # error. Counts cannot be reconciled against a re-run; names can.
+    #
     # The result file is rewritten after EVERY class, ending in a PARTIAL line
     # that names the last class to finish. Writing it only at the end -- as this
     # did until 2026-08-18 -- means anything that kills the eval between the last
@@ -199,7 +205,10 @@ classes withIndexDo: [ :c :i |
             tp := tp + r expectedPassCount.
             tf := tf + r failureCount.
             te := te + r errorCount.
-            s nextPutAll: c name , ': ' , r printString; lf ] ].
+            s nextPutAll: c name , ': ' , r printString; lf.
+            ([ r errors do: [ :ec | s nextPutAll: '    E: ' , ec selector; lf ].
+               r failures do: [ :fc | s nextPutAll: '    F: ' , fc selector; lf ] ]
+                 on: Error do: [ :e | s nextPutAll: '    (selector list unavailable)'; lf ]) ] ].
     '$D/result.txt' asFileReference writeStreamDo: [ :f |
         f nextPutAll: s contents;
           nextPutAll: 'PARTIAL after ' , i printString , '/' , classes size printString ,
