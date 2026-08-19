@@ -1,3 +1,74 @@
+# WIP (2026-08-19) — RESOLVED: the `68` DNU was `setGlobal` allocating `#Display` as a `Symbol`
+
+Root cause, fixed in `ObjectMemory::setGlobal`.  When it installs a global
+the image does not already have, it built BOTH halves of the binding with
+the wrong class:
+
+    Oop symbolClass = findGlobal("Symbol");            // abstract, format 0
+    Oop symbolObj   = allocateBytes(symbolClassIdx, name.size());
+    ... allocateSlots(indexOfClass(findGlobal("Association")), 2)
+
+`Symbol` is abstract with instSpec format 0 (no indexable fields), so the
+key symbol indexed as a non-indexable object and `at:` answered a
+SmallInteger where the image expects a Character.  `68` is `$D`, from
+`#Display`.  `lookupSymbol` twenty lines above already preferred
+`ByteSymbol`; `setGlobal` simply did not.
+
+The only caller that reaches this in practice is
+`Interpreter::ensureDisplayForm`, and a fresh Pharo 13 image really has no
+`Display` key (`Smalltalk globals includesKey: #Display` = false), so the
+create path always ran.
+
+Both halves fixed: `ByteSymbol` for the key (reusing the interned symbol
+rather than allocating a duplicate -- symbols are unique), `GlobalVariable`
+for the binding (a `LiteralVariable`, inst vars `#(name value)`, instSize 2,
+so the existing slot stores were already right).
+
+## Measured, reproducing pair (ReleaseTest, SystemNavigationTest), 55 tests
+
+    pre-fix            Pass 47  Fail 4  Error 2   MNU 4-5   (3 runs, identical)
+    + ByteSymbol       Pass 48  Fail 5  Error 0   MNU 0
+    + GlobalVariable   Pass 49  Fail 4  Error 0   MNU 0
+
+`testAllGlobalNamesStartingWithDoCaseSensitive` and
+`testAllGlobalBindingAreGlobalVariables` both pass.  The 4 remaining
+failures are pre-existing harness artifacts (Tests-Runner package,
+SUnitRunner selectors, CommandLine handler process, weak subscriptions).
+
+## How it was found, and two wrong turns worth remembering
+
+The chain `SmallInteger.doesNotUnderstand: | Symbol.isLiteralSymbol` plus
+`callerCls=Symbol callerSize=7` looked like a wrong-class *reference*, and
+I published a hypothesis that it was a stale pointer surviving object
+movement -- the corpse-trap family.  **That was wrong.**  `Symbol
+allInstances` is a heap scan and it returned exactly 1, which a stale
+reference could never satisfy.  Dumping the object's bytes named it
+outright: `rcvrBytes=Display rcvrIsGlobalKey=true`.
+
+The bisect also produced `noyg rc=124 mnu68=0`.  That was a TIMEOUT, not a
+fix -- 900s was never enough for a no-young-generation run.  Reading the
+zero as a result would have been a fabricated finding.  Record rc and a
+completion marker alongside every count.
+
+Ruled out and still true: deterministic, count stable at 2 under
+`PHARO_NO_JIT=1` and `PHARO_NO_SISTA_PER_BC=1`, so not a JIT defect.
+
+## Known remaining limitation (identified, NOT fixed)
+
+`setGlobal` appends the binding to the first free slot of the dictionary
+array without honouring hash placement or updating `tally`.  Enumeration
+(`keysDo:`) sees it -- that is how the tests above find `#Display` -- but
+hash lookup (`at:`/`includesKey:`) may not.  The real fix is to install the
+global through an image-level `Smalltalk at:put:` send instead of poking
+the dictionary from C++.  Not attempted here.
+
+## In flight
+
+Full SUnit sweeps on both architectures against the fixed binaries
+(`$MY/fullsweep.sh`, arm then x86, sequential to avoid CPU contention
+corrupting the per-test timeouts).  Baseline to beat: arm64 98.78%,
+x86_64 98.77%.
+
 # WIP (2026-08-19) — RETRACTION: the `68` DNU is not a stale reference. It is one real object.
 
 The previous entry hypothesised that the wrong-class reference was a stale
