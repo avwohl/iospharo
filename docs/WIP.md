@@ -1,3 +1,47 @@
+# WIP (2026-08-19) — the last stable package residual is a package bug, not ours
+
+`XMLWriterTest` was the one package failure that reproduced on BOTH
+architectures in every run (8 errors).  All eight are the same send:
+
+    MessageNotUnderstood: XMLWriterFormatter class >> #which
+
+and it is not a VM divergence:
+
+    implementors of #which   SDL_MouseButtonEvent, SDL_JoyAxisEvent,
+                             OSJoyButtonEvent, ... (12, all SDL/joystick)
+    XMLWriterFormatter class canUnderstand: #which        false
+    XMLWriterFormatter class-side selectors               defaultIndentLevel,
+                                                          defaultIndentString,
+                                                          writer:
+
+`#which` exists nowhere in `XMLWriterFormatter`'s hierarchy.  The test sends a
+selector the loaded code does not implement, so it fails identically on any VM,
+stock Cog included.  It is a version mismatch between the XMLWriter tests and
+the XMLWriter code that Metacello resolved — a package problem.
+
+## The package tier is now fully accounted for
+
+    NeoJSON     116 P /  0 F                     clean, both arches
+    Mustache     47 P /  0 F                     clean, both arches
+    DataFrame   839 P / 14 F                     identical on both arches
+    XMLParser  6359 P (arm) / 6354 P (x86)       XMLParserTest x86-only, unconfirmed
+    PolyMath   ~1390 P, err 16-19                see below
+    Fuel         19 P /  0 F                     clean
+    Grease      no tests in its Metacello group  package definition
+
+PolyMath's residual, now attributed:
+
+    XMLWriterTest 8         package version mismatch (this entry) — NOT ours
+    PMKDTreeTest 2-4        suite-context dependent; passes 13/13 alone on x86
+    the rest, singles       run-to-run variance (arm alone scores 16,16,17,18)
+    PMArbitraryPrecisionFloatTest  hits the 120 s per-class bound
+
+So there is no confirmed VM defect left in the package tier.  What remains is
+one unconfirmed x86-only difference (XMLParserTest, 5 errors, needs a second run
+per side before it means anything) and one genuinely slow test.
+
+---
+
 # WIP (2026-08-19) — the "8-test cross-arch delta" is mostly NOISE, and I said otherwise
 
 ## Correction
