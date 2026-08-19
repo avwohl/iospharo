@@ -1,5 +1,16 @@
 # WIP (2026-08-19) — all three tiers measured on both architectures
 
+> **In flight (2026-08-19):** a 9-agent workflow (`w7rbr8aaa`) is classifying the
+> residual package failures as package-bug vs vm-defect vs environment --
+> DataFrame's 14 failures, PolyMath's 2F/17E, XMLParser's 5 x86-only errors and
+> the XMLWriterFormatter #which MNU, plus determining the Metacello group that
+> would give Grease real coverage. Each investigation is paired with an
+> adversarial reviewer instructed to refute it, specifically to stop
+> "package-bug" being used as a lazy default: identical failure on both arches
+> argues against an ARCH-SPECIFIC defect but NOT against a VM defect that is
+> equally wrong everywhere.
+
+
 ## Tier 1: VM C++ tests — green on arm64 AND x86_64
 
     test_asmjit_t1_stub   PASS (1000 reentrant calls)
