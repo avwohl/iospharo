@@ -1,5 +1,19 @@
 # WIP (2026-08-19) — residual failures classified: NO VM DEFECTS FOUND
 
+> **Time-limit experiment, CONFIRMED (2026-08-19).** With `TestCase
+> defaultTimeLimit` verifiably raised 10s -> 600s (read back:
+> `limitBefore=0:00:00:10 limitAfter=0:00:10:00`), PolyMath's timeout errors
+> clear: PMKDTreeTest 13 ran err=0, PMTSNETest 6/0, PMGeneralFunctionFitTest
+> 9/0, PMAnotherGeneticOptimizerTest 11/0. TOTAL F+E 8 -> 2. The two survivors
+> are the genuine Pharo 13 API removal (`SMarkTest`, `#newSubclassOf:using:`)
+> and `PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate`, under
+> investigation. NOTE: an earlier attempt setting the limit per-instance
+> (`t timeLimit: 600 seconds`) produced 8 errors and was VOID -- the selector
+> exists so it did not DNU, but there is no getter to read it back and it
+> plainly did not take effect. Only the class-side setter works, and only a
+> verified read-back makes the number trustworthy.
+
+
 A 9-agent workflow (4 investigators, each re-run by an adversarial reviewer
 told to refute it, plus synthesis; 336 tool calls, ~48 min) classified every
 remaining package-test failure.  Full report: `$MY/../tasks/w7rbr8aaa.output`.
