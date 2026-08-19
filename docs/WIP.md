@@ -7,7 +7,20 @@ so these are directly comparable — same 2047 classes, same 27974 denominator:
     sweep-arm      (pre-fix)   P=27730  F=29  E=26  T=7   F+E=55   99.13%
     sweep-arm-fix  (post-fix)  P=27737  F=23  E=22  T=10  F+E=45   99.15%
 
-Ten fewer failures+errors.  `testAllGlobalBindingAreGlobalVariables` and
+Ten fewer failures+errors -- but **that delta is NOT the `setGlobal` fix
+alone**, and the header of this entry overstates it.  `sweep-arm` is dated
+08-18 07:39 and therefore predates FOUR VM commits, not one:
+
+    08-18 12:32  456b4872  eval deferred-quit deadline
+    08-18 21:23  30882ace  fail new:/basicNew: rather than class index 0
+    08-18 22:26  2595f5bc  register a class on demand in new:
+    08-19 07:03  9a9aefce  setGlobal wrong classes
+
+The only clean attribution for `setGlobal` is the direct before/after on
+the reproducing pair: Error 2 -> 0, Pass 47 -> 49.  Do not read the sweep's
+-10 as this fix's contribution.
+
+`testAllGlobalBindingAreGlobalVariables` and
 `testAllGlobalNamesStartingWithDoCaseSensitive` both pass in full-sweep
 context, and the `SmallInteger >> #asciiValue` / `#asLowercase` MNU
 signature occurs ZERO times across all 2047 classes (it was the recurring
@@ -27,10 +40,18 @@ pre-fix arm baseline is 99.13%, and the architectures are NOT near parity:
     sweep-x86-fixed   F=25  E=288  F+E=313  98.20%
     sweep-arm-fix     F=23  E=22   F+E=45   99.15%
 
-x86_64 carries an order of magnitude more ERRORS than arm64 (288 vs 22).
-That gap is the largest open item, and it is much bigger than the
-XMLParser deltas chased earlier.  The x86 sweep against the fixed binary
-is running now and will give the current figure.
+x86_64 carried an order of magnitude more ERRORS than arm64 (288 vs 22)
+as of 08-18 16:42.  That was the largest open item, and far bigger than
+the XMLParser deltas chased earlier.
+
+The x86 sweep now running is already contradicting that gap.  Note the
+`sweep-x86-fixed` baseline is dated 08-18 16:42, so it POSTdates the FFI
+fix but PREdates the two `new:`/class-registration commits and
+`setGlobal` -- most of any improvement is likely the class-registration
+work (which took PolyMath from 4/117 to 117/117), not `setGlobal`.
+Batch boundaries also differ between the two runs (1200 classes vs 1050
+for the same batch-number range), so only the completed-run totals are
+worth quoting.
 
 # WIP (2026-08-19) — RESOLVED: the `68` DNU was `setGlobal` allocating `#Display` as a `Symbol`
 
