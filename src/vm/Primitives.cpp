@@ -3067,6 +3067,23 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
     // found", and allocating with it manufactures an unusable object.
     if (classIndex == 0) {
+        // No class-table entry yet. classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an INSTANCE
+        // existed when the image was snapshotted; a class the image created and
+        // never instantiated arrives with an ordinary object hash and no slot.
+        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
+        // image is in that state (PMAB2SolverTest hash 1443483,
+        // classTable_[1443483] = nil) while every image-shipped class is fine
+        // (Array 51, Object 3161).
+        //
+        // registerClass() already handles this: a 22-bit object hash is always
+        // a valid index into the 4M-entry table, so its existing "the hash IS
+        // the index" branch enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        // Nothing was calling it for these classes.
+        classIndex = memory_.registerClass(rcvr);
+    }
+    if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
             // Same reporting as primitiveNewWithArg -- see the note there.
@@ -3201,6 +3218,23 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     // Why the lookup fails is a separate, still-open defect: indexOfClass
     // compares classTable_ entries against this receiver by IDENTITY, so a
     // stale class Oop misses both the hash path and the linear scan.
+    if (classIndex == 0) {
+        // No class-table entry yet. classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an INSTANCE
+        // existed when the image was snapshotted; a class the image created and
+        // never instantiated arrives with an ordinary object hash and no slot.
+        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
+        // image is in that state (PMAB2SolverTest hash 1443483,
+        // classTable_[1443483] = nil) while every image-shipped class is fine
+        // (Array 51, Object 3161).
+        //
+        // registerClass() already handles this: a 22-bit object hash is always
+        // a valid index into the 4M-entry table, so its existing "the hash IS
+        // the index" branch enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        // Nothing was calling it for these classes.
+        classIndex = memory_.registerClass(rcvr);
+    }
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 20) {
@@ -26539,6 +26573,23 @@ PrimitiveResult Interpreter::primitiveNewOldSpace(int argCount) {
     // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
     // found", and allocating with it manufactures an unusable object.
     if (classIndex == 0) {
+        // No class-table entry yet. classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an INSTANCE
+        // existed when the image was snapshotted; a class the image created and
+        // never instantiated arrives with an ordinary object hash and no slot.
+        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
+        // image is in that state (PMAB2SolverTest hash 1443483,
+        // classTable_[1443483] = nil) while every image-shipped class is fine
+        // (Array 51, Object 3161).
+        //
+        // registerClass() already handles this: a 22-bit object hash is always
+        // a valid index into the 4M-entry table, so its existing "the hash IS
+        // the index" branch enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        // Nothing was calling it for these classes.
+        classIndex = memory_.registerClass(rcvr);
+    }
+    if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
             // Same reporting as primitiveNewWithArg -- see the note there.
@@ -26612,6 +26663,23 @@ PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
 
     // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
     // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        // No class-table entry yet. classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an INSTANCE
+        // existed when the image was snapshotted; a class the image created and
+        // never instantiated arrives with an ordinary object hash and no slot.
+        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
+        // image is in that state (PMAB2SolverTest hash 1443483,
+        // classTable_[1443483] = nil) while every image-shipped class is fine
+        // (Array 51, Object 3161).
+        //
+        // registerClass() already handles this: a 22-bit object hash is always
+        // a valid index into the 4M-entry table, so its existing "the hash IS
+        // the index" branch enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        // Nothing was calling it for these classes.
+        classIndex = memory_.registerClass(rcvr);
+    }
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
@@ -26710,6 +26778,23 @@ PrimitiveResult Interpreter::primitiveNewPinned(int argCount) {
     // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
     // found", and allocating with it manufactures an unusable object.
     if (classIndex == 0) {
+        // No class-table entry yet. classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an INSTANCE
+        // existed when the image was snapshotted; a class the image created and
+        // never instantiated arrives with an ordinary object hash and no slot.
+        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
+        // image is in that state (PMAB2SolverTest hash 1443483,
+        // classTable_[1443483] = nil) while every image-shipped class is fine
+        // (Array 51, Object 3161).
+        //
+        // registerClass() already handles this: a 22-bit object hash is always
+        // a valid index into the 4M-entry table, so its existing "the hash IS
+        // the index" branch enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        // Nothing was calling it for these classes.
+        classIndex = memory_.registerClass(rcvr);
+    }
+    if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
             // Same reporting as primitiveNewWithArg -- see the note there.
@@ -26785,6 +26870,23 @@ PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
 
     // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
     // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        // No class-table entry yet. classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an INSTANCE
+        // existed when the image was snapshotted; a class the image created and
+        // never instantiated arrives with an ordinary object hash and no slot.
+        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
+        // image is in that state (PMAB2SolverTest hash 1443483,
+        // classTable_[1443483] = nil) while every image-shipped class is fine
+        // (Array 51, Object 3161).
+        //
+        // registerClass() already handles this: a 22-bit object hash is always
+        // a valid index into the 4M-entry table, so its existing "the hash IS
+        // the index" branch enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        // Nothing was calling it for these classes.
+        classIndex = memory_.registerClass(rcvr);
+    }
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
