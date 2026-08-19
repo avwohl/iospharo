@@ -1,3 +1,37 @@
+# WIP (2026-08-19) — arm full sweep after the `setGlobal` fix: F+E 55 -> 45
+
+Both sweeps tallied with ONE method (sum only the `=== BATCH TOTAL ===`
+blocks; per-class lines use `P:/F:/E:/S:` and double-count if included),
+so these are directly comparable — same 2047 classes, same 27974 denominator:
+
+    sweep-arm      (pre-fix)   P=27730  F=29  E=26  T=7   F+E=55   99.13%
+    sweep-arm-fix  (post-fix)  P=27737  F=23  E=22  T=10  F+E=45   99.15%
+
+Ten fewer failures+errors.  `testAllGlobalBindingAreGlobalVariables` and
+`testAllGlobalNamesStartingWithDoCaseSensitive` both pass in full-sweep
+context, and the `SmallInteger >> #asciiValue` / `#asLowercase` MNU
+signature occurs ZERO times across all 2047 classes (it was the recurring
+error before).
+
+Not hidden: Timeout went 7 -> 10, which is why Pass rose by 7 rather than
+10.  Timeouts are timing-sensitive and this delta is NOT shown to be real
+— it needs a second run before anyone reads it as a regression.
+
+## Earlier percentages in this file were computed inconsistently
+
+The previously quoted "arm64 98.78% / x86_64 98.77%" used a different
+denominator from the block-sum above.  Recomputed consistently the
+pre-fix arm baseline is 99.13%, and the architectures are NOT near parity:
+
+    sweep-x86         F=25  E=365  F+E=390  97.93%
+    sweep-x86-fixed   F=25  E=288  F+E=313  98.20%
+    sweep-arm-fix     F=23  E=22   F+E=45   99.15%
+
+x86_64 carries an order of magnitude more ERRORS than arm64 (288 vs 22).
+That gap is the largest open item, and it is much bigger than the
+XMLParser deltas chased earlier.  The x86 sweep against the fixed binary
+is running now and will give the current figure.
+
 # WIP (2026-08-19) — RESOLVED: the `68` DNU was `setGlobal` allocating `#Display` as a `Symbol`
 
 Root cause, fixed in `ObjectMemory::setGlobal`.  When it installs a global
