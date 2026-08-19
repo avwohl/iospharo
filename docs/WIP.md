@@ -122,6 +122,21 @@ Cross-arch divergence Rosetta cannot explain, same suite and same image:
     arm64   388,300,800 sends   7,874 compiled  5,475 failed  IC 94% hit
     x86_64  552,534,016 sends  16,033 compiled  3,888 failed  IC 84% hit
 
+    [RETRACTED 2026-08-19]  THIS COMPARISON IS NOT REAL.  388,300,800 =
+    65536 x 5925 and 552,534,016 = 65536 x 8431 are PERIODIC CHECKPOINT
+    values -- JITRuntime.cpp:3819 prints a stats line every time
+    (totalEntries & 0xFFFF) == 0 -- so these are two arbitrary mid-run
+    samples, not end-of-run totals, and they appear in ten logs across both
+    arches.  The strings "7874 compiled, 5475 failed" and "16033 compiled,
+    3888 failed" exist in NO file in either scratchpad.  Real end-of-run
+    totals are 0.56% apart: 12,445,810,688 (arm) vs 12,515,540,992 (x86).
+    The IC hit rates are ALSO not comparable across arches: arm walks IC
+    slots 0-2 inline (AsmjitT1.cpp:6331-6363) while x86 probes slot 0 and
+    exits (:3185-3189), so the two builds count different event
+    populations.  I published this comparison twice as evidence that
+    "instruction translation cannot explain" a structural gap.  It was not
+    evidence of anything.
+
 Instruction translation cannot change how often the VM re-enters its send
 runtime or how often an inline cache hits.  Whether that is Rosetta or our
 x86_64 backend emitting slower code was NOT determined.
