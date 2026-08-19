@@ -36,7 +36,7 @@ names, 2 from one Windows-only w64Convention test that arm skips).
     NeoJSON       116 / 0 / 0        116 / 0 / 0
     Mustache       47 / 0 / 0         47 / 0 / 0
     XMLParser    6359 / 0 / 0       6354 / 0 / 5
-    Grease          0                  0            (no test classes loaded)
+    Grease          0                  0            (no test classes loaded)*
     PolyMath     1449 / 2 / 17      1448 / 2 / 18
     DataFrame     839 / 14 / 0       839 / 14 / 0
     Fuel           19 / 0 / 0         19 / 0 / 0
@@ -45,6 +45,17 @@ names, 2 from one Windows-only w64Convention test that arm skips).
 The 6-error difference is XMLParser (5) + PolyMath (1).  The XMLParser
 ones are the state-dependent set already shown to PASS ON RETRY in the
 same image, so they are suite-state artifacts, not arch defects.
+
+### * Grease: measured, the load adds no tests at all
+
+`TestCase allSubclasses size` in the loaded Grease image is **2185** --
+exactly the line count of its own pre-load `pre.txt`.  The load added zero
+test classes, so the "classes this load ADDED" selection is behaving
+correctly; the 2 `GR*` test classes in the image were already in the base.
+Grease's Metacello default group loads core without tests.  Remedy: load
+the test group explicitly rather than bare `load.`.  Not a regression --
+the baseline run behaved identically -- but it does mean Grease
+contributes no coverage in either column.
 
 ### x86 package loads are impossible on this host
 
