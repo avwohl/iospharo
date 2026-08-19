@@ -6,8 +6,12 @@
 > clear: PMKDTreeTest 13 ran err=0, PMTSNETest 6/0, PMGeneralFunctionFitTest
 > 9/0, PMAnotherGeneticOptimizerTest 11/0. TOTAL F+E 8 -> 2. The two survivors
 > are the genuine Pharo 13 API removal (`SMarkTest`, `#newSubclassOf:using:`)
-> and `PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate`, under
-> investigation. NOTE: an earlier attempt setting the limit per-instance
+> and `PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate`, now explained:
+> it carries its own method pragma `<timeout: 50>`, which overrides the class
+> default, so raising the class limit cannot help it. Measured: `viaRun err=0
+> fail=0` and `directErr=NO-ERROR` when run ALONE, but it errors inside a full
+> 58-test class run. It is performance-marginal against the package author's
+> own 50s budget, not a correctness defect. NOTE: an earlier attempt setting the limit per-instance
 > (`t timeLimit: 600 seconds`) produced 8 errors and was VOID -- the selector
 > exists so it did not DNU, but there is no getter to read it back and it
 > plainly did not take effect. Only the class-side setter works, and only a
