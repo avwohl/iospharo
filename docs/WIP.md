@@ -1,3 +1,133 @@
+# WIP (2026-08-19) — residual failures classified: NO VM DEFECTS FOUND
+
+A 9-agent workflow (4 investigators, each re-run by an adversarial reviewer
+told to refute it, plus synthesis; 336 tool calls, ~48 min) classified every
+remaining package-test failure.  Full report: `$MY/../tasks/w7rbr8aaa.output`.
+
+**Not one failure in DataFrame, PolyMath, XMLParser or Grease traces to the VM
+computing something wrong.**  No bad arithmetic, no corrupted object, no wrong
+class, no wrong primitive result, no GC damage.
+
+Two VM-defect candidates were raised and both were killed by the reviewers:
+
+  * A `cos(2)` 1-ULP claim.  The image defines `Float>>cos` as
+    `^ (self + Halfpi) sin`; computing THAT formula with this host's libm
+    reproduces the VM's bits exactly.  No discrepancy.  Do not chase it.
+  * A VM-clock / watchdog defect.  Tests at 8416ms and 8550ms pass while
+    11232ms+ error, so the threshold sits where a sane 10s limit would.
+
+Also positively verified (not merely assumed): DataFrame's statistics were
+recomputed against exact rational arithmetic -- sample variance is exactly
+1379/55 and the VM is within 2 ULP; all column averages bit-for-bit; all six
+correlation entries within 2.2e-16; `exp`/`ln`/`sqrt` match libm bit-for-bit.
+
+## What the failures actually are
+
+    12  DataFrame  Float DefaultComparisonPrecision changed from 1e-4 to
+                   1.4901161193847656e-8 (sqrt machine epsilon).  DataFrame's
+                   assert:closeTo: literals are rounded to 5-6 digits and were
+                   never re-rounded.  All deviations fall between 2.0e-7 and
+                   1.0e-5 -- above the new bound, below the old.  Decisive:
+                   setting the precision back to 1e-4 gives 14/14 and 227/227.
+     2  DataFrame  Pharo 13 DateAndTime parses only the 'y-mm-dd' pattern.
+                   `'18 March 1996 1:10' asDateAndTime` raises DateError on a
+                   PRISTINE base image with no DataFrame loaded.  DateParser has
+                   no month-name handling at all, on any VM.
+     8  PolyMath   `#whichCategoryIncludesSelector:` removed in Pharo 13 (zero
+                   implementors; replaced by `protocolNameOfSelector:`).
+     1  PolyMath   `#newSubclassOf:using:` removed in Pharo 13 (zero
+                   implementors).  SMarkTest.  The ONLY package error that
+                   survives raising the time limit.
+     1  PolyMath   PMPermutationTest -- the package's own O(n^2) generator
+                   spends 14.3s of 16.0s rebuilding a 120-element set that
+                   `allOfSize: 5` builds in under a millisecond.
+     3  PolyMath   SubunitTestExamples is an intentional SMark demo fixture
+                   (`testFail [ self fail ]`).
+    12  both       SUnit watchdog timeouts -- see below.
+
+## The `#which` correction
+
+Earlier WIP said the XMLWriterTest MNU was `XMLWriterFormatter class >> #which`.
+That was a LOG TRUNCATION ARTIFACT.  The selector is
+`#whichCategoryIncludesSelector:`.  `#which` really exists (12 implementors, all
+SDL/joystick structs) and is a dead end.
+
+And it is not an XMLParser failure at all: the XMLParser image carries the
+FIXED method and scores 61/61 on both arches; the PolyMath image carries the old
+unguarded one-liner and scores 53/61 on both.  Two source versions of one method
+in two images -- not a VM difference, not an arch difference.
+
+## Grease: fixed, +554 tests
+
+Grease was contributing zero tests because its baseline keeps tests out of the
+`default` group.  Fixed to `load: #('default' 'Tests')`, and the unmatchable
+`Grease` name-pattern fallback corrected to `GR`.  Measured after the fix:
+
+    arm64  classes=37 pass=554 fail=0 err=0
+    x86_64 classes=37 pass=554 fail=0 err=0   (reusing the arm-loaded image)
+
+New package totals: arm 9383 pass / 16 fail / 17 err, x86 9377 / 16 / 23.
+
+## I was wrong about libgit2 scope
+
+I told the workflow "loads cannot work on this host - libgit2 is arm64-only".
+**That is wrong.**  The arm64 VM performs `github://` loads fine (all 7 packages
+loaded, clone 89606edf, rc=0) -- the libgit2 failure is scoped to the X86_64
+binary, not to the host.  My mis-scoping is why the decisive Grease experiment
+was nearly left undone with a working loader sitting right there.  The reviewer
+caught it; the experiment has now been run and is the +554 above.
+
+## The one genuinely open VM question: speed
+
+12 failures are watchdog timeouts.  The reviewers refused the `environment`
+label on these and downgraded them to **unclear**, correctly: the deciding
+question is "is this VM slower than Cog, or are these tests just heavy?" and
+that is UNANSWERABLE here -- the stock Cog VM aborts on this host with
+"Could not allocate codeZone in the expected place", on our image AND on a
+pristine one.  That is the problem this project exists to solve.
+
+Measurements worth keeping (arm64, rc=0):
+
+    INTADD3M    3M iterations   ms=12    ->  4 ns/iter  (inlined integer path)
+    BLOCKVAL3M  3M activations  ms=216   -> 72 ns per block value:
+    ALLOCARR2M  2M allocations  ms=186   -> 93 ns per (Array new: 4)
+    COMPILE300  300 compiles    ms=462   -> 1.54 ms per compiler evaluate: '1+1'
+
+Every timing-out test is dominated by block activation and small-object
+allocation, an 18-23x gap against the fast integer path.  PolyMath's
+`testPrintAndEvaluate` does >=61,440 compile-and-evaluate round trips: 61,440 x
+1.54ms ~ 95s, essentially all of its measured 117s.  Its author wrote
+`<timeout: 50>`, so we run it at ~2.3x the author's expectation.
+
+Cross-arch divergence Rosetta cannot explain, same suite and same image:
+
+    arm64   388,300,800 sends   7,874 compiled  5,475 failed  IC 94% hit
+    x86_64  552,534,016 sends  16,033 compiled  3,888 failed  IC 84% hit
+
+Instruction translation cannot change how often the VM re-enters its send
+runtime or how often an inline cache hits.  Whether that is Rosetta or our
+x86_64 backend emitting slower code was NOT determined.
+
+Unexplained and NOT interpreted: `T2 (asmjit): compiled=0 bailed=0` and all-zero
+`inline-prim` counters during a benchmark run.  Is zero tier-2 compilation
+expected on this branch?
+
+## Still open
+
+  * Whether this VM is slower than Cog on these workloads (needs a host where
+    stock Cog runs).  Gates all 12 timeout items.
+  * Rosetta overhead vs x86_64 backend code quality -- never split.
+  * Whether zero tier-2 asmjit compilation is expected.
+  * The identity of the 5th x86 XMLParser error: `result.txt` stores COUNTS
+    ONLY, and reproduction gives 4 errors twice, always the same four.
+  * Which of `testMaximumIterationsProbabilistic` / `testTruncate` produced the
+    single PMGeneralFunctionFitTest error -- same counts-only limitation.
+
+Harness work identified: record per-test selector names in `result.txt` (two of
+the open items above are unresolvable purely for want of this), and record or
+raise `TestCase defaultTimeLimit` so timeout-vs-value failures are
+distinguishable at a glance.
+
 # WIP (2026-08-19) — all three tiers measured on both architectures
 
 > **In flight (2026-08-19):** a 9-agent workflow (`w7rbr8aaa`) is classifying the
@@ -466,6 +596,12 @@ base run proves nothing.
 architectures in every run (8 errors).  All eight are the same send:
 
     MessageNotUnderstood: XMLWriterFormatter class >> #which
+
+    [CORRECTED 2026-08-19] `#which` is a LOG TRUNCATION ARTIFACT of the probe
+    that produced this line.  The real selector is
+    `#whichCategoryIncludesSelector:`.  `#which` does exist in the image (12
+    implementors, all SDL/joystick event structs) and is a dead end -- anyone
+    grepping for it will waste the afternoon.
 
 and it is not a VM divergence:
 
