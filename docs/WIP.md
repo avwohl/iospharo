@@ -1,3 +1,49 @@
+# WIP (2026-08-18) — PolyMath's suite now completes: 117/117 classes, 1392 passing
+
+## The result
+
+    before   PARTIAL after 4/117    240 tests, then the VM idled and was killed
+    after    RESULT classes=117 pass=1392 fail=2 err=16 timeout=1
+
+1392 of 1411 (98.7%), with the residual spread thin rather than concentrated:
+
+    XMLWriterTest                   61 ran, 53 passed,  8 errors
+    PMKDTreeTest                    13 ran, 11 passed,  2 errors
+    PMAnotherGeneticOptimizerTest   11 ran, 10 passed,  1 error
+    PMGeneralFunctionFitTest         9 ran,  8 passed,  1 error
+    PMPermutationTest               20 ran, 19 passed,  1 error
+    PMTSNETest                       6 ran,  5 passed,  1 error
+    SMarkTest                        2 ran,  1 passed,  1 error
+    PMArbitraryPrecisionFloatTest   TIMEOUT (120 s per-class bound)
+
+## What actually fixed it
+
+One line per `new`/`new:` site: register the class on demand.  See the previous
+entry for the root cause — `classTable_` is rebuilt at load by walking object
+headers, so a class with no instance at snapshot time is never registered, and
+`indexOfClass` then answered 0 for it.
+
+## A note on how long this took, and why
+
+The chain of symptoms ran: "PolyMath reports 4 of 117 classes" -> a corpse
+cascade -> a wedged Delay scheduler -> a VM that idles until the eval deadline
+kills it.  Read from the top it looks like a GC bug, and several entries above
+pursued exactly that, through eight refuted hypotheses.  It was none of them:
+the object was never collected, it was allocated with class index 0.
+
+The two things that would have shortened it:
+
+  * `method_=#cos` in the DNU dump is `selectorOf` on a **CompiledBlock**, which
+    answers the block's LAST LITERAL, not a selector.  Two mechanisms were built
+    on reading it as `Float>>cos` / `PMVector>>cos`.
+  * comparing `corpse=N` counts between bisect arms instead of the corpse's
+    `origSel=/method_=` IDENTITY.  Equal counts hid different corpses and once
+    inverted the attribution outright.
+
+Both are now called out where the diagnostics are emitted.
+
+---
+
 # WIP (2026-08-18) — ROOT CAUSE: runtime-created classes never get a class-table index
 
 ## The measurement
