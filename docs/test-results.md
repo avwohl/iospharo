@@ -1,5 +1,59 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-08-19 — all three tiers, both architectures.** One tally method
+> throughout: sum only the `=== BATCH TOTAL ===` blocks (per-class lines use
+> `P:/F:/E:/S:` and double-count if included). Earlier figures in this file used
+> a different denominator and are not directly comparable.
+>
+> SUnit, 2047 classes, same image loaded by each VM:
+>
+>     arm64  RAW       2043 cls  28058 tests  P=27725  F=23  E=22   98.81%
+>     x86_64 RAW       2037 cls  27982 tests  P=27380  F=26  E=287  97.85%
+>     arm64  NO-CAIRO  1925 cls  27187 tests  P=26855  F=23  E=21   98.78%
+>     x86_64 NO-CAIRO  1919 cls  27111 tests  P=26770  F=25  E=27   98.74%
+>
+> NO-CAIRO excludes RS*/Athens*/Cairo*/FreeType*/FT*/Roassal*. The host has only
+> an arm64 `libcairo.2.dylib` and no Intel Homebrew, so a Rosetta x86_64 VM
+> cannot load it: 260 of x86's 287 errors are that one missing dylib. Excluding
+> it, the two architectures are at parity. Every remaining non-Cairo x86 excess
+> is accounted for — 6 more Cairo-backed cases under Sp*/Hi* names, and 2 from
+> one Windows-only `w64Convention` test that arm skips and x86 runs.
+>
+> Package suites (7 packages), after the Grease fix:
+>
+>     arm64   9383 pass  16 fail  17 err
+>     x86_64  9377 pass  16 fail  23 err
+>
+> x86_64 package LOADS cannot run here — Iceberg resolves `github://` through
+> libgit2 and only an arm64 build exists — so x86 tests run against
+> arm64-loaded images via `REUSE_FROM` (Spur images are architecture-neutral).
+> The arm64 VM loads `github://` fine; the failure is scoped to the x86_64
+> binary, not the host.
+>
+> **No VM defects.** A 9-agent adversarial investigation classified every
+> residual package failure. None is the VM computing something wrong. They are:
+> 12 DataFrame failures from `Float DefaultComparisonPrecision` tightening
+> 1e-4 -> 1.49e-8 (restoring the old value gives 14/14 and 227/227); 2 from
+> Pharo 13 `DateAndTime` accepting only `y-mm-dd`, reproducible on a pristine
+> base image; 9 from selectors removed in Pharo 13
+> (`#whichCategoryIncludesSelector:`, `#newSubclassOf:using:`); 1 from a
+> package's own O(n^2) generator; 3 from an intentional SMark demo fixture; and
+> 12 SUnit watchdog timeouts.
+>
+> With `TestCase defaultTimeLimit` raised 10s -> 600s (verified by read-back),
+> PolyMath's F+E drops 8 -> 2. The survivors are the `SMarkTest` Pharo 13 API
+> removal and `PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate`, which
+> carries its own `<timeout: 50>` pragma and so ignores the class default —
+> it passes alone and exceeds 50s inside a full class run.
+>
+> VM C++ tests: green on both arches (`test_class_table` ALL PASSED,
+> `test_relaunch` 3/3, `test_asmjit_t1_stub`, `test_sista_ir`,
+> `test_sista_survey`). Run WITHOUT an image argument these exit rc=1 with a
+> usage line that reads exactly like a failure — it is not one. `test_platform`
+> reports 0 pixels on both arches; that predates the 2026-08-19 `setGlobal` fix
+> (verified by rebuilding the parent commit) and whether 0 is its expected
+> headless result is NOT established.
+
 > **2026-08-13 full suite, macOS-arm64, 2052 classes** (all of this session's
 > fixes: auto-GC ephemerons #18, exception-blacklist removal, DNU-intercept
 > removal, objectAsMethod super sends, UnixOSProcessPlugin pipes, preemption
