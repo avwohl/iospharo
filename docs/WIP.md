@@ -1,3 +1,55 @@
+# WIP (2026-08-19) — RETRACTION: the `68` DNU is not a stale reference. It is one real object.
+
+The previous entry hypothesised that the wrong-class reference was a stale
+pointer surviving object movement (the corpse-trap family).  **That is wrong
+and is retracted.**  `Symbol allInstances` is a heap scan, and it finds the
+object:
+
+    symInstCount=1  rcvrIsByteSymbol=false  callerCls=Symbol  callerSize=7
+
+Exactly ONE object in the entire heap has class `Symbol`, and it is the MNU
+receiver.  A stale reference would not be reachable by a heap scan.  So this
+is a real, persistent, heap-resident object whose class field is `Symbol`
+(class-table index 3095) instead of `ByteSymbol` (3085).
+
+## Where it comes from — narrowed to the run
+
+    base.image (fresh)          Symbol allInstances size = 0
+    prepped image (post-fileIn) Symbol allInstances size = 0
+    during the test run         Symbol allInstances size = 1
+
+So neither image load nor the harness fileIn creates it.  It appears while
+ReleaseTest / SystemNavigationTest run.
+
+## Ruled out
+
+Bisect over the reproducing pair, counting `MNU rcvr=68`:
+
+    base     rc=0    mnu68=2
+    nojit    rc=0    mnu68=2     <- NOT the JIT
+    nosista  rc=0    mnu68=2     <- NOT the Sista per-bytecode tier
+    noyg     rc=124  mnu68=0     <- TIMEOUT.  A false zero, NOT a fix.
+    base2    rc=0    mnu68=2     <- reproduces
+
+The count is stable at 2 across configurations with very different timing
+(no-JIT is several times slower), so this is deterministic, not a race.
+`noyg` is re-queued with a 5400s budget and an explicit completion check --
+900s was never enough for a no-young-generation run, and reading its
+`mnu68=0` as a fix would have been a fabricated result.
+
+`primitiveChangeClass`/`adoptInstance` (Primitives.cpp `changeClassOf`) is
+NOT the creator: `Symbol format = 0` is a pointer format, a ByteSymbol's
+instFormat is 16 (bytes), and the pointer/non-pointer compatibility check
+returns Failure for exactly this pair.
+
+## Open
+
+Which code path manufactures it.  Both MNU chains walk globals
+(`SystemEnvironment keysDo:` / `allGlobalNamesStartingWith:`,
+`Association printOn:`), so a globals key is the leading guess.  The
+in-flight probe (`$MY/symbytes.sh`) dumps the object's 7 bytes and tests
+whether it is a key in `Smalltalk globals`, which should name it outright.
+
 # WIP (2026-08-19) — the `SmallInteger 68` DNU is a wrong-CLASS reference, not a wrong value
 
 Measured, on the arm build, in the base image (`$MY/symcls`):
