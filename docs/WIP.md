@@ -1,3 +1,44 @@
+# WIP (2026-08-19) — package tests, arm64 complete
+
+Run against the fixed binary with `LOAD_TIMEOUT=1800 TEST_TIMEOUT=1800
+PER_CLASS_TIMEOUT=180` (`$MY/pkgrun.sh`), arm 10:30 -> 11:08, rc=0:
+
+    NeoJSON      116 pass    0 fail    0 err     11 classes
+    Mustache      47 pass    0 fail    0 err      1 class
+    XMLParser   6359 pass    0 fail    0 err    159 classes
+    Grease         0         --        --         0 classes  (see below)
+    PolyMath    1449 pass    2 fail   17 err    117 classes, 0 timeout
+    DataFrame    839 pass   14 fail    0 err     27 classes
+    Fuel          19 pass    0 fail    0 err      2 classes
+                ---------------------------
+                8829 pass   16 fail   17 err
+
+## Do NOT read PolyMath's +57 as a VM improvement
+
+PolyMath went 1392 -> 1449 passes and timeout 1 -> 0 against the
+2026-08-18 baseline.  That is **the harness parameter I changed**, not the
+VM: I raised `PER_CLASS_TIMEOUT` from its 120s default to 180s, and the
+class that previously hit the bound (PMArbitraryPrecisionFloatTest was the
+known offender) now runs to completion and contributes its tests.  Errors
+also went 16 -> 17 for the same reason — a class that used to be cut short
+now reaches a failing test.  A like-for-like VM comparison would need the
+same 120s bound.
+
+## Grease contributes zero tests — a coverage gap, not a regression
+
+Grease loads fine (423MB growth, rc=0) but adds no `TestCase` subclasses,
+so the "classes this load ADDED" selection correctly finds none.  Its
+`pre.txt` has 2185 classes, so the diff itself ran.  The likely cause is
+the Metacello baseline's default group excluding tests — `load.` loads
+core only, and the tests live in a separate group.  The remedy is to load
+the test group explicitly (e.g. `load: #('Tests')`) rather than bare
+`load.`.  Baseline behaved identically, so this understates coverage in
+BOTH runs and is not a regression.  A queued check
+(`$MY/greasechk.sh`) will confirm whether GR*Test classes are absent from
+the loaded image or merely unselected.
+
+x86_64 package run started 11:08:59.
+
 # WIP (2026-08-19) — SUnit: arm64 and x86_64 are at parity. No VM-level divergence left.
 
 Both full sweeps finished against the current binaries (arm 08:30, x86
