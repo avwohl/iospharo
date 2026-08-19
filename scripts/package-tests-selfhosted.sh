@@ -37,8 +37,10 @@ PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
 # architecture-neutral, so an image loaded by the arm64 VM runs unchanged under
 # the x86_64 one. This exists because the load itself cannot work on every
 # host: Iceberg resolves github:// through libgit2 over FFI, and a machine with
-# only an arm64 libgit2 (no Intel Homebrew under /usr/local) fails every load
-# with `IceGenericError: no error message set by libgit2` -- measured
+# only an arm64 libgit2 (no Intel Homebrew under /usr/local) fails every
+# X86_64 load with `IceGenericError: no error message set by libgit2`. The
+# arm64 VM on the same host loads github:// fine -- the failure is scoped to the
+# x86_64 binary, not to the host. Measured
 # 2026-08-19, all 7 packages, each in ~5s with the image never growing.
 # Loading on arm and testing on x86 is the way to get x86 package numbers there.
 REUSE_FROM=${REUSE_FROM:-}
@@ -48,7 +50,15 @@ PACKAGES=(
   "NeoJSON|Metacello new repository: 'github://svenvc/NeoJSON/repository'; baseline: 'NeoJSON'; load.|NeoJSON"
   "Mustache|Metacello new baseline: 'Mustache'; repository: 'github://noha/mustache:v1.4/repository'; load.|Mustache"
   "XMLParser|Metacello new baseline: 'XMLParser'; repository: 'github://pharo-contributions/XML-XMLParser/src'; load.|XML"
-  "Grease|Metacello new baseline: 'Grease'; repository: 'github://SeasideSt/Grease:master/repository'; load.|Grease"
+  # Grease keeps its tests OUT of the 'default' group: under the baseline's
+  # #'pharo13.x' block, default -> Slime -> Grease-Pharo110-Slime-Core, which
+  # closes over three CODE packages and no test package. Plain `load.` therefore
+  # loaded cleanly (clone 89606edf, rc=0, 27s) and added ZERO TestCase
+  # subclasses, reported as "classes=0 pass=0" -- indistinguishable from a failed
+  # load. Ask for the Tests group explicitly. The fallback pattern is 'GR', not
+  # 'Grease': every Grease test class is GR-prefixed (GRPharoConverterTest etc)
+  # and the string 'Grease' matches none of them.
+  "Grease|Metacello new baseline: 'Grease'; repository: 'github://SeasideSt/Grease:master/repository'; load: #('default' 'Tests').|GR"
   "PolyMath|Metacello new baseline: 'PolyMath'; repository: 'github://PolyMathOrg/PolyMath:master/src'; load.|PolyMath"
   "DataFrame|Metacello new baseline: 'DataFrame'; repository: 'github://PolyMathOrg/DataFrame/src'; load.|DataFrame"
   "Fuel|Metacello new baseline: 'Fuel'; repository: 'github://pharo-project/pharo-fuel:master/src'; load.|Fuel"
