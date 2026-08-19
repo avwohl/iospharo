@@ -1,5 +1,22 @@
 # WIP (2026-08-19, end of session) — READ THIS FIRST
 
+> **W^X fix validated at scale (arm64, 2026-08-19 17:16, rc=0).** Full SUnit
+> sweep on the crash-fixed binary. One batch (1501-1550) hit the 600s
+> `PER_BATCH_TIMEOUT` and produced no BATCH TOTAL, so the raw totals cover 1997
+> of 2047 classes and are NOT comparable to the pre-fix run's 2047. Comparing
+> like-for-like, both restricted to the same 40 batches:
+>
+>     pre-fix   Cls=1997 Total=26707  P=26479 F=23 E=20 T=10  F+E=43  99.15%
+>     W^X fix   Cls=1997 Total=26707  P=26477 F=24 E=19 T=12  F+E=43  99.14%
+>
+> **F+E identical at 43.** One test moved fail<->error; the 2-pass delta is
+> exactly the 2 extra timeouts, i.e. the known timing noise floor, not a
+> regression. Zero `Signal 10`/crash signatures across 26,707 tests. The
+> timed-out batch did NOT crash (0 crash markers; its log simply stops at the
+> 600s mark) — it is the per-batch bound, and re-running it with a longer
+> timeout is the outstanding check.
+
+
 Everything below is on `origin/jit` (HEAD `260692fa` + two follow-ups). 30
 commits today. Working tree clean, nothing unpushed.
 
