@@ -3797,7 +3797,25 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             // race) without an unordered_set probe per send.
             JITMethod* jm = methodMap_.lookup(m.rawBits());
             if (jm) {
-                jm->isSpliceTarget = true;
+                // Same MAP_JIT write-window requirement as the identical
+                // store in tryExecute — see the long comment there for
+                // why the header is read-only at this point.  Which of
+                // the two sites a given method reaches first is a race,
+                // so both need the scope.  noteMethodEntry is called from
+                // the interpreter's activation path and makes no promise
+                // about the current W^X mode; ScopedPatchWriteAccess
+                // handles both by restoring the mode it entered with.
+                // Idempotent: skip the flip when the flag already reads
+                // true.  Measured 254 of 255 stores redundant on the
+                // reproducer and scaling 1:1 with activations, and each
+                // flip makes the WHOLE 64 MB MAP_JIT zone writable for
+                // this thread on the JIT entry path.  No measurable
+                // wall-clock difference either way -- this is about not
+                // widening the writable window ~120k times for nothing.
+                if (!jm->isSpliceTarget) {
+                    ScopedPatchWriteAccess w(jm, sizeof(JITMethod));
+                    jm->isSpliceTarget = true;
+                }
                 // PMS §7 event 8: callers may have linked to this
                 // callee BEFORE it became a splice target.
                 unlinkSitesTargeting(jm);
@@ -4291,10 +4309,14 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
 }
 
 bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) {
-    // No makeWritable here — all JITMethod-field writes that used to
-    // require a W window were moved to the heap-side JITMethodStats
-    // struct (W^X audit 2026-04-26).  Remaining JITMethod field reads
-    // are safe in either W or X mode.
+    // No blanket makeWritable here — the JITMethod-field writes that
+    // used to need a W window for the whole function were moved to the
+    // heap-side JITMethodStats struct (W^X audit 2026-04-26).  Reads of
+    // JITMethod fields are safe in either W or X mode.  The audit's
+    // claim that ZERO header writes remain has since drifted: the
+    // isSpliceTarget refresh below is one, and it opens its own narrow
+    // write scope.  Anything added here that stores into *jm must do
+    // the same — this function is entered in EXECUTABLE mode.
 
     // Verify method map integrity (cheap, catches GC/rehash bugs)
     if (jm->compiledMethodOop != compiledMethod.rawBits()) {
@@ -4370,8 +4392,36 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     bool isSplice = sistaRuntimeForGCHook_
                  && sistaRuntimeForGCHook_->hasSplice(compiledMethod);
     // Cache splice flag on JITMethod for stencil-side bump skip.
+    //
+    // This store needs an explicit write window.  The JITMethod header
+    // is bump-allocated INSIDE the MAP_JIT code zone (CodeZone::allocate
+    // -> platform::allocCodeMemory), and tryExecute sits on the JIT
+    // ENTRY path — activateMethod -> tryJITActivation -> here — which
+    // runs with the thread in EXECUTABLE mode.  On Apple Silicon MAP_JIT
+    // pages are read-only in that mode, so an unguarded one-byte store
+    // raises SIGBUS/KERN_PROTECTION_FAILURE (the crash handler prints
+    // "[SIGSEGV]" for every fatal memory signal, and the fault address
+    // is jm+45, which looks deceptively like a tagged immediate).  It is
+    // arm64-only: makeWritable/makeExecutable are no-ops on x86_64,
+    // where the zone stays plain RWX.
+    //
+    // The refresh itself is real work and cannot just be dropped:
+    // JITCompiler.cpp:2572 seeds the flag at compile time, but Sista may
+    // register the splice long AFTER that, and the stencils read the
+    // cached flag rather than probing SistaRuntime's set per send.
+    //
+    // ScopedPatchWriteAccess, not a bare makeWritable/makeExecutable
+    // pair: it restores the mode it ENTERED with.  A forced flip to X on
+    // exit would be correct only while tryExecute is unreachable from
+    // inside an outer W window, and would SIGBUS that window's next emit
+    // store the day it becomes reachable.  The scope closes before
+    // unlinkSitesTargeting, which opens its own (nesting-safe) window.
     if (isSplice) {
-        jm->isSpliceTarget = true;
+        // Idempotent — see the matching note in noteMethodEntry.
+        if (!jm->isSpliceTarget) {
+            ScopedPatchWriteAccess w(jm, sizeof(JITMethod));
+            jm->isSpliceTarget = true;
+        }
         unlinkSitesTargeting(jm);   // PMS §7 event 8
     }
     // Use >= rather than == so methods whose executionCount jumps past

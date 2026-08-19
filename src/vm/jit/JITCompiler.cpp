@@ -2331,9 +2331,18 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // at the heap buffer instead of the in-zone offset.
     uint32_t totalSize = selBitsArrayOffset + selBitsArraySize;
 
-    // The code zone is kept in writable W^X mode by default (set during
-    // initialize). We write freely here; tryExecute() toggles to executable
-    // only around the actual machine code call.
+    // W^X: we are inside CodeZone::allocate's write window, so writing
+    // here is legal.  Do NOT generalise that.  This comment used to claim
+    // "the code zone is kept in writable W^X mode by default (set during
+    // initialize)" and that "tryExecute() toggles to executable only
+    // around the actual machine code call".  Both were false and stayed
+    // false long enough to cost a crash: CodeZone::initialize never makes
+    // the zone writable, the thread default is EXECUTABLE
+    // (apple_shared.cpp:60), and tryExecute is ENTERED in X.  An
+    // unguarded jm->isSpliceTarget store on that path SIGBUSed on every
+    // Apple Silicon run (fixed 2026-08-19, JITRuntime.cpp).  Any store
+    // into the MAP_JIT zone outside a window needs its own
+    // ScopedPatchWriteAccess.
 
     // Compute the actual allocation size (allocate() adds JITMethod header + alignment)
     size_t allocSize = sizeof(JITMethod) + totalSize;

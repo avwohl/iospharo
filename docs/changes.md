@@ -1,5 +1,65 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-08-19 — arm64 JIT crash: a W^X violation in tryExecute
+
+Every Apple Silicon run of a hot, runtime-compiled counted loop crashed:
+
+    | o r |
+    Object compile: 'pbLoopAdd | s | s := 0. 1 to: 100 do: [:i | s := s + 1 ]. ^s'.
+    o := Object new. r := 0. 1 to: 400 do: [ :k | r := o pbLoopAdd ]. r printString
+
+    before   arm64 rc=139 (3/3)   arm64 PHARO_NO_JIT=1 rc=0   x86_64 rc=0
+    after    arm64 rc=0 -> 100    x86_64 rc=0 -> 100
+
+`JITMethod` headers are bump-allocated INSIDE the MAP_JIT code zone.  On
+Apple Silicon those pages are read-only while the thread is in execute
+mode, and `tryExecute` is entered in execute mode by design — its own
+header comment asserted that the 2026-04-26 W^X audit had moved every
+JITMethod-field write out to the heap-side stats struct.  That assertion
+had drifted: `jm->isSpliceTarget = true` is a header write, and it sat
+directly on the JIT entry path.  It compiled to `strb w22, [x19, #0x2d]`
+and faulted at `jm + 45` = `offsetof(JITMethod, isSpliceTarget)`.
+
+Confirmed three independent ways: rebuild A/B, lldb single-step with the
+mode flipped to writable, and reading `g_wxShadowMode == 1 (EXECUTABLE)`
+at the faulting instruction.
+
+Both halves of the guard now use `ScopedPatchWriteAccess`, which restores
+the mode it ENTERED with.  A bare makeWritable/makeExecutable pair passes
+this reproducer but force-flips to executable on exit, and would SIGBUS
+the next emit store of any outer writable window the day `tryExecute`
+becomes reachable from one.  The twin store in `noteMethodEntry` is fixed
+too — same defect, not reached by this reproducer but reachable from five
+call sites in execute mode.
+
+The store is also now skipped when the flag already reads true: measured
+254 of 255 redundant, scaling 1:1 with activations, and each flip makes
+the whole 64 MB zone writable for the thread.  No measurable wall-clock
+difference — this is about not widening the writable window ~120k times
+for nothing.
+
+Why the reproducer needs its exact shape: the store is gated on
+`hasSplice`.  An inlined `to:do:` produces the counted-loop backward jump
+SistaRuntime registers as a splice; `whileTrue:` does not.  Loop trip
+count, receiver class and receiver immediacy are all irrelevant — the
+store targets `jm`, never the receiver.
+
+Verification: 23 nearby variants (nested loops, `timesRepeat:`, other
+receiver types and compiled-into classes, recompiles, J2J outer/inner);
+11 crashed before, all 11 rc=0 after, zero post-fix crashes, x86_64
+byte-identical throughout.
+
+Two leads that look right and are NOT: the fault address is not a tagged
+immediate (`jm` is 64-byte aligned; `jm+45` merely ends in 0b101), and it
+is not an alignment fault (a `strb` cannot be misaligned).  Signal 10 is
+SIGBUS on macOS — the handler prints `[SIGSEGV]` for every fatal memory
+signal.
+
+Also corrects a false-invariant comment in `JITCompiler.cpp` claiming the
+zone is kept writable by default and that `tryExecute` toggles to
+executable only around the call.  Both clauses were false, and that
+comment sits 40 lines above the next unguarded writes.
+
 ## 2026-08-19 — Grease was contributing zero tests; +554 after the fix
 
 `scripts/package-tests-selfhosted.sh` loaded Grease with a bare `load.`, which
