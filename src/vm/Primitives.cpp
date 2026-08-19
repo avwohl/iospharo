@@ -3069,10 +3069,22 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
+            // Same reporting as primitiveNewWithArg -- see the note there.
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                h = rcvr.asObjectPtr()->identityHash();
+                young = memory_.isYoungObject(
+                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+                if (h != 0 && h < memory_.classTableSize())
+                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
+            }
+            std::string cname = memory_.nameOfClass(rcvr);
             fprintf(stderr,
-                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
-                " failing the primitive rather than allocating class index 0\n",
-                (unsigned long long)rcvr.rawBits());
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                __func__, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
         }
         return PrimitiveResult::Failure;
     }
@@ -3192,10 +3204,28 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 20) {
+            // Say WHY the lookup failed. indexOfClass takes the receiver's
+            // identityHash as its class-table index and then verifies
+            // classTable_[hash] == rcvr by IDENTITY. Printing the hash and what
+            // the table actually holds there separates the two possibilities:
+            //   hash==0            -> the class was never assigned a table slot
+            //   table[hash] != rcvr -> one of the two is stale (the class moved,
+            //                          or this receiver Oop was not updated)
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                h = rcvr.asObjectPtr()->identityHash();
+                young = memory_.isYoungObject(
+                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+                if (h != 0 && h < memory_.classTableSize())
+                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
+            }
+            std::string cname = memory_.nameOfClass(rcvr);
             fprintf(stderr,
-                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
-                " failing the primitive rather than allocating class index 0\n",
-                (unsigned long long)rcvr.rawBits());
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                __func__, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
         }
         return PrimitiveResult::Failure;
     }
@@ -26511,10 +26541,22 @@ PrimitiveResult Interpreter::primitiveNewOldSpace(int argCount) {
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
+            // Same reporting as primitiveNewWithArg -- see the note there.
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                h = rcvr.asObjectPtr()->identityHash();
+                young = memory_.isYoungObject(
+                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+                if (h != 0 && h < memory_.classTableSize())
+                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
+            }
+            std::string cname = memory_.nameOfClass(rcvr);
             fprintf(stderr,
-                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
-                " failing the primitive rather than allocating class index 0\n",
-                (unsigned long long)rcvr.rawBits());
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                __func__, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
         }
         return PrimitiveResult::Failure;
     }
@@ -26573,10 +26615,22 @@ PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
+            // Same reporting as primitiveNewWithArg -- see the note there.
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                h = rcvr.asObjectPtr()->identityHash();
+                young = memory_.isYoungObject(
+                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+                if (h != 0 && h < memory_.classTableSize())
+                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
+            }
+            std::string cname = memory_.nameOfClass(rcvr);
             fprintf(stderr,
-                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
-                " failing the primitive rather than allocating class index 0\n",
-                (unsigned long long)rcvr.rawBits());
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                __func__, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
         }
         return PrimitiveResult::Failure;
     }
@@ -26658,10 +26712,22 @@ PrimitiveResult Interpreter::primitiveNewPinned(int argCount) {
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
+            // Same reporting as primitiveNewWithArg -- see the note there.
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                h = rcvr.asObjectPtr()->identityHash();
+                young = memory_.isYoungObject(
+                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+                if (h != 0 && h < memory_.classTableSize())
+                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
+            }
+            std::string cname = memory_.nameOfClass(rcvr);
             fprintf(stderr,
-                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
-                " failing the primitive rather than allocating class index 0\n",
-                (unsigned long long)rcvr.rawBits());
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                __func__, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
         }
         return PrimitiveResult::Failure;
     }
@@ -26722,10 +26788,22 @@ PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
     if (classIndex == 0) {
         static int badClsLog = 0;
         if (badClsLog++ < 5) {
+            // Same reporting as primitiveNewWithArg -- see the note there.
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                h = rcvr.asObjectPtr()->identityHash();
+                young = memory_.isYoungObject(
+                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+                if (h != 0 && h < memory_.classTableSize())
+                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
+            }
+            std::string cname = memory_.nameOfClass(rcvr);
             fprintf(stderr,
-                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
-                " failing the primitive rather than allocating class index 0\n",
-                (unsigned long long)rcvr.rawBits());
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                __func__, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
         }
         return PrimitiveResult::Failure;
     }

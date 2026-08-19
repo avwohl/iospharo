@@ -1,3 +1,76 @@
+# WIP (2026-08-18) — ROOT CAUSE: runtime-created classes never get a class-table index
+
+## The measurement
+
+In the reloaded PolyMath image, `new` splits perfectly along one line:
+
+    Object=OK  OrderedCollection=OK  Array=OK
+    PMVector=FAIL  PMAB2Solver=FAIL  PMAB2Stepper=FAIL
+    PMAB2SolverTest=FAIL  PMExplicitSystem=FAIL
+
+and the class hashes say why.  Pharo's `identityHash` is the VM's raw header
+hash x256, so dividing gives the class-table index the VM actually uses:
+
+                  Smalltalk identityHash     raw = class index
+    Array                       13056                     51
+    TestCase                   286464                   1119
+    OrderedCollection          808704                   3159
+    Object                     809216                   3161
+    ------------------------------------------------------------
+    PMExplicitSystem        334304512                1305877
+    PMAB2SolverTest         369531648                1443483
+    PMVector                801588736                3131206
+
+Base-image classes hold small, real class-table indices.  The package classes
+hold ORDINARY OBJECT HASHES — over a million — which were never class-table
+indices.  (`Array=51` also matches the `allocCls=51` the allocator trap printed
+for an unrelated allocation, which confirms the x256 decoding.)
+
+`ObjectMemory::indexOfClass` is built on the assumption in its own comment,
+"a class's identity hash IS its class table index".  That holds for classes the
+image shipped with.  For a class created at runtime it reads
+`classTable_[1443483]`, finds nil, falls through the linear scan, and returns 0
+— and every `new`/`new:` then allocated an object with class index 0.
+
+## Why it is package-dependent
+
+`classTable_` is built at image load by walking object headers: a class is
+registered because some instance's header names its index.  A class that HAS
+instances when the image is snapshotted therefore survives; a class with NO
+instances at that moment never appears in any header and is never registered.
+
+That is why NeoJSON, Mustache, DataFrame and Fuel pass the same
+load -> snapshot -> reload workflow while PolyMath does not.  It is not "loaded
+classes fail", it is "classes that never received an index fail", which varies
+per package with what the load happened to instantiate.
+
+## What the VM is missing
+
+Cog assigns a class-table index on demand (`ensureBehaviorHash:`): when a class
+is first needed as a class, the VM allocates a free class-table slot, writes
+that index into the class's header hash, and registers it.  This VM has no such
+path — `indexOfClass` can only look up, never assign.
+
+**Fix design** (not yet implemented): give `indexOfClass` a non-const
+counterpart that, on miss, allocates a free slot, stores it as the class's
+header identityHash, and sets `classTable_[idx] = classOop`.  The `new` family
+should call that rather than fail.  Care needed on: which index ranges are
+reserved, keeping it stable across snapshot (the hash is written into the
+object, so it persists), and not assigning an index to a non-class.
+
+Until then the guard committed earlier turns this from an unrecoverable corpse
+cascade plus a wedged Delay scheduler into a clean, catchable `PrimitiveFailed`.
+
+## Superseded
+
+Every entry above that treats this as a GC or scavenger defect is chasing a
+symptom.  The object was never collected; it was allocated with class index 0
+because the class lookup failed.  The scavenge-dependence observed earlier is
+consistent with GC timing changing *which* allocation trips first, not with the
+GC causing it.
+
+---
+
 # WIP (2026-08-18) — ROOT CAUSE + FIX: `new:` allocated with class index 0
 
 ## Not a GC bug at all
