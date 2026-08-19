@@ -1,3 +1,41 @@
+# WIP (2026-08-19) — the "8-test cross-arch delta" is mostly NOISE, and I said otherwise
+
+## Correction
+
+The previous entry called the arm-vs-x86 package difference "genuine
+architecture deltas rather than environment", on the strength of ONE run per
+architecture.  Two runs each say otherwise:
+
+    arm-run1   pass=1390 fail=3 err=17   PMKDTreeTest=3  PMGeneralFunctionFitTest=1  SMarkAutosizeRunnerTest=1
+    arm-run2   pass=1390 fail=2 err=18   PMKDTreeTest=3  PMGeneralFunctionFitTest=2
+    x86-run1   pass=1389 fail=2 err=19   PMKDTreeTest=4  PMGeneralFunctionFitTest=2
+    x86-run2   pass=1389 fail=2 err=19   PMKDTreeTest=4  PMGeneralFunctionFitTest=2
+
+Across all four PolyMath runs made today, arm has scored err = 16, 16, 17, 18 —
+it VARIES BY 2 on its own.  x86 has scored 19 twice.  A 3-error difference taken
+from one run per side is inside arm's own spread and is not established.
+
+`PMKDTreeTest` is the one that still looks like it might be real (arm 2/3/3,
+x86 4/4), but it also passes 13/13 when run ALONE on x86, so whatever it is
+depends on suite context, not on the instruction set.
+
+## What IS solid
+
+    XMLWriterTest = 8 errors on BOTH architectures, every run
+
+Stable, reproducible, architecture-independent.  That is the residual worth
+investigating; the rest of the "delta" is run-to-run variance in a suite whose
+own errors move by 2 between identical runs.
+
+## Method note
+
+Same trap as the corpse counts: a number measured once is not a difference.  The
+package tier needs two runs per side before any arm-vs-x86 claim, exactly as
+`scripts/sunit-sweep.sh`'s header already says for the SUnit tier ("if a result
+looks like a regression, re-run it idle before believing it").
+
+---
+
 # WIP (2026-08-19) — UN-RETRACTION: vm_stop DOES time out, and the fix is in
 
 ## I retracted a correct conclusion on too small a sample
