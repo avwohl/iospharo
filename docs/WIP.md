@@ -1,3 +1,53 @@
+# WIP (2026-08-19) — x86_64 packages are measurable after all: load on arm, test on x86
+
+## The method
+
+x86_64 cannot LOAD a package on this host: Metacello's `github://` goes through
+Iceberg -> libgit2, and only an arm64 libgit2 exists here.  But it can RUN the
+tests — Fuel passes 19/19 there, needing no fetch — and Spur images are
+architecture-neutral.  So: load with the arm64 VM, then run the test step with
+the x86_64 VM against that same image.
+
+That is a BETTER cross-architecture test than loading separately on each arch,
+because the image is held constant: any difference is codegen, not environment.
+
+## Results, same image, both VMs
+
+    package     classes   arm64              x86_64            delta
+    NeoJSON        11      116 P /  0 E       116 P /  0 E     identical
+    Mustache        1       47 P /  0 E        47 P /  0 E     identical
+    DataFrame      27      839 P / 14 F       839 P / 14 F     identical
+    XMLParser     159     6359 P /  0 E      6354 P /  5 E     XMLParserTest 0 -> 5
+    PolyMath      117     1392 P / 16 E      1389 P / 19 E     PMKDTreeTest 2 -> 4
+                                                               PMGeneralFunctionFitTest 1 -> 2
+                                                               SubunitTestExamples +1
+
+So x86_64 runs 8261 package tests here, against arm64's 8273, and the entire
+difference is eight tests in three classes.  That is the first real x86 package
+number this project has had; it was previously recorded only as "blocked".
+
+## A stale binary nearly produced a fictional finding
+
+The first x86 attempt reported PolyMath `corpse=4 dnu=42, PARTIAL 4/117` — the
+exact pre-fix signature — which reads as an architecture-specific GC defect.
+It was not: `build-x86` had not been rebuilt after the class-registration fix.
+
+    build-rel   NEW-BAD-CLASS string: 1   mtime 08-18 22:25
+    build-x86   NEW-BAD-CLASS string: 0   mtime 08-18 12:47
+
+Rebuilt, x86 completes PolyMath exactly as arm does.  Check the binary contains
+the change before attributing a difference to the architecture — `strings |
+grep` on a diagnostic the change introduced is enough.
+
+## Next on this tier
+
+The eight differing tests are the only remaining cross-arch package delta, and
+they are concentrated: `XMLParserTest` (5), `PMKDTreeTest` (2 more than arm),
+`PMGeneralFunctionFitTest` (1 more).  Two of the three are numeric; that is
+where to start.
+
+---
+
 # WIP (2026-08-19) — the `SmallInteger` DNU: the receiver's class is the ABSTRACT `Symbol`
 
 ## Captured from inside the failing run
