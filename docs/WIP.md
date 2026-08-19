@@ -1,3 +1,51 @@
+# WIP (2026-08-19) — the x86_64 "error gap" is a missing x86_64 Cairo, not a VM defect
+
+Earlier in this session I called the x86-vs-arm error gap (288 vs 22) "the
+largest open item".  **That framing was wrong.**  Measured on the running
+x86 sweep, the errors are almost entirely one missing native library.
+
+Errors by class-name prefix, same 1550 classes, arm vs x86:
+
+    RS*       (Roassal)   x86=229   arm=0
+    Athens*               x86=26    arm=0
+    Sp*       (Spec GUI)  x86=10    arm=16     <- comparable, arm slightly worse
+    Zn*, Morph*           x86=0     arm=0
+
+Error classes, deduplicated:
+
+    201  Error                <- Roassal downstream of the Athens failure
+     61  SymbolNotFoundError
+     10  MessageNotUnderstood
+      6  SubscriptOutOfBounds
+
+and the text names it outright:
+
+    SymbolNotFoundError: Could not find symbol named:
+      #cairo_image_surface_create searching in module: '...'
+    ... #cairo_matrix_init_identity ...
+
+The host has exactly one Cairo, and it is the wrong architecture:
+
+    /opt/homebrew/lib/libcairo.2.dylib    arm64      <- only build present
+    /usr/local/lib/libcairo*.dylib        absent     <- Intel prefix empty
+
+A x86_64 VM running under Rosetta cannot load an arm64 dylib, so every
+Athens/Roassal test that reaches Cairo fails at symbol resolution.  That
+accounts for 255 of the 268 x86 errors seen so far; the remaining ~13 are
+in line with arm.
+
+So arm64 and x86_64 do NOT differ by an order of magnitude in VM
+correctness.  They differ by one missing dependency.
+
+## Remedy — NOT done, needs a decision
+
+Installing an Intel-prefix Homebrew (`/usr/local`) plus `cairo` and
+`freetype` for x86_64 is a system-level change to the developer's machine,
+so it is not something to do unilaterally.  Until then the honest way to
+report x86 SUnit numbers is to exclude the Cairo-dependent classes (RS*,
+Athens*, Cairo*, FreeType*) and say so, rather than quoting a total that
+is dominated by a missing dylib.
+
 # WIP (2026-08-19) — arm full sweep after the `setGlobal` fix: F+E 55 -> 45
 
 Both sweeps tallied with ONE method (sum only the `=== BATCH TOTAL ===`
