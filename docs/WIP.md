@@ -1,3 +1,46 @@
+# WIP (2026-08-18) — arm64 package tier, before and after the class-registration fix
+
+Same harness, same base image, same machine:
+
+    package     before                              after
+    NeoJSON     116 P /  0 F                        116 P /  0 F     unchanged
+    Mustache     47 P /  0 F                         47 P /  0 F     unchanged
+    XMLParser   NO RESULT (test pass never          6359 P /  0 F    159 classes
+                reported anything)
+    PolyMath    PARTIAL 4/117, 240 tests, then      1392 P /  2 F    117 classes
+                the VM idled until the eval           16 E / 1 T
+                deadline killed it
+    DataFrame   839 P / 14 F                        839 P / 14 F     unchanged
+    Fuel         19 P /  0 F                         19 P /  0 F     unchanged
+    Grease      0 test classes                      0 test classes   package group
+                                                                     ships no tests
+
+7772 tests passing.  The four packages that already worked are byte-identical,
+so the fix is confined to what was broken.  PolyMath reproduces through the
+harness (873 s load, 284 s test) exactly as it did run directly, so the number
+is not a one-off.
+
+Two harness notes, both mine and both now visible rather than silent:
+
+  * PolyMath needs `LOAD_TIMEOUT` above ~890 s.  At the 900 s default the load
+    is marginal and rc=124; the run that hit it correctly reported
+    `DID-NOT-PERSIST` and then `classes=0`, instead of the pre-2026-08-18
+    behaviour of reporting `classes=0` with no indication why.
+  * Grease's `classes=0` is a package-definition fact, not a VM one: its default
+    Metacello `load.` group contains no TestCase subclasses at all.  Getting its
+    tests needs the `Tests` group in the PACKAGES table.
+
+## Still open on this tier
+
+  * XMLWriterTest 8 errors, PMKDTreeTest 2, five singles, and
+    PMArbitraryPrecisionFloatTest hitting the 120 s per-class bound — the
+    PolyMath residual, spread thin.
+  * x86_64 packages remain blocked by an arm64-only libgit2 on this host;
+    Fuel passes there (19/19) because it needs no fetch, which is the control
+    showing the x86 VM runs package tests fine and only cannot fetch.
+
+---
+
 # WIP (2026-08-18) — PolyMath's suite now completes: 117/117 classes, 1392 passing
 
 ## The result
