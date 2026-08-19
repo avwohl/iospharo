@@ -996,25 +996,60 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
         }
     }
 
-    Oop symbolClass = findGlobal("Symbol");
-    Oop assocClass = findGlobal("Association");
-    if (symbolClass.isNil() || assocClass.isNil()) {
+    // Globals in Pharo are GlobalVariable bindings, not plain Associations.
+    // GlobalVariable is a LiteralVariable with inst vars #(name value) --
+    // instSize 2, the same slot layout as Association's #(key value) -- so
+    // the storePointer(0/1) below is correct for either.  Using Association
+    // here is what made ReleaseTest>>testAllGlobalBindingAreGlobalVariables
+    // report `an Array(#Display->Form(1024x768x32)) should have been empty`.
+    // Fall back to Association only for images with no GlobalVariable.
+    Oop assocClass = findGlobal("GlobalVariable");
+    if (assocClass.isNil() || !assocClass.isObject()) {
+        assocClass = findGlobal("Association");
+    }
+    if (assocClass.isNil()) {
         return false;
     }
 
     uint32_t assocClassIdx = indexOfClass(assocClass);
-    uint32_t symbolClassIdx = indexOfClass(symbolClass);
-    if (assocClassIdx == 0 || symbolClassIdx == 0) {
+    if (assocClassIdx == 0) {
+        assocClassIdx = registerClass(assocClass);
+    }
+    if (assocClassIdx == 0) {
         return false;
     }
 
-    Oop symbolObj = allocateBytes(symbolClassIdx, name.size());
-    if (symbolObj.isNil()) {
-        return false;
+    // Reuse the image's interned symbol when there is one.  Symbols are
+    // unique, so a freshly allocated #name would compare ~= to every #name
+    // already compiled into the image.
+    Oop symbolObj = lookupSymbol(name);
+    if (!symbolObj.isObject() || symbolObj.isNil()) {
+        // Nothing interned — allocate.  The class MUST be ByteSymbol, not
+        // Symbol: `Symbol` is abstract, with instSpec format 0 (no indexable
+        // fields), so an instance of it is indexed as a non-indexable object
+        // and `at:` answers a SmallInteger where the image expects a
+        // Character.  That is how the #Display globals key installed here
+        // came to raise `68 doesNotUnderstand: #asciiValue` inside
+        // Symbol>>isLiteralSymbol.  lookupSymbol() above already picks
+        // ByteSymbol in preference to Symbol; keep the two consistent.
+        Oop symbolClass = findGlobal("ByteSymbol");
+        if (symbolClass.isNil() || !symbolClass.isObject()) {
+            symbolClass = findGlobal("Symbol");
+        }
+        if (symbolClass.isNil()) {
+            return false;
+        }
+        uint32_t symbolClassIdx = indexOfClass(symbolClass);
+        if (symbolClassIdx == 0) {
+            return false;
+        }
+        symbolObj = allocateBytes(symbolClassIdx, name.size());
+        if (symbolObj.isNil()) {
+            return false;
+        }
+        ObjectHeader* symHdr = symbolObj.asObjectPtr();
+        std::memcpy(symHdr->bytes(), name.c_str(), name.size());
     }
-
-    ObjectHeader* symHdr = symbolObj.asObjectPtr();
-    std::memcpy(symHdr->bytes(), name.c_str(), name.size());
 
     Oop assocObj = allocateSlots(assocClassIdx, 2);
     if (assocObj.isNil()) {

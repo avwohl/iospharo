@@ -1,5 +1,49 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-08-19 — `setGlobal` built malformed globals (two defects)
+
+`ObjectMemory::setGlobal`, on the path that installs a global the image
+does not already have, built both halves of the binding with the wrong
+class.  The only caller that hits it in practice is
+`Interpreter::ensureDisplayForm`, which installs `Display`; a fresh
+Pharo 13 image has no `Display` key (`Smalltalk globals includesKey:
+#Display` is false), so this path always ran.
+
+1. The key symbol was allocated as an instance of `Symbol`.  `Symbol` is
+   abstract, with instSpec format 0 -- no indexable fields -- so the
+   resulting object indexed as a non-indexable object and `at:` answered
+   a SmallInteger where the image expects a Character.  Walking globals
+   then died with `68 doesNotUnderstand: #asciiValue` inside
+   `Symbol>>isLiteralSymbol` (68 is `$D`, from `#Display`).  It now uses
+   `ByteSymbol`, matching `lookupSymbol` twenty lines above, and reuses
+   the image's already-interned symbol instead of allocating a duplicate
+   -- symbols are unique, so a fresh one compared ~= to every `#Display`
+   compiled into the image.
+
+2. The binding itself was an `Association`.  Pharo globals are
+   `GlobalVariable` bindings (a `LiteralVariable`, inst vars
+   `#(name value)`, instSize 2 -- the same slot layout, so the stores
+   were already correct).  It now uses `GlobalVariable`.
+
+Measured on the reproducing pair (ReleaseTest, SystemNavigationTest),
+55 tests:
+
+    before             Pass 47  Fail 4  Error 2
+    after (1)          Pass 48  Fail 5  Error 0
+    after (1)+(2)      Pass 49  Fail 4  Error 0
+
+`testAllGlobalNamesStartingWithDoCaseSensitive` and
+`testAllGlobalBindingAreGlobalVariables` both pass.  The defect was
+deterministic and not JIT-related: it reproduced identically with
+`PHARO_NO_JIT=1` and `PHARO_NO_SISTA_PER_BC=1`.
+
+Known remaining limitation, not fixed here: `setGlobal` appends the new
+binding to the first free slot of the dictionary's array without
+honouring hash placement or updating `tally`.  Enumeration (`keysDo:`)
+therefore sees it, but hash lookup (`at:`/`includesKey:`) may not.  The
+real fix is to install the global through an image-level
+`Smalltalk at:put:` send rather than poking the dictionary from C++.
+
 > **2026-08-12 — where the older record lives.** `docs/deferred.md` had
 > accumulated ~2,350 lines of completed-work changelog and debugging
 > narrative. It was split: the per-platform records are now
