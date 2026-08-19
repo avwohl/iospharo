@@ -1,3 +1,86 @@
+# WIP (2026-08-19) — session close: all three tiers, with the class fix verified
+
+## No regression from the class-registration fix
+
+A change that touches every `new` / `new:` in the VM has to be shown harmless at
+suite scale, not argued to be.  Full arm64 sweep, same image, same machine:
+
+    baseline (pre-fix)            2045 classes  28070 tests  27728 P  29 F  26 E  98.78%
+    with class-registration fix   2045 classes  28070 tests  27728 P  29 F  26 E  98.78%
+
+Byte-identical.  Per batch it tracked the baseline throughout (batch 1 exactly,
+600 exactly, 1798 within one test of it — inside this suite's documented
+few-tests-per-run noise).
+
+## Where the three tiers stand
+
+    VM tier     green on both architectures
+                test_sista_ir, test_asmjit_t1_stub, test_class_table,
+                test_relaunch 9/9
+
+    SUnit       arm64   2045 cls  27728 P / 29 F / 26 E   98.78%   1 h 47 m
+                x86_64  1997 cls  27221 P / 25 F / 26 E   98.77%
+                (x86 excluding the classes that need this host's arm64-only
+                cairo/freetype; raw x86 is 2046 cls / 25 F / 288 E)
+
+    packages    arm64, 7772 tests passing:
+                NeoJSON 116, Mustache 47, XMLParser 6359, PolyMath 1392,
+                DataFrame 839, Fuel 19
+                x86_64 blocked by an arm64-only libgit2 on this host; Fuel
+                passes there 19/19 (no fetch needed), which is the control
+                showing the x86 VM runs package tests fine
+
+## Real defects fixed this session, each measured before and after
+
+  1. **x86_64 FFI ABI** — libffi's x86 ffitarget.h gates its 64-bit ABI enum on
+     X86_64/X86_DARWIN, which libffi's own configure defines and we did not, so
+     x86_64 compiled FFI_DEFAULT_ABI = FFI_SYSV = 1 against a library expecting
+     FFI_UNIX64 = 2.  79 errors -> 2.
+  2. **The 120 s eval deadline** killed any eval still working, at exit code 0
+     with no output.  Now distinguishes working from idle by bytecode progress.
+  3. **libffi universal headers** — make_universal lipo'd two architectures'
+     libraries and copied only slice_a's headers.
+  4. **`new:` allocating with class index 0** — indexOfClass answers 0 for
+     "not found"; six primitives passed it to allocateSlots, manufacturing an
+     object with no class.
+  5. **Runtime-created classes never registered** — classTable_ is rebuilt at
+     load from object headers, so a class with no instance at snapshot time has
+     no slot.  registerClass already handled it and was simply never called.
+     XMLParser: no RESULT -> 6359 passing.  PolyMath: 4/117 -> 117/117.
+  6. **fullGC's pre-compact scavenge escaped every scavenge bisect knob**, so
+     "disable scavenging" floored at 1 and read as a non-fix.
+
+Plus four harness defects that were producing VM-looking failures: the missing
+`.sources` file (69 errors in one batch), substring test selection, unreported
+non-persisting loads, and write-once result files.
+
+## Retracted this session, in case any of it was acted on
+
+Each was published here and then measured false: the JIT hypothesis for the
+`SmallInteger` DNU; vm_stop's 2 s timeout as the test_relaunch crash mechanism;
+the image-size correlation for "no RESULT"; the remote-temp and
+operand-stack-above-sp hypotheses; and the entire GC / use-after-collect framing
+of the PolyMath hang.  The object was never collected.
+
+Two diagnostics caused most of that and are now annotated where they are
+emitted: `selectorOf` on a CompiledBlock answers the block's LAST LITERAL rather
+than a selector (`method_=#cos` was never Float's), and comparing corpse COUNTS
+between bisect arms hides genuinely different corpses behind equal numbers.
+
+## Open, in priority order
+
+  1. x86_64 packages need cairo/freetype/libgit2 for x86_64 on this host, or
+     the already-fat maccatalyst slices linked statically.
+  2. PolyMath residual: XMLWriterTest 8 errors, PMKDTreeTest 2, five singles,
+     PMArbitraryPrecisionFloatTest at the 120 s per-class bound.
+  3. `SmallInteger` DNU in ReleaseTest / SystemNavigationTest — measured NOT the
+     JIT; needs the receiver captured from inside the failing run.
+  4. test_relaunch's use-after-free — not reproducing, but vm_destroy freeing
+     after a bounded wait is wrong on its own terms.
+  5. Grease ships no tests in its default Metacello group.
+
+---
+
 # WIP (2026-08-18) — arm64 package tier, before and after the class-registration fix
 
 Same harness, same base image, same machine:
