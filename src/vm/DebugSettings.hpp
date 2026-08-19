@@ -64,7 +64,17 @@ struct DebugSettings {
     // Per-specialization opt-outs (default-on when probe enabled).
     // PHARO_T1_NO_INLINE_GETTER / SETTER / RETURNS_SELF to disable
     // individually — bisect tool for debugging path B regressions.
-    bool t1InlineGetter = false;      // default OFF 2026-05-28 (correctness); PHARO_T1_INLINE_GETTER opts in
+    // NOTE (2026-08-19): this initializer is DEAD. DebugSettings.cpp:137
+    // overwrites it with `!envPresent("PHARO_T1_NO_INLINE_GETTER")`, so the
+    // SHIPPING DEFAULT IS ON (opt-out), not off. Measured: GETTER3M 12 ms
+    // default vs 128 ms with PHARO_T1_NO_INLINE_GETTER=1, so the path is
+    // demonstrably live and worth ~10x. The "OFF for correctness" note below
+    // is therefore not describing current behaviour. If that 2026-05-28
+    // correctness concern was real it is UNADDRESSED and the default is
+    // wrong; if it was resolved the note should go. Deliberately not
+    // flipping either way here — changing a shipping JIT default needs the
+    // owner's decision, not a drive-by.
+    bool t1InlineGetter = false;      // (dead) claimed default OFF 2026-05-28 (correctness); PHARO_T1_INLINE_GETTER opts in
     bool t1InlineSetter = true;       // PHARO_T1_NO_INLINE_SETTER inverts
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
     // The six dispatch-A-only "extra" inline specs (TempReturn/IntCmpReturn/

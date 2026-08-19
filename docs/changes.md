@@ -1205,6 +1205,20 @@ everywhere else).  Coexist mode lets us leave `PHARO_T2=1` safely
 without T1 IC hit-rate regressions, while keeping T2 code paths
 exercised for correctness coverage.
 
+> **[CORRECTED 2026-08-19] T2 code paths are NOT exercised.** Measured at
+> HEAD: default, `PHARO_T2=1`, `+T2_REPLACE=1` and `+T2_WARMUP=0` all
+> report `T2 (asmjit): compiled=0 bailed=0` (rc=0 each) — three
+> independent gates keep it off (`DebugSettings.cpp:433` t2Strict, the
+> coexist skip at `JITRuntime.cpp:3211`, `DebugSettings.cpp:331`
+> t2Warmup). Lifting all three HANGS the VM during image startup, before
+> user code runs: `T2_LIMIT=200` rc=0 compiled=200; `T2_LIMIT=300` and
+> `T2_LIMIT=999` both rc=124 with no result at all. So the tier is not
+> merely unused — it cannot currently be reached safely, and the claim
+> above that it stays exercised for coverage is false. `T2_LIMIT` is a
+> ready-made bisect knob for whichever of compiles #201-300 livelocks.
+> The tier is 4,146 lines (Tier2Compiler_arm64.cpp 2,264 +
+> _x86_64.cpp 1,746 + .hpp 136); either bisect it or delete it.
+
 Companion commit `668d348` skips T2 compilation entirely when T1 is
 already executable and `T2_REPLACE=0`, saving asmjit memory and
 compile time.
