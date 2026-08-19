@@ -1,3 +1,56 @@
+# WIP (2026-08-19) — UN-RETRACTION: vm_stop DOES time out, and the fix is in
+
+## I retracted a correct conclusion on too small a sample
+
+The original entry (`e84e8501`) said: vm_stop waits at most 2 s for the
+interpreter to return, gives up, and vm_destroy frees the interpreter and heap
+anyway — a use-after-free.  A later entry retracted that as "measured FALSE",
+on the strength of 9 consecutive runs with a worst wait of 15 ms.
+
+**The retraction was wrong.**  Nine runs is simply not enough to see a ~10%
+event.  Ten more runs, with vm_stop now reporting its own outcome:
+
+    relaunch x10:  pass=9  fail=1  destroy-leak=1  stop-timeout=1
+
+and the failing run says it plainly:
+
+    === Cycle 1 of 3 ===   [VM-STOP] interpret() returned after 15ms   PASS
+    === Cycle 2 of 3 ===   [VM-STOP] interpret() returned after 15ms   PASS
+    === Cycle 3 of 3 ===   [VM-STOP-TIMEOUT] interpret() has not returned 2s
+                           after stop(); the worker is still running
+                           [VM-DESTROY-LEAK] the worker is STILL inside
+                           interpret() after vm_stop and a further 5s wait
+      cycle 3: FAIL (vm_stop timed out; worker stuck)
+
+So the original mechanism stands: vm_stop times out on roughly one cycle in
+thirty, and before today vm_destroy then freed the interpreter and the heap
+under a thread still executing inside interpret().  That is exactly the two
+crash reports — EXC_BAD_ACCESS in `Interpreter::synchronousSignal` with the
+main thread inside `free()`.
+
+Lesson worth keeping: "it did not reproduce in N runs" is not "it does not
+happen" unless N is large enough for the rate.  The retraction cited 9/9 as if
+it were proof.
+
+## The fix
+
+`vm_destroy` no longer assumes the precondition its own comment documents.  It
+waits a further 5 s and, if the worker is still inside `interpret()`, LEAKS the
+interpreter and heap rather than freeing them under it, and says so.  A leak
+during teardown costs memory in a process that is exiting; a use-after-free
+corrupts whatever the worker touches next.
+
+Measured: 10 runs, one timeout, **zero EXC_BAD_ACCESS, exit code 0**.  The cycle
+is reported as `FAIL (vm_stop timed out; worker stuck)` — which is the truth,
+and which test_relaunch was always able to say but never got to because the
+crash beat it to the summary.
+
+STILL OPEN, and unchanged by this: WHY interpret() sometimes fails to return
+within 2 s.  The fix makes the consequence safe and visible; it does not explain
+the cause.  `[VM-STOP-TIMEOUT]` now marks the moment for whoever chases it.
+
+---
+
 # WIP (2026-08-19) — x86_64 packages are measurable after all: load on arm, test on x86
 
 ## The method

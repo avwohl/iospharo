@@ -637,17 +637,48 @@ void vm_stop(void) {
 
 void vm_destroy(void) {
     // Delete all VM objects and reset state so vm_initialize()/vm_loadImage()/vm_run()
-    // can be called again for a fresh launch. The VM worker thread is parked on
-    // its condition variable at this point — vm_stop waited for gRunning to clear,
-    // which is exactly the moment interpret() returned — so replacing the
-    // interpreter underneath it is safe, and the next vm_run reuses that same
-    // thread rather than starting another.
+    // can be called again for a fresh launch. The VM worker thread is normally
+    // parked on its condition variable at this point — vm_stop waited for
+    // gRunning to clear, which is exactly the moment interpret() returned — so
+    // replacing the interpreter underneath it is safe, and the next vm_run
+    // reuses that same thread rather than starting another.
+    //
+    // But vm_stop's wait is BOUNDED, so that precondition can fail to hold, and
+    // this code used to free regardless. Freeing the interpreter and the heap
+    // under a thread still executing inside interpret() is a use-after-free:
+    // observed twice as EXC_BAD_ACCESS in Interpreter::synchronousSignal with
+    // the main thread inside free(). Enforce the precondition instead of
+    // assuming it.
+    //
+    // Give the worker one more chance to land, and if it still has not, LEAK the
+    // interpreter and heap rather than free them under it. A leak on a
+    // pathological shutdown costs memory in a process that is tearing down
+    // anyway; a use-after-free corrupts whatever the worker touches next. The
+    // leak is announced, so the next occurrence arrives with evidence instead of
+    // having to be reconstructed from a crash dump.
+    if (gRunning) {
+        auto start = std::chrono::steady_clock::now();
+        while (gRunning &&
+               std::chrono::steady_clock::now() - start < std::chrono::seconds(5)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
 
-    delete gInterpreter;
-    gInterpreter = nullptr;
+    if (gRunning) {
+        fprintf(stderr,
+                "[VM-DESTROY-LEAK] the worker is STILL inside interpret() after"
+                " vm_stop and a further 5s wait; leaking the interpreter and heap"
+                " rather than freeing them under a running thread\n");
+        fflush(stderr);
+        gInterpreter = nullptr;   // deliberate leak: see above
+        gMemory = nullptr;
+    } else {
+        delete gInterpreter;
+        gInterpreter = nullptr;
 
-    delete gMemory;
-    gMemory = nullptr;
+        delete gMemory;
+        gMemory = nullptr;
+    }
 
     delete gDisplay;
     gDisplay = nullptr;
