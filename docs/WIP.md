@@ -1,3 +1,59 @@
+# WIP (2026-08-19) — the `SmallInteger` DNU: the receiver's class is the ABSTRACT `Symbol`
+
+## Captured from inside the failing run
+
+The runner's error handler now reports the MNU receiver and the sender chain
+(local instrumentation of the pharo-headless-test submodule, not committed
+there):
+
+    MNU rcvr=68 sel=#asciiValue
+      chain= SmallInteger.doesNotUnderstand: | Symbol.isLiteralSymbol
+             | Symbol.storeOn: | Symbol.printOn: | Association.printOn: | ...
+    MNU rcvr=68 sel=#asLowercase
+      chain= SmallInteger.doesNotUnderstand: | Symbol.beginsWith:caseSensitive:
+             | ByteString.withIndexDo: | SystemNavigation.allGlobalNamesStartingWith:do:caseSensitive: | ...
+
+**68 is the code point of `$D`.**  So `at:` answered the raw byte where a
+Character was required — and the calling frame's receiver class is `Symbol`,
+the ABSTRACT class, not `ByteSymbol`.
+
+Measured in the same image:
+
+    #someLiteral class            ByteSymbol      (a normal symbol)
+    Symbol includesSelector: #at:  false          <-- the whole mechanism
+    objects with class == Symbol   0 at rest
+
+`ByteSymbol>>at:` is `<primitive: 63>` and answers a Character.  `Symbol` does
+not implement `at:` at all, so a receiver whose class resolves to `Symbol` falls
+through to `Object>>at:` (primitive 60), which answers a raw SmallInteger for a
+byte object.  68.  Every observation follows from that one fact.
+
+## What this is, and is not
+
+It is NOT a String / `at:` defect: both primitives are correct, and the right
+one for `ByteSymbol` was simply never reached.  It is a **class-index integrity**
+problem — an object whose header classIndex resolves to the wrong class — which
+is the same family as the class-table root cause confirmed earlier today, and
+consistent with everything already eliminated:
+
+    not the JIT             baseline / NO_JIT / NO_SISTA_PER_BC all identical
+    not the method cache    PHARO_NO_METHOD_CACHE=1 identical (MNU=6)
+    not visible at rest     0 objects with class == Symbol in a resting image
+
+It needs the SUnit runner to appear, and the runner compiles methods during its
+startup, so a symbol created at runtime is the natural suspect.
+
+## Next
+
+Find the object: at the DNU, walk from the failing frame to the receiver and
+print its raw header classIndex alongside `classTable_[thatIndex]`, exactly as
+`[NEW-BAD-CLASS]` does for `new:`.  If the index is `Symbol`'s, something
+created a symbol with the abstract class; if the index is right and the TABLE
+entry is wrong, it is a class-table corruption and the `[CTOVERWRITE-*]`
+diagnostics under `PHARO_CTCHECK` should catch the writer.
+
+---
+
 # WIP (2026-08-19) — session close: all three tiers, with the class fix verified
 
 ## No regression from the class-registration fix
