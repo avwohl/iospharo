@@ -32,6 +32,16 @@ WORK=${WORK:-/tmp/pkg-selfhosted}
 LOAD_TIMEOUT=${LOAD_TIMEOUT:-900}
 TEST_TIMEOUT=${TEST_TIMEOUT:-900}
 PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
+# REUSE_FROM=<dir>: skip the Metacello load and take each package's already
+# loaded pkg.image from a previous run's work directory. Spur images are
+# architecture-neutral, so an image loaded by the arm64 VM runs unchanged under
+# the x86_64 one. This exists because the load itself cannot work on every
+# host: Iceberg resolves github:// through libgit2 over FFI, and a machine with
+# only an arm64 libgit2 (no Intel Homebrew under /usr/local) fails every load
+# with `IceGenericError: no error message set by libgit2` -- measured
+# 2026-08-19, all 7 packages, each in ~5s with the image never growing.
+# Loading on arm and testing on x86 is the way to get x86 package numbers there.
+REUSE_FROM=${REUSE_FROM:-}
 
 # name | metacello expression | test-class name pattern
 PACKAGES=(
@@ -77,11 +87,25 @@ for entry in "${PACKAGES[@]}"; do
 
     D="$WORK/$PKG"
     rm -rf "$D"; mkdir -p "$D"
+    if [ -n "$REUSE_FROM" ]; then
+        if [ ! -f "$REUSE_FROM/$PKG/pkg.image" ]; then
+            printf '%-12s REUSE  no image in %s -- skipped\n' "$PKG" "$REUSE_FROM/$PKG" >> "$SUMMARY"
+            continue
+        fi
+        cp "$REUSE_FROM/$PKG/pkg.image"   "$D/pkg.image"
+        cp "$REUSE_FROM/$PKG/pkg.changes" "$D/pkg.changes" 2>/dev/null
+        cp "$REUSE_FROM/$PKG/pre.txt"     "$D/pre.txt"     2>/dev/null
+        cp "$BASE_SOURCES" "$D/"
+        sz=$(stat -f%z "$D/pkg.image" 2>/dev/null || stat -c%s "$D/pkg.image" 2>/dev/null || echo 0)
+        printf '%-12s reuse  from %s  image=%sMB\n' "$PKG" "$(basename "$REUSE_FROM")" "$((sz/1024/1024))" >> "$SUMMARY"
+    else
     cp "$BASE" "$D/pkg.image"
     cp "$BASE_CHANGES" "$D/pkg.changes"
     cp "$BASE_SOURCES" "$D/"
+    fi
 
     # --- load, and persist with a snapshot rather than --save ---
+    if [ -z "$REUSE_FROM" ]; then
     t0=$(date +%s)
     # Write the pre-load TestCase subclasses first: the test pass below selects
     # the classes THIS LOAD ADDED, which is exact, rather than the classes whose
@@ -105,6 +129,7 @@ for entry in "${PACKAGES[@]}"; do
     [ "$size" -le "$base_size" ] && grew=DID-NOT-PERSIST
     printf '%-12s load rc=%-3s %4ds  image=%sMB %s\n' \
         "$PKG" "$load_rc" "$((t1-t0))" "$((size/1024/1024))" "$grew" >> "$SUMMARY"
+    fi
 
     # --- run every TestCase subclass whose name matches the pattern ---
     rm -f "$D/result.txt"
