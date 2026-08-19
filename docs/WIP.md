@@ -1,3 +1,76 @@
+# WIP (2026-08-19) — all three tiers measured on both architectures
+
+## Tier 1: VM C++ tests — green on arm64 AND x86_64
+
+    test_asmjit_t1_stub   PASS (1000 reentrant calls)
+    test_class_table      ALL TESTS PASSED
+    test_sista_ir         PASS
+    test_sista_survey     rc=0
+    test_relaunch         All 3 cycles passed
+
+Careful: these binaries take an image argument.  Run bare they exit rc=1
+with a usage line, which reads exactly like a test failure.  It is not one.
+
+`test_platform` reports rc=1, `Display updates: 0`, `non-zero pixels 0.0%`
+on BOTH arches.  This is NOT caused by the setGlobal change: rebuilding
+with `9a9aefce~1`'s ObjectMemory.cpp gives byte-identical output
+(`$MY/logs/platbisect.txt`).  It is a headless GUI-pipeline test and
+whether 0 pixels is its expected result in this environment is NOT
+established — real GUI verification requires the Mac Catalyst app plus a
+screenshot per CLAUDE.md.  Do not report the GUI as broken or as working
+on this evidence.
+
+## Tier 2: SUnit — parity
+
+    arm  RAW       2043 cls  28058 tests  F=23  E=22   98.81%
+    x86  RAW       2037 cls  27982 tests  F=26  E=287  97.85%
+    arm  NO-CAIRO  1925 cls  27187 tests  F=23  E=21   98.78%
+    x86  NO-CAIRO  1919 cls  27111 tests  F=25  E=27   98.74%
+
+Every non-Cairo x86 excess is accounted for (6 Cairo-backed under Sp*/Hi*
+names, 2 from one Windows-only w64Convention test that arm skips).
+
+## Tier 3: package tests — parity
+
+    package      arm P/F/E          x86 P/F/E
+    NeoJSON       116 / 0 / 0        116 / 0 / 0
+    Mustache       47 / 0 / 0         47 / 0 / 0
+    XMLParser    6359 / 0 / 0       6354 / 0 / 5
+    Grease          0                  0            (no test classes loaded)
+    PolyMath     1449 / 2 / 17      1448 / 2 / 18
+    DataFrame     839 / 14 / 0       839 / 14 / 0
+    Fuel           19 / 0 / 0         19 / 0 / 0
+                 8829 / 16 / 17     8823 / 16 / 23
+
+The 6-error difference is XMLParser (5) + PolyMath (1).  The XMLParser
+ones are the state-dependent set already shown to PASS ON RETRY in the
+same image, so they are suite-state artifacts, not arch defects.
+
+### x86 package loads are impossible on this host
+
+All 7 x86_64 Metacello loads failed in ~5s with the image never growing —
+`IceGenericError: no error message set by libgit2`.  Iceberg resolves
+`github://` through libgit2 over FFI and the host has only
+`/opt/homebrew/lib/libgit2.dylib` (arm64); `/usr/local/lib` does not exist,
+so there is no Intel Homebrew at all.  Same shape as the Cairo finding.
+
+Fixed in tooling rather than worked around: `package-tests-selfhosted.sh`
+gained `REUSE_FROM=<dir>`, which skips the load and runs the tests against
+an image a previous run already loaded.  Spur images are
+architecture-neutral, so this is legitimate rather than a dodge.  Verified
+on NeoJSON: x86 over the arm-loaded image gives 11 classes / 116 pass,
+identical to arm.
+
+## The two host gaps, together
+
+    libcairo.2.dylib   arm64 only   -> 260 of x86's 287 SUnit errors
+    libgit2.dylib      arm64 only   -> all 7 x86 package loads
+    /usr/local/lib     absent       -> no Intel Homebrew to supply either
+
+Both are one decision: install an Intel-prefix Homebrew with cairo,
+freetype and libgit2.  That is a change to the developer's machine and has
+NOT been done unilaterally.
+
 # WIP (2026-08-19) — package tests, arm64 complete
 
 Run against the fixed binary with `LOAD_TIMEOUT=1800 TEST_TIMEOUT=1800
