@@ -1,3 +1,65 @@
+# WIP (2026-08-18) — `v` is a PLAIN frame temp; remote temps refuted; the window is bytecodes 59-63
+
+Compiling the same block source in a clean base image (the compiler produces the
+same temp layout, and this costs 5 s instead of 90 s on the 1.28 GB PolyMath
+image) gives the CompiledBlock's bytecode:
+
+    52 <D2> popIntoTemp: 2      <- v
+    53 <42> pushTemp: 2
+    54 <51> pushConstant: 1
+    55 <41> pushTemp: 1         <- t
+    56 <82> send: sin
+    57 <71> send: at:put:
+    58 <D8> pop
+    59 <42> pushTemp: 2         <- v pushed as the at:put: RECEIVER
+    60 <21> pushConstant: 2
+    61 <41> pushTemp: 1         <- t
+    62 <83> send: cos           <- allocates; the corrupting GC lands in here
+    63 <71> send: at:put:       <- receiver is the v pushed at 59
+
+`popIntoTemp:` / `pushTemp:` — **`v` is a plain FRAME temp, not a remote temp**,
+and the enclosing `fullClosure:` reports `NumCopied: 0`, so nothing is captured
+into an indirection vector.  The remote-temp hypothesis from the previous entry
+is REFUTED.  (It was worth testing: this workload reports `remoteTemp=2661087`.)
+
+## The sharp form of the defect
+
+At the GC inside bytecode 62, `v` should be live in TWO places, both inside
+`[stackBase_, stackPointer_)`:
+
+  1. temp slot 2 of the block's frame
+  2. the operand pushed at bytecode 59, sitting under the pending `at:put:`
+
+Either alone should keep it.  Yet it is collected, and the corpse trap reports
+`inStack=0` at the first push — the value is in NEITHER place by the time it is
+pushed again.
+
+So the question is no longer "which holder is unrooted".  It is: **why is the
+frame region that holds a live block temp and a pending send's receiver not
+being scanned (or not being updated) while a send from that frame is
+executing?**  sp=68 and fp=64 at the trap, so the whole frame is four slots and
+sits well inside the scanned range on the face of it.
+
+## Ruled out, all by measurement
+
+    the JIT                        4 configurations
+    the Sista per-bytecode tier    PHARO_NO_SISTA_PER_BC=1
+    f96cb69b's temp-sync residual  PHARO_NO_GC_TEMPSYNC=1
+    mark / compaction              [HEAPCHECK post-fullGC] => CLEAN
+    a stack slot above sp          PHARO_SCAV_SCAN_ABOVE_SP=64 and =1024
+    SavedFrame's Oop fields        all six visited (code)
+    remote temps / captured vars   plain pushTemp:, NumCopied: 0 (bytecode)
+
+## Next, and it is one cheap instrument
+
+Extend the corpse trap to print the current PC and bytecode alongside the
+sp/fp it already prints.  That says exactly which bytecode pushes the corpse and
+therefore which frame region the value came out of — the last thing still being
+inferred rather than measured.  Everything else about this defect is now
+measured, and eight hypotheses have died, so infer nothing further.
+
+---
+
 # WIP (2026-08-18) — the holder is OUTSIDE the operand stack: measured, not argued
 
 The corpse-push trap now reports whether the value is also resident in
