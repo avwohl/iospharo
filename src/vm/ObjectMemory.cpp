@@ -252,6 +252,22 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
                 got2 ? (long long)((uint8_t*)ra2 - (uint8_t*)i2.dli_saddr) : 0LL);
         }
     }
+    // Corpse forensics (PHARO_CORPSE_PUSH_TRAP): remember the last object
+    // allocated and the scavenge count at that instant.  If a corpse pushed
+    // later IS this address and the scavenge count has since advanced, then a
+    // scavenge ran between the allocation and the push and tenured the object,
+    // leaving this Oop aimed at a scrubbed eden slot -- a leaked GC deferral.
+    // If the counts match, nothing collected it and the allocator returned it
+    // uninitialised. The two cases need opposite fixes, so measure, don't guess.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_CORPSE_PUSH_TRAP), 0)) {
+        extern uint64_t g_scavengeCount;
+        extern uint64_t g_lastAllocAddr;
+        extern uint64_t g_lastAllocScav;
+        extern uint32_t g_lastAllocClassIdx;
+        g_lastAllocAddr = result.rawBits();
+        g_lastAllocScav = g_scavengeCount;
+        g_lastAllocClassIdx = classIndex;
+    }
     return result;
 }
 
@@ -1835,6 +1851,9 @@ uint32_t ObjectMemory::generateHash() {
 
 // ===== GARBAGE COLLECTION =====
 
+uint64_t g_lastAllocAddr = 0;      // corpse forensics: last allocateSlots result
+uint64_t g_lastAllocScav = 0;      // g_scavengeCount at that allocation
+uint32_t g_lastAllocClassIdx = 0;  // its class index
 uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
 GCResult ObjectMemory::scavenge() {
     // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young

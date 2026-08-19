@@ -1,3 +1,65 @@
+# WIP (2026-08-18) — ROOT CAUSE + FIX: `new:` allocated with class index 0
+
+## Not a GC bug at all
+
+The allocator forensics settle it.  On the deterministic repro:
+
+    [CORPSE-PUSH] val=0x71f1f1c400 ... bcOff=2 bc=0x7d
+                  isLastAlloc=1 allocScav=2 nowScav=2 allocCls=0
+
+  * `isLastAlloc=1`  — the corpse IS the object `PMVector new: 2` just returned
+  * `allocScav == nowScav` — NO scavenge ran between the allocation and the
+    push, so nothing collected it
+  * `allocCls=0` — `allocateSlots` was CALLED with class index 0
+
+The object was **born** with classIndex 0.  Several entries above this one frame
+this defect as a use-after-collect and hunt the scavenger; that framing is wrong
+and those entries are superseded.  (The scavenge dependence was real but
+indirect — see the open question below.)
+
+## Why it presented as an unrecoverable hang
+
+`ObjectMemory::indexOfClass` answers **0 for "not found"**, and 0 is not a valid
+Spur class index:
+
+    if (hash != 0 && hash < classTable_.size() && classTable_[hash] == classOop)
+        return hash;
+    for (uint32_t i = 0; i < classTable_.size(); ++i)
+        if (classTable_[i] == classOop) return i;
+    return 0;  // Not found
+
+All six `new` / `new:` primitives passed that straight to `allocateSlots`.  An
+object with classIndex 0 has no class, so every send to it raises
+`doesNotUnderstand:` — and the DNU cannot be handled either, for the same
+reason.  It surfaced far from the allocation as a "corpse" cascade that also
+left the Delay scheduler with `timerSem=nil`, i.e. as a hang.
+
+## The fix, and what it does and does not do
+
+All six sites now fail the primitive and name the failure, so the image's
+`basicNew:` fallback runs and can signal normally.  Measured on the repro:
+
+    before   corpse=4  dnu=42  timerSem=nil x25  VM idle until the 120 s
+             eval deadline killed it (~243 s)
+    after    corpse=0  dnu=0   no timer wedge    Error: PrimitiveFailed
+
+Normal allocation is unaffected: 5000 `Array new: 3` on a clean image allocate
+correctly with no `[NEW-BAD-CLASS]`.
+
+**The test still does not PASS.**  This converts an unhandleable hang into a
+catchable image-level error; it does not make the lookup succeed.
+
+## Still open: why the class is not found
+
+`indexOfClass` compares `classTable_` entries against the receiver by IDENTITY.
+A stale class Oop therefore misses the hash path AND the linear scan.  The
+scavenge does pass `includeClassTable=true`, so the table itself is updated —
+which points at the class Oop reaching the primitive being stale, not the table.
+That is the next thing to chase, and `[NEW-BAD-CLASS]` now prints the receiver
+address to start from.
+
+---
+
 # WIP (2026-08-18) — the corpse is BORN DEAD: `new:` returns classIndex 0
 
 ## Measured

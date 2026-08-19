@@ -497,17 +497,29 @@ public:
                             bcHere = *(instructionPointer_ - 1);
                         }
                     }
+                    // Was THIS object the most recent allocation, and has a
+                    // scavenge run since?  See the note in allocateSlots.
+                    extern uint64_t g_scavengeCount;
+                    extern uint64_t g_lastAllocAddr;
+                    extern uint64_t g_lastAllocScav;
+                    extern uint32_t g_lastAllocClassIdx;
+                    bool isLastAlloc = (g_lastAllocAddr == value.rawBits());
                     fprintf(stderr,
                         "[CORPSE-PUSH] val=0x%llx in=#%s fd=%zu jitState=%d "
                         "inStack=%d firstSlot=%lld sp=%lld fp=%lld "
-                        "bcOff=%lld bc=0x%02x\n",
+                        "bcOff=%lld bc=0x%02x isLastAlloc=%d allocScav=%llu "
+                        "nowScav=%llu allocCls=%u\n",
                         (unsigned long long)value.rawBits(),
                         memory_.selectorOf(method_).c_str(), frameDepth_,
                         currentJITState_ ? 1 : 0,
                         copies, firstOff,
                         (long long)(stackPointer_ - stackBase_),
                         framePointer_ ? (long long)(framePointer_ - stackBase_) : -1LL,
-                        bcOff, (unsigned)(bcHere & 0xFF));
+                        bcOff, (unsigned)(bcHere & 0xFF),
+                        isLastAlloc ? 1 : 0,
+                        (unsigned long long)g_lastAllocScav,
+                        (unsigned long long)g_scavengeCount,
+                        (unsigned)g_lastAllocClassIdx);
                 }
             }
         }

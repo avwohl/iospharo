@@ -3063,6 +3063,19 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     int instFormat = (instSpec >> 16) & 0x1F;
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
+    // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 5) {
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
+                " failing the primitive rather than allocating class index 0\n",
+                (unsigned long long)rcvr.rawBits());
+        }
+        return PrimitiveResult::Failure;
+    }
     if (classIndex == 0) {
         classIndex = memory_.registerClass(rcvr);
     }
@@ -3157,6 +3170,35 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     bool isWords64 = (instSpec == 9);
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // indexOfClass answers 0 for "not found", and cannot distinguish that from
+    // a real index. 0 is not a valid Spur class index, so allocating with it
+    // manufactures an object whose classIndex is 0: every send to it raises
+    // doesNotUnderstand:, and the DNU cannot be handled either because the
+    // receiver has no class. It surfaces far from here as an unrecoverable
+    // "corpse" cascade that also leaves the Delay scheduler wedged
+    // (timerSem=nil), i.e. as a hang.
+    //
+    // Measured 2026-08-18 on PMAB2SolverTest>>testVectorSystem: the corpse is
+    // the object `PMVector new: 2` had just returned -- isLastAlloc=1,
+    // allocCls=0, and allocScav == nowScav, so it was BORN with class index 0
+    // rather than collected.
+    //
+    // Fail the primitive instead, and say so. The image's basicNew: fallback
+    // then runs and can signal properly, which is what the VM owes its image.
+    // Why the lookup fails is a separate, still-open defect: indexOfClass
+    // compares classTable_ entries against this receiver by IDENTITY, so a
+    // stale class Oop misses both the hash path and the linear scan.
+    if (classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 20) {
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
+                " failing the primitive rather than allocating class index 0\n",
+                (unsigned long long)rcvr.rawBits());
+        }
+        return PrimitiveResult::Failure;
+    }
 
     Oop newObj;
 
@@ -26463,6 +26505,19 @@ PrimitiveResult Interpreter::primitiveNewOldSpace(int argCount) {
     }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
+    // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 5) {
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
+                " failing the primitive rather than allocating class index 0\n",
+                (unsigned long long)rcvr.rawBits());
+        }
+        return PrimitiveResult::Failure;
+    }
     Oop newObj = memory_.allocateSlots(classIndex, instSize, objFormat);
 
     if (newObj.isNil()) {
@@ -26512,6 +26567,19 @@ PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
     bool isWords16 = (instSpec >= 12 && instSpec <= 15);
     bool isWords64 = (instSpec == 9);
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
+    // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 5) {
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
+                " failing the primitive rather than allocating class index 0\n",
+                (unsigned long long)rcvr.rawBits());
+        }
+        return PrimitiveResult::Failure;
+    }
 
     Oop newObj;
     if (isBytes) {
@@ -26584,6 +26652,19 @@ PrimitiveResult Interpreter::primitiveNewPinned(int argCount) {
     }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
+    // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 5) {
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
+                " failing the primitive rather than allocating class index 0\n",
+                (unsigned long long)rcvr.rawBits());
+        }
+        return PrimitiveResult::Failure;
+    }
     Oop newObj = memory_.allocateSlots(classIndex, instSize);
 
     if (newObj.isNil()) {
@@ -26635,6 +26716,19 @@ PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
     bool isWords16 = (instSpec >= 12 && instSpec <= 15);
     bool isWords64 = (instSpec == 9);
     uint32_t classIndex = memory_.indexOfClass(rcvr);
+
+    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
+    // found", and allocating with it manufactures an unusable object.
+    if (classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 5) {
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] indexOfClass answered 0 for rcvr=0x%llx;"
+                " failing the primitive rather than allocating class index 0\n",
+                (unsigned long long)rcvr.rawBits());
+        }
+        return PrimitiveResult::Failure;
+    }
 
     Oop newObj;
     if (isBytes) {
