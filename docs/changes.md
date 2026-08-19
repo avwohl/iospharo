@@ -1,5 +1,32 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-08-19 — Grease was contributing zero tests; +554 after the fix
+
+`scripts/package-tests-selfhosted.sh` loaded Grease with a bare `load.`, which
+is the `'default'` group.  Grease keeps its tests out of that group: under the
+baseline's `#'pharo13.x'` block, `default -> Slime ->
+Grease-Pharo110-Slime-Core`, three code packages and no test package.  So the
+load succeeded perfectly (clone `89606edf`, rc=0, 27s) and added ZERO TestCase
+subclasses — reported as `classes=0 pass=0`, which is indistinguishable from a
+failed load.
+
+The name-pattern fallback could not have rescued it either: every Grease test
+class is GR-prefixed (`GRPharoConverterTest`), and the configured pattern was
+the literal string `Grease`, which matches none of them.
+
+Now loads `#('default' 'Tests')` with pattern `GR`.  Measured:
+
+    before   classes=0   pass=0
+    arm64    classes=37  pass=554  fail=0  err=0
+    x86_64   classes=37  pass=554  fail=0  err=0
+
+Package totals become arm 9383 pass / 16 fail / 17 err, x86 9377 / 16 / 23.
+
+Also corrected an over-broad comment added earlier the same day: the libgit2
+`IceGenericError` that blocks Metacello loads is scoped to the **x86_64**
+binary.  The arm64 VM on the same host loads `github://` fine — which is how
+the measurement above was possible at all.
+
 ## 2026-08-19 — `setGlobal` built malformed globals (two defects)
 
 `ObjectMemory::setGlobal`, on the path that installs a global the image
