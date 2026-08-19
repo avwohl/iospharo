@@ -1,5 +1,48 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
+## NEW 2026-08-19 — arm64 JIT crashes (SIGBUS) on a runtime-compiled hot loop
+
+Hard crash, reproduced independently 3/3. Six lines, base Pharo 13 image, no
+package load required:
+
+    | o r |
+    Object compile: 'pbLoopAdd | s | s := 0. 1 to: 20000 do: [:i | s := s + 1 ]. ^s'.
+    o := Object new. r := 0.
+    1 to: 400 do: [ :k | r := o pbLoopAdd ].
+    r printString
+
+    build-rel arm64            rc=139   42 crash lines, no result
+    build-rel arm64 NO_JIT=1   rc=0     EVAL-RESULT='20000'
+    build-x86 x86_64           rc=0     EVAL-RESULT='20000'
+
+So it is arm64-specific AND JIT-specific: the same binary with `PHARO_NO_JIT=1`
+returns the right answer, and the x86_64 build is fine.
+
+Faulting frame:
+
+    [CRASH] PC in C symbol:
+      pharo::jit::JITRuntime::tryExecute(Oop, JITState&, JITMethod*) + 1188
+      2  pharo::Interpreter::tryJITActivation(Oop, int) + 3056
+      4  pharo::Interpreter::activateMethod(Oop, int) + 5184
+
+    [SIGSEGV] Signal 10 caught!  Fault addr=0x11219db6d
+    x3=0x11219db40   (fault addr is x3 + 0x2d)
+
+Two details worth having before anyone starts:
+
+  * **Signal 10 is SIGBUS on macOS, not SIGSEGV.** The handler prints the label
+    `[SIGSEGV]` for any fatal memory signal, so the label is misleading.
+  * The fault address is **not 8-byte aligned** (`...b6d`, low bits 0b101).
+    In this VM low-bits 101 is the SmallFloat tag, so this looks like a tagged
+    immediate being dereferenced as a pointer rather than a wild address.
+
+Shape that triggers it: compile a method AT RUNTIME with `compile:` whose body
+is a counting loop, then call it enough times to go hot. Found incidentally by
+a JIT performance investigation, not by the test suites -- no SUnit or package
+test covers runtime `compile:` followed by a hot call, which is why three green
+tiers did not catch it.
+
+
 Two parts:
 
   * **[OPEN DEFECTS](#open-defects-as-of-2026-08-12)** — the current work list.
