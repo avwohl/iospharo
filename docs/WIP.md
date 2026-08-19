@@ -1,3 +1,55 @@
+# WIP (2026-08-18) — the corpse is BORN DEAD: `new:` returns classIndex 0
+
+## Measured
+
+The corpse trap now prints the pc and bytecode.  On the deterministic repro:
+
+    [CORPSE-PUSH] val=0x73c9f1afa0 ... inStack=0 sp=68 fp=64 bcOff=2 bc=0x7d
+    [CORPSE-PUSH] val=0x73c9f1afa0 ... inStack=1 firstSlot=67  bcOff=4 bc=0x42
+    [CORPSE-PUSH] val=0x73c9f1afa0 ... inStack=1 firstSlot=67  bcOff=8 bc=0x71
+
+The block's bytecodes start at method offset 49, so these map exactly:
+
+    bcOff=2  0x7D  send: new:       <- FIRST push, and it is already a corpse
+    bcOff=4  0x42  pushTemp: 2
+    bcOff=8  0x71  send: at:put:
+
+**The first corpse push is the RESULT of `PMVector new: 2`.**  The object is not
+something that lives and later dies inside the block — it comes back from the
+allocation already carrying classIndex 0.  That is also why `inStack=0`: at that
+instant it exists only in the allocation path's C++ local, before any push.
+
+## `method_=#cos` was a red herring for this entire investigation
+
+`memory_.selectorOf(method_)` on a **CompiledBlock** answers its last literal,
+and this block's last literal is `#cos`.  Every `in=#cos` / `method_=#cos` in
+these logs means "inside this block", NOT `Float>>cos`, and not `PMVector>>cos`.
+Two earlier entries in this file built a mechanism on that label; both are
+already retracted, and this is why.  Anyone reading `method_=` for a block frame
+should treat it as a literal, not a selector.
+
+## What this points at, and what is still inferred
+
+`ObjectMemory::allocateRaw` documents the design intent:
+
+    // Threshold-based GC trigger: request compacting GC at next safe point
+    // This avoids running GC from allocation where C++ locals hold Oops.
+
+So allocation is meant to DEFER its GC to a safe point precisely because the
+new object is only in a C++ local.  The measurements say the object nevertheless
+comes back dead, and that it takes fullGC's pre-compact scavenge to happen at
+all (scavenges=0 -> no corpse).  The obvious reading is that the deferral is not
+airtight for this path — but that is INFERENCE, and eight hypotheses have died
+on this defect already.
+
+Next, and it is direct: trap inside the allocation itself.  Log the Oop returned
+by `PMVector new:`-sized `allocateSlots` together with `g_scavengeCount`, and
+compare the count at allocation with the count at the push.  If a scavenge
+occurred in between, the deferral leaked; if not, the object was never
+initialised and the fault is in the allocator, not the GC.
+
+---
+
 # WIP (2026-08-18) — `v` is a PLAIN frame temp; remote temps refuted; the window is bytecodes 59-63
 
 Compiling the same block source in a clean base image (the compiler produces the

@@ -481,15 +481,33 @@ public:
                             if (firstOff < 0) firstOff = (long long)(q - stackBase_);
                         }
                     }
+                    // Which BYTECODE is doing the pushing?  That names the
+                    // frame region the value came out of -- a pushTemp: says a
+                    // frame temp slot, a send-return says the callee's result
+                    // slot, and so on.  Without it the origin is guesswork.
+                    long long bcOff = -1; int bcHere = -1;
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        ObjectHeader* mo = method_.asObjectPtr();
+                        Oop hdr0 = mo->slots()[0];
+                        int nLit = hdr0.isSmallInteger()
+                            ? (int)(hdr0.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* base = mo->bytes() + (1 + nLit) * 8;
+                        if (instructionPointer_ && instructionPointer_ > base) {
+                            bcOff = (long long)(instructionPointer_ - 1 - base);
+                            bcHere = *(instructionPointer_ - 1);
+                        }
+                    }
                     fprintf(stderr,
                         "[CORPSE-PUSH] val=0x%llx in=#%s fd=%zu jitState=%d "
-                        "inStack=%d firstSlot=%lld sp=%lld fp=%lld\n",
+                        "inStack=%d firstSlot=%lld sp=%lld fp=%lld "
+                        "bcOff=%lld bc=0x%02x\n",
                         (unsigned long long)value.rawBits(),
                         memory_.selectorOf(method_).c_str(), frameDepth_,
                         currentJITState_ ? 1 : 0,
                         copies, firstOff,
                         (long long)(stackPointer_ - stackBase_),
-                        framePointer_ ? (long long)(framePointer_ - stackBase_) : -1LL);
+                        framePointer_ ? (long long)(framePointer_ - stackBase_) : -1LL,
+                        bcOff, (unsigned)(bcHere & 0xFF));
                 }
             }
         }
