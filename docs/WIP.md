@@ -1,3 +1,55 @@
+# WIP (2026-08-19) — the `SmallInteger 68` DNU is a wrong-CLASS reference, not a wrong value
+
+Measured, on the arm build, in the base image (`$MY/symcls`):
+
+    #Display class          = ByteSymbol
+    (#Display at: 1)        = $D          (a Character)
+    #Display basicAt: 1     = 68          <- the "68"
+    Symbol format           = 0           <- NOT byte-indexable
+    ByteSymbol format       = 1048576
+    Symbol identityHash     = 792320      (class-table index 3095)
+    ByteSymbol identityHash = 789760      (class-table index 3085)
+
+Measured, in the failing harness run (`$MY/logs/symidx.txt`), via
+`ex signalerContext sender receiver class` — this is the RECEIVER's class,
+not the method's defining class, so `Symbol` here is meaningful:
+
+    MNU rcvr=68 sel=#asciiValue
+        callerCls=Symbol callerClsHash=792320   <- exactly Symbol's hash
+        ByteSymbolHash=789760                   <- and NOT ByteSymbol's
+        callerSize=7
+        chain=SmallInteger.doesNotUnderstand: | Symbol.isLiteralSymbol | ...
+
+## Why those two are inconsistent
+
+`Symbol` has format 0: zero indexable fields.  An instance of `Symbol`
+cannot have 7 characters.  But `basicSize` is read from the object
+header's slot count, independent of the class field — so a genuine
+7-byte `ByteSymbol` reached through a reference whose class resolves to
+`Symbol` reports exactly this pair.  3085 -> 3095 is not a bit flip.
+
+`Symbol>>isLiteralSymbol` walks the symbol expecting Characters from
+`at:` (primitive 63, `primitiveStringAt`).  It got 68, i.e. primitive 60
+(`Object>>at:`) semantics, and then `68 asciiValue` is the DNU.
+
+## Hypothesis (NOT yet established)
+
+This is the same defect as the corpse traps, one notch less severe: a
+stale reference surviving object movement.  When it lands on a dead
+object the class index reads 0 and the corpse trap fires; when it lands
+on a live object of a different class you get this — a valid object,
+wrong class, no trap.  That would explain why corpse traps and this DNU
+travel together and why both need the harness (deep stacks, heavy GC) to
+appear.
+
+Unverified.  The discriminating run is in flight: `$MY/symbisect.sh`
+re-runs the reproducing pair (ReleaseTest, SystemNavigationTest) under
+base / PHARO_NO_JIT / PHARO_NO_SISTA_PER_BC / PHARO_NO_YG / base again,
+counting `MNU rcvr=68`.  Results land in `$MY/logs/symbisect.txt`.
+Two `base` runs bracket the knobs because this signal has not yet been
+shown to reproduce run-to-run -- a knob that "fixes" it against a single
+base run proves nothing.
+
 # WIP (2026-08-19) — the last stable package residual is a package bug, not ours
 
 `XMLWriterTest` was the one package failure that reproduced on BOTH
