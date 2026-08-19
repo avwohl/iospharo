@@ -1,3 +1,82 @@
+# WIP (2026-08-19 17:25) — REBOOT HANDOFF. Read this first.
+
+Everything is committed and pushed to `origin/jit`. Nothing is lost by the
+reboot. But note what LIVES IN /private/tmp and will not survive it.
+
+## Get to this state on any machine
+
+    git fetch origin && git checkout jit && git pull
+    git submodule update --init --recursive
+
+## What the reboot destroys (no committed work, but real setup)
+
+The work was done in a git WORKTREE under
+`/private/tmp/claude-501/.../scratchpad/jw`, not in the primary checkout.
+If /private/tmp is cleared on reboot you lose, and will need to recreate:
+
+  * that worktree, and its `build-rel` (arm64) and `build-x86` (x86_64) build
+    directories — both need a fresh `cmake --build`, ~2 min each
+  * `base.image` / `base.changes` / `*.sources` (a fresh Pharo 13 image)
+  * all sweep artifacts under `scratchpad/sweep-*` and `pkg-*`
+
+**After reboot, in the primary repo run `git worktree prune`.** Otherwise git
+still believes `jit` is checked out in the deleted worktree and will refuse
+`git checkout jit`.
+
+## Interrupted by the reboot — the ONLY unfinished thing
+
+A full x86_64 SUnit sweep was 17% done (batch 351 of 2047) validating the W^X
+crash fix. Partial and healthy: `Cls=350 P=5608 F=0 E=27 T=0`, zero crash
+signatures. The 27 errors are the expected Cairo ones (Athens* sorts early).
+
+To redo it after rebuilding:
+
+    scripts/sunit-sweep.sh <path>/build-x86/test_load_image <prepped.image> <outdir>
+
+Prep the image first by filing in `scripts/pharo-headless-test/run_sunit_tests.st`
+and snapshotting (NOT `eval --save` — that is the stock Cog flag and silently
+does nothing here). Compare against the recorded pre-fix x86 run: F+E=313, of
+which ~260 are the missing arm64-only libcairo.
+
+## What IS established (arm64 side complete)
+
+**The arm64 JIT SIGBUS is fixed and validated at scale.** Full arm64 sweep
+rc=0. Like-for-like, both runs restricted to the same 40 batches (one batch,
+1501-1550, hit the 600s PER_BATCH_TIMEOUT in the new run and emitted no total,
+so raw totals are NOT comparable):
+
+    pre-fix   Cls=1997 Total=26707  P=26479 F=23 E=20 T=10  F+E=43  99.15%
+    W^X fix   Cls=1997 Total=26707  P=26477 F=24 E=19 T=12  F+E=43  99.14%
+
+F+E identical at 43; the 2-pass delta is exactly the 2 extra timeouts. Zero
+crash signatures in 26,707 tests. The timed-out batch did not crash — its log
+just stops at the 600s mark. Re-running it with a longer bound is the one
+outstanding arm check.
+
+Root cause, for the record: `jm->isSpliceTarget = true` writes the JITMethod
+header, which is bump-allocated INSIDE the MAP_JIT code zone. Apple Silicon
+keeps those pages read-only while the thread is in execute mode, and
+`tryExecute` is ENTERED in execute mode — its own comment wrongly asserted the
+2026-04-26 W^X audit had removed every such write. Both that store and its twin
+in `noteMethodEntry` now use `ScopedPatchWriteAccess`.
+
+## Everything else from this session
+
+See the entries below this one. Short version:
+
+  * All three tiers pass on both arches; SUnit is at PARITY once Cairo-dependent
+    classes are excluded (arm 98.78% / x86 98.74%).
+  * NO VM defects among residual test failures — they are Pharo 13 API removals,
+    a tightened Float comparison precision, `DateAndTime` pattern narrowing, a
+    package's own O(n^2) generator, an SMark demo fixture, and watchdog timeouts.
+  * Grease was contributing ZERO tests (wrong Metacello group); fixed, +554.
+  * Two host gaps still need YOUR decision: `libcairo` and `libgit2` exist only
+    as arm64 builds and there is no Intel Homebrew at /usr/local. Installing an
+    Intel-prefix brew with cairo, freetype and libgit2 closes both.
+  * Highest-leverage open work: the JIT stops compiling ~1-3% into a run and
+    never resumes — `evictLRU` is fully implemented but unreachable behind an
+    early return at `JITCompiler.cpp:1678`. A re-route, not a new subsystem.
+
 # WIP (2026-08-19, end of session) — READ THIS FIRST
 
 > **W^X fix validated at scale (arm64, 2026-08-19 17:16, rc=0).** Full SUnit
