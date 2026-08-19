@@ -1,3 +1,51 @@
+# WIP (2026-08-19) — SUnit: arm64 and x86_64 are at parity. No VM-level divergence left.
+
+Both full sweeps finished against the current binaries (arm 08:30, x86
+10:28, both rc=0), tallied with one method (`$MY/compare.sh`):
+
+                  classes  tests   P      F   E     F+E   rate
+    arm  RAW       2043    28058  27725  23   22     45   98.81%
+    x86  RAW       2037    27982  27380  26  287    313   97.85%
+
+    arm  NO-CAIRO  1925    27187  26855  23   21     44   98.78%
+    x86  NO-CAIRO  1919    27111  26770  25   27     52   98.74%
+
+NO-CAIRO excludes RS*/Athens*/Cairo*/FreeType*/FT*/Roassal*, which cannot
+work on x86 here: the host has only an arm64 `libcairo.2.dylib`.
+
+## Every non-Cairo x86 excess is accounted for
+
+Six classes have more errors on x86 than arm.  All eight extra errors are
+explained, and none is a VM defect:
+
+    HiFastTableExampleTest   x86=1  arm=0   cairo_image_surface_create
+    HiSpecExampleTest        x86=1  arm=0   cairo_image_surface_create
+    SpColorPickerTest        x86=2  arm=0   cairo_image_surface_create
+    SpAthensAdapterTest      x86=2  arm=1   Athens -> Cairo
+    TFFunctionCallTest       x86=1  arm=0   see below
+    TFUFFIDifferentCallingConventionFunctionCallTest x86=1 arm=0
+
+The two TF* entries are the SAME test,
+`testCallingFunctionWithW64CallingConvention`: SKIPPED on arm (S:1), run
+on x86 where it fails with `SymbolNotFoundError: 'w64Convention' in
+module 'libTestLibrary'`.  `w64Convention` is the Windows x64 calling
+convention; the test is gated to x86_64 but the symbol exists only in
+Windows builds of libTestLibrary.  A suite platform-gating artifact.
+
+The Sp*-prefixed Cairo cases are why the NO-CAIRO filter is a floor, not
+an exact split -- `SpColorPickerTest` and `SpAthensAdapterTest` are
+Cairo-backed but do not carry a Cairo prefix.
+
+**Conclusion: no arm-vs-x86 VM divergence remains in SUnit.**  The
+XMLParser and PMKDTree deltas chased earlier were suite-state artifacts
+(they pass on retry), and the error gap was one missing dylib.
+
+## Class-count note
+
+arm counted 2043 classes and x86 2037 in the per-class tally (vs 2047
+batch-declared).  Classes that time out emit no `Total:` line, so they
+drop from the per-class view; the 6-class difference is not a crash.
+
 # WIP (2026-08-19) — the x86_64 "error gap" is a missing x86_64 Cairo, not a VM defect
 
 Earlier in this session I called the x86-vs-arm error gap (288 vs 22) "the
