@@ -532,6 +532,35 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
                 return func;
             }
         }
+        // The absolute path did not yield the symbol.  Retry on its BASENAME
+        // through our own search paths, which start at the executable's
+        // directory (getLibSearchPaths above).
+        //
+        // This is what makes a wrong-ARCH host library recoverable.  The
+        // image's own finder walks /opt/homebrew, /usr/local, /usr/lib and
+        // hands us an absolute path; it has no way to know whether that file
+        // matches the running process's architecture.  On an Apple Silicon
+        // box with an arm64-only Homebrew, the x86_64 build under Rosetta
+        // gets handed /opt/homebrew/lib/libcairo.2.dylib, dlopen refuses it,
+        // and before 2026-08-22 the lookup stopped there -- the `[0] != '/'`
+        // guard on the bare-name search below meant an absolute path was
+        // never retried.  Every cairo_* lookup failed even with a perfectly
+        // good x86_64 libcairo staged beside the binary.  Measured: 26 of
+        // 26 x86_64 errors in SUnit batch 1-50, ~260 of ~287 across a full
+        // sweep.
+        //
+        // The VM knows something the image cannot: which of several files
+        // named libcairo.2.dylib this process can actually load.
+        size_t slash = moduleName.find_last_of('/');
+        std::string base = (slash == std::string::npos)
+            ? moduleName : moduleName.substr(slash + 1);
+        if (!base.empty() && base.find("SDL") == std::string::npos) {
+            func = tryLoadFromSearchPaths(base, funcName);
+            if (func) {
+                sFunctionCache[funcName] = func;
+                return func;
+            }
+        }
     }
 
     // If the module name is a bare library name, try common search paths.

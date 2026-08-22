@@ -37,6 +37,13 @@ class CodeZone;
 class MethodMap;
 struct JITMethod;
 
+// One freed span of the code zone, [start, end).  Collected during eviction
+// so every cache holding raw code addresses can be scrubbed against it.
+struct EvictedCodeRange {
+    uint64_t start;
+    uint64_t end;
+};
+
 // Allocate `codeSize` bytes (plus `numSendSites` IC sites) in the code
 // zone.  On a full zone: pin every method live on the active stack, in the
 // J2J save pool, or in a suspended process's context chain; LRU-evict cold

@@ -1658,8 +1658,7 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
 
         // Collect evicted code ranges during eviction via pre-eviction callback,
         // so we capture ALL evicted methods (both first-pass and second-pass).
-        struct EvictedRange { uint64_t start; uint64_t end; };
-        std::vector<EvictedRange> evictedRanges;
+        std::vector<EvictedCodeRange> evictedRanges;
         evictedRanges.reserve(32);
 
         auto evictCallback = [](uint64_t methodOop, void* ctx) {
@@ -1667,7 +1666,7 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
             map->remove(methodOop);
         };
         auto preEvictCallback = [](JITMethod* m, void* ctx) {
-            auto* ranges = static_cast<std::vector<EvictedRange>*>(ctx);
+            auto* ranges = static_cast<std::vector<EvictedCodeRange>*>(ctx);
             uint64_t s = reinterpret_cast<uint64_t>(m->codeStart());
             ranges->push_back({s, s + m->codeSize});
         };
@@ -1736,6 +1735,16 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
                 }
                 im = im->nextInZone;
             }
+
+            // The loop above only clears bit-60 J2J IC extras.  Two other
+            // caches hold raw code addresses into the spans just freed --
+            // PMS-linked send sites and the megaCache -- and neither was
+            // touched by incremental eviction.  Both are live jumps into
+            // free-list memory.  The full-flush path below has always
+            // called flushCaches() for this reason; the incremental path
+            // needed the same treatment, narrower.
+            interp.jitRuntime().scrubEvictedCodeRanges(
+                evictedRanges.data(), evictedRanges.size());
         }   // if (freed > 0)
     }       // evict window
 

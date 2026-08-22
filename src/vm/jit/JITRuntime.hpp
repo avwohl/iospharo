@@ -14,6 +14,7 @@
 #define PHARO_JIT_RUNTIME_HPP
 
 #include "JITConfig.hpp"
+#include "ZoneEviction.hpp"
 #include "JITState.hpp"
 #include "JITMethod.hpp"
 #include "CodeZone.hpp"
@@ -255,6 +256,10 @@ public:
     // numPatchedSites_==0 early-out preserves the flip-free property
     // of flush paths when no links exist.
     void unlinkEverything();
+
+    // Drop every cached raw code address that falls inside a just-evicted
+    // span.  Incremental eviction must call this; see the definition.
+    void scrubEvictedCodeRanges(const EvictedCodeRange* ranges, size_t n);
     // §7 event 8 (Sista splice) / event 4 helper: unlink every linked
     // site whose patched W6 targets the given method's code range.
     void unlinkSitesTargeting(JITMethod* callee);

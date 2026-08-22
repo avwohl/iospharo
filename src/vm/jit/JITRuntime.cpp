@@ -4925,6 +4925,57 @@ void JITRuntime::dumpICHistogram() const {
             100.0 * inlinable / (double)(totalSites - emptySites));
 }
 
+// Drop every cached raw code address that points into a just-evicted span.
+//
+// Incremental eviction frees methods into the free list without touching the
+// caches that hold their entry addresses.  The FULL-flush path has always
+// called flushCaches() for exactly this reason -- its comment spells it out:
+// "the megaCache's jitEntry fields still point into the freed zone space ...
+// with linked sites they would be live wrong-execution."  The incremental
+// path scrubbed only bit-60 J2J IC extras and left the rest, so the first
+// arm64 sweep with eviction reachable died in batch 501-550 with
+//
+//     [SIGSEGV] Signal 11  Fault addr=0x0
+//     PC not in any active JIT method and not in a named C symbol
+//     PC not in any method's allocation footprint either
+//
+// i.e. a dispatch jumped straight into freed zone space.
+//
+// This is deliberately narrower than flushCaches(): it keeps warm IC data for
+// the methods that SURVIVED, and only drops what actually aims at freed
+// memory.  Eviction now runs a few hundred times per long run rather than
+// 76,000, but a full IC flush per round would still throw away most of the
+// warmth the JIT just paid to build.
+void JITRuntime::scrubEvictedCodeRanges(const EvictedCodeRange* ranges,
+                                        size_t n) {
+    if (!initialized_ || !ranges || n == 0) return;
+
+    auto inEvicted = [&](uint64_t addr) {
+        if (!addr) return false;
+        for (size_t i = 0; i < n; i++) {
+            if (addr >= ranges[i].start && addr < ranges[i].end) return true;
+        }
+        return false;
+    };
+
+    // 1. PMS-linked send sites branch DIRECTLY to callee code, with no cache
+    //    read in between, so a link into an evicted method is an immediate
+    //    jump into the free list.  There is no per-site index from address
+    //    back to site, so unlink globally; links re-establish on the next
+    //    send through each site.  Early-outs when nothing is linked.
+    unlinkEverything();
+
+    // 2. megaCache holds jitEntry code addresses for megamorphic sends.
+    for (size_t k = 0; k < MegaCacheSize; k++) {
+        if (inEvicted(megaCache_[k].jitEntry)) {
+            // Zero the whole entry, not just jitEntry: methodBits names a
+            // CompiledMethod whose JITMethod is gone, and leaving the pair
+            // half-valid invites a probe hit that resolves to nothing.
+            megaCache_[k] = MegaCacheEntry{};
+        }
+    }
+}
+
 void JITRuntime::flushCaches() {
     if (!initialized_) return;
 
