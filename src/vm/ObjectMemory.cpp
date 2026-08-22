@@ -3748,23 +3748,33 @@ ObjectHeader* ObjectMemory::makeFreeChunk(uint8_t* addr, size_t size, bool zeroB
         return nullptr;
     }
 
+    // A chunk big enough to need an overflow count occupies TWO header words
+    // -- the count at addr, the header at addr+8 -- so its slot count is
+    // (size - 16) / 8, not (size - 8) / 8.  Computing it the short way made
+    // every large free chunk describe 8 bytes MORE than it owns, i.e. claim
+    // the first word of whatever follows it.  Nothing consumed free chunks
+    // before 2026-08-22 so it never bit, but sweepGC has been building them
+    // that way, and `allocateFromFreeList` computing `remainderAddr` from
+    // the shifted `chunk` is what made the opt-in free-list path stall (see
+    // docs/gc-oldspace-fragmentation-2026-08-22.md).
+    const bool needsOverflow = ((size - sizeof(ObjectHeader)) / 8) >= 255;
+    const size_t headerBytes = needsOverflow ? 16 : 8;
+    if (size < headerBytes + 8) {          // cannot hold header + one slot
+        std::memset(addr, 0, size);
+        return nullptr;
+    }
+    size_t slotCount = (size - headerBytes) / 8;
+
     ObjectHeader* chunk = reinterpret_cast<ObjectHeader*>(addr);
-    size_t slotCount = (size - sizeof(ObjectHeader)) / 8;
-
-    // Build header: classIndex=0, format=0, slotCount
-    uint8_t slots = (slotCount >= 255) ? 255 : static_cast<uint8_t>(slotCount);
-    uint64_t header = ObjectHeader::makeHeader(slots, 0, ObjectFormat::ZeroSized, 0);
-    chunk->setRawHeader(header);
-
-    // For overflow, write the overflow word before the header
-    if (slotCount >= 255) {
-        // This is more complex — for now, free chunks > 255 slots go to the
-        // large list at index 0. We'll set up the overflow word.
+    if (needsOverflow) {
         uint64_t* overflow = reinterpret_cast<uint64_t*>(addr);
         *overflow = slotCount | (0xFFULL << 56);
         chunk = reinterpret_cast<ObjectHeader*>(addr + 8);
-        header = ObjectHeader::makeHeader(255, 0, ObjectFormat::ZeroSized, 0);
-        chunk->setRawHeader(header);
+        chunk->setRawHeader(
+            ObjectHeader::makeHeader(255, 0, ObjectFormat::ZeroSized, 0));
+    } else {
+        chunk->setRawHeader(ObjectHeader::makeHeader(
+            static_cast<uint8_t>(slotCount), 0, ObjectFormat::ZeroSized, 0));
     }
 
     // Zero the body (next pointer in slot 0 will be set by addToFreeList).
@@ -3828,7 +3838,12 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
         ObjectHeader* chunk = freeLists_[0];
         while (chunk) {
             size_t chunkSize = chunk->totalSize();
-            if (chunkSize >= size) {
+            // Require an exact fit or a leftover big enough to become its
+            // own free chunk.  Accepting a 1-15 byte leftover left it neither
+            // split off nor zeroed, and the caller then writes a header
+            // claiming only `size` -- the next scanner walk steps straight
+            // into the orphaned tail.
+            if (chunkSize == size || (chunkSize > size && chunkSize - size >= 16)) {
                 // Unlink
                 Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
                 *prev = next.isObject() ? next.asObjectPtr() : nullptr;
@@ -3836,10 +3851,16 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                     freeListsMask_ &= ~1ULL;
                 }
 
-                // If leftover is big enough, put remainder back
+                // If leftover is big enough, put remainder back.  Measure
+                // from the chunk's TRUE start: for an overflow chunk `chunk`
+                // points one word past it, and using `chunk` as the base
+                // shifted every split by 8 bytes, compounding until the heap
+                // stopped parsing.
                 size_t remainder = chunkSize - size;
+                uint8_t* chunkBase = reinterpret_cast<uint8_t*>(chunk);
+                if (chunk->hasOverflowSlots()) chunkBase -= 8;
                 if (remainder >= 16) {
-                    uint8_t* remainderAddr = reinterpret_cast<uint8_t*>(chunk) + size;
+                    uint8_t* remainderAddr = chunkBase + size;
                     ObjectHeader* remChunk =
                         makeFreeChunk(remainderAddr, remainder, /*zeroBody=*/false);
                     if (remChunk) {

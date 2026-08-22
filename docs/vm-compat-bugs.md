@@ -164,14 +164,33 @@ either a SECOND failure on the reporting path after a silent first one, or
 the reporting path itself is where the bad index appears. Which of the two
 is not established, and the distinction decides where to look.
 
-First things to run, none of them done yet:
+### Two hypotheses tested the same day, both NEGATIVE
 
-  * `PHARO_NO_JIT=1` on the same load — the one-command discriminator for
-    whether the JIT is involved at all.
-  * the same load on arm64 with the same command line, to confirm the
-    difference is the architecture and not the run.
-  * `PHARO_T1_SKIP_SELECTORS=next:putAll:startingAt:` to see whether the
-    stdio path is the miscompiled one.
+**The write-stream preamble is not it.** The package script's eval writes the
+TestCase class list to `pre.txt` before loading, and the stack's
+`StdioStream` / `ZnUTF8Encoder` frames made that look like the origin. Run in
+isolation it is clean everywhere:
+
+    pre-x86-jit    rc=0  5s  2185 classes written  0 errors
+    pre-x86-nojit  rc=0  4s  2185 classes written  0 errors
+    pre-arm-jit    rc=0  3s  2185 classes written  0 errors
+
+So those frames really were the error being REPORTED to stderr, which was
+the other half of the hedge above.
+
+**The load on its own is not obviously broken either.** The same Metacello
+expression without the preamble runs for MINUTES on x86_64, compiling
+steadily (544M sends, 94k methods), where the package-tier run died at 31 s.
+
+What that leaves: the failure needs the combination, or something else the
+package script sets up, or it is intermittent. None of those is established.
+The next discriminators, still unrun:
+
+  * the package script's eval VERBATIM (preamble + load + snapshot) on
+    x86_64, repeated, to find out whether it is deterministic at all.
+  * if it is, `PHARO_NO_JIT=1` on that exact string.
+  * `PHARO_T1_SKIP_SELECTORS=next:putAll:startingAt:` to test the stdio path
+    specifically.
 
 Not to be confused with the x86_64 SUnit result, which is fine: the full
 sweep the same day scored 2039 classes / 28004 tests / 27667 P / 25 F / 22 E,
