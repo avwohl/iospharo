@@ -55,6 +55,19 @@ The history lives in `docs/history/`; nothing was deleted.
 - **MSYS2 login-shell environment stripping breaks Pharo's WindowsResolver.**
   Operator documentation, not a code gap.
 
+## Known structural costs, not yet measured
+
+- **Smalltalk that runs inside an FFI callback executes through
+  `Interpreter::step()`, one bytecode per call**, not through the
+  computed-goto dispatch loop: `enterInterpreterFromCallback` is
+  `while (running_) { for (batch < 1000) step(); ... }`.  Every callback the
+  image services — Iceberg/libgit2 progress callbacks, SDL, TFFI callbacks —
+  pays whatever `step()` costs over the fused loop, and nobody has measured
+  what that is.  Noticed 2026-08-22 while sampling a slow `Fuel` package
+  load; in THAT case the process turned out to be asleep in
+  `primitiveRelinquishProcessor` waiting on `http_stream_read`, i.e. network
+  I/O and not this, so the cost remains unquantified.
+
 ## Platform validation status
 
 - **Windows has no CI job and has not been validated in ~250 commits** (last
