@@ -130,6 +130,14 @@ mkdir -p "$OUT"
 # A leftover class/method filter silently OVERRIDES the batch range -- the
 # runner documents that the names file takes priority. Symptom is every batch
 # reporting the same handful of classes.
+#
+# This clears it ONCE. Every SUnit runner invocation reads and writes the same
+# fixed /tmp paths -- class-names, batch, results, detail, completed -- with no
+# per-run namespacing, so starting ANY targeted class run while this sweep is
+# in flight writes a filter that every SUBSEQUENT batch picks up at startup,
+# and appends into the same results file. Done accidentally on 2026-08-22
+# while chasing a crash mid-sweep. While a sweep runs, investigate with things
+# that do not touch these paths (log reads, `sample`, eval-mode runs) or wait.
 rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
 
 {
