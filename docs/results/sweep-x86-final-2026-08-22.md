@@ -12,6 +12,28 @@ same idle machine. Started 11:38, totals at 14:4x.
       ERROR      22
       SKIP      180
 
+## Merged, with the short batch re-run
+
+Batch 1751-1800 re-ran clean at 1800 s — it took **1081 s**, so it genuinely
+needed more than the 900 s bound rather than hanging. Merged back in:
+
+    === TOTALS, merged ===
+      classes 2045
+      tests   28062
+      PASS    27725
+      FAIL       25
+      ERROR      22
+      SKIP      180
+      rate    98.80%
+
+                 classes  tests   PASS   FAIL  ERROR   SKIP    rate
+    arm64 today   2046    28067  27727    27     25    182    98.79%
+    x86_64 today  2045    28062  27725    25     22    180    98.80%
+
+One class and two tests apart, and x86_64 has FEWER failures and errors than
+arm64. That is full architectural parity on a RAW sweep with no exclusion
+list, which has not been true on this host before.
+
 ## Side by side
 
                    classes  tests   PASS   FAIL  ERROR   SKIP
