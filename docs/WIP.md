@@ -193,177 +193,6 @@ that its own comment calls UNSOUND.
 `260692fa` and never retired, so it sat at the top of the open list for three
 days. Re-measured at HEAD: `rc=0 EVAL-RESULT='20000'` on arm64 AND x86_64.
 
-# WIP (2026-08-22 07:00) — REBOOT HANDOFF. Read this first.
-
-Everything is committed on `jit`. Two background runs were INTERRUPTED by the
-reboot and produce no final number; both are cheap to restart and the drivers
-are checked in now (`scripts/rerun/`), which they were not last time.
-
-## Get back to this state
-
-**The 8 commits are LOCAL — nothing has been pushed to origin/jit.** They live
-in `/Users/wohl/src/iospharo-jit`, not in /private/tmp, so the reboot does not
-touch them. But this state does not exist on any other machine until someone
-runs `git push origin jit`.
-
-    git checkout jit                    # already there; no pull needed
-    git submodule update --init --recursive
-
-Then check what actually survived before rebuilding anything:
-
-    ls build-rel/test_load_image build-x86/test_load_image   # in-repo, gitignored
-    ls Frameworks/*.xcframework                              # in-repo
-    ls build-x86/*.dylib | wc -l                             # expect 210
-
-Those live in the REPO, not /private/tmp, so a reboot should leave them alone.
-If `Frameworks/` is gone, rebuild it — but note `scripts/build-third-party.sh`
-currently FAILS: cairographics.org was unreachable on 2026-08-22 and it dies
-downloading pixman. Only SDL2 and libffi are hard-required by CMake, and those
-come from their own two scripts, so a configure will still succeed without it.
-
-## What the reboot destroys
-
-The scratchpad under `/private/tmp/claude-501/.../scratchpad`:
-
-  * `work/` — `base.image`, `sunit.image` (the prepped 79 MB SUnit runner
-    image), `*.sources`
-  * `sweep-rel/`, `sweep-x86/` — sweep output
-  * `pkg-arm/`, `pkg-x86/` — package work dirs
-  * `fullsweep.sh`, `pkgrun.sh` — now copied to `scripts/rerun/`
-
-Recreate the image with:
-
-    cd <scratch>/img && curl -sL https://get.pharo.org/64/130 | bash
-    cp Pharo.image <scratch>/work/sunit.image ; cp Pharo.changes ... ; cp *.sources ...
-    build-rel/test_load_image <scratch>/work/sunit.image eval \
-      "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
-       Smalltalk snapshot: true andQuit: true"
-
-NOT `eval --save` — that is the stock Cog flag and silently does nothing here.
-A correct prep takes ~8 s now and grows 52 MB -> 79 MB.
-
-## Interrupted, and what they had reached
-
-**arm64 full SUnit sweep — 34 of 41 batches, no final total.** Partial data
-salvaged to `docs/results/sweep-arm-2026-08-22/`. At the cut:
-
-    P=22914  F=10  E=20  S=140     F+E=30
-    crashed batches: 0
-
-For comparison the last recorded arm64 run (2026-08-19, pre-eviction) finished
-at F+E=43 with the JIT frozen after 22,060 methods. This run had eviction live
-throughout. Do NOT quote 30 as a final number — seven batches are missing.
-
-`nonzero-classes.txt` in that directory names every class that scored a
-non-zero F or E. Fourteen of the sixteen are Spec GUI adapters
-(`Sp*AdapterTest`, `Sp*CommonPropertiestTest`, `SliderTest`, `FTTableMorphTest`)
-which need the fake-GUI prelude the sweep does not inject — the documented
-~350-test population from CLAUDE.md. The non-GUI ones worth a look are
-`ReleaseTest` (F:4 T:1), `EpFileOutModificationsTest`, `LinkInstallerTest`,
-`OCClassBuilderTest`, `RSLinesTest`.
-
-Also settled on the way through: **batch 1501-1550 completed in 613 s.** That
-is the batch that hit the 600 s `PER_BATCH_TIMEOUT` on 2026-08-19 and emitted
-no total, which the previous handoff listed as the one outstanding arm check.
-It is not a hang; the bound was too tight. `PER_BATCH_TIMEOUT=900` clears it.
-
-**x86_64 full sweep — never started.** It was queued behind arm.
-
-**Package tier — never started.** It was queued behind both sweeps
-(`scripts/rerun/pkgrun.sh`), waiting on a `pgrep` for the sweep processes.
-
-## Restarting both
-
-    scripts/rerun/fullsweep.sh    # arm then x86, sequential (idle machine each)
-    scripts/rerun/pkgrun.sh       # waits for the sweeps, then packages both arches
-
-Both have the scratchpad path baked in — fix that line first. Baseline env is
-`PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000`; every recorded
-full-suite number was measured with it.
-
-One thing to TEST rather than assume on the package tier: whether x86_64 can
-now do a native Metacello load. Every previous x86 package run borrowed
-arm-loaded images via `REUSE_FROM=`, because Iceberg resolves `github://`
-through libgit2 over FFI and this host had only an arm64 libgit2. An x86_64
-libgit2 is now staged in `build-x86/`. `pkgrun.sh` attempts the native load
-deliberately. If it fails, fall back to `REUSE_FROM=<dir>/pkg-arm`.
-
-## What landed today (7 commits, all pushed)
-
-Five defects, each hidden behind the one before it. Full write-up in
-`docs/jit-eviction-2026-08-22.md`.
-
-**The JIT had been compiling ~4% of what it should.** The asmjit-T1 branch of
-`JITCompiler::compile` is the default and returns unconditionally; the whole
-code-zone eviction implementation sat below it in the stencil path. Written,
-debugged, never executed. AsmjitT1's own allocation site gave up on a full zone
-with no retry, so once the zone filled the JIT was done for the life of the
-process — the 2026-08-19 sweep ran 98.7% interpreted. Re-routed into
-`allocateWithEviction()` (`ZoneEviction.hpp`).
-
-That exposed four bugs inside the dead code:
-
-  * W^X SIGBUS on `->pinned` — JITMethod headers are bump-allocated INSIDE the
-    MAP_JIT zone and `CodeZone::allocate` opens a write window only on SUCCESS.
-  * W^X SIGBUS in `allocateFromFreeList` — it writes free-block headers during
-    the split, before `makeWritable`. Only eviction fills the free list.
-  * `advanceEpoch()` was never called from anywhere, so `epoch_` sat at 0 and
-    `evictLRU`'s first pass (`lastUsedEpoch < threshold`, both 0) selected
-    nothing. Eviction fell through to pass 2, which takes methods in ADDRESS
-    order — evicting the earliest-compiled, hottest code every round.
-  * Incremental eviction left stale entry addresses in the megaCache and in
-    PMS-linked send sites. Killed arm64 batch 501-550 with a dispatch into
-    freed zone space. Fixed by `scrubEvictedCodeRanges()`; that batch is now
-    rc=0.
-
-Plus `evictTarget = allocSize * 2` (~1 KB) meant one round per compile —
-76,000 rounds in a single image prep. Floored at 1/64th of the zone.
-
-    arm64 image prep   before: JIT frozen at 7,914 compiled
-                       after:  7.7 s, rc=0, 3 evict rounds, 33,681 compiled
-
-**x86_64 reached SUnit parity with NO exclusions.**
-
-  * `scripts/fetch-x86-libs.sh` (new) stages x86_64 Homebrew bottles — cairo,
-    libgit2 and their closure, 72 dylibs plus soname aliases — beside
-    `build-x86/test_load_image`, install names rewritten to `@loader_path`.
-    No Intel Homebrew; `/usr/local` untouched. Bottles rather than a source
-    build because cairographics.org is down.
-  * `FFI::lookupFunction` now retries an absolute module path on its BASENAME
-    through `getLibSearchPaths()`. The image hands the VM
-    `/opt/homebrew/lib/libcairo.2.dylib` and cannot know it is the wrong arch
-    for a Rosetta process; the bare-name search was guarded on
-    `moduleName[0] != '/'` so it never ran.
-  * **`build-libffi.sh` shipped arm64's `ffi.h` to both arches.** configure
-    substitutes `@FFI_EXEC_TRAMPOLINE_TABLE@` into it — arm64 `#if 1`
-    (`sizeof(ffi_closure)`=40, fun@24), x86_64 `#if 0` (56, fun@40). The x86_64
-    VM allocated 40 bytes and the library wrote `fun` at 40 and `user_data` at
-    48, past the end, so EVERY x86_64 FFI callback jumped through garbage
-    (`AthensCairoSurface extent: 100@100` -> PC=0x33). The script already split
-    `ffitarget.h` for exactly this reason — 77 errors, 2026-08-18 — and the fix
-    was never generalized. Now both are split, for all three universal slices.
-
-SUnit batch 1-50, same image, idle machine:
-
-    arm64   774 tests  772 PASS  0 FAIL  0 ERROR
-    x86_64  774 tests  772 PASS  0 FAIL  0 ERROR   (was 746 P / 26 E)
-
-The previous parity claim held only once Cairo-dependent classes were excluded.
-This one needs no exclusions.
-
-## Still open
-
-  * Both full sweeps, and the package tier — see above.
-  * x86_64 VM C++ tier (`test_sista_ir`, `test_class_table`,
-    `test_asmjit_t1_stub`) not re-run since the ffi.h fix. arm64 is green.
-    Note these exit rc=1 with a usage line when given no image argument, which
-    reads exactly like a failure.
-  * Throughput is UNMEASURED. More compilation also means more eviction and
-    recompilation; no speedup is claimed. The `PHARO_CODE_ZONE_MB=192` baseline
-    exists because the 64 MB default starved the JIT — with eviction working,
-    that knob's justification should be re-measured.
-  * `scripts/build-third-party.sh` is blocked on cairographics.org being down.
-
 ## Retired today, second one: the hardcoded `Float>>cos` JIT skip
 
 `AsmjitT1.cpp` refused to compile any method named `cos`, since `5c870c75`
@@ -625,6 +454,177 @@ This does NOT say to stop running them — more coverage is better, and a test
 Pharo skips for being slow on CI may still be a fine VM check. It says that
 before any of these 17 is called a VM defect, the guard has to be looked at
 first.
+
+# WIP (2026-08-22 07:00) — REBOOT HANDOFF. Read this first.
+
+Everything is committed on `jit`. Two background runs were INTERRUPTED by the
+reboot and produce no final number; both are cheap to restart and the drivers
+are checked in now (`scripts/rerun/`), which they were not last time.
+
+## Get back to this state
+
+**The 8 commits are LOCAL — nothing has been pushed to origin/jit.** They live
+in `/Users/wohl/src/iospharo-jit`, not in /private/tmp, so the reboot does not
+touch them. But this state does not exist on any other machine until someone
+runs `git push origin jit`.
+
+    git checkout jit                    # already there; no pull needed
+    git submodule update --init --recursive
+
+Then check what actually survived before rebuilding anything:
+
+    ls build-rel/test_load_image build-x86/test_load_image   # in-repo, gitignored
+    ls Frameworks/*.xcframework                              # in-repo
+    ls build-x86/*.dylib | wc -l                             # expect 210
+
+Those live in the REPO, not /private/tmp, so a reboot should leave them alone.
+If `Frameworks/` is gone, rebuild it — but note `scripts/build-third-party.sh`
+currently FAILS: cairographics.org was unreachable on 2026-08-22 and it dies
+downloading pixman. Only SDL2 and libffi are hard-required by CMake, and those
+come from their own two scripts, so a configure will still succeed without it.
+
+## What the reboot destroys
+
+The scratchpad under `/private/tmp/claude-501/.../scratchpad`:
+
+  * `work/` — `base.image`, `sunit.image` (the prepped 79 MB SUnit runner
+    image), `*.sources`
+  * `sweep-rel/`, `sweep-x86/` — sweep output
+  * `pkg-arm/`, `pkg-x86/` — package work dirs
+  * `fullsweep.sh`, `pkgrun.sh` — now copied to `scripts/rerun/`
+
+Recreate the image with:
+
+    cd <scratch>/img && curl -sL https://get.pharo.org/64/130 | bash
+    cp Pharo.image <scratch>/work/sunit.image ; cp Pharo.changes ... ; cp *.sources ...
+    build-rel/test_load_image <scratch>/work/sunit.image eval \
+      "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
+       Smalltalk snapshot: true andQuit: true"
+
+NOT `eval --save` — that is the stock Cog flag and silently does nothing here.
+A correct prep takes ~8 s now and grows 52 MB -> 79 MB.
+
+## Interrupted, and what they had reached
+
+**arm64 full SUnit sweep — 34 of 41 batches, no final total.** Partial data
+salvaged to `docs/results/sweep-arm-2026-08-22/`. At the cut:
+
+    P=22914  F=10  E=20  S=140     F+E=30
+    crashed batches: 0
+
+For comparison the last recorded arm64 run (2026-08-19, pre-eviction) finished
+at F+E=43 with the JIT frozen after 22,060 methods. This run had eviction live
+throughout. Do NOT quote 30 as a final number — seven batches are missing.
+
+`nonzero-classes.txt` in that directory names every class that scored a
+non-zero F or E. Fourteen of the sixteen are Spec GUI adapters
+(`Sp*AdapterTest`, `Sp*CommonPropertiestTest`, `SliderTest`, `FTTableMorphTest`)
+which need the fake-GUI prelude the sweep does not inject — the documented
+~350-test population from CLAUDE.md. The non-GUI ones worth a look are
+`ReleaseTest` (F:4 T:1), `EpFileOutModificationsTest`, `LinkInstallerTest`,
+`OCClassBuilderTest`, `RSLinesTest`.
+
+Also settled on the way through: **batch 1501-1550 completed in 613 s.** That
+is the batch that hit the 600 s `PER_BATCH_TIMEOUT` on 2026-08-19 and emitted
+no total, which the previous handoff listed as the one outstanding arm check.
+It is not a hang; the bound was too tight. `PER_BATCH_TIMEOUT=900` clears it.
+
+**x86_64 full sweep — never started.** It was queued behind arm.
+
+**Package tier — never started.** It was queued behind both sweeps
+(`scripts/rerun/pkgrun.sh`), waiting on a `pgrep` for the sweep processes.
+
+## Restarting both
+
+    scripts/rerun/fullsweep.sh    # arm then x86, sequential (idle machine each)
+    scripts/rerun/pkgrun.sh       # waits for the sweeps, then packages both arches
+
+Both have the scratchpad path baked in — fix that line first. Baseline env is
+`PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000`; every recorded
+full-suite number was measured with it.
+
+One thing to TEST rather than assume on the package tier: whether x86_64 can
+now do a native Metacello load. Every previous x86 package run borrowed
+arm-loaded images via `REUSE_FROM=`, because Iceberg resolves `github://`
+through libgit2 over FFI and this host had only an arm64 libgit2. An x86_64
+libgit2 is now staged in `build-x86/`. `pkgrun.sh` attempts the native load
+deliberately. If it fails, fall back to `REUSE_FROM=<dir>/pkg-arm`.
+
+## What landed today (7 commits, all pushed)
+
+Five defects, each hidden behind the one before it. Full write-up in
+`docs/jit-eviction-2026-08-22.md`.
+
+**The JIT had been compiling ~4% of what it should.** The asmjit-T1 branch of
+`JITCompiler::compile` is the default and returns unconditionally; the whole
+code-zone eviction implementation sat below it in the stencil path. Written,
+debugged, never executed. AsmjitT1's own allocation site gave up on a full zone
+with no retry, so once the zone filled the JIT was done for the life of the
+process — the 2026-08-19 sweep ran 98.7% interpreted. Re-routed into
+`allocateWithEviction()` (`ZoneEviction.hpp`).
+
+That exposed four bugs inside the dead code:
+
+  * W^X SIGBUS on `->pinned` — JITMethod headers are bump-allocated INSIDE the
+    MAP_JIT zone and `CodeZone::allocate` opens a write window only on SUCCESS.
+  * W^X SIGBUS in `allocateFromFreeList` — it writes free-block headers during
+    the split, before `makeWritable`. Only eviction fills the free list.
+  * `advanceEpoch()` was never called from anywhere, so `epoch_` sat at 0 and
+    `evictLRU`'s first pass (`lastUsedEpoch < threshold`, both 0) selected
+    nothing. Eviction fell through to pass 2, which takes methods in ADDRESS
+    order — evicting the earliest-compiled, hottest code every round.
+  * Incremental eviction left stale entry addresses in the megaCache and in
+    PMS-linked send sites. Killed arm64 batch 501-550 with a dispatch into
+    freed zone space. Fixed by `scrubEvictedCodeRanges()`; that batch is now
+    rc=0.
+
+Plus `evictTarget = allocSize * 2` (~1 KB) meant one round per compile —
+76,000 rounds in a single image prep. Floored at 1/64th of the zone.
+
+    arm64 image prep   before: JIT frozen at 7,914 compiled
+                       after:  7.7 s, rc=0, 3 evict rounds, 33,681 compiled
+
+**x86_64 reached SUnit parity with NO exclusions.**
+
+  * `scripts/fetch-x86-libs.sh` (new) stages x86_64 Homebrew bottles — cairo,
+    libgit2 and their closure, 72 dylibs plus soname aliases — beside
+    `build-x86/test_load_image`, install names rewritten to `@loader_path`.
+    No Intel Homebrew; `/usr/local` untouched. Bottles rather than a source
+    build because cairographics.org is down.
+  * `FFI::lookupFunction` now retries an absolute module path on its BASENAME
+    through `getLibSearchPaths()`. The image hands the VM
+    `/opt/homebrew/lib/libcairo.2.dylib` and cannot know it is the wrong arch
+    for a Rosetta process; the bare-name search was guarded on
+    `moduleName[0] != '/'` so it never ran.
+  * **`build-libffi.sh` shipped arm64's `ffi.h` to both arches.** configure
+    substitutes `@FFI_EXEC_TRAMPOLINE_TABLE@` into it — arm64 `#if 1`
+    (`sizeof(ffi_closure)`=40, fun@24), x86_64 `#if 0` (56, fun@40). The x86_64
+    VM allocated 40 bytes and the library wrote `fun` at 40 and `user_data` at
+    48, past the end, so EVERY x86_64 FFI callback jumped through garbage
+    (`AthensCairoSurface extent: 100@100` -> PC=0x33). The script already split
+    `ffitarget.h` for exactly this reason — 77 errors, 2026-08-18 — and the fix
+    was never generalized. Now both are split, for all three universal slices.
+
+SUnit batch 1-50, same image, idle machine:
+
+    arm64   774 tests  772 PASS  0 FAIL  0 ERROR
+    x86_64  774 tests  772 PASS  0 FAIL  0 ERROR   (was 746 P / 26 E)
+
+The previous parity claim held only once Cairo-dependent classes were excluded.
+This one needs no exclusions.
+
+## Still open
+
+  * Both full sweeps, and the package tier — see above.
+  * x86_64 VM C++ tier (`test_sista_ir`, `test_class_table`,
+    `test_asmjit_t1_stub`) not re-run since the ffi.h fix. arm64 is green.
+    Note these exit rc=1 with a usage line when given no image argument, which
+    reads exactly like a failure.
+  * Throughput is UNMEASURED. More compilation also means more eviction and
+    recompilation; no speedup is claimed. The `PHARO_CODE_ZONE_MB=192` baseline
+    exists because the 64 MB default starved the JIT — with eviction working,
+    that knob's justification should be re-measured.
+  * `scripts/build-third-party.sh` is blocked on cairographics.org being down.
 
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 
