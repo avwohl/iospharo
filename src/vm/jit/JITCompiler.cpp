@@ -5,6 +5,7 @@
  */
 
 #include "JITCompiler.hpp"
+#include "ZoneEviction.hpp"
 #include "J2JSaveLayout.h"
 #include "PlatformJIT.hpp"
 #include "SistaV1.hpp"
@@ -1518,6 +1519,260 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
 
 // ===== MAIN COMPILATION =====
 
+// ---------------------------------------------------------------------------
+// Code-zone allocation with cold-method eviction.  Declared in
+// ZoneEviction.hpp; see that header for why this is a free function
+// (short version: the asmjit-T1 path returns before the stencil path, so
+// while this logic lived inline down there it was unreachable in every
+// production run and the JIT silently stopped compiling on a full zone).
+// ---------------------------------------------------------------------------
+JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
+                                Interpreter& interp, size_t codeSize,
+                                uint32_t numSendSites) {
+    // Pass numSendSites so CodeZone::allocate also allocates the heap-side
+    // icBuffer (2026-05-03: ICs moved out of MAP_JIT).
+    //
+    // Fast path: the zone has room.  allocate() leaves the thread in W
+    // mode on success; the caller writes code and calls finalize().
+    JITMethod* jitMethod = zone.allocate(codeSize, numSendSites);
+    if (jitMethod) return jitMethod;
+
+    // Compute the actual allocation size (allocate() adds JITMethod header
+    // + alignment).  Diagnostics below report it.
+    size_t allocSize = sizeof(JITMethod) + codeSize;
+    allocSize = (allocSize + MethodAlignment - 1) & ~(MethodAlignment - 1);
+
+    // Incremental eviction: free cold methods into the free list.
+    // allocate() will reuse freed space without moving methods
+    // (ADRP+LDR relocations in stencils are not position-independent
+    // across non-page-aligned moves).
+    //
+    // SAFETY: before evicting, pin any JIT method that is *live* on the
+    // active stack.  Otherwise a native RET from a trampoline/primitive
+    // back into JIT code lands in freelist memory — SIGSEGV with
+    // "PC not in any active JIT method (evicted?)".  Two sources of live
+    // methods:
+    //   (1) J2JSave pool entries — chain-loop return frames.
+    //   (2) Native frame-pointer chain — LRs may be PCs inside JIT code.
+    // Unpinned on exit via the Unpin RAII below.
+
+    // W^X, and this is the part that has never run in production before
+    // 2026-08-22: `m->pinned = true/false`, freeMethod() and compact() all
+    // write JITMethod headers, which are bump-allocated INSIDE the MAP_JIT
+    // code zone.  allocate() opens a write window only when it SUCCEEDS, so
+    // everything below runs in whatever mode the caller had — on Apple
+    // Silicon that is execute, and an unguarded header store SIGBUSes.
+    // That is the identical fault fixed in JITRuntime::tryExecute on
+    // 2026-08-19; it was latent here only because the block was unreachable.
+    //
+    // The windows must CLOSE before each retry allocate(): a successful
+    // allocate() leaves the thread in W for the caller's emit, and a
+    // ScopedPatchWriteAccess destructor running after it would flip back to
+    // X and SIGBUS the first code store.  UnpinAll therefore carries its own
+    // window, since it must outlive both of them (the full flush reads
+    // ->pinned).
+    auto pinLiveMethods = [&]() -> bool {
+        // (1) J2JSave pool — chain-loop return frames for ongoing J2J
+        // calls.  Every live entry names a jitMethod that we must not
+        // evict (otherwise the chain-loop's resume into it blows up).
+        int live = interp.j2jPoolLiveCount();
+        const auto* base = interp.j2jPoolBase();
+        for (int i = 0; i < live; i++) {
+#if PHARO_J2J_SAVE_V2
+            // V2: derive the owning method from the packed resume
+            // address (the header precedes codeStart in the zone).
+            JITMethod* jm = base[i].resumeAddr
+                ? zone.findMethodByPC(
+                      reinterpret_cast<uint64_t>(base[i].addr()))
+                : nullptr;
+            if (jm) jm->pinned = true;
+#else
+            if (base[i].jitMethod && zone.contains(base[i].jitMethod)) {
+                base[i].jitMethod->pinned = true;
+            }
+#endif
+        }
+        // (2) Native frame-pointer chain — LRs may be PCs inside JIT
+        // code (trampoline return into caller's stencil).  Bounded by
+        // pthread stack, plus a depth cap.  Apple and Linux report
+        // stack info via different APIs; the platform layer exposes
+        // a uniform getStackBounds(top, bot) so this code stays
+        // ifdef-free.
+        uint8_t* stackTop = nullptr;
+        uint8_t* stackBot = nullptr;
+        if (!pharo::platform::getStackBounds(&stackTop, &stackBot)) {
+            // Silent-cap audit 2026-07-03: previously "pin nothing" —
+            // eviction then freed code LIVE on the C stack (SIGILL on
+            // return).  Without bounds we cannot prove safety: tell the
+            // caller to SKIP EVICTION entirely this round.
+            static int noBoundsWarn = 0;
+            if (noBoundsWarn++ < 5) {
+                fprintf(stderr, "[JIT] getStackBounds failed — eviction "
+                        "skipped (cannot pin native-stack frames)\n");
+            }
+            return false;
+        }
+        uint64_t* fp = static_cast<uint64_t*>(__builtin_frame_address(0));
+        // Depth cap raised 256 -> 65536 (silent-cap audit 2026-07-03):
+        // nested executeFromContext/chain-loop C recursion exceeds 256
+        // under deep Smalltalk recursion; frames past the cap went
+        // unpinned and their JIT code could be evicted while live.  The
+        // walk is already bounded by the real stack range.
+        for (int depth = 0; depth < 65536; depth++) {
+            uint8_t* fpB = reinterpret_cast<uint8_t*>(fp);
+            if (fpB + 16 > stackTop || fpB < stackBot) break;
+            // fp[0] = saved caller fp, fp[1] = saved LR (arm64 prologue)
+            uint64_t lr = fp[1];
+            if (lr) {
+                auto* m = zone.findMethodByPC(lr);
+                if (m) m->pinned = true;
+            }
+            uint64_t* next = reinterpret_cast<uint64_t*>(fp[0]);
+            // Caller frame is at a HIGHER address than callee on a
+            // downward-growing stack.  Bail on any inversion or reset.
+            if (!next || next <= fp) break;
+            fp = next;
+        }
+        // (3) SUSPENDED processes' Smalltalk stacks — a process other than the
+        // active one (e.g. the Delay timer runner parked on its semaphore) may
+        // have JIT methods live in its suspendedContext chain. Evicting those
+        // corrupts the process's code on resume (the full-suite wedge root).
+        interp.pinLiveJITMethodsAcrossProcesses();
+        return true;
+    };
+    struct UnpinAll {
+        CodeZone& z;
+        ~UnpinAll() {
+            // ->pinned lives in the MAP_JIT zone; needs a write window too.
+            ScopedPatchWriteAccess w(z.rawStart(), z.totalBytes());
+            for (auto* m = z.firstMethod(); m; m = m->nextInZone) m->pinned = false;
+        }
+    } unpinAll{zone};
+
+    size_t freed = 0;
+    {
+        ScopedPatchWriteAccess evictWindow(zone.rawStart(), zone.totalBytes());
+        if (!pinLiveMethods()) {
+            return nullptr;  // eviction unsafe without native-stack pinning
+        }
+
+        // Collect evicted code ranges during eviction via pre-eviction callback,
+        // so we capture ALL evicted methods (both first-pass and second-pass).
+        struct EvictedRange { uint64_t start; uint64_t end; };
+        std::vector<EvictedRange> evictedRanges;
+        evictedRanges.reserve(32);
+
+        auto evictCallback = [](uint64_t methodOop, void* ctx) {
+            auto* map = static_cast<MethodMap*>(ctx);
+            map->remove(methodOop);
+        };
+        auto preEvictCallback = [](JITMethod* m, void* ctx) {
+            auto* ranges = static_cast<std::vector<EvictedRange>*>(ctx);
+            uint64_t s = reinterpret_cast<uint64_t>(m->codeStart());
+            ranges->push_back({s, s + m->codeSize});
+        };
+        // Evict at least 2x what we need (amortize eviction cost)
+        size_t evictTarget = allocSize * 2;
+        size_t freed = zone.evictLRU(evictTarget, evictCallback, &methodMap,
+                                       preEvictCallback, &evictedRanges);
+        if (freed > 0) {
+            static int evictCount = 0;
+            if (++evictCount <= 3 || (evictCount % 500 == 0)) {
+                fprintf(stderr, "[JIT] Incremental evict #%d: freed %zu bytes for %zu needed, "
+                        "%zu methods remain, freeList=%zu\n",
+                        evictCount, freed, allocSize,
+                        zone.methodCount(), zone.freeListFreeBytes());
+            }
+            // Clear only J2J IC entries (bit 60) pointing to evicted code ranges.
+            // This preserves classKey/methodBits/getter/setter IC data for surviving
+            // methods, avoiding the massive re-patching overhead of a full flush.
+            static constexpr uint64_t J2J_BIT = 1ULL << 60;
+            static constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
+            JITMethod* im = zone.firstMethod();
+            while (im) {
+                if (im->numICEntries > 0 && im->icBuffer) {
+                    uint8_t* icStart = im->icZoneStart();
+                    for (uint32_t i = 0; i < im->numICEntries; i++) {
+                        uint64_t* slots = reinterpret_cast<uint64_t*>(
+                            icStart + i * IC_BYTES_PER_SITE);
+                        bool slot0Scrubbed = false;
+                        for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
+                            uint64_t extra = slots[e * 3 + 2];
+                            if (!(extra & J2J_BIT)) continue;
+                            uint64_t addr = extra & ADDR_MASK;
+                            for (auto& r : evictedRanges) {
+                                if (addr >= r.start && addr < r.end) {
+                                    slots[e * 3 + 2] = 0;
+                                    if (e == 0) slot0Scrubbed = true;
+                                    break;
+                                }
+                            }
+                        }
+                        // PMS §7 event 4: a linked site's callee was
+                        // just evicted — its slot-0 extra was scrubbed;
+                        // re-derive (unlinks: bit 60 now clear).  Ships
+                        // with linking, NOT later: eviction is zone-
+                        // pressure-driven and doesn't wait for links
+                        // to age.
+                        if (slot0Scrubbed) {
+                            interp.jitRuntime().rederiveSiteForICData(
+                                im->compiledMethodOop, slots);
+                        }
+                    }
+                }
+                im = im->nextInZone;
+            }
+        }   // if (freed > 0)
+    }       // evict window
+
+    // Retry outside the window — see the W^X note above.
+    jitMethod = zone.allocate(codeSize, numSendSites);
+    if (jitMethod) return jitMethod;
+
+    {
+        ScopedPatchWriteAccess flushWindow(zone.rawStart(), zone.totalBytes());
+        // Incremental eviction was not enough: full flush as a last resort.
+        // Still respects pinned methods — they are skipped, and the caller
+        // retries allocate() below.  (The old `if (!jitMethod)` guard here is
+        // gone: the retry above already returned when it succeeded.)
+        {
+            static int fullFlushCount = 0;
+            if (++fullFlushCount <= 5) {
+                fprintf(stderr, "[JIT] Full zone flush #%d (needed %zu bytes, "
+                        "evicted %zu, freeList=%zu, bump=%zu)\n",
+                        fullFlushCount, allocSize, freed,
+                        zone.freeListFreeBytes(), zone.bumpFreeBytes());
+            }
+            JITMethod* m = zone.firstMethod();
+            while (m) {
+                JITMethod* next = m->nextInZone;
+                if (!m->pinned) {
+                    uint64_t oop = m->compiledMethodOop;
+                    zone.freeMethod(m);
+                    methodMap.remove(oop);
+                }
+                m = next;
+            }
+            // PMS §7 event 4 full-flush + pre-existing-hole fix (design
+            // §14 #2): surviving (pinned) methods' J2J extras and the
+            // megaCache's jitEntry fields still point into the freed
+            // zone space — before PMS they survived until the next
+            // fullGC/flushCaches as latent stale code addresses; with
+            // linked sites they would be live wrong-execution.  One
+            // flushCaches() call clears megaCache + all surviving ICs
+            // (selBits preserved) + unlinks every patched site.
+            interp.jitRuntime().flushCaches();
+
+            // compact() only resets bump pointer when zone is empty of live
+            // methods.  With pinned survivors present, skip compact and let
+            // allocate() use the free list.
+            if (zone.firstMethod() == nullptr) zone.compact();
+        }
+    }
+
+    return zone.allocate(codeSize, numSendSites);
+}
+
 JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // PHARO_T1_INLINE_J2J=1 debug: log fib-related compilations
     {
@@ -2344,217 +2599,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // into the MAP_JIT zone outside a window needs its own
     // ScopedPatchWriteAccess.
 
-    // Compute the actual allocation size (allocate() adds JITMethod header + alignment)
-    size_t allocSize = sizeof(JITMethod) + totalSize;
-    allocSize = (allocSize + MethodAlignment - 1) & ~(MethodAlignment - 1);
-
-    // Allocate in code zone (tries bump pointer, then free list).
+    // Allocate in the code zone, evicting cold methods if it is full.
     // Pass numSendSites so CodeZone::allocate also allocates the
     // heap-side icBuffer (2026-05-03: ICs moved out of MAP_JIT).
-    JITMethod* jitMethod = zone_.allocate(totalSize, numSendSites);
+    JITMethod* jitMethod = allocateWithEviction(zone_, methodMap_, interp_,
+                                                totalSize, numSendSites);
     if (!jitMethod) {
-        // Incremental eviction: free cold methods into the free list.
-        // allocate() will reuse freed space without moving methods
-        // (ADRP+LDR relocations in stencils are not position-independent
-        // across non-page-aligned moves).
-        //
-        // SAFETY: before evicting, pin any JIT method that is *live* on the
-        // active stack.  Otherwise a native RET from a trampoline/primitive
-        // back into JIT code lands in freelist memory — SIGSEGV with
-        // "PC not in any active JIT method (evicted?)".  Two sources of live
-        // methods:
-        //   (1) J2JSave pool entries — chain-loop return frames.
-        //   (2) Native frame-pointer chain — LRs may be PCs inside JIT code.
-        // Unpinned on exit via the Unpin RAII below.
-        auto pinLiveMethods = [&]() -> bool {
-            // (1) J2JSave pool — chain-loop return frames for ongoing J2J
-            // calls.  Every live entry names a jitMethod that we must not
-            // evict (otherwise the chain-loop's resume into it blows up).
-            int live = interp_.j2jPoolLiveCount();
-            const auto* base = interp_.j2jPoolBase();
-            for (int i = 0; i < live; i++) {
-#if PHARO_J2J_SAVE_V2
-                // V2: derive the owning method from the packed resume
-                // address (the header precedes codeStart in the zone).
-                JITMethod* jm = base[i].resumeAddr
-                    ? zone_.findMethodByPC(
-                          reinterpret_cast<uint64_t>(base[i].addr()))
-                    : nullptr;
-                if (jm) jm->pinned = true;
-#else
-                if (base[i].jitMethod && zone_.contains(base[i].jitMethod)) {
-                    base[i].jitMethod->pinned = true;
-                }
-#endif
-            }
-            // (2) Native frame-pointer chain — LRs may be PCs inside JIT
-            // code (trampoline return into caller's stencil).  Bounded by
-            // pthread stack, plus a depth cap.  Apple and Linux report
-            // stack info via different APIs; the platform layer exposes
-            // a uniform getStackBounds(top, bot) so this code stays
-            // ifdef-free.
-            uint8_t* stackTop = nullptr;
-            uint8_t* stackBot = nullptr;
-            if (!pharo::platform::getStackBounds(&stackTop, &stackBot)) {
-                // Silent-cap audit 2026-07-03: previously "pin nothing" —
-                // eviction then freed code LIVE on the C stack (SIGILL on
-                // return).  Without bounds we cannot prove safety: tell the
-                // caller to SKIP EVICTION entirely this round.
-                static int noBoundsWarn = 0;
-                if (noBoundsWarn++ < 5) {
-                    fprintf(stderr, "[JIT] getStackBounds failed — eviction "
-                            "skipped (cannot pin native-stack frames)\n");
-                }
-                return false;
-            }
-            uint64_t* fp = static_cast<uint64_t*>(__builtin_frame_address(0));
-            // Depth cap raised 256 -> 65536 (silent-cap audit 2026-07-03):
-            // nested executeFromContext/chain-loop C recursion exceeds 256
-            // under deep Smalltalk recursion; frames past the cap went
-            // unpinned and their JIT code could be evicted while live.  The
-            // walk is already bounded by the real stack range.
-            for (int depth = 0; depth < 65536; depth++) {
-                uint8_t* fpB = reinterpret_cast<uint8_t*>(fp);
-                if (fpB + 16 > stackTop || fpB < stackBot) break;
-                // fp[0] = saved caller fp, fp[1] = saved LR (arm64 prologue)
-                uint64_t lr = fp[1];
-                if (lr) {
-                    auto* m = zone_.findMethodByPC(lr);
-                    if (m) m->pinned = true;
-                }
-                uint64_t* next = reinterpret_cast<uint64_t*>(fp[0]);
-                // Caller frame is at a HIGHER address than callee on a
-                // downward-growing stack.  Bail on any inversion or reset.
-                if (!next || next <= fp) break;
-                fp = next;
-            }
-            // (3) SUSPENDED processes' Smalltalk stacks — a process other than the
-            // active one (e.g. the Delay timer runner parked on its semaphore) may
-            // have JIT methods live in its suspendedContext chain. Evicting those
-            // corrupts the process's code on resume (the full-suite wedge root).
-            interp_.pinLiveJITMethodsAcrossProcesses();
-            return true;
-        };
-        struct UnpinAll {
-            CodeZone& z;
-            ~UnpinAll() {
-                for (auto* m = z.firstMethod(); m; m = m->nextInZone) m->pinned = false;
-            }
-        } unpinAll{zone_};
-        if (!pinLiveMethods()) {
-            return nullptr;  // eviction unsafe without native-stack pinning
-        }
-
-        // Collect evicted code ranges during eviction via pre-eviction callback,
-        // so we capture ALL evicted methods (both first-pass and second-pass).
-        struct EvictedRange { uint64_t start; uint64_t end; };
-        std::vector<EvictedRange> evictedRanges;
-        evictedRanges.reserve(32);
-
-        auto evictCallback = [](uint64_t methodOop, void* ctx) {
-            auto* map = static_cast<MethodMap*>(ctx);
-            map->remove(methodOop);
-        };
-        auto preEvictCallback = [](JITMethod* m, void* ctx) {
-            auto* ranges = static_cast<std::vector<EvictedRange>*>(ctx);
-            uint64_t s = reinterpret_cast<uint64_t>(m->codeStart());
-            ranges->push_back({s, s + m->codeSize});
-        };
-        // Evict at least 2x what we need (amortize eviction cost)
-        size_t evictTarget = allocSize * 2;
-        size_t freed = zone_.evictLRU(evictTarget, evictCallback, &methodMap_,
-                                       preEvictCallback, &evictedRanges);
-        if (freed > 0) {
-            static int evictCount = 0;
-            if (++evictCount <= 3 || (evictCount % 500 == 0)) {
-                fprintf(stderr, "[JIT] Incremental evict #%d: freed %zu bytes for %zu needed, "
-                        "%zu methods remain, freeList=%zu\n",
-                        evictCount, freed, allocSize,
-                        zone_.methodCount(), zone_.freeListFreeBytes());
-            }
-            // Clear only J2J IC entries (bit 60) pointing to evicted code ranges.
-            // This preserves classKey/methodBits/getter/setter IC data for surviving
-            // methods, avoiding the massive re-patching overhead of a full flush.
-            static constexpr uint64_t J2J_BIT = 1ULL << 60;
-            static constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
-            JITMethod* im = zone_.firstMethod();
-            while (im) {
-                if (im->numICEntries > 0 && im->icBuffer) {
-                    uint8_t* icStart = im->icZoneStart();
-                    for (uint32_t i = 0; i < im->numICEntries; i++) {
-                        uint64_t* slots = reinterpret_cast<uint64_t*>(
-                            icStart + i * IC_BYTES_PER_SITE);
-                        bool slot0Scrubbed = false;
-                        for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
-                            uint64_t extra = slots[e * 3 + 2];
-                            if (!(extra & J2J_BIT)) continue;
-                            uint64_t addr = extra & ADDR_MASK;
-                            for (auto& r : evictedRanges) {
-                                if (addr >= r.start && addr < r.end) {
-                                    slots[e * 3 + 2] = 0;
-                                    if (e == 0) slot0Scrubbed = true;
-                                    break;
-                                }
-                            }
-                        }
-                        // PMS §7 event 4: a linked site's callee was
-                        // just evicted — its slot-0 extra was scrubbed;
-                        // re-derive (unlinks: bit 60 now clear).  Ships
-                        // with linking, NOT later: eviction is zone-
-                        // pressure-driven and doesn't wait for links
-                        // to age.
-                        if (slot0Scrubbed) {
-                            interp_.jitRuntime().rederiveSiteForICData(
-                                im->compiledMethodOop, slots);
-                        }
-                    }
-                }
-                im = im->nextInZone;
-            }
-            jitMethod = zone_.allocate(totalSize, numSendSites);
-        }
-
-        // If incremental eviction wasn't enough, full flush as last resort.
-        // Must still respect pinned methods — skip them and retry allocate.
-        if (!jitMethod) {
-            static int fullFlushCount = 0;
-            if (++fullFlushCount <= 5) {
-                fprintf(stderr, "[JIT] Full zone flush #%d (needed %zu bytes, "
-                        "evicted %zu, freeList=%zu, bump=%zu)\n",
-                        fullFlushCount, allocSize, freed,
-                        zone_.freeListFreeBytes(), zone_.bumpFreeBytes());
-            }
-            JITMethod* m = zone_.firstMethod();
-            while (m) {
-                JITMethod* next = m->nextInZone;
-                if (!m->pinned) {
-                    uint64_t oop = m->compiledMethodOop;
-                    zone_.freeMethod(m);
-                    methodMap_.remove(oop);
-                }
-                m = next;
-            }
-            // PMS §7 event 4 full-flush + pre-existing-hole fix (design
-            // §14 #2): surviving (pinned) methods' J2J extras and the
-            // megaCache's jitEntry fields still point into the freed
-            // zone space — before PMS they survived until the next
-            // fullGC/flushCaches as latent stale code addresses; with
-            // linked sites they would be live wrong-execution.  One
-            // flushCaches() call clears megaCache + all surviving ICs
-            // (selBits preserved) + unlinks every patched site.
-            interp_.jitRuntime().flushCaches();
-
-            // compact() only resets bump pointer when zone is empty of live
-            // methods.  With pinned survivors present, skip compact and let
-            // allocate() use the free list.
-            if (zone_.firstMethod() == nullptr) zone_.compact();
-
-            jitMethod = zone_.allocate(totalSize, numSendSites);
-            if (!jitMethod) {
-                compilationsFailed_++;
-                return nullptr;
-            }
-        }
+        compilationsFailed_++;
+        return nullptr;
     }
 
     // Fill in method header

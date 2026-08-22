@@ -164,7 +164,26 @@ public:
         }
         // 2. Try free list (best-fit)
         else if (freeListBytes_ >= totalSize) {
+            // W^X: the free-list block headers live INSIDE the MAP_JIT zone,
+            // and splitting a block WRITES them (rest->blockSize / ->next /
+            // *bestPrev).  The bump path below can rely on the makeWritable()
+            // that follows this if/else, but the free-list path cannot: it
+            // writes during the search itself.  On Apple Silicon the thread
+            // default is execute, so an unguarded split SIGBUSes on
+            // `str w<n>, [x<n>]` storing rest->blockSize.
+            //
+            // Latent until 2026-08-22: nothing ever reached the free list,
+            // because the only thing that fills it is eviction, and eviction
+            // sat behind an unreachable branch (see ZoneEviction.hpp).  The
+            // first run with eviction wired up hit this on evict #1.
+            //
+            // On success we deliberately STAY writable — that is allocate()'s
+            // existing contract with its caller (finalize() flips back).
+            const bool wasExecutable =
+                (pharo::platform::currentWXShadowMode() == 1);
+            if (wasExecutable) makeWritable(zoneStart_, zoneSize_);
             method = allocateFromFreeList(totalSize);
+            if (!method && wasExecutable) makeExecutable(nullptr, 0);
         }
 
         if (!method) return nullptr;

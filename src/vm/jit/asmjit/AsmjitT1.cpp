@@ -32,6 +32,7 @@
 #if PHARO_JIT_ENABLED
 
 #include "../CodeZone.hpp"
+#include "../ZoneEviction.hpp"
 #include "../JITState.hpp"
 #include "../PlatformJIT.hpp"
 #include "../SistaV1.hpp"
@@ -12023,7 +12024,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
 
     // Allocate the JITMethod with full payload + IC sites.  CodeZone
     // calloc()s a heap-side icBuffer of numSendSites*IC_BYTES_PER_SITE.
-    JITMethod* jm = zone.allocate(payloadSize, numSendSites);
+    //
+    // allocateWithEviction, not zone.allocate: on a full zone this LRU-
+    // evicts cold methods (pinning everything live) and retries, falling
+    // back to a full flush.  Before 2026-08-22 this site called
+    // zone.allocate directly and simply gave up, so once the zone filled
+    // the JIT never compiled another method for the rest of the process —
+    // 98.7% of a full SUnit sweep ran interpreted.  The eviction code
+    // existed and was debugged, but sat in JITCompiler::compile's stencil
+    // path, below the unconditional `return jm` of the asmjit-T1 branch
+    // that is the default path.  See ZoneEviction.hpp.
+    JITMethod* jm = allocateWithEviction(zone, methodMap, interp,
+                                         payloadSize, numSendSites);
     if (!jm) {
         g_failed++; g_failedBcOther++;
         return nullptr;
