@@ -463,6 +463,58 @@ last seven batches were never measured — the pre-reboot run was interrupted
 there — and the definitive full sweep on both arches is the last thing this
 session runs, after the code stops changing.
 
+## The package tier found the real cost of making eviction reachable: 7x
+
+`scripts/package-tests-selfhosted.sh`, arm64, `build-rel` at `02195e8f`,
+against the 2026-08-17 run of the same seven packages:
+
+    package     2026-08-17 load     today's load      tests today
+    NeoJSON            20 s               29 s        11 cls, 116 P, 0 F, 0 E
+    Mustache            9 s               11 s         1 cls,  47 P, 0 F, 0 E
+    XMLParser        1055 s          TIMEOUT 1800 s    (image never persisted)
+    Grease             50 s              365 s        37 cls, 554 P, 0 F, 0 E
+    PolyMath     TIMEOUT 1200 s         (running)
+    DataFrame         139 s             (running)
+    Fuel                4 s             (running)
+
+Grease is a genuine gain — 37 classes and 554 passes where the 2026-08-17
+run reported "loaded, 0 classes matched the name pattern"; the `GR` pattern
+fix in the script works. But **XMLParser and Grease are 1.7x and 7x slower
+than they were**, and the difference between the two runs is that code-zone
+eviction now actually runs. The previous handoff said "Throughput is
+UNMEASURED. More compilation also means more eviction and recompilation; no
+speedup is claimed." This is the measurement, and it is a large regression.
+
+### First measured cause: the eviction pin scan walked the whole heap, per round
+
+`sample` on the stuck XMLParser load: **749 of 796 samples inside
+`Interpreter::pinLiveJITMethodsAcrossProcesses`**, called from
+`allocateWithEviction` on every round. It found Process objects by walking
+the entire heap. Instrumented (4 MB zone, four-class SUnit batch):
+
+    rounds=235   heapObjects=194,282,615   processes=7,722
+                 = 826,734 object visits per round, to find 32 processes
+
+Fixed in `1d7a91af`: an object cannot appear anywhere but eden without a GC,
+and all three GC paths bump `gcCount_`, so the whole-heap result is cached
+per GC and only eden is re-walked each round. Same regions, same class
+check, same completeness.
+
+    same batch, PHARO_CODE_ZONE_MB=1, 325 rounds
+      before  12 s, 325 full heap walks
+      after    8 s,   6 full heap walks    identical results
+
+The chain walk also gained a Floyd cycle guard: without one, a context chain
+that closes a loop burns the full 70,000-step depth cap per process per
+round, and `materializeFrameStack` has a `[CYCLE-BREAK]` path precisely
+because such chains exist.
+
+Still to measure: whether that closes the package-load gap or only part of
+it. 248,066 methods were compiled during the XMLParser load, against ~176k
+CompiledMethods + CompiledBlocks in the image — so there is recompile churn
+on top of the scan cost, and `evictTarget` (1/64th of the zone) may want
+raising now that a round is cheaper.
+
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 
 Full detail in `docs/jit-eviction-2026-08-22.md`. Short version, five defects,
