@@ -585,6 +585,40 @@ one of `ReleaseTest`'s four FAILs is NOT the harness self-pollution it has
 been labelled as since 2026-08-11; the other three genuinely do name the
 injected runner.
 
+**The full list is 17 tests, and it overlaps our recorded residual.**
+`SystemNavigation default allSendersOf: #skipOnPharoCITestingEnvironment`:
+
+    AllocationTest>>testOneGBAllocation
+    AllocationTest>>testOneGWordAllocation
+    DebugPointTest>>testTranscriptDebugPoint
+    OmDeferrerTest>>testExecuteOnceAfterScheduling
+    OmDeferrerTest>>testExecuteWithoutDelay
+    RandomTest>>testUnixRandomGeneratorSeed
+    SpJobListPresenterTest>>testJobIsFinishedWhenWaitingMoreThanWorkBlockDuration
+    SpJobListPresenterTest>>testJobIsNotFinishedWhenWaitingLessThanWorkBlockDuration
+    SpJobListPresenterTest>>testProgressDoesNotRefreshMoreThanRefreshRate
+    SpToolbarToggleButtonMorphTest>>testClickDeactivatedCheckboxActivatesIt
+    StBreadcrumbPresenterTest>>testRoot
+    StDebuggerTest>>testDynamicVariableEvaluation
+    StPlaygroundPageTest>>testContents
+    StSpotterModelTest>>testAnnounceQueryEndedIsSentOnce
+    StSpotterTest>>testOpenSpotterRefreshesPreviewOnce
+    TKTNewProcessTaskRunnerTest>>testNewProcessTaskRunnerRunsInNewProcessEveryTime
+    WeakAnnouncerTest>>testNoDeadWeakSubscriptions
+
+Compare that against `docs/arm-vs-x86-2026-08-11.md`'s list of arm's 20
+non-passes: `SpJobListPresenterTest>>testJobIsFinishedWhenWaiting...` and
+`StSpotterModelTest>>testAnnounceQueryEndedIsSentOnce` are on it by name, and
+its "GUI/debugger (8)" and "task kernel (3)" buckets name `StDebugger`,
+`StSpotter`, `StPlaygroundPage` and `TKTNewProcessTaskRunner` classes. Some
+of what has been counted against this VM is tests Pharo has already given up
+on running.
+
+This does NOT say to stop running them — more coverage is better, and a test
+Pharo skips for being slow on CI may still be a fine VM check. It says that
+before any of these 17 is called a VM defect, the guard has to be looked at
+first.
+
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 
 Full detail in `docs/jit-eviction-2026-08-22.md`. Short version, five defects,
