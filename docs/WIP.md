@@ -129,13 +129,37 @@ So:
   * **`EpFileOutModificationsTest` and `RSLinesTest` are clean at HEAD.**
     Both pass 100% alone; their sweep failures are cross-class order
     effects, not defects of their own.
-  * **`LinkInstallerTest` is order-dependent and NOT the JIT.** 40/40 alone
-    with the JIT on. Run `EpFileOutModificationsTest` first — a single
-    predecessor is enough — and one of the `propagateNewClassScopedLinks`
-    family fails with `[Assertion failed]` plus `[Leaked metalinks]`.
-    `PHARO_NO_JIT=1` does not change it. The 2026-08-18 note that listed
-    this as untriaged with "worth a PHARO_NO_JIT=1 check" now has its
-    answer: the JIT is not involved.
+  * **`LinkInstallerTest` is GC-history-dependent and NOT the JIT.** 40/40
+    alone, with the JIT on or off. Put ANY class in front of it —
+    `EpFileOutModificationsTest` or `RSLinesTest`, one is enough — and
+    `testPropagateNewClassScopedLinksOnMethodNode` fails with
+    `[Assertion failed]` plus `[Leaked metalinks]`. `PHARO_NO_JIT=1` does not
+    change that, so the 2026-08-18 note that filed this as untriaged with
+    "worth a PHARO_NO_JIT=1 check" has its answer: the JIT is not involved.
+
+    What the predecessor supplies is allocation. `PHARO_NEWSPACE_MB=1` makes
+    it fail with NO predecessor at all — but only sometimes: two runs of the
+    same command, same binary, gave 39/40 and 40/40. So it is GC-pressure
+    -sensitive and FLAKY, and the single-run knob bisect around it
+    (ROUNDTRIP_ONLY fails / SKIP_SCAV passes) is not evidence — one sample of
+    a flaky test tells you nothing. Anyone picking this up needs repetition
+    counts before believing any knob.
+
+    The test itself says what breaks:
+
+        node := (ReflectivityExamples >> #exampleIfTrueIfFalse) ast.
+        node link: metalink2 forObject: obj1.       "makes an anon subclass"
+        anonNode := (obj1 class >> #exampleIfTrueIfFalse) ast.
+        node link: metalink.                        "class-scoped link"
+        self assert: (anonNode links includes: metalink).   <-- fails
+
+    i.e. the propagation from a base node's link to the copy of that node in
+    an already-created anonymous subclass stops happening once a collection
+    has run in between. `setUp` calls `Smalltalk garbageCollectMost` twice
+    and `MetaLink uninstallAll`, so the registry that drives propagation is
+    reachable-through-weak-structures by construction. That is where to
+    look — and it is plausibly the same root as `ReleaseTest`'s four dead
+    `WeakAnnouncementSubscription`s, since those are LinkInstaller's.
   * **`OCClassBuilderTest>>testCreateNormalClassWithTraitComposition`** is
     the upstream image defect already recorded in `docs/image_issues.md:235`
     (stock Cog on a pristine image errors identically). Reproduces with the
@@ -388,6 +412,56 @@ recorded baseline:
     load/store compiles to the same instructions, but it puts a real load in
     the hot dispatch loop where the compiler could previously keep it in a
     register — so it needs a bench-suite before/after, not a blind edit.
+
+## The 14 GUI-adapter classes are a missing display, not a VM defect — measured
+
+The sweep image has no `Display`, no `World` and no `MorphicUIManager`, and
+`scripts/pharo-headless-test/setup_fake_gui.st` supplies all three in pure
+Smalltalk. Prepped a second image with that prelude filed in BEFORE the
+runner (the order CLAUDE.md specifies) and re-ran every Spec/GUI class the
+sweep scored non-zero on:
+
+    class                                             sweep        fake-GUI
+    FTTableMorphTest                                  0 P / 1 E     1/1
+    SliderTest                                        8 P / 1 E     9/9
+    SpAthensAdapterTest                               8 P / 1 E     9/9
+    SpComponentListAdapterTest                        7 P / 1 E     8/8
+    SpListCommonPropertiestTest                      18 P / 5 E    23/23
+    SpTableCommonPropertiestTest                     14 P / 3 E    17/17
+    SpTreeAdapterMultipleSelectionTest               18 P / 2 E    20 P / 1 S
+    SpTreeTableAdapterMultiColumnMultiSelectionTest  18 P/1 F/1 E  20/20
+    SpTreeTableAdapterMultiColumnTest                18 P/1 F/1 E  20/20
+    SpTreeTableAdapterSingleColumnMultiSelectionTest 18 P/1 F/1 E  20/20
+    SpTreeTableAdapterSingleColumnTest               17 P/1 F/1 E  19/19
+                                                     ----------    -----
+                                                     4 F + 18 E    167 tests
+                                                                   0 F, 0 E
+
+So 22 of the partial sweep's 30 F+E were the missing display.
+
+### Which leaves, for batches 1-1700 on arm64, ZERO confirmed VM defects
+
+    what                                       F   E   verdict
+    Spec/GUI adapters (11 classes)             4  18   missing display; 0/0 with the prelude
+    ReleaseTest testNoOrphanPackage            1   0   harness (Package(Tests-Runner))
+    ReleaseTest ...SentButNotImplemented       1   0   harness (SUnitRunner>>runAllTests)
+    ReleaseTest testUnknownProcesses           1   0   harness (CommandLine handler process)
+    ReleaseTest testNoDeadSubscriptions        1   0   LinkInstaller's own weak subs, earlier
+                                                       in the same image
+    OCClassBuilderTest ...TraitComposition     0   1   upstream, fails identically on stock Cog
+    EpFileOutModificationsTest                 1   0   17/17 alone
+    RSLinesTest                                0   1   18/18 alone
+    LinkInstallerTest                          1   0   40/40 alone, NOT the JIT
+                                              --  --
+                                              10  20
+
+Plus one TIMEOUT, `ReleaseTest>>testNoShadowedVariablesInMethods`, which is
+defect `#6` and the only VM-side item on the list.
+
+Caveat that has to travel with this: it covers batches 1-1700 of 2047. The
+last seven batches were never measured — the pre-reboot run was interrupted
+there — and the definitive full sweep on both arches is the last thing this
+session runs, after the code stops changing.
 
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 
