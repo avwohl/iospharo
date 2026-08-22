@@ -1,3 +1,73 @@
+# WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
+
+Full detail in `docs/jit-eviction-2026-08-22.md`. Short version, five defects,
+each hidden behind the one before it.
+
+## The JIT was compiling ~4% of what it should
+
+`JITCompiler::compile`'s asmjit-T1 branch is the default and returns
+unconditionally; the whole code-zone eviction implementation sat below it in
+the stencil path. Written, debugged, never executed. AsmjitT1's own allocation
+site gave up on a full zone with no retry, so once the zone filled the JIT was
+done for the life of the process — the 2026-08-19 arm64 sweep ran 98.7%
+interpreted with the compiled count frozen at 22,060.
+
+Re-routing it into `allocateWithEviction()` (`ZoneEviction.hpp`) exposed four
+bugs that had been sitting inside the dead code:
+
+  * W^X SIGBUS on `->pinned` — JITMethod headers are bump-allocated INSIDE the
+    MAP_JIT zone, and `CodeZone::allocate` opens a write window only when it
+    SUCCEEDS. Same fault class as the 2026-08-19 `tryExecute` fix.
+  * W^X SIGBUS in `allocateFromFreeList` — it writes free-block headers during
+    the split, before `allocate()`'s `makeWritable`. Only eviction fills the
+    free list, so this had never run.
+  * `advanceEpoch()` was never called from anywhere, so `epoch_` sat at 0 and
+    evictLRU's first pass — `lastUsedEpoch < threshold`, both 0 — selected
+    nothing. Eviction always fell through to pass 2, which walks the method
+    list in ADDRESS order: it evicted the earliest-compiled, hottest methods
+    every round.
+  * Incremental eviction left stale entry addresses in the megaCache and in
+    PMS-linked send sites. Killed arm64 batch 501-550 with a dispatch into
+    freed zone space.
+
+Plus `evictTarget = allocSize * 2` (~1 KB) meant a round per compile: 76,000
+rounds in one image prep. Floored at 1/64th of the zone.
+
+    arm64 image prep   before: crashed / JIT frozen at 7,914 compiled
+                       after:  7.7 s, rc=0, 3 evict rounds, 33,681 compiled
+
+## x86_64 SUnit parity, without excluding Cairo
+
+  * `scripts/fetch-x86-libs.sh` (new) stages x86_64 Homebrew bottles — cairo,
+    libgit2 and their closure, 72 dylibs — beside `build-x86/test_load_image`,
+    install names rewritten to `@loader_path`. No Intel Homebrew, nothing
+    installed, `/usr/local` untouched.
+  * `FFI::lookupFunction` now retries an absolute module path on its BASENAME
+    through `getLibSearchPaths()`. The image hands the VM
+    `/opt/homebrew/lib/libcairo.2.dylib` and cannot know it is the wrong arch
+    for a Rosetta process; the bare-name search was guarded on
+    `moduleName[0] != '/'` so it never ran.
+  * **`build-libffi.sh` shipped arm64's `ffi.h` to both arches.** configure
+    substitutes `@FFI_EXEC_TRAMPOLINE_TABLE@` into it — arm64 `#if 1`
+    (`sizeof(ffi_closure)`=40, fun@24), x86_64 `#if 0` (56, fun@40). The
+    x86_64 VM allocated 40 bytes and the library wrote `fun` at 40 and
+    `user_data` at 48, past the end, so EVERY x86_64 FFI callback jumped
+    through garbage. The script already split `ffitarget.h` for exactly this
+    reason (77 errors, 2026-08-18) and the fix was never generalized.
+
+    SUnit batch 1-50, same image, idle machine:
+
+        arm64   774 tests  772 PASS  0 FAIL  0 ERROR
+        x86_64  774 tests  772 PASS  0 FAIL  0 ERROR   (was 746 P / 26 E)
+
+## In flight
+
+Full SUnit sweeps on both arches (`scratchpad/fullsweep.sh`, arm then x86
+sequentially so each runs idle). Packages tier not yet re-run — the selected
+set is the seven in `scripts/package-tests-selfhosted.sh`. With libgit2 now
+staged for x86_64, the `REUSE_FROM=` workaround for x86 package loads may no
+longer be needed; worth testing rather than assuming.
+
 # WIP (2026-08-19 17:25) — REBOOT HANDOFF. Read this first.
 
 Everything is committed and pushed to `origin/jit`. Nothing is lost by the
