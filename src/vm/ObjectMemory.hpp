@@ -1008,7 +1008,12 @@ private:
 
     /// Initialize a region as a free chunk (classIndex=0).
     /// size includes header. Returns the chunk header.
-    ObjectHeader* makeFreeChunk(uint8_t* addr, size_t size);
+    /// Build a free chunk (classIndex 0) at `addr`.  `zeroBody` writes the
+    /// whole body; pass false when the memory is ALREADY a free chunk's body
+    /// (splitting a chunk), because zeroing it there is O(chunk size) per
+    /// allocation and the free list's largest chunk is the whole
+    /// post-compaction gap -- measured as a 5x slowdown on a package load.
+    ObjectHeader* makeFreeChunk(uint8_t* addr, size_t size, bool zeroBody = true);
 
     /// Add a free chunk to the appropriate free list.
     void addToFreeList(ObjectHeader* chunk, size_t size);

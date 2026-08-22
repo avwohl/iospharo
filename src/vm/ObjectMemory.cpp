@@ -3430,6 +3430,15 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
             return nullptr;
 
         case Space::Old: {
+            // Reuse a post-compaction gap before extending the heap.  See
+            // rebuildFreeListAfterCompact for why the gaps exist and why this
+            // is opt-in.
+            if (GET_DEBUG_BOOL(PHARO_OLDSPACE_FREELIST) && freeListsMask_) {
+                if (ObjectHeader* reused = allocateFromFreeList(size)) {
+                    bytesAllocated_ += size;
+                    return reused;
+                }
+            }
             if (oldSpaceFree_ + size <= oldSpaceEnd_) {
                 // Fast path: bump pointer allocation
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(oldSpaceFree_);
@@ -3730,7 +3739,7 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
 
 // ===== FREE LIST HELPERS =====
 
-ObjectHeader* ObjectMemory::makeFreeChunk(uint8_t* addr, size_t size) {
+ObjectHeader* ObjectMemory::makeFreeChunk(uint8_t* addr, size_t size, bool zeroBody) {
     // A free chunk has classIndex=0 and stores its size in slots.
     // Minimum free chunk is 16 bytes (8-byte header + 8-byte next pointer).
     if (size < 16) {
@@ -3758,8 +3767,11 @@ ObjectHeader* ObjectMemory::makeFreeChunk(uint8_t* addr, size_t size) {
         chunk->setRawHeader(header);
     }
 
-    // Zero the body (next pointer in slot 0 will be set by addToFreeList)
-    std::memset(chunk->bytes(), 0, slotCount * 8);
+    // Zero the body (next pointer in slot 0 will be set by addToFreeList).
+    // Skipped when splitting an existing free chunk: that body is already
+    // free-chunk memory, and zeroing it costs O(chunk size) on every single
+    // allocation once the list holds one big post-compaction gap.
+    if (zeroBody) std::memset(chunk->bytes(), 0, slotCount * 8);
 
     return chunk;
 }
@@ -3828,7 +3840,8 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                 size_t remainder = chunkSize - size;
                 if (remainder >= 16) {
                     uint8_t* remainderAddr = reinterpret_cast<uint8_t*>(chunk) + size;
-                    ObjectHeader* remChunk = makeFreeChunk(remainderAddr, remainder);
+                    ObjectHeader* remChunk =
+                        makeFreeChunk(remainderAddr, remainder, /*zeroBody=*/false);
                     if (remChunk) {
                         addToFreeList(remChunk, remainder);
                     }
@@ -5229,6 +5242,49 @@ void ObjectHeader::slot_run_tripwire_fire(const ObjectHeader* hdr, size_t index,
 
 void ObjectMemory::rebuildFreeListAfterCompact() {
     clearFreeLists();
+
+    // PHARO_OLDSPACE_FREELIST: put the post-compaction GAPS on the free list
+    // so allocation can reuse them.
+    //
+    // Sliding compaction cannot move a pinned object, so `toFinger` jumps to
+    // it and abandons everything below.  Measured 2026-08-22: a NeoJSON
+    // package image ends up with 235 MB of old space holding 89 MB of
+    // objects, and the XMLParser one with 1.15 GB holding 94 MB -- 12x --
+    // because six 32-byte pinned objects sit between +166 MB and +208 MB and
+    // nothing below them is ever reused.  Full analysis in
+    // docs/gc-oldspace-fragmentation-2026-08-22.md.
+    //
+    // Opt-in while it is new: this is the first code path that hands the
+    // old-space allocator a chunk it did not bump-allocate, and a mistake
+    // here corrupts the heap rather than failing a test.  allocateRaw's Old
+    // case reads the same knob.
+    if (GET_DEBUG_BOOL(PHARO_OLDSPACE_FREELIST)) {
+        size_t gaps = 0, gapBytes = 0;
+        uint8_t* prevEnd = oldSpaceStart_;
+        ObjectScanner sc(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* o = sc.next()) {
+            uint8_t* objStart = reinterpret_cast<uint8_t*>(o);
+            if (o->hasOverflowSlots()) objStart -= 8;
+            if (objStart > prevEnd) {
+                size_t gap = static_cast<size_t>(objStart - prevEnd);
+                if (gap >= 16) {
+                    // zeroBody=false: the gap is already zeros (that is why
+                    // ObjectScanner walked over it) or an older free chunk;
+                    // memsetting 148 MB on every fullGC buys nothing.
+                    if (ObjectHeader* c = makeFreeChunk(prevEnd, gap, false)) {
+                        addToFreeList(c, gap);
+                        gaps++; gapBytes += gap;
+                    }
+                }
+            }
+            prevEnd = reinterpret_cast<uint8_t*>(o) + o->totalSize();
+        }
+        if (gaps && GET_DEBUG_BOOL(PHARO_GC_LOG)) {
+            fprintf(stderr, "[GC-FREELIST] %zu gaps, %zu MB reclaimed for reuse "
+                    "(used=%zu MB)\n", gaps, gapBytes / (1024 * 1024),
+                    (size_t)(oldSpaceFree_ - oldSpaceStart_) / (1024 * 1024));
+        }
+    }
 
     // The gap between oldSpaceFree_ and oldSpaceEnd_ is one big free chunk.
     // No scanner walks past oldSpaceFree_, so the gap doesn't need to be

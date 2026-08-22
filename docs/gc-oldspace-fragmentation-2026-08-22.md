@@ -113,6 +113,36 @@ load writes it, the test pass reads it).
 Not yet decided. What is decided is that this is not "Metacello allocates a
 lot": 89 MB of it is real and 146 MB of it is zeros.
 
+## (1) was attempted, and it is NOT ready — `PHARO_OLDSPACE_FREELIST`
+
+The knob exists and is OFF by default. Two halves, one of which works:
+
+  * **The gap accounting works.** `rebuildFreeListAfterCompact` walks old
+    space, finds each span between consecutive objects, and puts it on the
+    free list. On the NeoJSON image: `[GC-FREELIST] 17 gaps, 148 MB
+    reclaimed for reuse (used=235 MB)`, and the post-GC census then reports
+    them honestly as `free-chunks=146 MB in 10` where it used to say 0 —
+    because `ObjectScanner` skips zero words, so before this the gaps were
+    invisible to every walk in the VM.
+  * **Allocating from them is not safe yet.** With the knob on, a NeoJSON
+    Metacello load STALLS: `[PROGRESS] 20s: ~93575837 steps` followed by
+    `[PROGRESS] 30s: ~93575837 steps` — the same count, i.e. no bytecodes
+    executed for ten seconds.
+
+One real bug was found and fixed on the way: `makeFreeChunk` memset the
+whole chunk body, and `allocateFromFreeList` calls it on the REMAINDER of
+every split. With one 148 MB gap on the list that is a 148 MB memset per
+allocation. `makeFreeChunk` now takes `zeroBody` and the split path passes
+false. That took the load from "5x slower and climbing" to "stalls", so it
+was necessary but not sufficient.
+
+What to look at next: `allocateFromFreeList`'s large-list walk stores a raw
+`ObjectHeader**` into a slot that otherwise holds an `Oop`
+(`prev = reinterpret_cast<ObjectHeader**>(&chunk->slots()[0])`), and returns
+a chunk that may be up to 15 bytes LARGER than the request with no
+free-chunk header on the excess — either would leave the heap unparseable
+for the next scanner walk, which is exactly what a stall looks like.
+
 ## Reproducing
 
     PHARO_GC_LOG=1 build-rel/test_load_image <pkg.image> eval \
