@@ -539,6 +539,52 @@ image, so there is recompile churn on top of the scan costs, and
 `evictTarget` (1/64th of the zone) may want raising now that a round is
 cheaper.
 
+### Third measured cause: the mourn queue was re-drained on every activation
+
+`drainMournQueueNatively` runs from `activateMethod` whenever
+`pendingFinalizationSignals() > 0`. It splits the mourn queue three ways —
+WeakKey/Value Associations processed natively, WeakArrays dropped, and
+everything else ("keepers": ObjectFinalizer, FinalizationRegistryEntry,
+WeakSubscription, Ephemeron) re-pushed for the image-side
+FinalizationProcess — and when it re-pushes keepers it deliberately leaves
+the pending signal set.
+
+So once the queue holds NOTHING BUT keepers, every activation pops the whole
+queue and pushes it straight back, forever, until the image side gets to
+them. `test_relaunch`'s own log line has been printing the evidence:
+
+    [DRAIN-1] initial=74 processed=74 wka=50 kept=21 dec=0 pending=74->74
+
+and the second `sample` of the XMLParser load put 38% of the process there
+(260 of 683 samples, under `activateMethod`).
+
+`dd85a061` remembers the queue size a no-progress drain ended on and skips
+while it is unchanged. A GC adding mourners changes it; the
+FinalizationProcess dispatching some changes it; the signal stays pending
+either way. Thirteen weak/finalization classes, 755 tests, byte-identical
+before and after.
+
+After all three fixes the profile is flat — no single dominant frame, time
+spread across normal dispatch and JIT activation.
+
+## A correction worth carrying: `PHARO_CI_TESTING_ENVIRONMENT`
+
+Chasing the dead subscriptions turned up something that affects how every
+suite number here should be read. `TestCase>>skipOnPharoCITestingEnvironment`
+tests for the `PHARO_CI_TESTING_ENVIRONMENT` environment variable, and Pharo
+CI sets it. **Our sweeps do not**, so we run every test Pharo's own CI skips.
+
+`WeakAnnouncerTest>>testNoDeadWeakSubscriptions` is one of them: its first two
+lines are `self longTestCase. self skipOnPharoCITestingEnvironment.` So it is
+a fine 13-second reproducer for the dead-subscription defect but it is NOT
+evidence that Cog passes anything.
+
+`ReleaseTest>>testNoDeadSubscriptions` is the one that carries the claim — its
+comment says it was skipped "in the past" and it runs on CI now. That means
+one of `ReleaseTest`'s four FAILs is NOT the harness self-pollution it has
+been labelled as since 2026-08-11; the other three genuinely do name the
+injected runner.
+
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 
 Full detail in `docs/jit-eviction-2026-08-22.md`. Short version, five defects,
