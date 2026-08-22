@@ -5931,6 +5931,14 @@ bool Interpreter::step() {
         // one-shot flag which only fires after explicit GC primitives 130/131).
         // When finalizeDeferred is on, this is handled by
         // backwardBranchInterruptCheck instead.
+        //
+        // NOT the only signal site, despite how this reads: the GC primitives
+        // (Interpreter.cpp:13839, :13862) and the WKA-class-not-found
+        // fallback (:22917) call signalFinalizationIfNeeded regardless of the
+        // knob, which is why [SIG-FIN] fires three times in a
+        // WeakAnnouncerTest run with finalizeDeferred ON.  Measured
+        // 2026-08-22 after mis-reading this gate as the reason dead weak
+        // subscriptions survive; it is not.
         if (!g_debug.finalizeDeferred) {
             signalFinalizationIfNeeded();
         }
@@ -23086,6 +23094,7 @@ void Interpreter::drainMournQueueNatively() {
         } else {
             mournNoProgressSize_ = 0;
         }
+
     } else {
         mournNoProgressSize_ = 0;
         // Queue fully drained (all WKAs processed natively + all WeakArrays
