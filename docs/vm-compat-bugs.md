@@ -129,6 +129,54 @@ That is more coverage, but it means some of our failures are tests upstream
 has already given up on, and they should not be counted against the VM
 without checking for that guard first.
 
+## NEW 2026-08-22 — x86_64 only: the XMLParser package load dies with "only integers should be used as indices"
+
+arm64 and x86_64, same script, same base image, same day:
+
+    arm64    load rc=0  369 s   image grew to 1146 MB   159 classes, 6358 P, 0 F, 1 E
+    x86_64   load rc=0   31 s   image 52 MB, DID NOT PERSIST   0 classes
+
+`rc=0` in 31 s with the image still at its original size means Metacello
+bailed without loading anything. The load log's last progress line is
+`MetacelloNotification: Project: OrderPreservingDictionary`, and the only
+error in the whole log is
+
+    Error: only integers should be used as indices
+
+which is a non-integer reaching an indexing primitive.
+
+**Read the stack carefully before chasing it** — the frames are printed
+innermost-first, so [15]-[27] are the OUTER ones:
+
+    [0]  UnhandledError>>signal
+    ...
+    [14] SmalltalkImage>>shortDebugStackOn:
+    [15] ZnNewLineWriterStream>>cr
+    ...
+    [22] ZnUTF8Encoder>>next:putAllASCII:startingAt:toStream:
+    [23] StdioStream>>nextPut:
+    ...
+    [26] StdioStream>>next:putAll:startingAt:
+    [27] FullBlockClosure>>on:do:
+
+i.e. this fires while the image is writing a debug stack to stderr. So it is
+either a SECOND failure on the reporting path after a silent first one, or
+the reporting path itself is where the bad index appears. Which of the two
+is not established, and the distinction decides where to look.
+
+First things to run, none of them done yet:
+
+  * `PHARO_NO_JIT=1` on the same load — the one-command discriminator for
+    whether the JIT is involved at all.
+  * the same load on arm64 with the same command line, to confirm the
+    difference is the architecture and not the run.
+  * `PHARO_T1_SKIP_SELECTORS=next:putAll:startingAt:` to see whether the
+    stdio path is the miscompiled one.
+
+Not to be confused with the x86_64 SUnit result, which is fine: the full
+sweep the same day scored 2039 classes / 28004 tests / 27667 P / 25 F / 22 E,
+against arm64's 2046 / 28067 / 27727 / 27 / 25.
+
 ## OPEN DEFECTS (as of 2026-08-12)
 
 **Update 2026-08-12 (later session): `#1` and `#5b` are FIXED.**  `#1` was the
