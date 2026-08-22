@@ -26,6 +26,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace pharo {
 
@@ -43,6 +44,32 @@ struct EvictedCodeRange {
     uint64_t start;
     uint64_t end;
 };
+
+// Membership test over a range list that has been SORTED by `start` and
+// coalesced (no overlaps, no adjacency).  allocateWithEviction sorts before
+// it scrubs and before it hands the list to scrubEvictedCodeRanges.
+//
+// This is a binary search because the linear version was quadratic in the
+// wrong place: one round evicts ~1/64th of the zone, which at 192 MB is
+// thousands of methods, and the IC scrub tests EVERY J2J entry of EVERY
+// method in the zone against EVERY range.  Millions of entries times
+// thousands of ranges is billions of comparisons per round.
+inline bool evictedRangesContain(const EvictedCodeRange* ranges, size_t n,
+                                 uint64_t addr) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (addr < ranges[mid].start)      hi = mid;
+        else if (addr >= ranges[mid].end)  lo = mid + 1;
+        else                               return true;
+    }
+    return false;
+}
+
+// Sort by start and merge overlapping/adjacent spans.  Eviction usually
+// frees runs of neighbouring methods, so this collapses a few thousand
+// ranges into a handful.
+void sortAndCoalesceRanges(std::vector<EvictedCodeRange>& ranges);
 
 // Allocate `codeSize` bytes (plus `numSendSites` IC sites) in the code
 // zone.  On a full zone: pin every method live on the active stack, in the

@@ -4990,12 +4990,10 @@ void JITRuntime::scrubEvictedCodeRanges(const EvictedCodeRange* ranges,
                                         size_t n) {
     if (!initialized_ || !ranges || n == 0) return;
 
+    // `ranges` arrives sorted and coalesced (allocateWithEviction does it
+    // once per round) so this is a binary search, not a scan per probe.
     auto inEvicted = [&](uint64_t addr) {
-        if (!addr) return false;
-        for (size_t i = 0; i < n; i++) {
-            if (addr >= ranges[i].start && addr < ranges[i].end) return true;
-        }
-        return false;
+        return addr != 0 && evictedRangesContain(ranges, n, addr);
     };
 
     // 1. PMS-linked send sites branch DIRECTLY to callee code, with no cache

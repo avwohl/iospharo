@@ -1526,6 +1526,23 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
 // while this logic lived inline down there it was unreachable in every
 // production run and the JIT silently stopped compiling on a full zone).
 // ---------------------------------------------------------------------------
+void sortAndCoalesceRanges(std::vector<EvictedCodeRange>& ranges) {
+    if (ranges.size() < 2) return;
+    std::sort(ranges.begin(), ranges.end(),
+              [](const EvictedCodeRange& a, const EvictedCodeRange& b) {
+                  return a.start < b.start;
+              });
+    size_t w = 0;
+    for (size_t r = 1; r < ranges.size(); r++) {
+        if (ranges[r].start <= ranges[w].end) {
+            if (ranges[r].end > ranges[w].end) ranges[w].end = ranges[r].end;
+        } else {
+            ranges[++w] = ranges[r];
+        }
+    }
+    ranges.resize(w + 1);
+}
+
 JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
                                 Interpreter& interp, size_t codeSize,
                                 uint32_t numSendSites) {
@@ -1692,6 +1709,10 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
         freed = zone.evictLRU(evictTarget, evictCallback, &methodMap,
                               preEvictCallback, &evictedRanges);
         if (freed > 0) {
+            // Sort + coalesce ONCE, so the scrub below and
+            // scrubEvictedCodeRanges can binary-search instead of scanning
+            // every range for every IC entry of every method in the zone.
+            sortAndCoalesceRanges(evictedRanges);
             static int evictCount = 0;
             if (++evictCount <= 3 || (evictCount % 500 == 0)) {
                 fprintf(stderr, "[JIT] Incremental evict #%d: freed %zu bytes for %zu needed, "
@@ -1716,12 +1737,11 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
                             uint64_t extra = slots[e * 3 + 2];
                             if (!(extra & J2J_BIT)) continue;
                             uint64_t addr = extra & ADDR_MASK;
-                            for (auto& r : evictedRanges) {
-                                if (addr >= r.start && addr < r.end) {
-                                    slots[e * 3 + 2] = 0;
-                                    if (e == 0) slot0Scrubbed = true;
-                                    break;
-                                }
+                            if (evictedRangesContain(evictedRanges.data(),
+                                                     evictedRanges.size(),
+                                                     addr)) {
+                                slots[e * 3 + 2] = 0;
+                                if (e == 0) slot0Scrubbed = true;
                             }
                         }
                         // PMS §7 event 4: a linked site's callee was
