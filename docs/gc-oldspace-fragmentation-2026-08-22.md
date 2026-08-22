@@ -71,6 +71,19 @@ place again, and no later GC can improve it.
 show up as free chunks in any walk — the census reports "free-chunks=0 MB"
 while 146 MB of the span is exactly that.
 
+## It is much worse than 2.7x on a big load
+
+The XMLParser package image, same script, same day:
+
+    image file on disk                     1,202,629,400 bytes   (1.15 GB)
+    live objects (allObjectsDo/sizeInMemory)   98,296,808 bytes   (94 MB)
+                                               837,995 objects
+
+**12x.** A 52 MB base image plus one package baseline produces a 1.15 GB
+file holding 94 MB of objects, and every launch of that image reads and
+faults in all 1.15 GB. The package tier pays this twice per package (the
+load writes it, the test pass reads it).
+
 ## Consequences that are already being paid
 
   * Package images are ~2.7x their content: 235 MB (NeoJSON), 163 MB
