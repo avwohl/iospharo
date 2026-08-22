@@ -653,6 +653,9 @@ public:
     /// 177 (allInstances:) and pointersTo: for small classes.
     void collectInstancesOfClass(uint32_t classIndex, std::vector<Oop>& out);
 
+    /// As collectInstancesOfClass, but the YOUNG allocation area only.
+    void collectInstancesOfClassInEden(uint32_t classIndex, std::vector<Oop>& out);
+
     /// Templated iteration that inlines the callback (no std::function overhead).
     /// For hot paths like primitiveFindRoots. F must take (Oop).
     template <typename F>

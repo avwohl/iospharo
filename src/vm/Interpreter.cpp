@@ -1991,6 +1991,15 @@ void Interpreter::dumpJITStats() {
                 t2ICTotal > 0 ? 100.0 * jit::g_t2ICHits / t2ICTotal : 0.0);
     }
     jit::Tier2Compiler::dumpBailStats();
+    if (pinScanCalls_ > 0) {
+        fprintf(stderr,
+            "  evict pin-scan: rounds=%zu fullHeapWalks=%zu processes=%zu "
+            "chains=%zu chainSteps=%zu (per round: %zu procs, %zu steps)\n",
+            pinScanCalls_, pinScanFullWalks_, pinScanProcesses_,
+            pinScanChains_, pinScanSteps_,
+            pinScanProcesses_ / pinScanCalls_,
+            pinScanSteps_ / pinScanCalls_);
+    }
     {
         auto& ps = jitRuntime_.patchStats_;
         if (ps.links || ps.refusedGate || ps.refusedNoMap) {
@@ -2319,7 +2328,21 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
     uint32_t procClsIdx = active.asObjectPtr()->classIndex();
     if (procClsIdx == 0) return;
 
+    // Cost accounting.  This function is called from EVERY code-zone
+    // eviction round, and a 2026-08-22 `sample` of a package load caught 94%
+    // of the process inside it (749 of 796 samples), almost all in the chain
+    // walk below.  PHARO_JIT_STATS prints the totals so the cost is visible
+    // instead of being a mystery stall.
+    size_t procsSeen = 0, chainsWalked = 0, chainSteps = 0;
+
     auto pinChain = [&](Oop ctx) {
+        chainsWalked++;
+        // Cycle guard, Floyd's, no allocation: a context chain that closes a
+        // loop (materialisation under recursive error handling can build one
+        // -- see the [CYCLE-BREAK] path in materializeFrameStack) otherwise
+        // burns the FULL depth cap here, per process, per eviction round.
+        Oop slow = ctx;
+        bool advanceSlow = false;
         // Depth cap raised 256 -> 70000 (silent-cap audit 2026-07-03):
         // suspended chains legitimately reach MaxFrameDepth-scale under deep
         // recursion; contexts past the cap went UNPINNED and eviction could
@@ -2328,12 +2351,16 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
         // MaxFrameDepth(65536) is the standard chain-walk cycle guard here.
         for (int d = 0; d < 70000 && ctx.isObject() && ctx.rawBits() > 0x10000
                  && memory_.isValidPointer(ctx); d++) {
+            chainSteps++;
             Oop mth = memory_.fetchPointer(3, ctx);   // Context>>method (CompiledMethod/Block)
             if (mth.isObject() && mth.rawBits() > 0x10000) {
                 jit::JITMethod* jm = map.lookup(mth.rawBits());
                 if (jm && zone.contains(jm)) jm->pinned = true;
             }
             ctx = memory_.fetchPointer(0, ctx);       // sender
+            if (advanceSlow) slow = memory_.fetchPointer(0, slow);
+            advanceSlow = !advanceSlow;
+            if (ctx.rawBits() == slow.rawBits() && ctx.rawBits() > 0x10000) break;
         }
     };
 
@@ -2344,15 +2371,50 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
         pinChain(activeContext_);
 
     // Every Process instance in the heap: pin its suspendedContext chain.
-    Oop o = memory_.firstObject();
-    size_t guard = 0;
-    while (o.isObject() && o.rawBits() != 0 && ++guard < 16000000) {
-        ObjectHeader* h = o.asObjectPtr();
-        if (h->classIndex() == procClsIdx && o.rawBits() != active.rawBits()) {
-            pinChain(memory_.fetchPointer(ProcessSuspendedContextIndex, o));
-        }
-        o = memory_.objectAfter(o);
+    //
+    // This used to walk the WHOLE heap here, on every eviction round.
+    // Measured 2026-08-22 with a 4 MB code zone on a four-class SUnit batch:
+    // 235 rounds, 826,734 objects visited PER ROUND, 194 million in a
+    // 9-second run — and a `sample` of the 30-minute XMLParser package load
+    // caught 94% of the process inside this function.  Finding 32 Process
+    // objects should not cost 826,734 object visits.
+    //
+    // An object cannot appear anywhere except EDEN without a GC having run,
+    // and every GC bumps memory_.gcCount().  So: cache the whole-heap result
+    // per GC, and re-walk only eden each round.  That is exactly as complete
+    // as the old walk (same regions, same class check) at a fraction of the
+    // cost.  Duplicates between the cache and the eden re-walk are harmless —
+    // pinning is idempotent.
+    if (memory_.gcCount() != pinScanProcCacheGC_) {
+        std::vector<Oop> all;
+        memory_.collectInstancesOfClass(procClsIdx, all);
+        pinScanProcCache_.clear();
+        pinScanProcCache_.reserve(all.size());
+        for (Oop p : all) pinScanProcCache_.push_back(p.rawBits());
+        pinScanProcCacheGC_ = memory_.gcCount();
+        pinScanFullWalks_++;
     }
+    auto pinProcess = [&](uint64_t bits) {
+        if (bits == active.rawBits()) return;
+        Oop p = Oop::fromRawBits(bits);
+        if (!p.isObject() || p.rawBits() < 0x10000
+            || !memory_.isValidPointer(p)) return;
+        ObjectHeader* ph = p.asObjectPtr();
+        // A `become:` between GCs can leave a forwarder where the cache
+        // recorded a Process; the class check alone would not catch it.
+        if (ph->isForwarded() || ph->classIndex() != procClsIdx) return;
+        procsSeen++;
+        pinChain(memory_.fetchPointer(ProcessSuspendedContextIndex, p));
+    };
+    for (uint64_t bits : pinScanProcCache_) pinProcess(bits);
+    std::vector<Oop> young;
+    memory_.collectInstancesOfClassInEden(procClsIdx, young);
+    for (Oop p : young) pinProcess(p.rawBits());
+
+    pinScanCalls_++;
+    pinScanProcesses_ += procsSeen;
+    pinScanChains_ += chainsWalked;
+    pinScanSteps_ += chainSteps;
 #endif  // PHARO_JIT_ENABLED — JIT-disabled builds never reach the LRU eviction
         // path (JITCompiler.cpp) that calls this, so the body is a no-op there.
 }

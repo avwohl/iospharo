@@ -392,6 +392,14 @@ public:
     /// recycled heap address (sweepGC has no recoverAfterGC pass).
     void purgeDeadCacheRoots();
 
+    // pinLiveJITMethodsAcrossProcesses cost counters — see its comment.
+    size_t pinScanCalls_ = 0, pinScanObjects_ = 0, pinScanProcesses_ = 0;
+    size_t pinScanChains_ = 0, pinScanSteps_ = 0, pinScanFullWalks_ = 0;
+    // Process oops found by the last whole-heap walk, and the GC count it was
+    // taken at.  Anything allocated since then is in eden and is re-walked.
+    std::vector<uint64_t> pinScanProcCache_;
+    size_t pinScanProcCacheGC_ = static_cast<size_t>(-1);
+
     /// Set/get system paths
     void setImageName(const std::string& name) { imageName_ = name; }
     void setVMPath(const std::string& path) { vmPath_ = path; }
