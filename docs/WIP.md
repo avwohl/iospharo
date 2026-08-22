@@ -368,6 +368,19 @@ image, so there is recompile churn on top of the scan costs, and
 `evictTarget` (1/64th of the zone) may want raising now that a round is
 cheaper.
 
+**And `evictLRU`'s second pass is still not an LRU.** Pass 1 keeps only
+methods with `lastUsedEpoch < epoch_ - 10`, and the epoch advances once per
+64K method entries — so a method has to go ~650K entries untouched to be
+pass-1 eligible. Whenever pass 1 does not free enough (which is most rounds),
+pass 2 walks `firstMethod_` and takes whatever is unpinned, i.e. **address
+order**. The lowest addresses hold the earliest-compiled methods, which are
+the kernel ones that stay hot. `763f7f7b` fixed the epoch never advancing;
+the address-order fallback under it is still there. The fix is to run pass 2
+at progressively younger thresholds (`epoch_-5`, `-2`, `-1`, then
+everything) instead of ignoring recency entirely — deliberately NOT done in
+this session, because changing eviction policy immediately before the
+definitive sweep would invalidate the measurement.
+
 ### Third measured cause: the mourn queue was re-drained on every activation
 
 `drainMournQueueNatively` runs from `activateMethod` whenever
