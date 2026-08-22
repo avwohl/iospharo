@@ -73,6 +73,44 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 `docs/deferred.md`, which is now only that. Fixed work is recorded in
 `docs/changes.md` and `docs/history/`.
 
+## NEW 2026-08-22 — four dead weak subscriptions are never removed from the announcer
+
+Reproduces in ISOLATION, on every build tried, in 13 s:
+
+    printf 'WeakAnnouncerTest\n' > /tmp/sunit_class_names.txt
+    build-rel/test_load_image <prepped sunit image>
+
+    WeakAnnouncerTest   34 tests   32 P   1 F   1 S
+      FAIL: testNoDeadWeakSubscriptions
+        [an Array(a WeakAnnouncementSubscription (nil subscribes to MethodAdded)
+                  a WeakAnnouncementSubscription (nil subscribes to ClassRemoved)
+                  a WeakAnnouncementSubscription (nil subscribes to MethodModified)
+                  a WeakAnnouncementSubscription (nil subscribes to MethodRemoved))
+         should have been empty]
+
+`nil subscribes to X` means the subscriber has been collected — the weak
+reference was cleared correctly — but the subscription itself is still in
+`SystemAnnouncer uniqueInstance`'s registry. Removing it is finalization's
+job, and finalization is where to look.
+
+Same signature, same four announcement classes, as
+`ReleaseTest>>testNoDeadSubscriptions`, which fails in every full-suite run
+and has been filed as "harness self-pollution" since 2026-08-11. It is not:
+`WeakAnnouncerTest` reproduces it alone, with no other test class in the
+image. The two are one defect.
+
+Related and probably the same root: `LinkInstallerTest` fails
+`testPropagateNewClassScopedLinksOnMethodNode` as soon as ANY class runs
+before it (40/40 alone, 39/40 otherwise, with the JIT on OR off), and
+`PHARO_NEWSPACE_MB=1` reproduces it alone — but flakily, so the knob bisect
+around it is not yet evidence. The four dead subscriptions above are exactly
+LinkInstaller's subscription set.
+
+Not established: whether stock Cog passes `testNoDeadWeakSubscriptions` on
+this image. There is no runnable Cog on this host (it aborts allocating its
+code zone at 0x320000000), so that comparison needs another machine. Until
+then this is a strong candidate, not a confirmed divergence.
+
 ## OPEN DEFECTS (as of 2026-08-12)
 
 **Update 2026-08-12 (later session): `#1` and `#5b` are FIXED.**  `#1` was the
