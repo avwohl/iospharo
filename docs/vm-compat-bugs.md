@@ -129,80 +129,54 @@ That is more coverage, but it means some of our failures are tests upstream
 has already given up on, and they should not be counted against the VM
 without checking for that guard first.
 
-## NEW 2026-08-22 — x86_64 only: the XMLParser package load dies with "only integers should be used as indices"
+## NEW 2026-08-22 — a package load aborts SILENTLY, mid-dependency, and the VM still exits 0
 
-arm64 and x86_64, same script, same base image, same day:
+Filed first as "x86_64 only, dies with 'only integers should be used as
+indices'". Three tests later that description is wrong in almost every
+particular, and what is left is worse: **the abort is intermittent and
+produces no error at all.**
 
-    arm64    load rc=0  369 s   image grew to 1146 MB   159 classes, 6358 P, 0 F, 1 E
-    x86_64   load rc=0   31 s   image 52 MB, DID NOT PERSIST   0 classes
+The same command, verbatim from `scripts/package-tests-selfhosted.sh`, run
+back to back on x86_64:
 
-`rc=0` in 31 s with the image still at its original size means Metacello
-bailed without loading anything. The load log's last progress line is
-`MetacelloNotification: Project: OrderPreservingDictionary`, and the only
-error in the whole log is
+    verb-1  rc=0  613 s  image 1262 MB   loaded
+    verb-2  rc=0   54 s  image   52 MB   did nothing, and printed NOTHING
 
-    Error: only integers should be used as indices
+`verb-2` stops after three Metacello lines, at
+`MetacelloNotification: Project: BitmapCharacterSet` — the FIRST dependency,
+i.e. inside a `github://` sub-project clone. `pre.txt` was written correctly
+(2185 classes). There is no exception, no error line, no crash. The VM
+simply does not reach `Smalltalk snapshot: true andQuit: true` and exits
+zero, which the package script faithfully records as `load rc=0
+DID-NOT-PERSIST`.
 
-which is a non-integer reaching an indexing primitive.
+**An exit code of 0 on a load that did nothing is the real defect here.**
+Everything downstream — the harness, the summary, anyone reading it — treats
+rc=0 as success.
 
-**Read the stack carefully before chasing it** — the frames are printed
-innermost-first, so [15]-[27] are the OUTER ones:
+### What was ruled out on the way, each by measurement
 
-    [0]  UnhandledError>>signal
-    ...
-    [14] SmalltalkImage>>shortDebugStackOn:
-    [15] ZnNewLineWriterStream>>cr
-    ...
-    [22] ZnUTF8Encoder>>next:putAllASCII:startingAt:toStream:
-    [23] StdioStream>>nextPut:
-    ...
-    [26] StdioStream>>next:putAll:startingAt:
-    [27] FullBlockClosure>>on:do:
+  * *"x86_64 cannot load XMLParser."* It can: 709 s, 1265 MB image, 0 errors,
+    the same expression without the preamble. And `verb-1` above.
+  * *"The write-stream preamble is the trigger."* Run alone it is clean on
+    both arches, JIT and no-JIT: 2185 classes written, 0 errors. The
+    `StdioStream`/`ZnUTF8Encoder` frames in the original stack were the error
+    being REPORTED to stderr.
+  * *"'only integers should be used as indices' is the failure."* `verb-2`
+    failed the same way with no such error, so that message is one
+    manifestation, not the cause.
 
-i.e. this fires while the image is writing a debug stack to stderr. So it is
-either a SECOND failure on the reporting path after a silent first one, or
-the reporting path itself is where the bad index appears. Which of the two
-is not established, and the distinction decides where to look.
+### Still open
 
-### Two hypotheses tested the same day, both NEGATIVE
+Whether it is x86-specific at all. arm64 loaded XMLParser once, in the
+package tier — one sample against a failure rate that looks like ~50% on
+x86. The same two-run experiment is running on arm64; until it reports,
+"x86_64 only" is an assumption, not a result.
 
-**The write-stream preamble is not it.** The package script's eval writes the
-TestCase class list to `pre.txt` before loading, and the stack's
-`StdioStream` / `ZnUTF8Encoder` frames made that look like the origin. Run in
-isolation it is clean everywhere:
-
-    pre-x86-jit    rc=0  5s  2185 classes written  0 errors
-    pre-x86-nojit  rc=0  4s  2185 classes written  0 errors
-    pre-arm-jit    rc=0  3s  2185 classes written  0 errors
-
-So those frames really were the error being REPORTED to stderr, which was
-the other half of the hedge above.
-
-**The load on its own SUCCEEDS on x86_64.** The same Metacello expression
-without the preamble, run to completion:
-
-    x86_64   rc=0   709 s   image 1265 MB   0 errors
-    arm64    rc=0   369 s   image 1146 MB   (the package-tier figure)
-
-So there is no fundamental x86_64 load failure here. The 31 s bail in the
-package tier was something else.
-
-What that leaves: the failure needs the combination of preamble and load, or
-something else the package script sets up, or it is intermittent — and given
-the load alone takes 709 s while the failing run took 31 s, intermittent is
-now the leading possibility rather than a fallback. None of it is
-established.
-The next discriminators, still unrun:
-
-  * the package script's eval VERBATIM (preamble + load + snapshot) on
-    x86_64, repeated, to find out whether it is deterministic at all.
-  * if it is, `PHARO_NO_JIT=1` on that exact string.
-  * `PHARO_T1_SKIP_SELECTORS=next:putAll:startingAt:` to test the stdio path
-    specifically.
-
-Not to be confused with the x86_64 SUnit result, which is fine: the full
-sweep the same day scored 2039 classes / 28004 tests / 27667 P / 25 F / 22 E,
-against arm64's 2046 / 28067 / 27727 / 27 / 25.
+Where to look: the load stops inside a libgit2 `github://` clone, which is
+also where `Fuel` sits for 17 minutes against a repository that no longer
+exists. A VM that exits 0 after a Smalltalk process was terminated mid-eval
+is the shape described in memory `eval-deadline-killed-long-work`.
 
 ## OPEN DEFECTS (as of 2026-08-12)
 
