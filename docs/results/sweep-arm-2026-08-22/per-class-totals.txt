@@ -1,0 +1,3602 @@
+=== SUnit Test Run #19 (batch 1-50 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== AIAstarTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== AIBFSTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== AIBellmanFordTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AIDijkstraTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== AIDinicTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== AIGraphAlgorithmTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AIGraphReducerTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== AIHitsTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== AIKruskalTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== AILongestPathInDAGTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== AILongestPathInDCGTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AIPrimTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== AIShortestPathInDAGTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== AITarjanTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== AITopologicalSortingTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== AIWeightedHitsTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== AbstractClassDescriptionAnnouncementTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== AbstractClassDescriptionTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== AbstractFontFamilyMemberTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== AbstractFontFamilyTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== AbstractFontProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== AbstractStoredSettingTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AbstractTraitsOnPreparedModelTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== AbstractTutorialTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AbstractWindowManagerTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== AccessorInstanceVariableSlotTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ActiveClassAnnotationsTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== AdditionalMethodStateTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== AllocationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AndreasSystemProfilerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== AnnouncementSetTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== AnnouncerTest ===
+Total: 29 P:29 F:0 E:0 S:0
+=== ArgumentNamesTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ArgumentVariableTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ArrayTest ===
+Total: 324 P:324 F:0 E:0 S:0
+=== AsciiCharsetTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== AssignmentAndLiteralDebuggerTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== AssociationTest ===
+Total: 13 P:11 F:0 E:0 S:0
+=== AthensAffineTransformTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== AthensCairoCanvasTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== AthensCairoMatrixTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== AthensCairoPDFSurfaceTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AthensCairoSVGSurfaceTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== AthensProjectiveTransformTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== BCBeautifulCommentsSettingsTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== BMPReadWriterTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== BagTest ===
+Total: 168 P:168 F:0 E:0 S:0
+=== BalloonEngineTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== Base64MimeConverterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== Base64Test ===
+Total: 4 P:4 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 772
+=== BATCH COMPLETE ===
+=== SUnit Test Run #20 (batch 51-100 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== BasicBehaviorClassMetaclassTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== BecomeTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== BehaviorTest ===
+Total: 45 P:43 F:0 E:0 S:0
+=== BehaviorWithCompilerTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== BenchmarkResultTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== BinaryFileStreamTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== BitBltClipBugsTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== BitBltTest ===
+Total: 9 P:7 F:0 E:0 S:0
+=== BitRegisterTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== BlockClosureTest ===
+Total: 50 P:48 F:0 E:0 S:2
+=== BlockClosureValueWithinDurationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== BlockClosureValueWithinTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== BlockClosuresTestCase ===
+Total: 13 P:13 F:0 E:0 S:0
+=== BooleanSlotTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== BooleanTest ===
+Total: 5 P:3 F:0 E:0 S:0
+=== BreadthFirstGuideTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== BreakpointObserverTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== BreakpointTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== BuilderManifestTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== ByteArrayTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== ByteSymbolTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== CDClassWithPoolDictionaryParserTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== CDClassWithTraitAliasParserTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== CDClassWithTraitCompositionSequenceParserTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== CDClassWithTraitExclusionParserTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== CDClassWithTraitParserTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== CDCompiledBlockClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDCompiledMethodClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDDoubleByteClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDDoubleWordClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDEphemeronClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDExistingClassDefinitionTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== CDExistingClassSideDefinitionTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== CDFluidClassParserTest ===
+Total: 44 P:44 F:0 E:0 S:0
+=== CDImmediateClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDMetaclassWithTraitParserTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== CDNilSubclassParserTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== CDNormalClassCategoryParserTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== CDNormalClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDNormalMetaclassParserTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== CDPointClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDTraitParserTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== CDVariableByteClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDVariableClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDVariableWordClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CDWeakClassParserTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== CNSelectorExtractionOnPositionTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== CNSelectorExtractionOnSelectionTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== CNSelectorExtractorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CairoLibraryTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 699
+=== BATCH COMPLETE ===
+=== SUnit Test Run #21 (batch 101-150 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== CairoUTF8ConverterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== CavWindowProfileTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== CavWindowStrategyTest ===
+Total: 3 P:2 F:0 E:0 S:1
+=== CavroisWindowManagerTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== CavroisWindowPlaceHolderTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ChainedSortFunctionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ChangesBrowserTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== CharacterKeyCombinationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CharacterSetTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== CharacterTest ===
+Total: 19 P:17 F:0 E:0 S:0
+=== ChunkImportTestCase ===
+Total: 11 P:11 F:0 E:0 S:0
+=== CircleMorphTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== ClapApplicationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClapCodeEvaluatorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClapCommandSpecTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== ClapCommandTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== ClapContextTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== ClapDocumentationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ClapFlagTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== ClapHelloTest ===
+Total: 8 P:7 F:0 E:0 S:1
+=== ClapHelloWorldTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ClapMatchesTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== ClapMeaningsTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ClapPharoVersionTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== ClapPositionalTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ClapTestRunnerTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ClapValidationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClassAnnotationTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== ClassAnnouncementsTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClassDefinitionPrinterConfigurationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClassDescriptionProtocolsTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== ClassDescriptionTest ===
+Total: 29 P:27 F:0 E:0 S:0
+=== ClassFactoryForTestCaseTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== ClassFactoryWithNonDefaultEnvironmentTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== ClassHierarchyPrinterTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== ClassHierarchyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClassQueryTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClassTest ===
+Total: 46 P:44 F:0 E:0 S:0
+=== ClassTraitTest ===
+Total: 5 P:4 F:0 E:0 S:0 T:1
+=== ClassVariableTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== ClipboardTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ClyAbstractMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyAbstractMethodsQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyAbstractlyNamedTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ClyAccrossWindowNavigationStateTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ClyActiveBreakpointsQueryTest ===
+Total: 39 P:39 F:0 E:0 S:0
+=== ClyAllBasisCritiquesTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== ClyAllClassVariablesQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAllClassesQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAllExtensionMethodsQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 577
+=== BATCH COMPLETE ===
+=== SUnit Test Run #22 (batch 151-200 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== ClyAllInstanceVariablesQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAllMethodCritiquesTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== ClyAllMethodGroupsQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAllMethodsQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAllPackageTagsQueryTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== ClyAllPackagesQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAllProblemMethodsTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== ClyAllVariablesQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyAsyncBrowserQueryCursorTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== ClyAsyncQueryResultTest ===
+Total: 20 P:19 F:0 E:0 S:1
+=== ClyAsyncQueryTest ===
+Total: 40 P:33 F:0 E:0 S:7
+=== ClyAsyncRawQueryCursorTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== ClyBothMetaLevelClassScopeTest ===
+Total: 40 P:40 F:0 E:0 S:0
+=== ClyBreakpointMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyBrowserContextAbstractTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ClyBrowserItemCursorTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== ClyBrowserToolValidityTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== ClyClassBindingsTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== ClyClassCommentsQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyClassExternalReferencesQueryTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== ClyClassReferencesQueryTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== ClyClassScopeTest ===
+Total: 48 P:48 F:0 E:0 S:0
+=== ClyClassSideScopeTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== ClyClassVariableTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ClyCompositeScopeTest ===
+Total: 39 P:39 F:0 E:0 S:0
+=== ClyConcreteGroupCritiquesTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== ClyConstantMethodQueryTest ===
+Total: 40 P:39 F:0 E:0 S:1
+=== ClyConstantQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyCriticMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyDeprecatedMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyDeprecatedMethodsQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyExpectedFailedTestMethodsQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyExpectedFailureMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyExtendedClassGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyExtendedMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyExtendingPackagesQueryTest ===
+Total: 36 P:35 F:0 E:0 S:1
+=== ClyExtensionLastSortedClassesTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== ClyFFIMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyFFIMethodsTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyFilterQueryTest ===
+Total: 41 P:34 F:0 E:0 S:7
+=== ClyFlagMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyFlaggingMethodsQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyFullBrowserStateTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== ClyGroupedClassVariablesTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== ClyGroupedCritiquesTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== ClyGroupedExtendingPackagesTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== ClyGroupedInstanceVariablesTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== ClyHierarchicalSystemItemsTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== ClyHierarchicallySortedClassesTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== ClyInheritedMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 1144
+=== BATCH COMPLETE ===
+=== SUnit Test Run #23 (batch 201-250 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== ClyInheritedTraitsHierarchyTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== ClyInstallMetaLinkPresenterTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== ClyInstanceSideScopeTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== ClyInterestingSuperclassScopeTest ===
+Total: 40 P:40 F:0 E:0 S:0
+=== ClyItemNameFilterTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ClyMergedSubclassesAndInheritedTraitsHierarchyTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== ClyMergedSuperclassesAndInheritedTraitsHierarchyTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== ClyMessageImplementorsQueryTest ===
+Total: 38 P:38 F:0 E:0 S:0
+=== ClyMessageSendersQueryTest ===
+Total: 38 P:38 F:0 E:0 S:0
+=== ClyMethodCallCountersQueryTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== ClyMethodCounterGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyMethodGroupTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ClyMethodScopeTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== ClyMethodSourcesQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyMethodVisibilityGroupsTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== ClyMethodWatchQueryTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== ClyMethodsInProtocolGroupProviderTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ClyMethodsInProtocolQueryTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== ClyMultipleClassRelationScopeTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== ClyNavigationEnvironmentTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== ClyNoTagClassGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyNotebookPageRecyclerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ClyOverriddenMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyOverriddenMethodsQueryTest ===
+Total: 40 P:40 F:0 E:0 S:0
+=== ClyOverridingMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyOverridingMethodsQueryTest ===
+Total: 39 P:39 F:0 E:0 S:0
+=== ClyPackageExtensionMethodsQueryTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== ClyPackageExtensionScopeTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== ClyPackageScopeTest ===
+Total: 29 P:29 F:0 E:0 S:0
+=== ClyQueryBrowserFilterTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== ClyQueryBrowserStateTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== ClyQueryExampleTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== ClyQueryViewMorphShouldExpandTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== ClyQueryViewStateTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== ClyRawItemCursorTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== ClyRawQueryResultTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== ClyRegexPatternTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ClyRequiredMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyRestUntaggedClassesQueryTest ===
+Total: 38 P:37 F:0 E:0 S:1
+=== ClyScopeExampleTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== ClySemiAsyncQueryResultTest ===
+Total: 21 P:20 F:0 E:0 S:1
+=== ClySharedPoolReferencesQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClySortBrowserItemFunctionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ClySortByDefiningClassFunctionTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClySortByNameFunctionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ClySortItemGroupFunctionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ClySortMethodByPackageFunctionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ClySortMethodBySelectorFunctionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ClySortSystemItemFunctionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClySortedQueryResultTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 918
+=== BATCH COMPLETE ===
+=== SUnit Test Run #24 (batch 251-300 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== ClySubclassScopeTest ===
+Total: 44 P:44 F:0 E:0 S:0
+=== ClySubstringPatternTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ClySuperclassScopeTest ===
+Total: 47 P:47 F:0 E:0 S:0
+=== ClySystemEnvironmentTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClyTaggedClassGroupProviderTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ClyTaggedClassesQueryTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== ClyTestedClass2MockTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ClyTestedClassMockTest ===
+Total: 4 P:3 F:0 E:0 S:1
+=== ClyTestedEnvironmentPluginTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== ClyTextEditorToolMorphTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyTraitFirstSortFunctionTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyTraitUserScopeTest ===
+Total: 38 P:38 F:0 E:0 S:0
+=== ClyTraitUsersHierarchyTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== ClyUnclassifiedMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyUnclassifiedMethodsQueryTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== ClyUndeclaredMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ClyUndeclaredMethodsQueryTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== ClyUnimplementedMethodsQueryTest ===
+Total: 44 P:43 F:0 E:0 S:1
+=== ClyUnionQueryTest ===
+Total: 52 P:52 F:0 E:0 S:0
+=== ClyUnknownQueryTest ===
+Total: 20 P:19 F:0 E:0 S:1
+=== ClyUnknownScopeTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== ClyUntaggedClassesQueryTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ClyVariableReadersQueryTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== ClyVariableReferencesQueryTest ===
+Total: 39 P:39 F:0 E:0 S:0
+=== ClyVariableWritersQueryTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== ClyWatchMethodGroupProviderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== CmCommandDecoratorTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== CmCommandTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== CmCommandsGroupTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== CmUICommandTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== CmUILeftPositionStrategyExtensionsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CmUIRightPositionStrategyExtensionsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CmdCommandActivationStrategyTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CmdCommandActivatorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== CmdMenuTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== CoASTResultSetBuilderTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== CoAvoidRepeatedFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoClassVariableFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoCompletionEngineCodeSnippetTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== CoCompletionEngineTest ===
+Total: 65 P:65 F:0 E:0 S:0
+=== CoFetcherWithNoResultsTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== CoFilterFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoFilterNarrowingComparisonTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== CoGlobalSelectorFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoGlobalVariableFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoHierarchyClassVariableFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoHierarchyImplementedSelectorsFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoHierarchyInstanceVariableFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoImplementedSelectorsFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoInitializeTypeInferenceTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 778
+=== BATCH COMPLETE ===
+=== SUnit Test Run #25 (batch 301-350 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== CoInstanceVariableFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoMethodVariablesFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoNarrowHistoryFetcherTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== CoRepeatedHierarchyImplementedSelectorsFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoResultSetResettingTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CoResultSetTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== CoSequenceFetcherTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== CoSharedPoolVariableFetcherTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CoStaticBenchmarksTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== CoStatisticsTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== CoSuperMessageHeuristicTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== CodeSimulationTest ===
+Total: 9 P:8 F:0 E:0 S:1
+=== CodeSimulationWithHaltTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CollectVisitorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== CollectionArithmeticTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== CollectionTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== CollectionValueHolderTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ColorTest ===
+Total: 16 P:14 F:0 E:0 S:0
+=== CommandLineArgumentsTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CommandLineHandlerTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== CommandLinePasswordManagerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== CommentTestCase ===
+Total: 0 P:0 F:0 E:0 S:0
+=== CommentsToTestsTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== CommonClassDefinitionPrinterTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== CompiledBlockTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== CompiledCodeTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== CompiledMethodTest ===
+Total: 75 P:73 F:0 E:0 S:0
+=== CompletionContextTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== CompletionEngineTest ===
+Total: 51 P:51 F:0 E:0 S:0
+=== CompositeAnnotationContextTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ComputedSlotTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ConfigurableHistoryIteratorTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ContextDebuggingTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ContextTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== ContinuationTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== CopyVisitorTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== CoverageCollectorTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== CoverageDemoTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== DTCoverageCollectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DTCoverageMockTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== DTCoveragePluginPresenterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DTFilterableListPresenterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== DTMockPluginTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== DTTestCoverageTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== DTTestProfilingTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== DateAndTimeDosEpochTest ===
+Total: 63 P:63 F:0 E:0 S:0
+=== DateAndTimeEpochTest ===
+Total: 64 P:64 F:0 E:0 S:0
+=== DateAndTimeLeapTest ===
+Total: 43 P:43 F:0 E:0 S:0
+=== DateAndTimeTest ===
+Total: 59 P:57 F:0 E:0 S:0
+=== DateAndTimeUnixEpochTest ===
+Total: 63 P:63 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 774
+=== BATCH COMPLETE ===
+=== SUnit Test Run #26 (batch 351-400 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== DateParsingTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== DateTest ===
+Total: 54 P:52 F:0 E:0 S:0
+=== DebugPointBrowserPresenterTest ===
+Total: 11 P:10 F:0 E:0 S:1
+=== DebugPointObserverTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== DebugPointTest ===
+Total: 45 P:45 F:0 E:0 S:0
+=== DebugSessionContexts2Test ===
+Total: 3 P:3 F:0 E:0 S:0
+=== DebugSessionContextsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DebugSessionExceptionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== DebuggerModelTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== DebuggerTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== DebuggerTestCaseForRestartTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DelayBasicSchedulerMicrosecondTickerTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DelayBasicSchedulerMillisecondTickerTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DelayMutexSchedulerMicrosecondTickerTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DelayMutexSchedulerMillisecondTickerTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DelaySemaphoreSchedulerMicrosecondTickerTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DelaySemaphoreSchedulerMillisecondTickerTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DelayTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== DeleteVisitorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DependentsArrayTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== DeprecationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DictionaryTest ===
+Total: 205 P:205 F:0 E:0 S:0
+=== DiffBuilderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== DiffPatchTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== DirectoryEntryTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== DiskFileAttributesTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== DiskFileSystemTest ===
+Total: 59 P:59 F:0 E:0 S:0
+=== DocCommentsReleaseTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== DosTimestampTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== DoubleLinkedListTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== DrTestsTestRunnerTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== DrTestsTestRunnerUITest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== DrTestsUITest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== DurationTest ===
+Total: 71 P:69 F:0 E:0 S:0
+=== DynamicMessageImplementorTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== EDDebuggingAPITest ===
+Total: 27 P:27 F:0 E:0 S:0
+=== EDEmergencyDebuggerTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== EFArrayExpressionTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== EFAssignmentExpressionTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== EFBlockExpressionOnlyTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== EFBlockExpressionTest ===
+Total: 30 P:30 F:0 E:0 S:0
+=== EFCascadeExpressionTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== EFContextTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== EFFFICallTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== EFFormatterTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== EFInternalTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== EFLiteralArrayExpressionTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== EFLiteralValueExpressionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== EFMessageExpressionTest ===
+Total: 83 P:83 F:0 E:0 S:0
+=== EFMethodExpressionTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 975
+=== BATCH COMPLETE ===
+=== SUnit Test Run #27 (batch 401-450 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== EFParseErrorExpressionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== EFPatternBlockExpressionTest ===
+Total: 30 P:30 F:0 E:0 S:0
+=== EFPragmaExpressionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== EFReturnExpressionTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== EFSequenceExpressionTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== EFTemporariesExpressionTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== EFTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== EFVariableExpressionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== EmbeddedFreeTypeFontInstallerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== EpAnnouncementsTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== EpApplyPreviewerTest ===
+Total: 40 P:40 F:0 E:0 S:0
+=== EpApplyTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== EpCodeChangeIntegrationTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== EpCommentTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== EpDisabledIntegrationTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== EpEnabledIntegrationTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== EpFileOutModificationsTest ===
+Total: 17 P:16 F:1 E:0 S:0
+=== EpFilterTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== EpHasImpactFilterTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== EpLogBrowserOperationFactoryTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== EpLogTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== EpLostChangesDetectorTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== EpMonitorIntegrationTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== EpRevertTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== EpTriggeringIntegrationTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== EqFruitComparisonTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== EqPersonComparisonTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== EquivalentTreeTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== EventManagerTest ===
+Total: 25 P:23 F:0 E:0 S:0
+=== ExampleClassVariableTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ExampleSetTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ExampleSlotWithFluidAPITest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ExampleSlotWithStateTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ExceptionTest ===
+Total: 47 P:47 F:0 E:0 S:0
+=== ExecutionCounterTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== ExternalBrowserTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FBDBytecodeDecompilerExamplesTest ===
+Total: 51 P:51 F:0 E:0 S:0
+=== FBDDecompilerTest ===
+Total: 160 P:159 F:0 E:0 S:1
+=== FBIRBytecodeDecompilerTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== FFIArchitectureTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FFIAutoReleaseOptionCalloutTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== FFICallbackParametersTest ===
+Total: 12 P:11 F:0 E:0 S:1
+=== FFICallbackTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FFICalloutAPITest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== FFICalloutMethodBuilderTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== FFICalloutTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FFICompilerPluginTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FFIConstantHandleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FFIExternalArrayTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== FFIExternalEnumerationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 690
+=== BATCH COMPLETE ===
+=== SUnit Test Run #28 (batch 451-500 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== FFIExternalPackedStructureTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FFIExternalStructureFieldParserTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== FFIExternalStructurePlatformTest ===
+Total: 4 P:2 F:0 E:0 S:2
+=== FFIExternalStructureTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== FFIExternalUnionTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== FFIExternalValueHolderTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FFIFunctionParserTest ===
+Total: 45 P:45 F:0 E:0 S:0
+=== FFIFunctionResolutionTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== FFIOpaqueObjectTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FFIStringCalloutTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== FFITypeArrayTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FFITypesTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== FIFOQueueTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== FLBinaryFileStreamBasicSerializationTest ===
+Total: 79 P:76 F:0 E:0 S:3
+=== FLBlockClosureSerializationTest ===
+Total: 18 P:16 F:0 E:0 S:2
+=== FLByteArrayBasicSerializationTest ===
+Total: 79 P:76 F:0 E:0 S:3
+=== FLClassSerializationTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== FLCompiledMethodSerializationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FLConfigurationTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== FLContextSerializationTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== FLConvenienceExtensionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FLCreateClassSerializationTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== FLCreateTraitSerializationTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== FLDebuggerStackSerializerTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FLDecoderTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== FLEncoderDecoderTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FLEncoderTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== FLEphemeronTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== FLFileReferenceStreamBasicSerializationTest ===
+Total: 79 P:76 F:0 E:0 S:3
+=== FLFullBasicSerializationTest ===
+Total: 86 P:83 F:0 E:0 S:3
+=== FLFullBlockClosureSerializationTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== FLFullHeaderSerializationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FLGZippedBasicSerializationTest ===
+Total: 82 P:79 F:0 E:0 S:3
+=== FLGlobalClassSerializationTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== FLGlobalEnvironmentTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== FLGlobalSendSerializationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FLGlobalTraitSerializationTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== FLHashedCollectionSerializationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FLHeaderSerializationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FLHookedSubstitutionTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== FLIgnoredVariablesTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== FLIndexStreamTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FLLimitingSerializationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FLMaterializerConvenienceMethodsTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FLMaterializerTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== FLMigrationTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== FLPluggableSubstitutionTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== FLProcessSerializationTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== FLSequencedSerializationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FLSerializationTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 813
+=== BATCH COMPLETE ===
+=== SUnit Test Run #29 (batch 501-550 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== FLSerializerConvenienceMethodsTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FLSerializerTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== FLSignatureTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FLSimpleStackTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FLSingletonTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FLSortedCollectionSerializationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FLTraitSerializationTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== FLUserGuidesTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FLVersionTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== FLWeakObjectsTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== FTAscendingSortingStateTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FTCellSelectionModeStrategyTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== FTColumnTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== FTDescendingSortingStateTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FTNullColumnSortingStrategyTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== FTPropertyColumnSortingStrategyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FTRowSelectionModeStrategyTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== FTSortFunctionColumnSortingStrategyTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== FTTableMorphTest ===
+Total: 1 P:0 F:0 E:1 S:0
+=== FTUnsortedSortingStateTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FailingTearDownTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FailingTestResourceTestCase ===
+Total: 5 P:5 F:0 E:0 S:0
+=== FalseTest ===
+Total: 17 P:15 F:0 E:0 S:0
+=== FastStepThroughTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== FileAttributesPluginPrimsTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== FileHandleTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== FileLocatorTest ===
+Total: 38 P:38 F:0 E:0 S:0
+=== FileReferenceAttributeTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== FileReferenceTest ===
+Total: 112 P:112 F:0 E:0 S:0
+=== FileRegistryTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FileTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== FinalizationRegistryTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== Float32ArrayTest ===
+Total: 277 P:277 F:0 E:0 S:0
+=== Float64ArrayTest ===
+Total: 268 P:268 F:0 E:0 S:0
+=== FloatReferencesRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== FloatTest ===
+Total: 75 P:72 F:0 E:0 S:1
+=== FluidClassDefinitionPrinterTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== FontChooserTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== FontTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FormSetTest ===
+Total: 13 P:11 F:0 E:0 S:0
+=== FormTest ===
+Total: 8 P:6 F:0 E:0 S:0
+=== FractionTest ===
+Total: 32 P:30 F:0 E:0 S:0
+=== FreeTypeCacheTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== FreeTypeFontFamilyMemberTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== FreeTypeFontTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== FuzzyMatcherTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== GAngleTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== GArcTest ===
+Total: 16 P:14 F:0 E:0 S:2
+=== GCircleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== GCoordinatesTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 1151
+=== BATCH COMPLETE ===
+=== SUnit Test Run #30 (batch 551-600 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== GEllipseTest ===
+Total: 23 P:22 F:0 E:0 S:1
+=== GIFReadWriterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== GLineTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== GMatrixTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== GPointTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== GPolygonTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== GRayTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== GRectangleTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== GSegmentTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== GTriangleTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== GVectorTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== GZipReadStreamTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== GeneratorTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== GlobalIdentifierFuelPersistenceTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== GlobalIdentifierMergerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== GlobalIdentifierStonPersistenceTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== GlobalIdentifierWithDefaultConfigurationTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== GlobalIdentifierWithFuelTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== GlobalIdentifierWithStonTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== GlobalVariableTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== HaloMorphTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== HaltInCompiledBlockPrintOnTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== HaltTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== HashTableSizesTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== HashTesterTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== HeapTest ===
+Total: 148 P:148 F:0 E:0 S:0
+=== HiFastTableExampleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== HiRulerBuilderTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== HiRulerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== HiSpecExampleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== HistoryIteratorTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== HistoryNodeTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== HistorySlotTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== HowToMakeYourOwnTutorialTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ISOLanguageDefinitionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== IVsAndClassVarNamesConflictTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== IdentityBagTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== IdentityDictionaryTest ===
+Total: 206 P:206 F:0 E:0 S:0
+=== IdentitySetTest ===
+Total: 176 P:176 F:0 E:0 S:0
+=== ImageCleanerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ImageReadWriterTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== InitializedClassVariableTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== InitializedSlotTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== InstructionClientTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== InstructionStreamTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== IntegerArrayTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== IntegerDigitLogicTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== IntegerTest ===
+Total: 83 P:80 F:0 E:0 S:3
+=== InteractiveResolverTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== IntervalTest ===
+Total: 260 P:260 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 1216
+=== BATCH COMPLETE ===
+=== SUnit Test Run #31 (batch 601-650 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== IsContextPostMortemTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== JobTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== KMCategoryTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== KMCombinationTest ===
+Total: 9 P:8 F:0 E:0 S:1
+=== KMDispatchChainTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== KMDispatcherTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== KMKeymapBuilderTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== KMKeymapTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== KMPerInstanceTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== KMShortcutPrinterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== KMShortcutTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== KeyboardKeyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== KeyedTreeTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== LIFOQueueTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== LRUCacheTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== LargeNegativeIntegerTest ===
+Total: 15 P:13 F:0 E:0 S:0
+=== LargePositiveIntegerTest ===
+Total: 19 P:17 F:0 E:0 S:0
+=== LayoutFrameTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== LazyClassVariableTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== LazySlotTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== LegacyClassDefinitionPrinterTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== LessonInstanciationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== LibTTYTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== LimitedWriteStreamTest ===
+Total: 23 P:21 F:0 E:0 S:0
+=== LinkInstallerTest ===
+Total: 40 P:39 F:1 E:0 S:0
+=== LinkedListTest ===
+Total: 255 P:255 F:0 E:0 S:0
+=== LiteralVariableTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== LocalRecursionStopperTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== LocaleChangedTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== LocaleIDTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== LocaleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== LogicalFontManagerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== LowLevelReflectiveAPITest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MCAncestryTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MCAnnouncementTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== MCChangeNotificationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MCClassDefinitionTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== MCDataStreamTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MCDependencySorterTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MCDictionaryRepositoryTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== MCDirectoryRepositoryTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== MCFileInTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCGitBasedNetworkRepositoryTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCGitlabRepositoryTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MCMczInstallerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MCMergingTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== MCMethodDefinitionTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MCOrganizationTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCPTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCPackageLoaderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 586
+=== BATCH COMPLETE ===
+=== SUnit Test Run #32 (batch 651-700 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== MCPackageTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MCPatchTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCReleaseTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCRepositoryAuthorizationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MCScannerTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MCSerializationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MCSmalltalkhubRepositoryTest ===
+=== MCSnapshotTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MCSortingTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MCStReaderTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MCStWriterTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MCWorkingCopyForExtensionsTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MCWorkingCopyManagementTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MCWorkingCopyTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MD5Test ===
+Total: 9 P:7 F:0 E:0 S:0
+=== MOPTraitTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MagnitudeTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MailAddressParserTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MailAddressTokenizerTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MailMessageTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ManyTestResourceTestCase ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MarginTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MathOperationnsExtensionsTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MathOperationsExtensionsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MemoryFileSystemTest ===
+Total: 67 P:67 F:0 E:0 S:0
+=== MemoryHandleTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== MemoryLoggerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MessageNotUnderstoodTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MessageTallyTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MetaClassTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MetaLinkAnonymousClassBuilderTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== MetaLinkObjectAPITest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== MetaLinkRegistryTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetaLinkTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== MetacelloCommandLineHandlerTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== MetacelloCoreIssue125TestCase ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MetacelloCoreSymbolicVersionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MetacelloCoreVersionQueryTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloGroupSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloLockTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloMCGroupSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloMCPackagesSpecTestCase ===
+Total: 12 P:12 F:0 E:0 S:0
+=== MetacelloMCProjectReferenceSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloMCProjectSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloMCValueHolderSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloMCVersionSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloPackageSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloPackagesSpecTestCase ===
+Total: 15 P:15 F:0 E:0 S:0
+=== MetacelloProjectReferenceSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloProjectSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 310
+=== BATCH COMPLETE ===
+=== SUnit Test Run #33 (batch 701-750 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== MetacelloReferenceTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloRepositoriesSpecTestCase ===
+Total: 13 P:13 F:0 E:0 S:0
+=== MetacelloRepositorySpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloRepositorySqueakCommonTestCase ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MetacelloSemanticVersionNumberTestCase ===
+Total: 33 P:33 F:0 E:0 S:0
+=== MetacelloSpecTestCase ===
+Total: 0 P:0 F:0 E:0 S:0
+=== MetacelloValueHolderSpecTestCase ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MetacelloVersionNumberTestCase ===
+Total: 38 P:38 F:0 E:0 S:0
+=== MetacelloVersionSpecTestCase ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MethodAnnouncementsTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== MethodClassifierTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MethodConstantTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MethodDictionaryTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== MethodMapTest ===
+Total: 30 P:30 F:0 E:0 S:0
+=== MethodPragmaTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== MethodQueryTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MicAnchorBlockTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MicAnchorLinkerTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MicAnnotatedParagraphBlockTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== MicAnnotationSubclassTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== MicArgumentListTest ===
+Total: 30 P:30 F:0 E:0 S:0
+=== MicBlockQuoteBlockTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== MicCitationBlockTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MicCodeBlockTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== MicColumnsBlockTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MicCommentTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MicDocumentBrowserLayoutModelTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MicDocumentBrowserModelTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MicEnvironmentBlockTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== MicFigureBlockTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== MicFileResourceReferenceTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== MicFootnoteBlockTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MicFormatBlockTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== MicGitHubAPITest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MicGitHubRessourceReferenceTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== MicHTTPResourceReferenceTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MicHeaderBlockTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== MicHorizontalLineBlockTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MicInlineBlockTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MicInlineDelimiterTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MicInlineExtenedSyntaxTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MicInlineParserTest ===
+Total: 36 P:36 F:0 E:0 S:0
+=== MicInlineSpaceBlockTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MicInlineTokenStreamTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== MicInputfileBlockTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MicLinkBlockTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== MicMathBlockTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== MicMetaDataBlockTest ===
+Total: 20 P:19 F:0 E:0 S:1
+=== MicMicrodownTextualBuilderTest ===
+Total: 43 P:43 F:0 E:0 S:0
+=== MicNoteBlockTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 684
+=== BATCH COMPLETE ===
+=== SUnit Test Run #34 (batch 751-800 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== MicOrderedListBlockTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== MicParagraphBlockTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== MicParserTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MicPharoClassCommentResourceReferenceTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MicPharoCommentResourceReferenceTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MicPharoEvaluatortBlockTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MicPharoImageResourceReferenceTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MicPharoPackageCommentResourceReferenceTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== MicPharoScriptBlockTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== MicRawBlockTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MicRawParagraphBlockTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== MicRelativeResourceReferenceTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MicResourceReferenceTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MicResourceSettingsTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MicRootBlockTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== MicScriptBlockExtensionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MicSectionBlockTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MicSlideBlockTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== MicStringExtensionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MicTextPresenterTest ===
+Total: 22 P:21 F:0 E:0 S:1
+=== MicUnknownResourceUriTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MicUnorderedListBlockTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== MicZincPathResolverTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MicrodownParserTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== MicrodownPresenterTest ===
+Total: 26 P:25 F:0 E:0 S:1
+=== MicrodownSpecComponentTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MicrodownTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== MicrodownVisitorTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MirrorPrimitivesTest ===
+Total: 40 P:39 F:0 E:0 S:1
+=== MockBasicAPITest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== MockMessageArgumentTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MockMessageSendTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MockMessageSequenceTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== MockVerifyMessageTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== MonitorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== MonthTest ===
+Total: 18 P:16 F:0 E:0 S:0
+=== MorphTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== MorphTreeMorphTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== MorphicEventHandlerTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== MorphicNativeWindowTest ===
+Total: 5 P:0 F:0 E:0 S:5
+=== MorphicWindowManagerTest ===
+Total: 13 P:10 F:0 E:0 S:3
+=== MouseClickStateTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== MutexTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== NSClampTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== NSDomainAndRangeTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== NSLinearScaleTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== NSLogScaleTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== NSNiceLinearTicksGeneratorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== NSNumberTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== NSOrdinalScaleTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 450
+=== BATCH COMPLETE ===
+=== SUnit Test Run #35 (batch 801-850 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== NSPolylinearScaleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== NSPowScaleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== NSSLnScaleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== NSScaleTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== NSSymLogScaleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== NativeArrayTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== NaturalLanguageTranslatorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== NavigationInteractionTest ===
+Total: 3 P:2 F:0 E:0 S:1
+=== NestedDictionaryTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== NetNameResolverTest ===
+Total: 2 P:1 F:0 E:0 S:1
+=== NetworkIPv6StringTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== NewValueHolderTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== NoUnusedVariablesLeftTest ===
+=== NonInteractiveTranscriptTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== NullStreamTest ===
+Total: 8 P:6 F:0 E:0 S:0
+=== NullWorldRendererTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== NumberParserTest ===
+Total: 25 P:23 F:0 E:0 S:0
+=== NumberParsingTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== NumberTest ===
+Total: 23 P:21 F:0 E:0 S:0
+=== OCASTAndOrTranslatorTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== OCASTBasicTranslatorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCASTBlockTranslatorTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== OCASTCheckerTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== OCASTClosureAnalyzerTest ===
+Total: 33 P:33 F:0 E:0 S:0
+=== OCASTDoubleBranchConditionalTranslatorTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== OCASTLiteralTranslatorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCASTRepeatTranslatorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCASTSemanticAnalyzerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== OCASTSingleBlockTranslatorTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCASTSingleBranchConditionalTranslatorTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== OCASTSpecialLiteralTranslatorTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OCASTTimesRepeatTranslatorTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== OCASTToDoTranslatorTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OCASTTranslatorMappingForFullBlockClosuresTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCASTTranslatorTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCASTVariableTranslatorTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== OCASTWhileFalseTranslatorTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== OCASTWhileTrueTranslatorTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== OCAnnotationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OCArrayLiteralTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== OCBlockNodeTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OCBytecodeGeneratorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCBytecodeToASTCacheTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== OCCacheResetTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== OCClassBuilderTest ===
+Total: 26 P:25 F:0 E:1 S:0
+=== OCClosureCompilerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== OCClosureTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== OCCodeReparatorTest ===
+Total: 15 P:13 F:0 E:0 S:2
+=== OCCodeSnippetScriptingTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCCodeSnippetTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 440
+=== BATCH COMPLETE ===
+=== SUnit Test Run #36 (batch 851-900 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== OCCommentNodeTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCCommentNodeVisitorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCCompilationContextTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== OCCompileWithFailureTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCCompiledMethodIntegrityTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== OCCompilerNotifyingTest ===
+Total: 31 P:31 F:0 E:0 S:0
+=== OCCompilerSyntaxErrorNotifyingTest ===
+Total: 31 P:31 F:0 E:0 S:0
+=== OCCompilerTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== OCContextTempMappingTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== OCDoItVariableTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== OCDoitTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== OCDumpVisitorTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== OCDynamicASTCompilerPluginTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCEOFTokenTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCEnvironmentScopeTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCErrorNodeParserTest ===
+Total: 29 P:29 F:0 E:0 S:0
+=== OCEvaluationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCGenericNodeVisitorTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OCIRBuilderTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== OCIRPrinterTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== OCIRTransformTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== OCIRVisitorTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== OCIfNotNilTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== OCIsEssentialTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== OCLiteralTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== OCMessageNodeTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== OCMethodNodeTest ===
+Total: 31 P:31 F:0 E:0 S:0
+=== OCNewCompilerWithChangesFunctionalTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== OCParseErrorNodeTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== OCParseTreeRewriterTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== OCParseTreeSearcherTest ===
+Total: 46 P:46 F:0 E:0 S:0
+=== OCParserTest ===
+Total: 142 P:140 F:0 E:0 S:2
+=== OCPatternParserTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== OCPerformTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCProgramNodeTest ===
+Total: 121 P:120 F:0 E:0 S:1
+=== OCReadBeforeWrittenTesterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCReturnNodeAdderVisitorTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== OCScanner2Test ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCScannerTest ===
+Total: 138 P:138 F:0 E:0 S:0
+=== OCScopeTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCSequenceNodeTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OCSimpleFormatterTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== OCSourceCode2BytecodeTest ===
+Total: 58 P:58 F:0 E:0 S:0
+=== OCSpecialSelectorTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCStaticASTCompilerPluginTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCTargetCompilerTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== OCTypingVisitorTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OCVariableNodeNameResolutionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OCVariableNodeTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OSEnvironmentTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 956
+=== BATCH COMPLETE ===
+=== SUnit Test Run #37 (batch 901-950 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== OSPlatformTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OSWindowAttributesTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== OSWindowTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ObjectFinalizerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ObjectLayoutTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ObjectTest ===
+Total: 28 P:26 F:0 E:0 S:0
+=== ObjectWithPrintingRaisingHaltTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ObservableSlotTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== ObsoleteTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OldClassDefinitionPrinterTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== OmBlockFileStoreTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OmDeferrerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OmFileStoreTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== OmMemoryStoreTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== OmRandomSuffixStrategyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== OmSessionStoreTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== OmStoreFactoryTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OpalCompilerTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== OpenToolTest ===
+Total: 11 P:0 F:0 E:0 S:11
+=== OrderedCollectionTest ===
+Total: 351 P:351 F:0 E:0 S:0
+=== OrderedDictionaryTest ===
+Total: 67 P:67 F:0 E:0 S:0
+=== OrderedIdentityDictionaryTest ===
+Total: 67 P:67 F:0 E:0 S:0
+=== OupsDebugRequestTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== OupsDebuggerSelectionStrategyTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== OupsDebuggerSelectorTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== OupsDebuggerSystemTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OupsSingleDebuggerSelectorTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== OutOfMemoryTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== OverridesDeprecatedMethodRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== PNGReadWriterTest ===
+Total: 42 P:42 F:0 E:0 S:0
+=== PaCasesMatrixTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PaCombinedMatrixExampleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PaMatrix3ExampleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PaMatrixExampleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PaSelectedCasesExampleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PaSimpleMatrixExampleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== PaSuiteTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== PackageAndClassesTest ===
+Total: 29 P:29 F:0 E:0 S:0
+=== PackageAndMethodsTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== PackageAndTraitOnModelTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== PackageAndTraitsTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== PackageAnnouncementsTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== PackageObsoleteTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== PackageOnModelTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== PackageOrganizerTest ===
+Total: 30 P:30 F:0 E:0 S:0
+=== PackageRenameTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== PackageTagTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== PackageTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== PaginatedMorphTreeMorphTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PathTest ===
+Total: 76 P:76 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 1010
+=== BATCH COMPLETE ===
+=== SUnit Test Run #38 (batch 951-1000 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== PharoBootstrapRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== PharoDocCommentTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== PharoSyntaxTutorialTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== PharoTutorialGoOnMockTutorialTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== PharoTutorialGoTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== PharoTutorialNavigationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== PlatformResolverTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== PluggableDictionaryTest ===
+Total: 209 P:209 F:0 E:0 S:0
+=== PluggableSetTest ===
+Total: 174 P:174 F:0 E:0 S:0
+=== PointArrayTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== PointTest ===
+Total: 36 P:34 F:0 E:0 S:0
+=== PolygonMorphTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PostorderGuideTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== PragmaTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== PreorderGuideTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ProcessLocalSlotTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ProcessMonitorTestServiceTest ===
+Total: 47 P:44 F:0 E:0 S:3
+=== ProcessSpecificTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ProcessTerminateBugTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== ProcessTest ===
+Total: 46 P:46 F:0 E:0 S:0
+=== ProjectManagerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ProperMethodCategorizationTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== ProperPackagesTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ProperlyImplementedSUnitClassesTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== PropertySlotTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ProtoObjectTest ===
+Total: 17 P:15 F:0 E:0 S:0
+=== ProtocolAnnouncementsTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== ProtocolConventionsTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== QueryAnnotationsFromClassTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== QuotedPrintableMimeConverterTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== RBAbstractClassVariableParametrizedTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBAbstractEnvTestCase ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RBAbstractInstanceVariableParametrizedTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBAbstractRefactoringTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBAbstractTransformationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBAddAccessorsForClassTransformationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBAddAssignmentTransformationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBAddClassVariableRefactoringTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBAddClassVariableTransformationParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBAddInstanceVariableParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBAddInstanceVariableRefactoringTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBAddMessageSendTransformationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBAddMethodRefactoringTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBAddMethodTransformationParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBAddParameterParametrizedTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== RBAddPragmaTransformationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBAddReturnStatementTransformationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBAddSubtreeTransformationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBAddTemporaryVariableParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBAddVariableAccessorsParametrizedTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 788
+=== BATCH COMPLETE ===
+=== SUnit Test Run #39 (batch 1001-1050 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== RBAddVariableAccessorsWithLazyInitializationParametrizedTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBBrowserEnvironmentTest ===
+Total: 27 P:27 F:0 E:0 S:0
+=== RBChildrenToSiblingsParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBClassTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== RBConditionTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== RBCopyPackageParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBDeprecateMethodParametrizedTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBDriverTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RBExtractMethodAndOccurrencesTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBExtractMethodRefactoringTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RBExtractMethodToComponentRefactoringTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBExtractMethodTransformationTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== RBExtractSetUpMethodAndOccurrencesParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBExtractSetUpMethodParametrizedTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBExtractToTemporaryParametrizedTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== RBFindAndReplaceParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBFindAndReplaceSetUpParametrizedTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBInlineAllMethodParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBInlineMethodFromComponentParametrizedTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBInlineMethodParametrizedTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== RBInlineParameterParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBInlineTemporaryParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBInsertClassParametrizedTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RBMakeClassAbstractParametrizedTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBMaxOneAssignmentWithReferencesConditionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBMergeInstanceVariableIntoAnotherParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBMethodNameTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBMethodProtocolTransformationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBMoveClassTransformationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBMoveInstanceVariableToClassParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBMoveMethodParametrizedTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBMoveMethodToClassParametrizedTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBMoveMethodToClassSideParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBMoveMethodToClassSideRefactoringTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBMoveTemporaryVariableDefinitionTransformationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBMoveVariableDefinitionParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBNamespaceTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== RBNotInCascadedMessageConditionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBProtectInstanceVariableParametrizedTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBProtectVariableTransformationTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== RBPullUpClassVariableParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBPullUpInstanceVariableParametrizedTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBPullUpMethodParametrizedTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== RBPullUpMethodRefactoringTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBPushDownClassVariableParametrizedTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBPushDownInstanceVariableParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBPushDownMethodParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBPushDownMethodRefactoringTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBRealizeClassParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBRefactoringChangeManagerPerformChangesTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 319
+=== BATCH COMPLETE ===
+=== SUnit Test Run #40 (batch 1051-1100 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== RBRefactoringChangeManagerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RBRefactoringChangeTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== RBRegexTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBRemoveAllMessageSendsTransformationTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RBRemoveAllSendersParametrizedTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBRemoveAssignmentTransformationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBRemoveClassPushStateToSubclassesTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBRemoveClassRefactoringTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RBRemoveClassTransformationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBRemoveClassVariableParametrizedTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBRemoveClassVariableRefactoringTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBRemoveDirectAccessToVariableTransformationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBRemoveInstanceVariable2ParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBRemoveMethodParametrizedTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBRemoveMethodRefactoringTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBRemoveMethodsInHierarchyRefactoringTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBRemoveMethodsRefactoringTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBRemoveParameterParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBRemovePragmaTransformationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBRemoveProtocolTransformationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBRemoveReturnStatementTransformationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBRemoveSenderMethodParametrizedTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RBRemoveSubtreeTransformationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBRemoveTemporaryVariableTransformationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBRenameAndDeprecateClassTransformationTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBRenameClassRefactoringTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RBRenameClassVariableParametrizedTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBRenameInstanceVariableParametrizedTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RBRenameMethodParametrizedTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RBRenameMethodRefactoringTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBRenamePackageParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBRenameTemporaryParametrizedTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBRenameVariableParametrizedTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBReplaceMessageSendParametrizedTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== RBReplaceSubtreeTransformationTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RBSearchTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBSharedPoolTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RBSplitCascadeParametrizedTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RBSubtreeDoesNotContainReturnConditionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RBTemporaryToInstanceVariableParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBTemporaryToInstanceVariableRefactoringTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBTestAsDataForExtractSetupTransformationTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RBTransformationsTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== RBVariableTypeTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBVariablesNotReadBeforeWrittenConditionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RBWithDifferentConstructorsParametrizedTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RBWithDifferentsArgumentsParametrizedTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RGAnnouncementsTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== RGBackendTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RGBehaviorTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 278
+=== BATCH COMPLETE ===
+=== SUnit Test Run #41 (batch 1101-1150 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== RGClassDefinitionTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== RGClassDescripitonStrategyTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== RGClassDescriptionTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RGClassStrategyTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RGClassTest ===
+Total: 31 P:31 F:0 E:0 S:0
+=== RGClassVariableTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RGCommentDefinitionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RGCommentTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RGElementDefinitionTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RGEnsureTraitTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RGEnvironmentBackendTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RGEnvironmentQueryInterfaceTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RGEnvironmentTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== RGGlobalVariableTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RGLayoutDefinitionTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== RGMCClassTest ===
+Total: 4 P:3 F:0 E:0 S:1
+=== RGMCPackageTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RGMCTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RGMCTraitCompositionVisitorTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== RGMetaclassDefinitionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RGMetaclassStrategyTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RGMetaclassTraitStrategyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RGMetaclassTraitTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== RGMetatraitDefinitionTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RGMethodDefinitionTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== RGMethodTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== RGMonticelloTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RGObjectTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RGPackageDefinitionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RGPackageTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== RGPoolVariableTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RGReadOnlyBackendTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RGReadOnlyImageBackendTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== RGSlotTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RGStampParserTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RGTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RGTraitAliasTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RGTraitCompositionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RGTraitDefinitionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RGTraitExclusionTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RGTraitStrategyTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RGTraitTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== RGUnresolvedValueTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RGVariableDefinitionTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RPackageMonticelloSynchronisationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSAdjacencyMatrixBuilderTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RSAlignmentTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RSAngleLineLayoutTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSAnimationTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RSAthensRendererTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 395
+=== BATCH COMPLETE ===
+=== SUnit Test Run #42 (batch 1151-1200 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== RSAttachPointTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSBarPlotTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== RSBoundingTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RSBoxPlotShapeTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== RSBoxPlotTest ===
+Total: 25 P:25 F:0 E:0 S:0
+=== RSCameraTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSCanvasControllerTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSCanvasTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== RSChannelTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSChartTickTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSChartTitleDecorationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSCircleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSCircleVennDiagramTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSCircularAroundAVertexLayoutTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSClusterChartTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSClusteringLayoutTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSCollectionTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== RSColoredTreePaletteTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSCompositeChartTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSCompositeTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== RSConnectionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSDSMTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RSDensityPlotTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RSDependencyTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSDominanceTreeLayoutTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSDraggableCanvasTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSDraggableTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSEasingInterpolatorTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSElasticBoxTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSExamplesTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSFlowCanvasTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSFlowLayoutTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSForceBasedLayoutTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSGhostDraggableTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSGridLayoutTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSGroupTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== RSHeatmapTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSHighlightableTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RSHistogramPlotTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RSHorizontalDominanceTreeLayoutTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSHorizontalTreeLayoutTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RSInspectorShapeTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSKernelDensityTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== RSKiviatTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSLabelTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== RSLabeledTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSLayoutBuilderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSLayoutTestCase ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RSLineBuilderTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== RSLinePlotTest ===
+Total: 31 P:31 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 385
+=== BATCH COMPLETE ===
+=== SUnit Test Run #43 (batch 1201-1250 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== RSLinesTest ===
+Total: 18 P:17 F:0 E:1 S:0
+=== RSLocationTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RSMapBuilderTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSMarkerDecorationParametrizedTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSMarkerTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSMondrianTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== RSMonitorEventsTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSNormalizerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSObjectWithPropertyTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSOvalLayoutTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSPAnimationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSPBoundingTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSPLinesTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSParallelAnimationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSPopupTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RSQuantileTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSRTreeTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== RSResizeTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RSRoassalTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSSVGTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RSScatterPlotTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== RSSearchInCanvasInteractionTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RSSelectionInCanvasInteractionTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== RSSelectionPresentationInteractionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== RSSequentialAnimationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSShadowInteractionTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RSShapeBuilderTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RSShapeTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== RSSpecExamplesTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSStatisticalMeasuresTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RSSugiyamaLayoutTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSSunburstBuilderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RSTickLocatorTest ===
+Total: 30 P:30 F:0 E:0 S:0
+=== RSTransformableTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RSTransitionAnimationTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RSTreeLayoutTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== RSUMLClassBuilderTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSVerticalGridLayoutTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSViolinPlotShapeTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RSViolinPlotTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== RSWrapLabelTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RTCollectionTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== RTFLeadsToAssertPrimitiveCallCheckerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RTFMethodCallsCollectorTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RTFSelfCallInterpreterTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RTFSelfCallTreeCleanerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RTPatternMatcherTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RTreeTest ===
+Total: 27 P:27 F:0 E:0 S:0
+=== RandomTest ===
+Total: 16 P:14 F:0 E:0 S:0
+=== ReAbstractRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 378
+=== BATCH COMPLETE ===
+=== SUnit Test Run #44 (batch 1251-1300 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== ReAddSubclassDriverTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReAsClassRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReAsOrderedCollectionNotNeededRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReAssertWithBooleanEqualtiyRuleTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ReAssignmentInIfTrueRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReAssignmentWithoutEffectRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReBaselineProperlyPackagedRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReBaselineWithProperSuperclassRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReBasicScenarioExceptionStrategyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReBetweenAndRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReClassHasSubclassesTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReClassNameInSelectorRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReClassNotCategorizedRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReClassSideInitializeMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReClassSideResetMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReClassVariableCapitalizationRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReClassVariableNeitherReadNorWrittenRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReClassesAreNotMetaClassConditionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReCollectSelectNotUsedRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReCollectionProtocolRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReCompactSourceCodeRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReCritiqueTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ReCyclomaticComplexityRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReDeadBlockRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReDefinesSelectorsConditionTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReDriverTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ReDuplicateClassDriverTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReEqualsTrueRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReEquivalentSuperclassMethodsRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReExceptionStrategyTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReExcessiveArgumentsRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReExcessiveInheritanceRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReExcessiveVariablesRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReExtraBlockRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReExtractTempDriverTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReGenerateEqualAndHashDriverTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReGeneratePrintOnDriverTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReGlobalVariablesUsageRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReGuardClauseRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReHierarchyDefinesMethodTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReIfTrueIfFalseUselessRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReImplementedNotSentRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReInconsistentMethodClassificationRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReInstanceSideBaselineMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceSideEqualsMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceSideFinalizeMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceSideHashMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceSideInitializeMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceSidePrintOnMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceSideSpeciesMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 137
+=== BATCH COMPLETE ===
+=== SUnit Test Run #45 (batch 1301-1350 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== ReInstanceSideValueMethodProtocolRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReInstanceVariableCapitalizationRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReJustSendsSuperRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReKeysDoRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReLiteralArrayCharactersRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReLocalMethodsSameThanTraitRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReLongMethodsRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReMethodSelectorKeywordCasingRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReMethodSourceCleanerTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ReMethodSourceContainsLinefeedsRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReMethodsDontReferToInstVarsTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReMethodsDontReferToSharedVarsTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReMethodsHaveNoSuperCallInSiblingsConditionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReMethodsReceiveNoSupersendsTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReMethodsSendNoSupersendsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReMultiplePeriodsTerminatingStatementRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReNilBranchRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReNoNilAssignationInInitializeRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReNoPrintStringInPrintOnRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReNoUnusedInstanceVariableRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReNotEliminationRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReNotOptimizedIfNilRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReNotOptimizedIfRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RePackageManifestShouldBePackagedInManifestTagRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RePointRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RePullUpMethodDriverTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RePushDownMethodDriverTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReRefersToClassRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReRemoveClassDriverTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReRemoveInstanceVariablesDriverTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReRemoveUnusedTemporaryVariableRefactoringTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReRenameInstanceVariableDriverTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReRenameMethodDriverTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReRenameSharedVariableDriverTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReRuleManagerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReSafeMethodNameForbasedOnTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== ReSearchingLiteralRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReSelfSentNotImplementedRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReSemanticsOfCompositeExtractMethodRefactoringTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== ReSemanticsOfExtractSetUpMethodRefactoringTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReSemanticsOfInlineMethodRefactoringTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== ReSentButNotUnderstoodBySuperRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReSentNotImplementedRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReShouldSendSuperInitializeAsFirstMessageTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReSingleAssignmentConditionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReSizeCheckRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReSmalllintCheckerTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReSmalllintTest ===
+Total: 58 P:58 F:0 E:0 S:0
+=== ReSmokeExceptionStrategyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReSourceCodeLineTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 244
+=== BATCH COMPLETE ===
+=== SUnit Test Run #46 (batch 1351-1400 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== ReStatementsAfterReturnConditionalRuleTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReStringConcatenationRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReSuperWithoutSendTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReTempVarOverridesInstVarRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReTemporaryNeitherReadNorWrittenRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReTemporaryVariableCapitalizationRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReTempsReadBeforeWrittenRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReTestCaseShouldNotUseInitializeRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReTestClassNameShouldEndWithTestTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReTestClassNameShouldNotEndWithTestsTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReTestClassNotInPackageWithTestEndingNameTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReThemeAccessRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReTrueFalseDuplicationRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReUnclassifiedMethodsRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReUncommonMessageSendRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReUnoptimizedAndOrRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReUnoptimizedToDoRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReUnwindBlocksRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReUpToRootDefinesMethodTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ReUseSetUpRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReUsesTrueRuleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReVarSearchSourceAnchorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ReYourselfNotUsedRuleTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ReadStreamTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== ReadWriteStreamTest ===
+Total: 19 P:17 F:0 E:0 S:0
+=== RecompileTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RectangleTest ===
+Total: 52 P:52 F:0 E:0 S:0
+=== RecursionStopperTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ReduceTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== ReferenceFinderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ReflectiveMethodTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== ReflectivityControlTest ===
+Total: 71 P:71 F:0 E:0 S:0
+=== ReflectivityOnStackTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== ReflectivityReificationTest ===
+Total: 112 P:112 F:0 E:0 S:0
+=== ReflectivityTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ReflectivityTestCase ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RegisteredClassAnnotationsTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== RelationSetTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RelationSlotTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ReleaseTest ===
+Total: 44 P:38 F:4 E:0 S:1 T:1
+=== RenrakuExtensionsTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RenrakuGlobalBanningTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RenrakuTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== RestartTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ResumableTestFailureTestCase ===
+Total: 1 P:1 F:0 E:0 S:0
+=== Ring2ChunkImporterTest ===
+Total: 34 P:32 F:0 E:0 S:2
+=== RoassalSpecTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RottenTestsFinderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RubAbstractTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== RubEditingAreaTest ===
+Total: 7 P:5 F:0 E:0 S:2
+=== BATCH TOTAL ===
+Total: 504
+=== BATCH COMPLETE ===
+=== SUnit Test Run #47 (batch 1401-1450 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== RubEditingStateTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RubFindReplaceServiceTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RubScrolledTextMorphTest ===
+Total: 2 P:1 F:0 E:0 S:1
+=== RubSelectionTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== RubSmalltalkEditorTest ===
+Total: 63 P:63 F:0 E:0 S:0
+=== RubTextEditorLocalHistoryTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== RubTextEditorTest ===
+Total: 34 P:34 F:0 E:0 S:0
+=== RubTextFieldAreaTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== RubTextSegmentMorphTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RunArrayTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== RuntimeSyntaxErrorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== RuntimeTyperTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== RxExtensionsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== RxMatcherTest ===
+Total: 176 P:176 F:0 E:0 S:0
+=== RxParserTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SHA1Test ===
+Total: 9 P:7 F:0 E:0 S:0
+=== SHA256Test ===
+Total: 12 P:10 F:0 E:0 S:0
+=== SHRBStyleAttributionTest ===
+Total: 64 P:64 F:0 E:0 S:0
+=== SHStyleElementTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SMTPClientTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== STCommandLineHandlerTest ===
+Total: 9 P:7 F:0 E:0 S:0
+=== STONCStyleCommentsSkipStreamTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== STONJSONTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== STONLargeWriteReadTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== STONReaderTest ===
+Total: 54 P:53 F:0 E:0 S:0 T:1
+=== STONTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== STONWriteAsciiOnlyReadTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== STONWritePrettyPrinterReadTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== STONWriteReadCommentsTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== STONWriteReadTest ===
+Total: 37 P:37 F:0 E:0 S:0
+=== STONWriterTest ===
+Total: 45 P:45 F:0 E:0 S:0
+=== SUnitExtensionsTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SUnitSuiteBuilderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SUnitTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== SUnitTestsCounterTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ScaledDecimalTest ===
+Total: 36 P:34 F:0 E:0 S:0
+=== ScheduleTest ===
+Total: 15 P:13 F:0 E:0 S:0
+=== ScopesManagerTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== ScopesTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ScrollbarTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== SelectVisitorTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== SelfEvaluatingObjectTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SelfVariableTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SemaphoreTest ===
+Total: 18 P:16 F:0 E:0 S:0
+=== SendsDeprecatedMethodToGlobalRuleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SessionCreationTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SessionErrorHandlingTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SessionManagerRegistrationOrderTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SessionManagerRegistrationTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== SessionManagerUnregistrationTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 949
+=== BATCH COMPLETE ===
+=== SUnit Test Run #48 (batch 1451-1500 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== SetTest ===
+Total: 174 P:174 F:0 E:0 S:0
+=== SettingBrowserTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SettingsStonReaderTest ===
+Total: 7 P:6 F:0 E:0 S:1
+=== SettingsStonWriterTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== ShAnonymousClassInstallerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShClassInstallerAnnouncementsTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShClassInstallerTest ===
+Total: 28 P:28 F:0 E:0 S:0
+=== ShClassSlotChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShCreateClassTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== ShLayoutChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShMetaclassChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShModifyClassTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ShSharedPoolChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShSharedVariablesChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShSlotChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShSuperclassChangeDetectorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== ShTraitBuilderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ShTraitInstallerTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SharedPoolTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== SharedQueueTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== ShiftClassBuilderAbstractTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== ShiftClassBuilderTest ===
+Total: 27 P:27 F:0 E:0 S:0
+=== ShiftClassSideClassBuilderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== ShiftClassSideTraitBuilderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== ShiftTraitBuilderTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== ShortIntegerArrayTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== SignalLoggerTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SignalTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SimpleAnnotationContextTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SimpleTestResourceTestCase ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SimulateKeystrokesTest ===
+Total: 3 P:0 F:0 E:0 S:3
+=== SimulateMouseTest ===
+Total: 3 P:0 F:0 E:0 S:3
+=== SindarinCommandsTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== SindarinDebugSessionTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SindarinDebuggerTest ===
+Total: 85 P:85 F:0 E:0 S:0
+=== SizeInMemoryTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SliderTest ===
+Total: 9 P:8 F:0 E:1 S:0
+=== SlotAnnouncementsTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== SlotBasicTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== SlotClassBuilderTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== SlotClassVariableTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SlotEnvironmentTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SlotErrorsTest ===
+Total: 12 P:11 F:0 E:0 S:1
+=== SlotExampleMovieAndPersonTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SlotIntegrationTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== SlotLayoutEqualityTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SlotLayoutExtensionTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== SlotMethodRecompilationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SlotMigrationTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== SlotSilentTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 575
+=== BATCH COMPLETE ===
+=== SUnit Test Run #49 (batch 1501-1550 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== SlotTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SlotTraitsTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SmallDictionaryTest ===
+Total: 207 P:207 F:0 E:0 S:0
+=== SmallIdentityDictionaryTest ===
+Total: 207 P:207 F:0 E:0 S:0
+=== SmallIntegerTest ===
+Total: 29 P:27 F:0 E:0 S:0
+=== SmalllintManifestCheckerTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SmalltalkImageTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== SocketAddressTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SocketStreamTest ===
+Total: 24 P:22 F:0 E:0 S:0
+=== SortFunctionTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== SortedCollectionTest ===
+Total: 287 P:287 F:0 E:0 S:0
+=== SourceFileArrayTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SourceFileBufferedReadWriteStreamTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpAbstractWidgetLayoutTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpAbstractWidgetPresenterDeferringActionTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpActionModifierTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpApplicationTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpApplicationWithLocaleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpApplicationWithToolbarTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpAthensAdapterTest ===
+Total: 9 P:8 F:0 E:1 S:0
+=== SpBaseTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== SpButtonAdapterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpButtonPresenterTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== SpCheckBoxExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpCheckboxAdapterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpCheckboxPresenterTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== SpClassMethodBrowserTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpClosedWindowListPresenterTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== SpCodeAdapterTest ===
+Total: 23 P:23 F:0 E:0 S:0
+=== SpCodeBehaviorInteractionModelTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpCodeMethodInteractionModelTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpCodeNullInteractionModelTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpCodeObjectInteractionModelTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SpCodePopoverPrintPresenterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpCodePresenterTest ===
+Total: 67 P:61 F:0 E:0 S:6
+=== SpCodeScriptingInteractionModelTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== SpColorPickerTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpColumnViewPresenterTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== SpCommandTest ===
+Total: 16 P:16 F:0 E:0 S:0
+=== SpComponentListAdapterMultipleSelectionTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== SpComponentListAdapterSingleSelectionTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpComponentListAdapterTest ===
+Total: 8 P:7 F:0 E:1 S:0
+=== SpComponentListPresenterTest ===
+Total: 32 P:32 F:0 E:0 S:0
+=== SpComposablePresenterWithAdditionalSubpresentersTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpComposablePresenterWithModelTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== SpContextInteractionModelTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SpDatePresenterTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== SpDemoTest ===
+Total: 12 P:10 F:0 E:0 S:1 T:1
+=== SpDrawStyleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpDropListAdapterTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 1267
+=== BATCH COMPLETE ===
+=== SUnit Test Run #50 (batch 1551-1600 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== SpDropListExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpDropListPresenterTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== SpDropListWithoutInitialSelectionAdapterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpDynamicWidgetChangeTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpEasyColumnViewPresenterTest ===
+Total: 26 P:23 F:0 E:0 S:3
+=== SpEasyListViewPresenterTest ===
+Total: 31 P:30 F:0 E:0 S:1
+=== SpEasyTreeColumnViewPresenterTest ===
+Total: 21 P:18 F:0 E:0 S:3
+=== SpEasyTreeListViewPresenterTest ===
+Total: 21 P:18 F:0 E:0 S:3
+=== SpEditableListPresenterTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== SpEventHandlerTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpExecutableLayoutTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpFontStyleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpFrameLayoutTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpGridLayoutAdapterTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== SpGridLayoutBuilderTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpGridLayoutTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpHorizontalBoxLayoutAdapterTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== SpHorizontalBoxLayoutTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpHorizontalPanedLayoutAdapterTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SpHorizontalPanedLayoutTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== SpImageAdapterTest ===
+Total: 10 P:10 F:0 E:0 S:0
+=== SpImagePresenterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpInformUserDialogTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpJobListPresenterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpLabelAdapterTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpLabelPresenterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpLinkPresenterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpListAdapterMultipleSelectionTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== SpListAdapterSingleSelectionTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpListCommonPropertiestTest ===
+Total: 23 P:18 F:0 E:5 S:0
+=== SpListPresenterHeaderTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpListPresenterMultipleSelectionTest ===
+Total: 63 P:63 F:0 E:0 S:0
+=== SpListPresenterSingleSelectionTest ===
+Total: 45 P:45 F:0 E:0 S:0
+=== SpListPresenterTest ===
+Total: 31 P:31 F:0 E:0 S:0
+=== SpListSearchTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpListSelectionPresenterTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpListViewPresenterTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== SpMenuBarPresenterBuilderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpMenuBarPresenterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpMenuButtonPresenterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpMenuItemPresenterTest ===
+Total: 13 P:12 F:0 E:0 S:1
+=== SpMenuPresenterBuilderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpMenuPresenterTest ===
+Total: 13 P:12 F:0 E:0 S:1
+=== SpMergeStyleTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SpMillerColumnAdapterTest ===
+Total: 10 P:8 F:0 E:0 S:2
+=== SpMillerColumnPresenterTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpMorphPresenterTest ===
+Total: 7 P:6 F:0 E:0 S:1
+=== SpMorphStyleTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== SpMorphicBoxLayoutTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== SpMorphicFrameLayoutTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 727
+=== BATCH COMPLETE ===
+=== SUnit Test Run #51 (batch 1601-1650 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== SpMorphicGridLayoutTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpMorphicListAdapterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpMorphicNumberInputFieldAdapterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpMorphicPanedLayoutTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpMorphicScrollableAdapterTest ===
+Total: 0 P:0 F:0 E:0 S:0
+=== SpMorphicWindowAdapterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpMultipleSelectionModeTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpNotebookAdapterTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SpNotebookPresenterTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpNotificationCenterTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpNotificationTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpNumberInputFieldPresenterTest ===
+Total: 47 P:47 F:0 E:0 S:0
+=== SpOpenOnIntExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpOpenOnNilExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpOpenOnStringExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpOptionListPresenterTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpOptionPresenterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpOverlayLayoutAdapterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpOverlayLayoutTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== SpPaginatorMorphTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpPopoverPresenterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpPresenterBuildTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpPresenterFocusOrderTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpPresenterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpPropertyStyleTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpRGBSlidersPresenterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpRGBWidgetTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpRadioButtonAdapterTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpRadioButtonExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpRadioButtonInteractionTest ===
+Total: 11 P:9 F:0 E:0 S:2
+=== SpRadioButtonPresenterTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpRecursiveContextSetterTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpRequiredFieldValidationTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpScrollSyncExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpScrollableLayoutAdapterTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpSearchInputFieldOptionsPresenterTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== SpSingleSelectionModeTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== SpSliderAdapterTest ===
+Total: 13 P:13 F:0 E:0 S:0
+=== SpSliderInputPresenterTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpSliderPresenterTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== SpStringTableColumnTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpStyleEnvironmentColorProxyTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpStyleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpStyleVariableTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpTableAdapterMultipleSelectionTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== SpTableAdapterSingleSelectionTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpTableCommonPropertiestTest ===
+Total: 17 P:14 F:0 E:3 S:0
+=== SpTablePresenterTest ===
+Total: 35 P:35 F:0 E:0 S:0
+=== SpTableSearchTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpTextAdapterTest ===
+Total: 20 P:20 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 523
+=== BATCH COMPLETE ===
+=== SUnit Test Run #52 (batch 1651-1700 of 2047) ===
+=== DIAGNOSTICS ===
+=== END DIAGNOSTICS ===
+=== SpTextFieldExampleTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpTextInputFieldAdapterTest ===
+Total: 17 P:17 F:0 E:0 S:0
+=== SpTextInputFieldPresenterStyleTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpTextInputFieldPresenterTest ===
+Total: 40 P:40 F:0 E:0 S:0
+=== SpTextInputFieldWithValidationPresenterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpTextPresenterDecoratorMorphicAdapterTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== SpTextPresenterDecoratorTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpTextPresenterTest ===
+Total: 35 P:32 F:0 E:0 S:3
+=== SpToggleButtonAdapterTest ===
+Total: 14 P:14 F:0 E:0 S:0
+=== SpToggleSplitPresenterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== SpToolbarAdapterTest ===
+Total: 7 P:7 F:0 E:0 S:0
+=== SpToolbarPresenterTest ===
+Total: 15 P:15 F:0 E:0 S:0
+=== SpToolbarToggleButtonMorphTest ===
+Total: 12 P:11 F:0 E:0 S:1
+=== SpToolbarToggleButtonPresenterTest ===
+Total: 9 P:9 F:0 E:0 S:0
+=== SpTransmissionWithComponentListTest ===
+Total: 12 P:11 F:0 E:0 S:1
+=== SpTreeAdapterMultipleSelectionTest ===
+Total: 21 P:18 F:0 E:2 S:1
+=== SpTreeAdapterSingleSelectionTest ===
+Total: 22 P:20 F:0 E:0 S:2
+=== SpTreePresenterExpandTest ===
+Total: 11 P:11 F:0 E:0 S:0
+=== SpTreePresenterTest ===
+Total: 21 P:21 F:0 E:0 S:0
+=== SpTreeTableAdapterMultiColumnMultiSelectionTest ===
+Total: 20 P:18 F:1 E:1 S:0
+=== SpTreeTableAdapterMultiColumnTest ===
+Total: 20 P:18 F:1 E:1 S:0
+=== SpTreeTableAdapterMultipleSelectionTest ===
+Total: 19 P:18 F:0 E:0 S:1
+=== SpTreeTableAdapterSingleColumnMultiSelectionTest ===
+Total: 20 P:18 F:1 E:1 S:0
+=== SpTreeTableAdapterSingleColumnTest ===
+Total: 19 P:17 F:1 E:1 S:0
+=== SpTreeTableAdapterSingleSelectionTest ===
+Total: 23 P:21 F:0 E:0 S:2
+=== SpTreeTablePresenterMultipleSelectionTest ===
+Total: 64 P:64 F:0 E:0 S:0
+=== SpTreeTablePresenterSingleSelectionTest ===
+Total: 41 P:41 F:0 E:0 S:0
+=== SpTreeTablePresenterTest ===
+Total: 22 P:22 F:0 E:0 S:0
+=== SpTreeTableSearchTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== SpUIThemeDecoratorTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpValidationReportTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpVerticalBoxLayoutAdapterTest ===
+Total: 12 P:12 F:0 E:0 S:0
+=== SpVerticalBoxLayoutTest ===
+Total: 19 P:19 F:0 E:0 S:0
+=== SpVerticalPanedLayoutAdapterTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SpVerticalPanedLayoutTest ===
+Total: 24 P:24 F:0 E:0 S:0
+=== SpWindowPresenterTest ===
+Total: 18 P:18 F:0 E:0 S:0
+=== SpWindowSimulateOpenModalTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== SpWindowTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== SpWorldPresenterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SpaceTallyTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== SplitJoinTest ===
+Total: 26 P:26 F:0 E:0 S:0
+=== StBitmapFilterTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== StBreadcrumbPresenterTest ===
+Total: 1 P:1 F:0 E:0 S:0
+=== StCamelCaseSplitTest ===
+Total: 5 P:5 F:0 E:0 S:0
+=== StClassAndMethodsSelectionPresenterTest ===
+Total: 4 P:4 F:0 E:0 S:0
+=== StClassProcessorTest ===
+Total: 6 P:6 F:0 E:0 S:0
+=== StCritiqueBrowserPresenterTest ===
+Total: 3 P:3 F:0 E:0 S:0
+=== StCritiquePackageSelectorPresenterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== StCritiqueRuleSelectorPresenterTest ===
+Total: 8 P:8 F:0 E:0 S:0
+=== StCritiqueToolbarPresenterTest ===
+Total: 2 P:2 F:0 E:0 S:0
+=== BATCH TOTAL ===
+Total: 680
+=== BATCH COMPLETE ===
