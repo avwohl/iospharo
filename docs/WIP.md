@@ -268,15 +268,15 @@ sweep scored non-zero on:
 
 So 22 of the partial sweep's 30 F+E were the missing display.
 
-### Which leaves, for batches 1-1700 on arm64, ZERO confirmed VM defects
+### Which leaves, for batches 1-1700 on arm64, ONE candidate VM defect
 
     what                                       F   E   verdict
     Spec/GUI adapters (11 classes)             4  18   missing display; 0/0 with the prelude
     ReleaseTest testNoOrphanPackage            1   0   harness (Package(Tests-Runner))
     ReleaseTest ...SentButNotImplemented       1   0   harness (SUnitRunner>>runAllTests)
     ReleaseTest testUnknownProcesses           1   0   harness (CommandLine handler process)
-    ReleaseTest testNoDeadSubscriptions        1   0   LinkInstaller's own weak subs, earlier
-                                                       in the same image
+    ReleaseTest testNoDeadSubscriptions        1   0   CANDIDATE VM DEFECT — see below;
+                                                       reproduces alone in WeakAnnouncerTest
     OCClassBuilderTest ...TraitComposition     0   1   upstream, fails identically on stock Cog
     EpFileOutModificationsTest                 1   0   17/17 alone
     RSLinesTest                                0   1   18/18 alone
@@ -285,7 +285,16 @@ So 22 of the partial sweep's 30 F+E were the missing display.
                                               10  20
 
 Plus one TIMEOUT, `ReleaseTest>>testNoShadowedVariablesInMethods`, which is
-defect `#6` and the only VM-side item on the list.
+defect `#6`.
+
+CORRECTION, made later the same session: `testNoDeadSubscriptions` was
+originally written up here as pollution from `LinkInstallerTest` earlier in
+the image. It is not — `WeakAnnouncerTest` reproduces the same four dead
+subscriptions with no other test class in the image, in 13 s. It is filed in
+`docs/vm-compat-bugs.md` as a candidate VM defect. So the honest count for
+batches 1-1700 is: three harness artifacts, one upstream image bug, three
+order-dependent classes that pass in isolation, and ONE candidate VM defect
+— plus the `#6` timeout.
 
 Caveat that has to travel with this: it covers batches 1-1700 of 2047. The
 last seven batches were never measured — the pre-reboot run was interrupted
