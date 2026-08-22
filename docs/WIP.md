@@ -509,11 +509,35 @@ that closes a loop burns the full 70,000-step depth cap per process per
 round, and `materializeFrameStack` has a `[CYCLE-BREAK]` path precisely
 because such chains exist.
 
-Still to measure: whether that closes the package-load gap or only part of
-it. 248,066 methods were compiled during the XMLParser load, against ~176k
-CompiledMethods + CompiledBlocks in the image — so there is recompile churn
-on top of the scan cost, and `evictTarget` (1/64th of the zone) may want
-raising now that a round is cheaper.
+### Second measured cause: the IC scrub was quadratic in evicted methods
+
+After eviction frees code, every J2J inline-cache entry that points into the
+freed span has to be cleared. The membership test was a LINEAR scan of the
+range list, executed once per J2J entry, per IC site, per method in the
+zone. One round frees 1/64th of the zone — at the 192 MB baseline that is
+thousands of methods, hence thousands of ranges — so the inner loop is
+(millions of IC entries) x (thousands of ranges), per round.
+
+`79cc0fa0` sorts and coalesces the range list once per round and binary
+searches it. Eviction frees runs of neighbouring methods, so the coalesce
+collapses most of the list before the search even starts.
+`scrubEvictedCodeRanges`, which scanned the same list once per megaCache
+slot, uses the same helper.
+
+    five-class SUnit batch, PHARO_CODE_ZONE_MB=1, ~330 rounds
+      baseline (02195e8f)      12 s
+      + pin-scan cache          8 s
+      + range binary search     7 s     identical results, 179 tests, 0 F 0 E
+
+A 1 MB zone has few methods to scrub, so that understates the second fix;
+192 MB is where it should show, and the re-run of the package tier on the
+fixed VM is the measurement that decides it.
+
+Still open on this thread: 248,066 methods were compiled during the
+XMLParser load against ~176k CompiledMethods + CompiledBlocks in the whole
+image, so there is recompile churn on top of the scan costs, and
+`evictTarget` (1/64th of the zone) may want raising now that a round is
+cheaper.
 
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 
