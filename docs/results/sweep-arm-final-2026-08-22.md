@@ -4,13 +4,27 @@
 PHARO_MAX_STEPS=4000000000000`, on the prepped SUnit-runner image, machine
 otherwise idle. Started 09:31, totals at 11:23.
 
-    === TOTALS ===
-      classes 1982
-      tests   27538
-      PASS    27210
+    === TOTALS, with both damaged batches re-run and merged ===
+      classes 2046
+      tests   28067
+      PASS    27727
       FAIL       27
-      ERROR      24
-      SKIP      178
+      ERROR      25
+      SKIP      182
+      rate    98.79%
+
+    (the raw sweep, before the two re-runs: 1982 classes, 27538 tests,
+     27210 P, 27 F, 24 E, 178 S)
+
+Against the 2026-08-19 reference in `docs/test-results.md` — arm64 RAW,
+2043 classes, 28058 tests, P=27725, F=23, E=22, 98.81% — this is three more
+classes, nine more tests, two more passes, and F+E of 52 against 45. That
+gap is inside the run-to-run band the same file documents ("this harness
+flips a few tests per run in either direction";
+`WeakOrderedCollectionTest` alone gave 3 FAIL / 1 PASS across four identical
+isolated runs). **Parity with the reference — but reached with the JIT
+compiling throughout rather than freezing when the code zone filled**, which
+is what the 2026-08-19 run did.
 
 ## Two batches in that number are not clean, and both are known
 
@@ -28,8 +42,11 @@ otherwise idle. Started 09:31, totals at 11:23.
     invocation reads the same `/tmp/sunit_class_names.txt`. My interference,
     not the VM's.
 
-Together they account for the ~65 missing classes (1982 against 2047). Both
-are re-run separately; the totals above are a floor, not a final figure.
+Together they accounted for the 64 missing classes (1982 against 2046). Both
+were re-run afterwards on an idle machine — 601-650 clean in 33 s, 801-850
+clean in 184 s — and merged into the totals above, so those totals are the
+figure, not a floor. The per-class table below is from the raw sweep and so
+still omits those two batches' classes.
 
 ## Every class with a non-zero F or E, and what it is
 
