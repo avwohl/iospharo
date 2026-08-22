@@ -3834,6 +3834,24 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // an A4 investigation aid.  A4 is resolved at root cause; the
     // selectorOf() call per method entry was needless overhead.)
 
+    // Advance the code zone's LRU epoch (every ~64K method entries).
+    //
+    // Nothing called advanceEpoch() before 2026-08-22, so epoch_ sat at 0
+    // for the life of the process.  codeZone_.touch() was being called on
+    // every entry, but it stamps lastUsedEpoch = epoch_ = 0 on everything,
+    // and evictLRU's first pass keeps only methods with
+    // `lastUsedEpoch < threshold` where threshold is also 0 — a condition
+    // no unsigned value satisfies.  So pass 1 evicted NOTHING and eviction
+    // always fell through to pass 2, which walks firstMethod_ and takes
+    // whatever is unpinned: address order, not recency.  The lowest
+    // addresses hold the earliest-compiled methods, i.e. the kernel ones
+    // that stay hot, so every round evicted hot code that was immediately
+    // recompiled.  Invisible until eviction was reachable at all.
+    //
+    // At 64K entries per epoch and evictLRU's `epoch_ - 10` threshold, a
+    // method must go ~650K method entries untouched to be pass-1 eligible.
+    if ((totalEntries & 0xFFFF) == 0) codeZone_.advanceEpoch();
+
     // Periodic stats (every ~64K entries)
     if ((totalEntries & 0xFFFF) == 0) {
         size_t icHits = interp_ ? interp_->jitICHits() : 0;

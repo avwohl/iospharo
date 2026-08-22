@@ -1671,8 +1671,22 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
             uint64_t s = reinterpret_cast<uint64_t>(m->codeStart());
             ranges->push_back({s, s + m->codeSize});
         };
-        // Evict at least 2x what we need (amortize eviction cost)
+        // How much to free per round.  This was `allocSize * 2` with the
+        // comment "amortize eviction cost", which does not amortize
+        // anything: allocSize is one method, so a round freed ~1 KB and
+        // the very next compile needed another round.  A round is NOT
+        // cheap — it walks the whole native stack, scans every process's
+        // context chain, makes two O(methods) LRU passes, and then scrubs
+        // J2J entries across every IC site of every method in the zone.
+        // First run with eviction actually reachable: 76,000 rounds during
+        // a single image prep, which ground throughput to a crawl.
+        //
+        // Free a fixed fraction of the zone instead, so the per-round cost
+        // is spread over hundreds of subsequent compiles.  1/64th of a
+        // 64 MB zone is 1 MB, roughly 125 methods.
         size_t evictTarget = allocSize * 2;
+        const size_t zoneSlice = zone.totalBytes() / 64;
+        if (evictTarget < zoneSlice) evictTarget = zoneSlice;
         size_t freed = zone.evictLRU(evictTarget, evictCallback, &methodMap,
                                        preEvictCallback, &evictedRanges);
         if (freed > 0) {
