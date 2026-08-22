@@ -16,8 +16,13 @@ otherwise idle. Started 09:31, totals at 11:23.
 
   * **batch 601-650 crashed** (`rc=134`, 36 of 51 classes): old space
     exhausted by an `Error>>freeze` context storm — 11M Contexts, 2.2M
-    Errors. Investigated separately; it is the one open question from this
-    run.
+    Errors. It does **not** reproduce: re-run on an idle machine it is
+    36 s / 37 s clean on the current binary, 53 s clean on `26ad35b3` (the
+    pre-fix baseline), and 21 s clean with `PHARO_NO_JIT=1`, against 158 s
+    and a crash inside the sweep. One occurrence in this run's 41 batches
+    against zero in the pre-fix run's 34 is not a distinguishable
+    regression, so it is on the record as a single observed storm with a
+    good log, not as something introduced today.
   * **batch 801-850 reports 2 classes instead of 51** because I started a
     single-class run while the sweep was in flight and every SUnit runner
     invocation reads the same `/tmp/sunit_class_names.txt`. My interference,
