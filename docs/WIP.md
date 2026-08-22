@@ -522,7 +522,26 @@ forwarder mention anywhere in the batch log, and the census counts plain
 `Error`, not `MessageNotUnderstood`. So it is the same storm machinery with a
 different trigger.
 
-Prime suspect for the trigger, on reasoning not yet on measurement: the
+### It does not reproduce, and the become: theory was wrong
+
+Re-ran batch 601-650 four ways on an idle machine after the sweep:
+
+    cur-1      rc=0  36s  50 classes  0 FATAL
+    cur-2      rc=0  37s  50 classes  0 FATAL
+    base-1     rc=0  53s  50 classes  0 FATAL   (26ad35b3, the pre-fix baseline)
+    cur-nojit  rc=0  21s  50 classes  0 FATAL
+
+versus 158 s and a crash inside the sweep. So it is INTERMITTENT, and one
+occurrence in this run's 41 batches against zero in the pre-fix run's 34 is
+not a difference anyone can call a regression. It stays on the record as a
+single observed storm with a good log, not as a bug introduced today.
+
+The `become:` hypothesis below is retained only because it was written down;
+it is **not** the cause of anything measured, and plain `become:` in this VM
+leaves no forwarder at all (it scans the heap and swaps references in
+place), so it was weak to begin with.
+
+Superseded reasoning, kept so nobody re-derives it: the
 pin-scan cache
 (`1d7a91af`). It is the only one of today's changes that can make eviction
 free code a process is still live in, and `pinLiveJITMethodsAcrossProcesses`
