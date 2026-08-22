@@ -565,7 +565,14 @@ either way. Thirteen weak/finalization classes, 755 tests, byte-identical
 before and after.
 
 After all three fixes the profile is flat — no single dominant frame, time
-spread across normal dispatch and JIT activation.
+spread across normal dispatch and JIT activation. And the load that could not
+finish, finishes:
+
+    XMLParser load    2026-08-17 (eviction unreachable)   1055 s
+                      today, before these fixes           TIMEOUT at 1800 s
+                      today, after                         369 s
+
+which is 2.9x faster than the number recorded before eviction ever ran.
 
 ## A correction worth carrying: `PHARO_CI_TESTING_ENVIRONMENT`
 
