@@ -16,4 +16,7 @@ Catalyst builds fail with "undeclared identifier".
 
 The patch makes the include unconditional on all Apple platforms.
 
-Upstream: not yet submitted.
+Upstream: PR https://github.com/asmjit/asmjit/pull/521, opened
+2026-05-17, still open with no review or comments as of 2026-08-22.
+When it lands, repoint the submodule at asmjit/asmjit and drop both
+this patch and the avwohl/asmjit:iospharo-catalyst fork branch.
