@@ -136,12 +136,49 @@ allocation. `makeFreeChunk` now takes `zeroBody` and the split path passes
 false. That took the load from "5x slower and climbing" to "stalls", so it
 was necessary but not sufficient.
 
-What to look at next: `allocateFromFreeList`'s large-list walk stores a raw
-`ObjectHeader**` into a slot that otherwise holds an `Oop`
-(`prev = reinterpret_cast<ObjectHeader**>(&chunk->slots()[0])`), and returns
-a chunk that may be up to 15 bytes LARGER than the request with no
-free-chunk header on the excess — either would leave the heap unparseable
-for the next scanner walk, which is exactly what a stall looks like.
+### Found by inspection afterwards: `makeFreeChunk` mis-sizes every LARGE chunk
+
+    ObjectHeader* chunk = (ObjectHeader*)addr;
+    size_t slotCount = (size - sizeof(ObjectHeader)) / 8;      // (size - 8) / 8
+    ...
+    if (slotCount >= 255) {
+        uint64_t* overflow = (uint64_t*)addr;
+        *overflow = slotCount | (0xFFULL << 56);               // word 0
+        chunk = (ObjectHeader*)(addr + 8);                     // header at word 1
+        chunk->setRawHeader(makeHeader(255, ...));
+    }
+
+For a chunk of 255 slots or more the header needs TWO words — the overflow
+count and the header itself — but `slotCount` was computed for one. The
+object placed at `addr + 8` therefore claims `8 + slotCount*8` bytes starting
+one word in, i.e. it runs **8 bytes past the end of the chunk it describes**.
+
+That alone is a latent defect wherever large free chunks are built at all,
+which includes `sweepGC`, not just the new opt-in path.
+
+It also explains the stall directly. `allocateFromFreeList` then does
+
+    remainderAddr = (uint8_t*)chunk + size;
+
+with `chunk` already being `addr + 8`, so every split places the remainder
+one word past where it belongs, and each subsequent split compounds it until
+the heap no longer parses — which is what a VM that stops executing
+bytecodes looks like from outside.
+
+Two more, smaller, in the same function:
+
+  * a chunk is accepted when `chunkSize >= size`, and if the leftover is
+    under 16 bytes it is neither split off nor zeroed — the caller writes a
+    header claiming `size` and the scanner walks into the orphaned tail. The
+    fix is to require `chunkSize == size || chunkSize - size >= 16`.
+  * the large-list walk stores a raw `ObjectHeader**` into a slot that
+    otherwise holds an `Oop`
+    (`prev = reinterpret_cast<ObjectHeader**>(&chunk->slots()[0])`). Benign
+    only because a heap `Oop` and its address have the same bits and `nil`
+    is 0 — worth making explicit rather than relying on it.
+
+None of this is fixed here. It is written down because the analysis is the
+expensive part and it was done with the machine busy elsewhere.
 
 ## Reproducing
 
