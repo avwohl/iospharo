@@ -477,6 +477,48 @@ Pharo skips for being slow on CI may still be a fine VM check. It says that
 before any of these 17 is called a VM defect, the guard has to be looked at
 first.
 
+## The definitive arm64 sweep found a crash — batch 601-650, old space exhausted
+
+`rc=134` (SIGABRT), 36 of 51 classes, in the run started 09:31 with every
+fix from today. The same batch on the pre-fix binary this morning:
+`rc=0 51s classes=51 completed=yes`. So it is a REGRESSION CANDIDATE, not a
+known failure.
+
+    [VM] FATAL: old space exhausted during scavenge tenure
+                (need 432 bytes, 72 free of 4294967296)
+    [HEAP-CENSUS] 16204520 objects, 4121 MB total; top 3:
+      11052843 objs  3882671 KB  Context
+       2195531 objs   120068 KB  Error
+       2203522 objs   103243 KB  FullBlockClosure
+
+11 million Contexts and 2.2 million Errors is a runaway exception recursion
+filling the 4 GB reservation, not a leak. The last class to report a result
+was `MCClassDefinitionTest`; the pre-fix ordering puts `MCDataStreamTest`
+next, and `MCDataStreamTest` alone passes 3/3, so it needs the preceding 39
+classes.
+
+Prime suspect, on reasoning not yet on measurement: the pin-scan cache
+(`1d7a91af`). It is the only one of today's changes that can make eviction
+free code a process is still live in, and `pinLiveJITMethodsAcrossProcesses`
+exists precisely because that produces "broad nil/value corruption that kills
+the Delay subsystem and wedges the whole SUnit suite". The hole it could
+have: a `become:` between GCs — which Monticello class-definition loading
+does constantly — leaves a cached Process oop forwarded, and the cache SKIPS
+forwarded entries where the old whole-heap walk would have found the object
+at its new home. Following forwarders instead of skipping them is the
+candidate fix. NOT yet verified; the plan is re-run 601-650 on the current
+binary (deterministic?), then `PHARO_NO_JIT=1` (is it the JIT at all?), then
+a build of `26ad35b3` if both say yes.
+
+### And one batch of this sweep is mine, not the VM's
+
+`batch 801-850 classes=2`: I started a single-class run to chase the crash
+while the sweep was in flight, and every SUnit runner invocation reads the
+same fixed `/tmp/sunit_class_names.txt` — so that batch picked up my filter
+at startup. Deleted mid-batch; 851-900 is back to 51 classes, so the damage
+is exactly one batch. Both 601-650 and 801-850 need re-running before the
+totals mean anything. `scripts/sunit-sweep.sh` now says so at the top.
+
 # WIP (2026-08-22 07:00) — REBOOT HANDOFF. Read this first.
 
 Everything is committed on `jit`. Two background runs were INTERRUPTED by the
