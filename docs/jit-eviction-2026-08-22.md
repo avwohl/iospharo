@@ -100,3 +100,56 @@ work and more recompilation. No speedup is claimed here and none has been
 measured. The `PHARO_CODE_ZONE_MB=192` baseline that every recorded full-suite
 run uses exists precisely because the 64 MB default starved the JIT — with
 eviction working, that knob's justification should be re-measured.
+
+---
+
+# x86_64 parity, same day
+
+Two more defects, found only because closing the first one exposed the next.
+
+## 4. The FFI never retried an absolute path that would not load
+
+The image's library finder hands the VM an absolute path
+(`/opt/homebrew/lib/libcairo.2.dylib`) and has no way to know it is the wrong
+architecture for a process running under Rosetta. `FFI::lookupFunction` tried
+`dlopen` on it, and when that failed it stopped: the bare-name search below is
+guarded on `moduleName[0] != '/'`. It now retries on the BASENAME through
+`getLibSearchPaths()`, which starts at the executable's own directory.
+
+Paired with `scripts/fetch-x86-libs.sh`, which stages x86_64 Homebrew bottles
+(cairo, libgit2 and their closure — 72 dylibs) beside `build-x86/test_load_image`
+with install names rewritten to `@loader_path`. Nothing is installed and
+`/usr/local` is untouched.
+
+## 5. x86_64 compiled a 40-byte ffi_closure for a library that wants 56
+
+With cairo reachable, every x86_64 FFI callback jumped through garbage —
+`AthensCairoSurface extent: 100@100` died at `PC=0x33`, the stack showing
+`ffi_closure_unix64_inner` had read `fun` out of bounds and called it.
+
+libffi's configure substitutes `@FFI_EXEC_TRAMPOLINE_TABLE@` into `ffi.h`:
+
+        macos-arm64   #if 1   trampoline_table[_entry]  cif@16 fun@24 size 40
+        macos-x86_64  #if 0   char tramp[32]            cif@32 fun@40 size 56
+
+`build-libffi.sh` already splits `ffitarget.h` per arch — that header's ABI
+enum cost 77 x86_64 errors on 2026-08-18 — but `ffi.h` never got the same
+treatment, so the universal slice shipped arm64's copy to both. The x86_64 VM
+allocated 40 bytes and the x86_64 library wrote `fun` at 40 and `user_data` at
+48, past the end. Confirmed directly: the x86_64 slice of `libffi.a` has zero
+trampoline-table symbols, the arm64 slice has three.
+
+The library was never at fault — the same `cairo_image_surface_create` call
+from a plain C x86_64 program against the same dylib returns a valid surface.
+
+## Result
+
+SUnit batch 1-50, both architectures, same prepped image, idle machine:
+
+        arm64   774 tests  772 PASS  0 FAIL  0 ERROR   99.74%
+        x86_64  774 tests  772 PASS  0 FAIL  0 ERROR   99.74%
+
+x86_64 was 746 PASS / 26 ERROR before this work, every error a `cairo_*`
+`SymbolNotFoundError`. This is parity with NO exclusions — the previous
+recorded parity claim held only once Cairo-dependent classes were removed
+from the comparison.
