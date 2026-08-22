@@ -91,3 +91,40 @@ Full detail in `docs/WIP.md`; in one line each:
 
 A `sample` of the stuck 30-minute XMLParser load put 94% of the process in
 the first of those, and a later one put 38% in the third.
+
+# x86_64 package tier, same day, native Metacello load
+
+The first time x86_64 has loaded these packages itself. Every previous x86
+package number came from arm-loaded images borrowed via `REUSE_FROM`,
+because Iceberg resolves `github://` through libgit2 over FFI and this host
+had only an arm64 libgit2. `scripts/fetch-x86-libs.sh` staged an x86_64 one,
+and the native load works.
+
+    package     classes   pass   fail   err        arm64 pass
+    NeoJSON          11    116      0     0             116
+    Mustache          1     47      0     0              47
+    XMLParser         0      0      0     0            6358   <-- see below
+    Grease           37    554      0     0             554
+    PolyMath        117   1389      2    19            1448   (+1 timeout)
+    DataFrame        27    839     14     0             839
+    Fuel              2     19      0     0              19
+                    ---   ----    ---   ---
+                    195   2964     16    19            9381
+
+Five of seven match arm64 exactly, including DataFrame's 14 known
+`Float DefaultComparisonPrecision` failures. The gap is two packages:
+
+  * **XMLParser loads on arm64 and not on x86_64** — `rc=0` in 31 s with the
+    image never persisting, against 369 s and 159 classes on arm. Filed in
+    `docs/vm-compat-bugs.md`; the single error in its log is "only integers
+    should be used as indices", raised while the image writes a debug stack
+    to stderr, so whether that is the original failure or a second one on the
+    reporting path is not yet established.
+  * **PolyMath scores 1389 against arm's 1448**, with one extra timeout. Its
+    loaded image is also 885 MB on x86 against 1852 MB on arm, which is a
+    large enough difference to be worth understanding before reading the
+    59-test gap as a VM divergence.
+
+Load times, arm64 -> x86_64: NeoJSON 21->29 s, Mustache 11->15 s, Grease
+48->89 s, PolyMath 269->577 s, DataFrame 91->176 s. That is the usual ~2x
+Rosetta factor and nothing anomalous.
