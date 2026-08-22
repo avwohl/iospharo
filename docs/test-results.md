@@ -1,5 +1,20 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-08-22 — the package tier was 7x slower than its own baseline, and is
+> now faster than it.** Code-zone eviction became reachable on 2026-08-22 and
+> cost more than it saved until three defects in it were found and fixed:
+> XMLParser went 1055 s (2026-08-17, eviction unreachable) -> TIMEOUT at
+> 1800 s -> 369 s, and Grease 50 s -> 365 s -> 48 s.  Two packages that had
+> never produced a result on this host now do.  Numbers and method in
+> `docs/results/packages-arm-2026-08-22.md`; the defects are written up in
+> `docs/WIP.md`.
+>
+> Read any per-test failure in this file against
+> `TestCase>>skipOnPharoCITestingEnvironment`: 17 tests carry that guard and
+> Pharo's own CI skips them, while our sweeps do not set
+> `PHARO_CI_TESTING_ENVIRONMENT` and therefore run them.  Two of the 17 are
+> named individually in this repo's arm-vs-x86 residual list.
+
 > **2026-08-19 — all three tiers, both architectures.** One tally method
 > throughout: sum only the `=== BATCH TOTAL ===` blocks (per-class lines use
 > `P:/F:/E:/S:` and double-count if included). Earlier figures in this file used
