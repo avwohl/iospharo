@@ -3020,10 +3020,52 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
         static int count = 0;
         ++count;
         if (count <= 50 || (count & 0x1F) == 0) {
-            fprintf(stderr, "[GC-LOG] fullGC #%d done: live=%zu MB reclaimed=%zu MB %lldms\n",
+            // usedAfter is the BUMP POINTER, not the live set.  Walk what
+            // is actually in old space so the two can be compared: a
+            // package-loaded image measured 235 MB used against 91 MB of
+            // real objects, and only the second number is "live".
+            size_t objBytes = 0, freeBytes = 0, objCount = 0, freeCount = 0;
+            uint8_t* walkEnd = oldSpaceStart_;
+            {
+                ObjectScanner walk(oldSpaceStart_, oldSpaceFree_);
+                while (ObjectHeader* o = walk.next()) {
+                    size_t sz = o->totalSize();
+                    walkEnd = reinterpret_cast<uint8_t*>(o) + sz;
+                    if (o->classIndex() == 0) { freeBytes += sz; freeCount++; }
+                    else { objBytes += sz; objCount++; }
+                }
+            }
+            fprintf(stderr, "[GC-LOG] fullGC #%d done: used=%zu MB (objects=%zu MB "
+                    "in %zu, free-chunks=%zu MB in %zu) reclaimed=%zu MB marked=%zu %lldms\n",
                     count, usedAfter / (1024 * 1024),
+                    objBytes / (1024 * 1024), objCount,
+                    freeBytes / (1024 * 1024), freeCount,
                     result.bytesReclaimed / (1024 * 1024),
+                    markedCount,
                     (long long)result.milliseconds);
+            fprintf(stderr, "[GC-LOG]   walkEnd=+%zu MB  passes=%zu moved=%zu\n",
+                    (size_t)(walkEnd - oldSpaceStart_) / (1024 * 1024),
+                    result.compactPasses, result.objectsMoved);
+            {
+                // Where do the pinned objects sit?  A pinned object high in
+                // old space is a floor under oldSpaceFree_ that sliding
+                // compaction cannot cross.
+                ObjectScanner pw(oldSpaceStart_, oldSpaceFree_);
+                int shown = 0;
+                uint8_t* lastObj = oldSpaceStart_;
+                while (ObjectHeader* o = pw.next()) {
+                    lastObj = reinterpret_cast<uint8_t*>(o) + o->totalSize();
+                    if (o->isPinned() && shown < 12) {
+                        fprintf(stderr, "[GC-LOG]   pinned @+%zu KB size=%zu cls=%u\n",
+                                (size_t)((uint8_t*)o - oldSpaceStart_) / 1024,
+                                o->totalSize(), o->classIndex());
+                        shown++;
+                    }
+                }
+                fprintf(stderr, "[GC-LOG]   lastObjectEnd=+%zu KB  oldSpaceFree=+%zu KB\n",
+                        (size_t)(lastObj - oldSpaceStart_) / 1024,
+                        (size_t)(oldSpaceFree_ - oldSpaceStart_) / 1024);
+            }
         }
     }
 
@@ -4674,6 +4716,8 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
     savedFirstFieldsSpace_.top = savedFirstFieldsSpace_.start;
 
     uint8_t* toFinger = pass.dstStart;  // Destination for next live object
+    planSeen_ = planMarked_ = planUnmarked_ = planPinned_ = 0;
+    planInPlace_ = planToMove_ = planMarkedBytes_ = 0;
 
     // Assume the rest of the heap fits; the scratch-overflow branch below
     // overwrites these when it does not.
@@ -4682,11 +4726,15 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
 
     ObjectScanner scanner(pass.srcStart, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
+        planSeen_++;
         if (!obj->isMarked()) {
+            planUnmarked_++;
             continue;  // Dead — skip
         }
+        planMarked_++;
 
         size_t objSize = obj->totalSize();
+        planMarkedBytes_ += objSize;
         uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
         bool isOverflow = obj->hasOverflowSlots();
         // Object start in memory (includes overflow word if present)
@@ -4696,6 +4744,7 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
 
         // Pinned objects don't move
         if (obj->isPinned()) {
+            planPinned_++;
             if (toFinger < objStart) {
                 // Gap before pinned object — skip over it
                 toFinger = objStart;
@@ -4707,6 +4756,7 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
 
         // Does this object actually need to move?
         if (destHeaderPos == objAddr) {
+            planInPlace_++;
             // Already in place — no forwarding needed. Clear grey bit.
             obj->setGrey(false);
             toFinger += objSize;
@@ -4751,6 +4801,7 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
 
             // Mark this object as having a forwarding address (grey bit)
             obj->setGrey(true);
+            planToMove_++;
         }
 
         toFinger += objSize;
@@ -4758,6 +4809,16 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
 
     // Plan summary logged by fullGC caller
 
+    if (GET_DEBUG_BOOL(PHARO_GC_LOG)) {
+        fprintf(stderr, "[GC-PLAN] seen=%zu marked=%zu unmarked=%zu pinned=%zu "
+                "inplace=%zu tomove=%zu markedBytes=%zu toFinger=+%zu KB "
+                "src=[+%zu,+%zu] KB\n",
+                planSeen_, planMarked_, planUnmarked_, planPinned_,
+                planInPlace_, planToMove_, planMarkedBytes_,
+                (size_t)(toFinger - oldSpaceStart_) / 1024,
+                (size_t)(pass.srcStart - oldSpaceStart_) / 1024,
+                (size_t)(pass.srcEnd - oldSpaceStart_) / 1024);
+    }
     // Everything from pass.srcStart on was planned.  pass.srcEnd and
     // pass.complete were set to say so before the walk started.
     pass.dstEnd = toFinger;

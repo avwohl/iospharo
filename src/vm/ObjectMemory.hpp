@@ -625,6 +625,10 @@ public:
 
     /// Register a root for GC (interpreter stack, etc.)
     void addRoot(Oop* root);
+
+    // Compaction-plan counters (PHARO_GC_LOG diagnostic only).
+    size_t planSeen_ = 0, planMarked_ = 0, planUnmarked_ = 0, planPinned_ = 0;
+    size_t planInPlace_ = 0, planToMove_ = 0, planMarkedBytes_ = 0;
     void removeRoot(Oop* root);
 
     /// Set the interpreter (for GC root enumeration)
