@@ -178,12 +178,20 @@ isolation it is clean everywhere:
 So those frames really were the error being REPORTED to stderr, which was
 the other half of the hedge above.
 
-**The load on its own is not obviously broken either.** The same Metacello
-expression without the preamble runs for MINUTES on x86_64, compiling
-steadily (544M sends, 94k methods), where the package-tier run died at 31 s.
+**The load on its own SUCCEEDS on x86_64.** The same Metacello expression
+without the preamble, run to completion:
 
-What that leaves: the failure needs the combination, or something else the
-package script sets up, or it is intermittent. None of those is established.
+    x86_64   rc=0   709 s   image 1265 MB   0 errors
+    arm64    rc=0   369 s   image 1146 MB   (the package-tier figure)
+
+So there is no fundamental x86_64 load failure here. The 31 s bail in the
+package tier was something else.
+
+What that leaves: the failure needs the combination of preamble and load, or
+something else the package script sets up, or it is intermittent — and given
+the load alone takes 709 s while the failing run took 31 s, intermittent is
+now the leading possibility rather than a fallback. None of it is
+established.
 The next discriminators, still unrun:
 
   * the package script's eval VERBATIM (preamble + load + snapshot) on
