@@ -497,16 +497,43 @@ was `MCClassDefinitionTest`; the pre-fix ordering puts `MCDataStreamTest`
 next, and `MCDataStreamTest` alone passes 3/3, so it needs the preceding 39
 classes.
 
-Prime suspect, on reasoning not yet on measurement: the pin-scan cache
+### The storm's shape is in the log, and this VM already has a name for it
+
+The DIAG lines before the FATAL repeat one loop, on a P79 process:
+
+    [DIAG] P79 Context>>and: ip=143 fd=2
+    [DIAG]   [-1] Error>>freezeUpTo:
+    [DIAG]   [-2] Error>>freeze
+    ...
+    [DIAG] P79 UnhandledError>>findContextSuchThat: ip=41 fd=2
+    [DIAG]   [-1] UnhandledError>>receiver
+    [DIAG]   [-2] UnhandledError>>signal
+
+`Error>>freeze` copies the signalling context's sender chain
+(`freezeUpTo:` -> `copyTo:`), and this is doing it over and over while
+re-signalling, which is what turns into 11M Contexts. `ObjectMemory.cpp:535`
+already names this: "that MNU-on-a-forwarded-object during `Context>>copyTo:`
+is the documented ARM **context-storm** TRIGGER ... the debugger's handler
+freezes on it and re-copies the stack, re-hitting the same forwarder
+forever." The fix recorded there was making `classOf` follow forwarders.
+
+This instance is NOT that signature — there is no `doesNotUnderstand` or
+forwarder mention anywhere in the batch log, and the census counts plain
+`Error`, not `MessageNotUnderstood`. So it is the same storm machinery with a
+different trigger.
+
+Prime suspect for the trigger, on reasoning not yet on measurement: the
+pin-scan cache
 (`1d7a91af`). It is the only one of today's changes that can make eviction
 free code a process is still live in, and `pinLiveJITMethodsAcrossProcesses`
 exists precisely because that produces "broad nil/value corruption that kills
-the Delay subsystem and wedges the whole SUnit suite". The hole it could
-have: a `become:` between GCs — which Monticello class-definition loading
-does constantly — leaves a cached Process oop forwarded, and the cache SKIPS
-forwarded entries where the old whole-heap walk would have found the object
-at its new home. Following forwarders instead of skipping them is the
-candidate fix. NOT yet verified; the plan is re-run 601-650 on the current
+the Delay subsystem and wedges the whole SUnit suite". One candidate hole, and it is
+weaker than it first looked: `becomeForward` DOES leave obj1 as a forwarder
+to obj2, and the cache SKIPS forwarded entries where the old whole-heap walk
+would have found the object. But plain `become:` in this VM swaps references
+by scanning the heap and leaves no forwarder at all, so only
+`becomeForward`-ed Processes are exposed, which is a narrow case. NOT
+verified; the plan is re-run 601-650 on the current
 binary (deterministic?), then `PHARO_NO_JIT=1` (is it the JIT at all?), then
 a build of `26ad35b3` if both say yes.
 
