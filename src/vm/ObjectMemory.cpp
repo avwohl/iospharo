@@ -1366,7 +1366,15 @@ std::string ObjectMemory::selectorOf(Oop method) const {
     if (!name.empty()) return name;
     // Penultimate is not a Symbol — likely an AdditionalMethodState whose
     // slot 1 holds the real selector.
-    if (sel.isObject() && sel.rawBits() >= 0x10000) {
+    //
+    // isValidPointer, not just isObject: selectorOf is a DIAGNOSTIC helper
+    // called from compile paths, trace gates and crash handlers, i.e. from
+    // exactly the places that already suspect something is wrong.  It has
+    // to be total.  fetchPointer above bounds-checks the slot read, but
+    // this branch dereferences whatever it answered, and a method whose
+    // literal happens to be a bogus pointer would fault here instead of
+    // answering "?".
+    if (sel.isObject() && sel.rawBits() >= 0x10000 && isValidPointer(sel)) {
         ObjectHeader* amsHdr = sel.asObjectPtr();
         if (amsHdr->slotCount() >= 2) {
             Oop amsSel = amsHdr->slotAt(1);

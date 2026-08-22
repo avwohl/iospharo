@@ -1686,8 +1686,11 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
         size_t evictTarget = allocSize * 2;
         const size_t zoneSlice = zone.totalBytes() / 64;
         if (evictTarget < zoneSlice) evictTarget = zoneSlice;
-        size_t freed = zone.evictLRU(evictTarget, evictCallback, &methodMap,
-                                       preEvictCallback, &evictedRanges);
+        // Assign, do not re-declare: the outer `freed` is what the
+        // full-flush diagnostic below reports, and a shadowing local left
+        // it reading 0 for every flush.
+        freed = zone.evictLRU(evictTarget, evictCallback, &methodMap,
+                              preEvictCallback, &evictedRanges);
         if (freed > 0) {
             static int evictCount = 0;
             if (++evictCount <= 3 || (evictCount % 500 == 0)) {

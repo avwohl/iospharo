@@ -101,10 +101,13 @@ dies. `test_relaunch` x86_64:
     before   SIGSEGV in cycle 1, 4 runs out of 4
     after    cycle 1 PASS, 3 runs out of 3   (arm64 still 3/3 cycles)
 
-Still open on x86_64 and now visible behind the crash: with
-`PHARO_NO_JIT=1`, `vm_stop` times out and `vm_destroy` takes its
-leak-rather-than-free path — the 2026-08-18 `running_`-is-a-plain-bool data
-race, which arm64 does not show (`interpret() returned after 15ms`).
+One `PHARO_NO_JIT=1` x86_64 run during the bisect DID hit `vm_stop`'s 2 s
+timeout and take `vm_destroy`'s leak-rather-than-free path — the 2026-08-18
+`running_`-is-a-plain-bool data race. It does not reproduce: re-run after
+the fix, `PHARO_NO_JIT=1` passes with zero `[VM-STOP-TIMEOUT]` on BOTH
+arches. So that race is still real UB (a plain `bool` written by the main
+thread and read by the dispatch loop) but it is not currently failing a
+test, and it is filed rather than chased.
 
 ## SUnit — the arm64 residual is 5 non-GUI classes, and 3 of them evaporate in isolation
 
@@ -336,6 +339,55 @@ This one needs no exclusions.
     exists because the 64 MB default starved the JIT — with eviction working,
     that knob's justification should be re-measured.
   * `scripts/build-third-party.sh` is blocked on cairographics.org being down.
+
+## Retired today, second one: the hardcoded `Float>>cos` JIT skip
+
+`AsmjitT1.cpp` refused to compile any method named `cos`, since `5c870c75`
+(2026-05-28). Its own comment named the cause and the exit condition:
+
+    "looks like the `+` inline emit's SmallFloat encode occasionally
+     outputs un-tagged double bits ... Disable JIT for #cos until the
+     root cause is found."
+
+That root cause was found and fixed **ten days later** by `f5433641`:
+`orr xN, xN, #5` is not a valid AArch64 bitmask immediate (5 = 0b101, two
+non-contiguous bits), so asmjit silently emitted nothing and the result kept
+tag 0 — a SmallFloat the VM then read as a heap pointer. All three encode
+sites use `add #5` now and carry that explanation. The skip outlived its bug
+by eleven weeks.
+
+Removed, and measured rather than assumed:
+
+    200k-iteration `i degreesToRadians cos` loop   EVAL-RESULT '-20.56565958076199'
+      same, PHARO_NO_JIT=1                         EVAL-RESULT '-20.56565958076199'
+      PHARO_COMPILE_LOG confirms `[COMPILE] cos`   (it really is compiled now)
+    IntegerTest/FloatTest/FractionTest/NumberParserTest   0 F, 0 E
+      including testDegreeCos in all three and testDegreeCosForExceptionalValues
+
+It was also the ONLY ungated `selectorOf` on the compile entry path — every
+compilation paid a selector fetch plus a `std::string` for it, and it is where
+the stale-oop SIGSEGV above landed.
+
+Batch 1-50, both arches, after all of today's changes — identical to the
+recorded baseline:
+
+    arm64   774 tests  772 PASS  0 FAIL  0 ERROR
+    x86_64  774 tests  772 PASS  0 FAIL  0 ERROR
+
+## Left standing deliberately
+
+  * `Interpreter::unblockStuckSnapshotCallers()` is a real workaround —
+    it scans every Process, finds one whose top frame is exactly
+    `snapshot:andQuit:`, and signals its Semaphore because "we've seen the
+    worker's chain not reach `wait signal`". It is load-bearing for headless
+    eval today; ripping it out without root-causing the fork-tail loss would
+    hang evals. Filed, not removed.
+  * `running_` is a plain `bool` written by the main thread (`stop()`) and
+    read by the dispatch loop. Real UB, and the 2026-08-18 note blamed it for
+    a `vm_stop` timeout. Making it `std::atomic<bool>` with relaxed
+    load/store compiles to the same instructions, but it puts a real load in
+    the hot dispatch loop where the compiler could previously keep it in a
+    register — so it needs a bench-suite before/after, not a blind edit.
 
 # WIP (2026-08-22) — JIT eviction was unreachable; x86_64 reached SUnit parity with no exclusions
 

@@ -11469,22 +11469,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             return nullptr;
         }
     }
-    // Hardcoded skip for known-broken Float methods.
-    // Float>>cos JIT compilation SIGSEGVs at offset 336 in the JIT'd
-    // code under repeated `i degreesToRadians cos` calls (the JIT
-    // dispatch reads garbage as a heap pointer with tag 0 — looks
-    // like the `+` inline emit's SmallFloat encode occasionally
-    // outputs un-tagged double bits).  IntegerTest>>testDegreeCos
-    // crashes deterministically.  Disable JIT for #cos until the
-    // root cause is found.  Other Float trig methods (sin, tan)
-    // appear to work — only cos has the issue.
-    {
-        std::string sel = memory.selectorOf(compiledMethod);
-        if (sel == "cos") {
-            g_failed++; g_failedSkipSel++;
-            return nullptr;
-        }
-    }
+    // A hardcoded `sel == "cos"` skip lived here from 2026-05-28
+    // (`5c870c75`) to 2026-08-22.  Its own comment named the cause —
+    // "looks like the `+` inline emit's SmallFloat encode occasionally
+    // outputs un-tagged double bits" — and that cause was FIXED ten days
+    // later by `f5433641`: `orr xN, xN, #5` is not a valid AArch64 bitmask
+    // immediate (5 = 0b101 is two non-contiguous bits), asmjit silently
+    // emitted nothing, and the result kept tag 0.  All three encode sites
+    // now use `add #5`.  The skip outlived its bug by eleven weeks.
+    //
+    // It also cost every compilation a `selectorOf` + std::string, on the
+    // one path in this function that is not behind a debug gate — which is
+    // exactly where the x86_64 test_relaunch stale-oop SIGSEGV landed.
     // g_debug.t1SkipSelectors: comma-separated selector list to reject
     // from real-emit (compile as stub-on-entry).  Unlike index-based
     // bisects, selectors are stable across runs even when compile
