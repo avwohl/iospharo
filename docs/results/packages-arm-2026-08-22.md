@@ -18,7 +18,7 @@ run made BEFORE code-zone eviction became reachable at all, so it is the
     Grease           50 s          365 s                   48 s
     PolyMath   TIMEOUT (1200 s)   (not reached)          269 s
     DataFrame       139 s        (not reached)             91 s
-    Fuel              4 s        (not reached)             (see below)
+    Fuel              4 s        (not reached)          FAILS — repo is gone
 
 Two packages that had NEVER produced a result on this host now do:
 `XMLParser` (which timed out at 1800 s in the morning run and produced "no
@@ -34,6 +34,36 @@ RESULT" on 2026-08-17) and `PolyMath` (which timed out at 1200 s on
     Grease           37     554      0     0
     PolyMath        117    1448      2    18
     DataFrame        27     839     14     0
+    Fuel              2      19      0     0
+                    ---    ----    ---   ---
+                    354    9381     16    19
+
+The 2026-08-19 reference in `docs/test-results.md` for the same seven
+packages is 9383 pass / 16 fail / 17 err, measured on a different host where
+all seven loaded. Today's run is within two tests of it on every column —
+and every load ran natively here, which they could not this morning.
+
+## Fuel does not load, and never did
+
+`github.com/pharo-project/pharo-fuel` is **gone**: 404 on the web page, 401
+"Repository not found" on `.git/info/refs`. Iceberg tries SSH first (auth
+error — every package here logs that, it is normal), falls back to HTTPS, and
+then sits inside libgit2's `http_stream_read` against a repository that does
+not exist. Killed at 1042 s with 20 KB in `pharo-local`; a working clone
+(NeoJSON) has 1.5 MB inside 21 s, and nothing was logged for the last 15
+minutes of it.
+
+The 19 passes are from the Fuel already IN the base image, so this entry has
+never actually loaded anything from that URL — including in the 2026-08-17
+run, which recorded "load 4 s" and the same 2 classes / 19 passes.
+
+`scripts/package-tests-selfhosted.sh` now points at `theseion/Fuel`, whose
+existence, `master` default branch and `srcDirectory: 'repository'` are
+verified over the GitHub API. **The load itself is untested.**
+
+Worth a separate look: the VM sat in a blocking libgit2 read for 17 minutes
+against a 401 instead of surfacing an error. Whether stock Cog fails faster
+there is unknown.
 
 `Grease`'s 37 classes / 554 passes are new since the script's test-class
 pattern was corrected from `Grease` (matches nothing) to `GR`.

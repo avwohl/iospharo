@@ -61,7 +61,22 @@ PACKAGES=(
   "Grease|Metacello new baseline: 'Grease'; repository: 'github://SeasideSt/Grease:master/repository'; load: #('default' 'Tests').|GR"
   "PolyMath|Metacello new baseline: 'PolyMath'; repository: 'github://PolyMathOrg/PolyMath:master/src'; load.|PolyMath"
   "DataFrame|Metacello new baseline: 'DataFrame'; repository: 'github://PolyMathOrg/DataFrame/src'; load.|DataFrame"
-  "Fuel|Metacello new baseline: 'Fuel'; repository: 'github://pharo-project/pharo-fuel:master/src'; load.|Fuel"
+  # 2026-08-22: github.com/pharo-project/pharo-fuel is GONE -- 404 on the web
+  # page, 401 "Repository not found" on .git/info/refs.  Iceberg tries SSH
+  # first (auth error, normal -- every package here logs it), falls back to
+  # HTTPS, and then sits in libgit2's http_stream_read against a repository
+  # that does not exist: 1042 s with 20 KB in pharo-local, where a working
+  # clone (NeoJSON) has 1.5 MB inside 21 s.  It is NOT a VM defect and it is
+  # not a regression either: the 2026-08-17 run's "Fuel load 4 s" produced the
+  # same 2 classes / 19 passes this run does, and those come from the Fuel
+  # that is already IN the base image -- this entry has never actually loaded
+  # anything from that URL.
+  #
+  # theseion/Fuel is the surviving repository: it exists, its default branch
+  # is master, and its .project says `srcDirectory: 'repository'`.  That much
+  # is verified over the GitHub API.  The Metacello load itself is NOT tested
+  # -- if it turns out to add classes, the 19 passes below will move.
+  "Fuel|Metacello new baseline: 'Fuel'; repository: 'github://theseion/Fuel:master/repository'; load.|Fuel"
 )
 
 [ -x "$VM" ]   || { echo "no such VM binary: $VM" >&2; exit 1; }
