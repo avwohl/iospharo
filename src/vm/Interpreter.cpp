@@ -12500,7 +12500,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // before the first real activation arms the drain — this is
     // the timing Cog's test suite relies on.
     if (__builtin_expect(g_debug.finalizeDeferred &&
-                         memory_.pendingFinalizationSignals() > 0, 0)) {
+                         memory_.pendingFinalizationSignals() > 0
+                         && !mournDrainWouldNoOp(), 0)) {
         g_drainSite = "interp-act";
         g_drainActivatee = method.rawBits();
         drainMournQueueNatively();
@@ -22868,7 +22869,7 @@ void Interpreter::backwardBranchInterruptCheck() {
     if (--backwardBranchCountdown_ > 0) return;
     backwardBranchCountdown_ = kBackwardBranchCheckReload;
 
-    if (memory_.pendingFinalizationSignals() > 0) {
+    if (memory_.pendingFinalizationSignals() > 0 && !mournDrainWouldNoOp()) {
         g_drainSite = "backjump";
         drainMournQueueNatively();
     }
@@ -23064,7 +23065,29 @@ void Interpreter::drainMournQueueNatively() {
         }
         // pendingFinalizationSignals retained (no clear).  Signal will fire
         // at next activateMethod-end check, so FP wakes and drains.
+        //
+        // NO-PROGRESS GUARD.  When the queue holds NOTHING BUT keepers, this
+        // whole function pops them and pushes them straight back, and leaves
+        // pendingFinalizationSignals set — so the very next activateMethod
+        // runs it again, and the one after that, for as long as the
+        // image-side FinalizationProcess takes to dispatch them through
+        // primitive 172.  That is an O(queue) walk PER ACTIVATION with
+        // nothing to show for it; a `sample` of a package load caught 38% of
+        // the process in here (260 of 683 samples, under activateMethod).
+        // The [DRAIN-1] line printed by test_relaunch shows the shape:
+        // `kept=21 dec=0 pending=74->74`.
+        //
+        // Remember the queue size we made no progress on, and skip until it
+        // changes — a GC adding mourners or the FP dispatching some both
+        // change it.  The signal is still pending, so the image-side path is
+        // not disturbed.
+        if (processed > 0 && keepers.size() == processed) {
+            mournNoProgressSize_ = memory_.mournQueueSize();
+        } else {
+            mournNoProgressSize_ = 0;
+        }
     } else {
+        mournNoProgressSize_ = 0;
         // Queue fully drained (all WKAs processed natively + all WeakArrays
         // dropped).  No mourners left for FP to process.
         memory_.clearPendingFinalizationSignals();

@@ -392,6 +392,15 @@ public:
     /// recycled heap address (sweepGC has no recoverAfterGC pass).
     void purgeDeadCacheRoots();
 
+    /// True when the last native mourn drain made no progress and the queue
+    /// has not changed since — see the NO-PROGRESS GUARD in
+    /// drainMournQueueNatively.
+    bool mournDrainWouldNoOp() const {
+        return mournNoProgressSize_ != 0
+            && memory_.mournQueueSize() == mournNoProgressSize_;
+    }
+    size_t mournNoProgressSize_ = 0;
+
     // pinLiveJITMethodsAcrossProcesses cost counters — see its comment.
     size_t pinScanCalls_ = 0, pinScanObjects_ = 0, pinScanProcesses_ = 0;
     size_t pinScanChains_ = 0, pinScanSteps_ = 0, pinScanFullWalks_ = 0;
