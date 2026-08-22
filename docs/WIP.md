@@ -6,7 +6,12 @@ are checked in now (`scripts/rerun/`), which they were not last time.
 
 ## Get back to this state
 
-    git checkout jit && git pull
+**The 8 commits are LOCAL — nothing has been pushed to origin/jit.** They live
+in `/Users/wohl/src/iospharo-jit`, not in /private/tmp, so the reboot does not
+touch them. But this state does not exist on any other machine until someone
+runs `git push origin jit`.
+
+    git checkout jit                    # already there; no pull needed
     git submodule update --init --recursive
 
 Then check what actually survived before rebuilding anything:
