@@ -73,43 +73,61 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 `docs/deferred.md`, which is now only that. Fixed work is recorded in
 `docs/changes.md` and `docs/history/`.
 
-## NEW 2026-08-22 — four dead weak subscriptions are never removed from the announcer
+## NEW 2026-08-22 — four dead weak subscriptions are never removed from the system announcer
 
-Reproduces in ISOLATION, on every build tried, in 13 s:
+Two tests report it, and they are NOT equally strong evidence — read both
+before quoting either.
+
+**`ReleaseTest>>testNoDeadSubscriptions` is the real one.** It runs on Pharo
+CI today (its comment says "we skiped this on the ci **in the past**:
+pharo-project/pharo#2471"), so upstream expects it to pass:
+
+    testNoDeadSubscriptions
+        3 timesRepeat: [ Smalltalk garbageCollect ].
+        dead := self class codeChangeAnnouncer subscriptions subscriptions
+                    select: [ :sub | sub subscriber isNil ].
+        self assert: dead asArray equals: #()
+
+Ours fails it with four entries:
+
+    a WeakAnnouncementSubscription (nil subscribes to MethodAdded)
+    a WeakAnnouncementSubscription (nil subscribes to ClassRemoved)
+    a WeakAnnouncementSubscription (nil subscribes to MethodModified)
+    a WeakAnnouncementSubscription (nil subscribes to MethodRemoved)
+
+`nil subscribes to X` means the weak reference to the subscriber WAS cleared
+correctly — the subscription object itself is what never got removed from the
+announcer, and removing it is finalization's job.
+
+**`WeakAnnouncerTest>>testNoDeadWeakSubscriptions` reproduces the same four in
+13 s in isolation**, which is the useful part:
 
     printf 'WeakAnnouncerTest\n' > /tmp/sunit_class_names.txt
     build-rel/test_load_image <prepped sunit image>
+    -> 34 tests, 32 P, 1 F, 1 S
 
-    WeakAnnouncerTest   34 tests   32 P   1 F   1 S
-      FAIL: testNoDeadWeakSubscriptions
-        [an Array(a WeakAnnouncementSubscription (nil subscribes to MethodAdded)
-                  a WeakAnnouncementSubscription (nil subscribes to ClassRemoved)
-                  a WeakAnnouncementSubscription (nil subscribes to MethodModified)
-                  a WeakAnnouncementSubscription (nil subscribes to MethodRemoved))
-         should have been empty]
+but it is **skipped on Pharo CI by its own first lines** (`self longTestCase.
+self skipOnPharoCITestingEnvironment.` — that reads
+`PHARO_CI_TESTING_ENVIRONMENT` out of the process environment, which our
+harness does not set). So upstream makes no claim about it, and it cannot be
+cited as "Cog passes this". Use it as a fast reproducer, not as evidence.
 
-`nil subscribes to X` means the subscriber has been collected — the weak
-reference was cleared correctly — but the subscription itself is still in
-`SystemAnnouncer uniqueInstance`'s registry. Removing it is finalization's
-job, and finalization is where to look.
+This corrects the "harness self-pollution" label `ReleaseTest`'s four FAILs
+have carried since 2026-08-11: `testNoOrphanPackage`,
+`testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented` and
+`testUnknownProcesses` genuinely do name the injected runner, but
+`testNoDeadSubscriptions` does not — WeakAnnouncerTest reproduces it with no
+other test class in the image.
 
-Same signature, same four announcement classes, as
-`ReleaseTest>>testNoDeadSubscriptions`, which fails in every full-suite run
-and has been filed as "harness self-pollution" since 2026-08-11. It is not:
-`WeakAnnouncerTest` reproduces it alone, with no other test class in the
-image. The two are one defect.
+Not established: whether stock Cog passes `testNoDeadSubscriptions` on this
+image. There is no runnable Cog on this host (it aborts allocating its code
+zone at 0x320000000), so that comparison needs another machine.
 
-Related and probably the same root: `LinkInstallerTest` fails
-`testPropagateNewClassScopedLinksOnMethodNode` as soon as ANY class runs
-before it (40/40 alone, 39/40 otherwise, with the JIT on OR off), and
-`PHARO_NEWSPACE_MB=1` reproduces it alone — but flakily, so the knob bisect
-around it is not yet evidence. The four dead subscriptions above are exactly
-LinkInstaller's subscription set.
-
-Not established: whether stock Cog passes `testNoDeadWeakSubscriptions` on
-this image. There is no runnable Cog on this host (it aborts allocating its
-code zone at 0x320000000), so that comparison needs another machine. Until
-then this is a strong candidate, not a confirmed divergence.
+Also worth deciding, separately: our sweeps do not set
+`PHARO_CI_TESTING_ENVIRONMENT`, so we run every test Pharo's own CI skips.
+That is more coverage, but it means some of our failures are tests upstream
+has already given up on, and they should not be counted against the VM
+without checking for that guard first.
 
 ## OPEN DEFECTS (as of 2026-08-12)
 
