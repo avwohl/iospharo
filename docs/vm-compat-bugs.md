@@ -1,6 +1,23 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
-## NEW 2026-08-19 — arm64 JIT crashes (SIGBUS) on a runtime-compiled hot loop
+## ~~arm64 JIT crashes (SIGBUS) on a runtime-compiled hot loop~~ — FIXED `260692fa` (2026-08-19), VERIFIED 2026-08-22
+
+Filed 2026-08-19 and fixed the same day by `260692fa` ("guard the
+isSpliceTarget header writes with a W^X window"); the entry was never
+retired, so it sat at the top of this file as the newest open defect for
+three days.  Re-measured at HEAD on 2026-08-22 with the repro below:
+
+    build-rel  arm64    rc=0   EVAL-RESULT='20000'
+    build-x86  x86_64   rc=0   EVAL-RESULT='20000'
+
+The diagnosis in the original entry was right, and `JITRuntime::tryExecute`
+now carries the reasoning at the store site: `jm->isSpliceTarget = true` is a
+one-byte write into a JITMethod header that is bump-allocated INSIDE the
+MAP_JIT code zone, on an entry path that runs in EXECUTABLE mode.  The
+"unaligned tagged-immediate-looking" fault address was `jm + 45`, the offset
+of that field.
+
+Original report, kept for the shape it names:
 
 Hard crash, reproduced independently 3/3. Six lines, base Pharo 13 image, no
 package load required:

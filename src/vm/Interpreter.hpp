@@ -4118,6 +4118,27 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
                 visitor(keyOop);
             }
         }
+
+        rootTag_ = "jit-compile-queues";
+        // Pending-compile queues: raw CompiledMethod oop bits that sit
+        // here ACROSS a safe point, so a GC in between moves the methods
+        // and every entry goes stale.  Nothing walked them until
+        // 2026-08-22 -- see the declaration comment in JITRuntime.hpp for
+        // the x86_64 test_relaunch SIGSEGV that finally named it.  Same
+        // weak-root treatment as the two maps above: updated here,
+        // zeroed by purgeDeadCacheRoots when the method is dead.
+        for (size_t i = 0, n = jitRuntime_.initialCompileQueueCount(); i < n; i++) {
+            uint64_t& key = jitRuntime_.initialCompileQueueSlot(i);
+            if (key != 0) visitor(*reinterpret_cast<Oop*>(&key));
+        }
+        for (size_t i = 0, n = jitRuntime_.recompileQueueCount(); i < n; i++) {
+            uint64_t& key = jitRuntime_.recompileQueueSlot(i);
+            if (key != 0) visitor(*reinterpret_cast<Oop*>(&key));
+        }
+        for (size_t i = 0, n = jitRuntime_.initialCompileDrainingCount(); i < n; i++) {
+            uint64_t& key = jitRuntime_.initialCompileDrainingSlot(i);
+            if (key != 0) visitor(*reinterpret_cast<Oop*>(&key));
+        }
       }  // visitCacheRoots (JIT weak cache roots)
 
         // Shadow-slot detector (PHARO_SHADOW_SLOTS): entry obj keys and

@@ -496,6 +496,41 @@ private:
     // pressure: insert overwrites the first probe slot when its 8-slot
     // window is full).
 public:
+    // ---- Pending-compile queues, as GC roots -------------------------
+    //
+    // Both queues hold RAW CompiledMethod oop bits and are drained at a
+    // later safe point, so anything that moves objects in between --
+    // a scavenge, a compaction -- leaves every queued entry pointing at
+    // where the method USED to be.  Nothing updated them until
+    // 2026-08-22, which is a plain missing-root bug of the same shape as
+    // the count map and the failed-compile map two screens down; those
+    // two are walked in Interpreter::forEachRoot and purged in
+    // purgeDeadCacheRoots, and these were simply never added.
+    //
+    // It was not theoretical.  `test_relaunch` on x86_64 SIGSEGV'd 4 runs
+    // out of 4 inside `ObjectMemory::selectorOf` called from
+    // `compileViaAsmjit` off `drainInitialCompileQueue`, and
+    // PHARO_NO_QUEUE_COMPILE=1 -- which bypasses this queue and compiles
+    // inline -- was the one knob that made it pass.  The nil/true/false
+    // filter at the top of the drain loop, whose comment already says
+    // "startup-window queueing can race with GC and end up with a stale
+    // oop", was catching the one stale value that is easy to name and
+    // letting every other one through.
+    //
+    // Weak roots, like the count map: a queued method that nothing else
+    // references is dead, and compiling it would be pointless.  The
+    // update pass (RootScope::All) rewrites survivors;
+    // purgeDeadCacheRoots zeroes the rest, and a zero slot is skipped by
+    // both drains.
+    size_t initialCompileQueueCount() const;
+    uint64_t& initialCompileQueueSlot(size_t i);
+    // The drain's in-flight copy.  compile() allocates, so the entries it
+    // has not reached yet must be updated by a GC just like the queue.
+    size_t initialCompileDrainingCount() const;
+    uint64_t& initialCompileDrainingSlot(size_t i);
+    size_t recompileQueueCount() const;
+    uint64_t& recompileQueueSlot(size_t i);
+
     static constexpr size_t FailedMapSize = 16384;  // 128 KB of keys
     uint64_t& initialCompileFailedKey(size_t i) {
         return initialCompileFailedKeys_[i];

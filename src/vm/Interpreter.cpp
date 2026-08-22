@@ -22576,7 +22576,7 @@ void Interpreter::purgeDeadCacheRoots() {
         return bits != 0 && memory_.isDeadAfterMark(Oop::fromRawBits(bits));
     };
     size_t mcPurged = 0, jmPurged = 0, icPurged = 0,
-           cmPurged = 0, fmPurged = 0, t2Purged = 0;
+           cmPurged = 0, fmPurged = 0, t2Purged = 0, qPurged = 0;
 
     // 1. Method cache: void entries with a dead selector/class/method.
     // (afterGC flushes the whole cache post-fullGC anyway; this exists
@@ -22699,6 +22699,23 @@ void Interpreter::purgeDeadCacheRoots() {
                 fmPurged++;
             }
         }
+
+        // Pending-compile queues (see forEachRoot's matching walk): a
+        // dead entry left in place is a stale oop the drain would hand
+        // straight to the compiler, which is exactly the x86_64
+        // test_relaunch crash.  Zero is the drains' skip value.
+        for (size_t i = 0, n = jitRuntime_.initialCompileQueueCount(); i < n; i++) {
+            uint64_t& key = jitRuntime_.initialCompileQueueSlot(i);
+            if (deadBits(key)) { key = 0; qPurged++; }
+        }
+        for (size_t i = 0, n = jitRuntime_.recompileQueueCount(); i < n; i++) {
+            uint64_t& key = jitRuntime_.recompileQueueSlot(i);
+            if (deadBits(key)) { key = 0; qPurged++; }
+        }
+        for (size_t i = 0, n = jitRuntime_.initialCompileDrainingCount(); i < n; i++) {
+            uint64_t& key = jitRuntime_.initialCompileDrainingSlot(i);
+            if (deadBits(key)) { key = 0; qPurged++; }
+        }
         for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
             auto& entry = jitRuntime_.tier2Entry(i);
             if (deadBits(entry.key)) {
@@ -22718,10 +22735,12 @@ void Interpreter::purgeDeadCacheRoots() {
 #endif
 
     if (GET_DEBUG_BOOL(PHARO_GC_PURGE_LOG)
-        && (mcPurged | jmPurged | icPurged | cmPurged | fmPurged | t2Purged)) {
+        && (mcPurged | jmPurged | icPurged | cmPurged | fmPurged | t2Purged
+            | qPurged)) {
         fprintf(stderr, "[GC-PURGE] methodCache=%zu jitMethods=%zu icEntries=%zu "
-                "countKeys=%zu failedKeys=%zu tier2Keys=%zu\n",
-                mcPurged, jmPurged, icPurged, cmPurged, fmPurged, t2Purged);
+                "countKeys=%zu failedKeys=%zu tier2Keys=%zu queueSlots=%zu\n",
+                mcPurged, jmPurged, icPurged, cmPurged, fmPurged, t2Purged,
+                qPurged);
     }
 }
 

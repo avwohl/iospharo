@@ -1,3 +1,171 @@
+# WIP (2026-08-22 07:30) — post-reboot session: what the three tiers actually score
+
+Everything below was measured at HEAD (`26ad35b3`) on the reboot-surviving
+binaries (`build-rel` arm64, `build-x86` x86_64 under Rosetta) and the
+reboot-surviving prepped image in the old session scratchpad. Nothing had to
+be rebuilt: `git status` is clean and the last four commits are docs only.
+
+## VM C++ tier — arm64 green, x86_64 now green too
+
+The previous handoff listed "x86_64 VM C++ tier not re-run since the ffi.h
+fix" as open. Re-run, both arches, same image:
+
+    binary                arm64   x86_64
+    test_sista_ir         PASS    PASS
+    test_asmjit_t1_stub   PASS    PASS
+    test_class_table      51/51   51/51
+    test_relaunch         3/3     SIGSEGV 3/3   <-- see below
+
+`test_class_table`, `test_platform` and `test_sista_survey` exit rc=1 with a
+usage line when given no image argument, which reads exactly like a failure;
+they all pass when given one.
+
+## NEW, and the sharpest thing found today: `test_relaunch` SIGSEGVs on x86_64, 3/3
+
+Not the 2026-08-18 use-after-free (that one was a teardown race and its
+mitigation — leak rather than free under a running worker — is in
+`vm_destroy` and holds). This is a **JIT compile-time crash in cycle 1**,
+before `vm_stop` is ever called, and it is deterministic:
+
+    build-rel  arm64    3/3 cycles PASS, 3 runs
+    build-x86  x86_64   SIGSEGV in cycle 1, 3 runs out of 3
+
+Every run dies at the same place in the boot — right after
+`[DRAIN-1] ... in=#lowSpaceWatcher step=8181xxxxx` — and all three crash
+reports carry one backtrace:
+
+    0  ???                                    (Rosetta translated PC)
+    1  pharo::jit::compileViaAsmjit + 1976
+    2  pharo::jit::JITCompiler::compile + 709
+    3  pharo::jit::JITRuntime::drainInitialCompileQueue + 1099
+    4  pharo::Interpreter::interpret + 15667
+
+`compileViaAsmjit + 1976` is the instruction after
+`callq pharo::ObjectMemory::selectorOf(Oop)` (disassembled from the binary;
+the next instruction loads the literal `"cos"`), so the crashing call is the
+**unconditional** `selectorOf` at `AsmjitT1.cpp:11482` — the one that feeds
+the hardcoded `sel == "cos"` skip. It is the first selectorOf on that path
+that is not behind a debug gate, so any bad `compiledMethod` oop reaching
+`compileViaAsmjit` faults exactly there. `EXC_BAD_ACCESS` at
+`0x2326050058d87940` — garbage, not a near-null offset.
+
+Two things follow immediately, and both are worth acting on:
+
+  * `selectorOf` trusts `numLiteralsOf(method)` and then does
+    `fetchPointer(numLits - 1, method)` with no bound against the object's
+    own `slotCount()`. `drainInitialCompileQueue` validates the queued oop
+    (isValidPointer + slot 0 is a SmallInteger) but nothing checks that the
+    literal count is consistent, so a stale oop that happens to land on any
+    live object with a SmallInteger in slot 0 reads out of bounds.
+  * The `sel == "cos"` skip is itself the hardcoded-selector workaround the
+    project rules forbid ("Float>>cos JIT compilation SIGSEGVs ... Disable
+    JIT for #cos until the root cause is found"). It also makes every single
+    compilation pay a `selectorOf` + `std::string` construction.
+
+### ROOT-CAUSED AND FIXED the same session: the compile queues were never GC roots
+
+The knob bisect named it in one pass:
+
+    baseline                     SIGSEGV        (4 runs out of 4)
+    PHARO_NO_ASMJIT_T1=1         SIGSEGV        stencil path crashes too
+    PHARO_CODE_ZONE_MB=192       SIGSEGV        not zone pressure
+    PHARO_NO_QUEUE_COMPILE=1     rc=0, PASS     <-- the one that clears it
+    PHARO_NO_JIT=1               no crash, but vm_stop times out (separate)
+
+`PHARO_NO_QUEUE_COMPILE=1` is the knob that compiles inline instead of
+through `g_initialCompileQueue`. So the queue was the problem, and it is a
+plain missing-root bug:
+
+  * `g_initialCompileQueue` (256 slots) and `g_recompileQueue` (32 slots)
+    hold RAW CompiledMethod oop bits and are drained at a LATER safe point.
+    Nothing visited them in `forEachRoot`, so any scavenge or compaction in
+    between left every entry pointing at where the method used to be.
+  * `drainInitialCompileQueue` then copied the queue into a **stack** array
+    and compiled from that. `compile()` allocates — it scavenges, and on a
+    full zone it runs a whole eviction round — so even a correctly-rooted
+    queue would go stale mid-drain, one entry at a time, for every entry the
+    loop had not reached yet.
+
+The tell was in the code all along: the drain's nil/true/false filter
+carries the comment *"startup-window queueing can race with GC and end up
+with a stale oop that happens to land on a special object"*. It was
+catching the one stale value that is easy to name and letting every other
+one through. The count map and the failed-compile map three screens away in
+the same file are both walked in `forEachRoot` AND purged in
+`purgeDeadCacheRoots`; these two queues were simply never added.
+
+Fix: both queues plus the drain's in-flight copy (now a file static, not a
+stack array) are visited as weak cache roots and purged when the method
+dies. `test_relaunch` x86_64:
+
+    before   SIGSEGV in cycle 1, 4 runs out of 4
+    after    cycle 1 PASS, 3 runs out of 3   (arm64 still 3/3 cycles)
+
+Still open on x86_64 and now visible behind the crash: with
+`PHARO_NO_JIT=1`, `vm_stop` times out and `vm_destroy` takes its
+leak-rather-than-free path — the 2026-08-18 `running_`-is-a-plain-bool data
+race, which arm64 does not show (`interpret() returned after 15ms`).
+
+## SUnit — the arm64 residual is 5 non-GUI classes, and 3 of them evaporate in isolation
+
+The partial sweep salvaged before the reboot named 16 classes with a
+non-zero F or E. Fourteen are Spec/GUI adapters that need the fake-GUI
+prelude the sweep does not inject (documented ~350-test population). The
+five non-GUI ones, re-run at HEAD:
+
+    class                        in the sweep    alone      with PHARO_NO_JIT=1
+    EpFileOutModificationsTest    17 P / 1 F     17/17 P    --
+    RSLinesTest                   17 P / 1 E     18/18 P    --
+    LinkInstallerTest             39 P / 1 F     40/40 P    40/40 P
+    OCClassBuilderTest            25 P / 1 E     25 P/1 E   25 P / 1 E
+    ReleaseTest                   38 P / 4 F     38 P/4 F   --
+                                     + 1 T          + 1 T
+
+So:
+
+  * **`EpFileOutModificationsTest` and `RSLinesTest` are clean at HEAD.**
+    Both pass 100% alone; their sweep failures are cross-class order
+    effects, not defects of their own.
+  * **`LinkInstallerTest` is order-dependent and NOT the JIT.** 40/40 alone
+    with the JIT on. Run `EpFileOutModificationsTest` first — a single
+    predecessor is enough — and one of the `propagateNewClassScopedLinks`
+    family fails with `[Assertion failed]` plus `[Leaked metalinks]`.
+    `PHARO_NO_JIT=1` does not change it. The 2026-08-18 note that listed
+    this as untriaged with "worth a PHARO_NO_JIT=1 check" now has its
+    answer: the JIT is not involved.
+  * **`OCClassBuilderTest>>testCreateNormalClassWithTraitComposition`** is
+    the upstream image defect already recorded in `docs/image_issues.md:235`
+    (stock Cog on a pristine image errors identically). Reproduces with the
+    JIT off. Not ours.
+  * **`ReleaseTest`'s four FAILs are three harness artifacts and one
+    consequence of the above**: `testNoOrphanPackage` (`Package(Tests-Runner)`),
+    `testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented`
+    (`SUnitRunner class>>#runAllTests`), `testUnknownProcesses`
+    (`CommandLine handler process`) — all three name the runner this harness
+    injects — and `testNoDeadSubscriptions`, which reports exactly four dead
+    `WeakAnnouncementSubscription`s on `ClassRemoved`/`MethodRemoved`/
+    `MethodAdded`/`MethodModified`, i.e. LinkInstaller's own subscription
+    set, left behind by `LinkInstallerTest` earlier in the same image.
+  * **`ReleaseTest>>testNoShadowedVariablesInMethods` TIMEOUTs**, which is
+    defect `#6` (the activation wall) and the only VM-side item in this list.
+
+## The `#1` of what is left is `#6`/`#19`, and they are one defect
+
+`createFullBlockWithLiteral` calls `materializeFrameStack()` whenever
+`frameDepth_ > 0`, so creating ANY closure converts the whole native frame
+stack to heap Contexts. That is `#19`'s measured 12-25x glyph gap and `#6`'s
+reflective-scan timeouts, and the file already says what the fix is:
+per-frame married-context identity (single-frame lazy materialization). The
+`PHARO_IGNOC_WIDEN` body scan in that function is an opt-in approximation
+that its own comment calls UNSOUND.
+
+## Retired today
+
+`docs/vm-compat-bugs.md`'s top entry — "NEW 2026-08-19 arm64 JIT crashes
+(SIGBUS) on a runtime-compiled hot loop" — was fixed the day it was filed by
+`260692fa` and never retired, so it sat at the top of the open list for three
+days. Re-measured at HEAD: `rc=0 EVAL-RESULT='20000'` on arm64 AND x86_64.
+
 # WIP (2026-08-22 07:00) — REBOOT HANDOFF. Read this first.
 
 Everything is committed on `jit`. Two background runs were INTERRUPTED by the

@@ -3062,6 +3062,33 @@ static uint64_t g_initialCompileQueue[kInitialCompileQueueSize] = {0};
 static size_t g_initialCompileQueueHead = 0;
 static size_t g_initialCompileQueueDrained = 0;
 static size_t g_initialCompileQueueDropped = 0;
+// In-flight copy taken by drainInitialCompileQueue.  Static, and a GC root
+// for the duration of the drain -- see the comment at the copy site.
+static uint64_t g_initialCompileDraining[kInitialCompileQueueSize] = {0};
+static size_t g_initialCompileDrainingCount = 0;
+
+// GC-root access to both pending-compile queues.  Defined here rather
+// than inline in the header because both backing arrays are file-static
+// in this translation unit.  See the comment on the declarations in
+// JITRuntime.hpp for why they have to be roots at all.
+size_t JITRuntime::initialCompileQueueCount() const {
+    return g_initialCompileQueueHead;
+}
+uint64_t& JITRuntime::initialCompileQueueSlot(size_t i) {
+    return g_initialCompileQueue[i];
+}
+size_t JITRuntime::initialCompileDrainingCount() const {
+    return g_initialCompileDrainingCount;
+}
+uint64_t& JITRuntime::initialCompileDrainingSlot(size_t i) {
+    return g_initialCompileDraining[i];
+}
+size_t JITRuntime::recompileQueueCount() const {
+    return g_recompileQueueHead;
+}
+uint64_t& JITRuntime::recompileQueueSlot(size_t i) {
+    return g_recompileQueue[i];
+}
 
 bool JITRuntime::queueInitialCompile(Oop compiledMethod) {
     uint64_t methBits = compiledMethod.rawBits();
@@ -3108,16 +3135,29 @@ size_t JITRuntime::drainInitialCompileQueue() {
     // we want re-entrant queue pushes to land in fresh slots, not
     // overwrite ones we're about to drain.
     g_initialCompileQueueHead = 0;
-    uint64_t snapshot[kInitialCompileQueueSize];
+    // The snapshot is a FILE-STATIC, not a stack array, because it is a GC
+    // root for as long as this loop runs.  compile() allocates -- it can
+    // scavenge, and on a full zone it can trigger a whole eviction round --
+    // so by the time entry i+1 is read, entry i's GC may already have moved
+    // every method still sitting in here.  A stack copy cannot be visited
+    // by forEachRoot; this one is (see initialCompileDrainingSlot).
+    // Re-entrancy: drainInitialCompileQueue is only ever called from the
+    // safe point, never from inside compile(), so a single buffer is enough.
     for (size_t i = 0; i < head; i++) {
-        snapshot[i] = g_initialCompileQueue[i];
+        g_initialCompileDraining[i] = g_initialCompileQueue[i];
         g_initialCompileQueue[i] = 0;
     }
+    g_initialCompileDrainingCount = head;
+    struct ClearDraining {
+        ~ClearDraining() { g_initialCompileDrainingCount = 0; }
+    } clearDraining;
     Oop nilOop = interp_ ? interp_->memory().nil() : Oop::nil();
     Oop trueOop = interp_ ? interp_->memory().trueObject() : Oop::nil();
     Oop falseOop = interp_ ? interp_->memory().falseObject() : Oop::nil();
     for (size_t i = 0; i < head; i++) {
-        uint64_t methBits = snapshot[i];
+        // Re-read through the static every iteration: a GC inside a
+        // previous compile() rewrites these slots in place.
+        uint64_t methBits = g_initialCompileDraining[i];
         if (methBits == 0) continue;
         Oop method = Oop::fromRawBits(methBits);
         if (!method.isObject() || method.rawBits() < 0x10000) continue;
