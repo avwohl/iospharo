@@ -852,6 +852,9 @@ static LONG WINAPI pharoWinCrashHandler(EXCEPTION_POINTERS* ep) {
 
 extern "C" void pharo_dumpPrimSeq();
 
+extern "C" size_t g_pinCalls;
+extern "C" size_t g_pinNewlyPinned;
+
 int main(int argc, char* argv[]) {
 #ifndef _WIN32
     struct sigaction sa;
@@ -1633,6 +1636,11 @@ int main(int argc, char* argv[]) {
     pharo_tffiWorkerShutdownAll();
     PHARO_EXIT_STEP("socketPluginShutdown");
     socketPluginShutdown();
+    if (GET_DEBUG_BOOL(PHARO_PIN_STATS)) {
+        fprintf(stderr, "[PIN-STATS] primitivePin calls=%zu newlyPinned=%zu\n",
+                g_pinCalls, g_pinNewlyPinned);
+    }
+
     PHARO_EXIT_STEP("all shutdown steps complete");
     return exitCode;
 }

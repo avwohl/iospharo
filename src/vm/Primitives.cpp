@@ -11196,6 +11196,8 @@ PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
 // Primitive 184: Pin or unpin an object
 // Takes 1 argument: boolean (true = pin, false = unpin)
 // Returns: true if was pinned before, false if wasn't
+extern "C" { size_t g_pinCalls = 0; size_t g_pinNewlyPinned = 0; }
+
 PrimitiveResult Interpreter::primitivePin(int argCount) {
     // Official VM signature: receiver pin: aBoolean
     if (argCount != 1) {
@@ -11228,6 +11230,16 @@ PrimitiveResult Interpreter::primitivePin(int argCount) {
     ObjectHeader* header = rcvr.asObjectPtr();
     bool wasPinned = header->isPinned();
     header->setPinned(shouldPin);
+
+    // How often is this called?  It decides whether the fragmentation fix in
+    // docs/gc-oldspace-fragmentation-2026-08-22.md is viable as specified:
+    // relocating on pin needs a forwarder, and becomeForward walks the whole
+    // heap per call.  Six pins survive in a loaded image, but that is the
+    // RESTING count, not the call rate.
+    if (GET_DEBUG_BOOL(PHARO_PIN_STATS)) {
+        g_pinCalls++;
+        if (shouldPin && !wasPinned) g_pinNewlyPinned++;
+    }
 
     popN(2);
     push(wasPinned ? trueObj : falseObj);
