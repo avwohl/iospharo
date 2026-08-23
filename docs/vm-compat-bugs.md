@@ -230,6 +230,42 @@ image's error handler runs, reports, and the eval never reaches its snapshot
 — which is a real reporting weakness worth fixing on its own, but it is a
 consequence, not the defect.
 
+### A structural asymmetry that fits, verified from the source
+
+`emitMethodBytes` (`src/vm/jit/asmjit/AsmjitT1.cpp`) has one arch split:
+
+    10079:  #if defined(__x86_64__)
+    10435:      if (op >= SistaV1::ExtendA)   // 0xE0..0xFD
+                    loopBail(EXIT_ARITH_OVERFLOW)      <-- catches 0xF9 / 0xFA
+    10493:  #elif defined(__aarch64__)
+    10869:      if (op == SistaV1::PushFullBlock)      // 0xF9
+                    ... ExitBlockCreate                <-- dedicated handler
+
+`PushFullBlock` is 0xF9 and `PushClosure` is 0xFA (`SistaV1.hpp:106-107`), so
+on **x86_64 both block-creating bytecodes fall into the generic
+extended-bytecode bail**, while arm64 routes them to `ExitBlockCreate`, whose
+handler creates the closure and syncs the interpreter globals.
+
+That is this repo's documented `per-arch-backend-drift` class — the one that
+has already produced three bugs — and it fits every feature of the evidence:
+x86-only, a non-block where a `FullBlockClosure` belongs, and small
+sequential integers (1 and 2) of the kind that live in a neighbouring frame's
+temps. The intermittency fits too: it needs the callee JIT-compiled with its
+IC already upgraded to a J2J entry.
+
+**Fits is not causes.** The structure is confirmed; that it produces THIS DNU
+is not. Four knobs decide it, run as rate-vs-rate because the failure is
+intermittent (a single passing run proves nothing):
+
+    PHARO_T1_EXTBAIL_SEND=1      most targeted -- changes that exact bail's code
+    PHARO_T1_X86_NO_XMETHOD=1    disables x86 cross-method inline-J2J
+    PHARO_T1_NO_CALLER_RESUME=1  disables the documented x86 per-send sp leak
+    PHARO_T1_XMETHOD_MAX_IC=0    restores leaf-only callees
+
+Baseline rate is being measured first; arm64 has already come back 8/8 clean,
+which is consistent with the asymmetry above but does not on its own
+distinguish between these four.
+
 Where to look: the load stops inside a libgit2 `github://` clone, which is
 also where `Fuel` sits for 17 minutes against a repository that no longer
 exists. A VM that exits 0 after a Smalltalk process was terminated mid-eval
