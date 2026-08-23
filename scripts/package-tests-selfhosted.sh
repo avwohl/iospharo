@@ -31,6 +31,14 @@ shift 2
 WORK=${WORK:-/tmp/pkg-selfhosted}
 LOAD_TIMEOUT=${LOAD_TIMEOUT:-900}
 TEST_TIMEOUT=${TEST_TIMEOUT:-900}
+# Seconds per TestCase subclass.  SIZE THIS FOR THE ARCHITECTURE: an x86_64
+# (Rosetta) run needs roughly twice what arm64 does, and the bound failing is
+# indistinguishable in the summary from the tests failing.  Measured
+# 2026-08-22: PolyMath's PMArbitraryPrecisionFloatTest took 186 s on x86_64
+# against a 180 s bound -- six seconds over -- and the resulting TIMEOUT cost
+# 57 passes, which is 57 of the 59-test gap between the two architectures'
+# PolyMath scores.  Re-run alone with a 900 s bound it answers exactly what
+# arm64 answers: 58 ran, 57 passed, 1 error.  Use 360+ for x86_64.
 PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
 # REUSE_FROM=<dir>: skip the Metacello load and take each package's already
 # loaded pkg.image from a previous run's work directory. Spur images are

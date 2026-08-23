@@ -120,10 +120,23 @@ Five of seven match arm64 exactly, including DataFrame's 14 known
     should be used as indices", raised while the image writes a debug stack
     to stderr, so whether that is the original failure or a second one on the
     reporting path is not yet established.
-  * **PolyMath scores 1389 against arm's 1448**, with one extra timeout. Its
-    loaded image is also 885 MB on x86 against 1852 MB on arm, which is a
-    large enough difference to be worth understanding before reading the
-    59-test gap as a VM divergence.
+  * **PolyMath's 59-test gap is a timeout bound, not a divergence.** Diffing
+    the two runs class by class, 117 entries each, exactly two differ:
+
+        PMArbitraryPrecisionFloatTest   arm 58 ran/57 passed/1 err
+                                        x86 TIMEOUT after 180 s      -57 passes
+        PMKDTreeTest                    arm 11 passed/2 err
+                                        x86  9 passed/4 err          -2 passes
+
+    57 + 2 = 59, the whole gap. Re-run alone on x86_64 with a 900 s bound,
+    `PMArbitraryPrecisionFloatTest` takes **186 s** — six seconds over the
+    bound — and returns `58 ran, 57 passed, 1 error`, byte-identical to
+    arm64. So the only real arm/x86 difference in PolyMath is
+    `PMKDTreeTest`'s 2 tests, and x86_64's package total is effectively
+    1446 against arm's 1448.
+
+    `PER_CLASS_TIMEOUT` is sized for arm64; x86_64 under Rosetta needs ~2x.
+    The script now says so at the knob.
 
 Load times, arm64 -> x86_64: NeoJSON 21->29 s, Mustache 11->15 s, Grease
 48->89 s, PolyMath 269->577 s, DataFrame 91->176 s. That is the usual ~2x
