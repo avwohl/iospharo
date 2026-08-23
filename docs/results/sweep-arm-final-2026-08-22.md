@@ -312,3 +312,34 @@ should be weighed against that.
 What this census does establish is narrower and still useful: reaching for
 `PHARO_CI_TESTING_ENVIRONMENT` would remove five failures, not a large slice,
 so it is not a shortcut to a better score.
+
+### Confirmed in the fake-GUI config, and a harness trap worth knowing
+
+Re-ran the 30 residual classes against an image with `setup_fake_gui.st` AND
+the fixed runner filed in. `ReleaseTest` confirms both fixes in the realistic
+configuration:
+
+    ReleaseTest  43 ran, 41 passed, 1 skipped, 1 failure, 1 error
+
+Down from 4 FAILs. The survivors are the two established as not ours:
+`testNoDeadSubscriptions` (pharo#2471) and `testUnknownProcesses` (image MNU on
+`DefaultExecutionEnvironment>>#watchDogProcess`).
+
+**The run then wedged, and the cause is the harness, not the VM.** After four
+classes it went to ~1% CPU with
+
+    [DIAG] P10 ProcessorScheduler class>>whileTrue:
+
+i.e. only the idle process runnable, no further progress past ~1900 s. That is
+the "only-idle wedge" `run_sunit_tests.st` describes in its own `startUp:`
+comment: filing in `setup_fake_gui.st` starts Morphic, whose render loop
+busy-spins at pri-80, starves the pri-80 Delay scheduler, and kills the timer.
+The runner suspends those Morphic processes as **the very first `startUp:`
+action** precisely to prevent it.
+
+Driving the fake-GUI classes from a bare `eval` skips `startUp:` entirely, so
+that protection never runs. **Do not measure the fake-GUI configuration outside
+the runner's own startup path** — use the documented prep (`setup_fake_gui.st`
+into the prep step ahead of the runner, then a bare launch so SessionManager
+fires `SUnitRunner>>startUp:`). The four classes that did report before the
+wedge are recorded above; the rest of that run produced no data.
