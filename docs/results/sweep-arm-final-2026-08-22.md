@@ -396,7 +396,19 @@ Attribution, each with its evidence elsewhere in these docs:
   * **Slow, not stuck (1):** `testNoShadowedVariablesInMethods` is another
     whole-image scan; its sibling needed 230 s on arm64.
   * **Remaining GUI/debugger cases (8):** `StDebugger*`, `StSpotterModel`,
-    `LinkInstaller`, `SystemDependencies`, `FTTableMorph`. Not investigated
-    individually; this file records them flipping run to run.
+    `LinkInstaller`, `SystemDependencies`, `FTTableMorph`. Mostly not
+    investigated individually; this file records them flipping run to run.
+
+    `FTTableMorphTest>>testCanAlternateRowColors` is the exception, because it
+    errors on BOTH arches in every run rather than flipping. Isolated:
+
+        SubscriptOutOfBounds: '1 in #()'   Array(Object)>>errorSubscriptBounds:
+
+    i.e. it indexes row 1 of an EMPTY collection — the table has no rows at
+    all. That is the shape of a morph that was never laid out, which is what a
+    headless environment gives you even with the fake-GUI prelude, not a VM
+    computation error. Recorded rather than chased: confirming it would mean
+    driving real Morphic layout, and nothing here suggests the VM computed a
+    wrong value.
 
 **No demonstrated VM computation error in the set.**
