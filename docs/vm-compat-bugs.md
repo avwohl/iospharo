@@ -291,6 +291,17 @@ on this path and there is finally a repro to bisect the suppressors against.
 If it does NOT, this whole line of investigation is unsupported and the three
 surviving mechanisms below go back to being reading, not evidence.
 
+**It did not.** `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`, x86_64: `DNU=0 ok=6 of 6`.
+The amplifier does not reach this workload either, so per the sentence above
+the three surviving mechanisms are demoted: plausible readings of the source,
+NOT evidence about this DNU. The honest status of this entry is **one
+unreproduced failure with a good log and no established cause** — 0
+reproductions in 16 default-config runs and 0 in 6 amplified ones.
+
+Start by getting a repro, not by acting on the mechanisms. The package tier
+hit this twice in one day while 22 deliberate attempts did not, which points
+at something the package script does that an isolated eval does not.
+
 ### What a 12-agent adversarial pass established about the mechanism
 
 Three exclusions, all verified against source, all high confidence:
