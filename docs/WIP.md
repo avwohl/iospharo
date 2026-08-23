@@ -1,4 +1,56 @@
-# WIP (2026-08-22 23:50) — late session: eval exit status, and a libgit2 trap that ate an hour
+# WIP (2026-08-23 02:00) — all three tiers at measured arm/x86 parity
+
+Commits `0dc4f080`..`841d47a9` are LOCAL and NOT PUSHED.
+
+## Where the three tiers stand
+
+    tier         arm64                    x86_64
+    VM C++       4/4 green                4/4 green
+    SUnit        98.79% (27 F, 24 E)      98.80% (25 F, 22 E)
+    packages     9382 P / 16 F / 18 E     9382 P / 16 F / 18 E  (identical)
+
+The package tier is now byte-identical across architectures. Both gaps that
+made x86_64 look worse were **fixed bounds sized for arm64**, not VM defects:
+
+  * XMLParser's 5 errors vs arm's 1 were `TestTookTooMuchTime` against SUnit's
+    default 10 s per-test limit. The tests take 8.7-8.9 s on arm64 and 11.6 s
+    on x86_64 — arm at 88% of the allowance, x86 at 116%. Raising it gives
+    6359 pass / 0 err on BOTH, exactly as predicted.
+  * PolyMath's 59-test gap was `PER_CLASS_TIMEOUT` sized for arm64.
+
+New knob `PER_TEST_TIMEOUT` in `scripts/package-tests-selfhosted.sh`, default
+0 = leave the image's 10 s alone, so nothing changes unless asked.
+
+## The one genuine x86_64 defect found today
+
+`NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` reports
+`TIMEOUT(prim-stuck)` even at `timeoutScale=60` (600 s per test, 630 s
+watchdog). The runner emits that marker only when the test AND its watchdog are
+both stuck — `run_sunit_tests.st:1027`, "blocking C++ primitive, or scheduler
+dead". **It passes on arm64.** This is a hang inside a primitive, not a wrong
+answer, and it is the sharpest open x86_64 lead — far more tractable than the
+`cull:` DNU, which is still 0-for-24.
+
+The other 12 of x86_64's 13 sweep TIMEOUTs are bound artifacts: re-run at
+`timeoutScale=20` the nine timed-out classes give 167 pass, 0 fail, 0 error.
+
+## Read NAMES, not COUNTS (this bit me twice today)
+
+`docs/results/sweep-x86-final-2026-08-22.md` carries two corrections because I
+attributed a `P:4 F:1` summary line to the wrong test, twice. Per-test names
+are in `/tmp/sunit_test_detail.txt` and the package runner's `result.txt`.
+A `P:4 F:1` line names no test at all.
+
+## Characterized, not a defect: `testUsingMethodsFFI`
+
+Passes in both sweeps. Fails only in a bare `eval` on x86_64 because it asserts
+that some FFI method has already RUN (Pharo rewrites an FFI method on first
+call, dropping the push-self). Same image, same clean eval: arm64 has 7 such
+methods, x86_64 has 0 — five FreeType, plus `libgit2_init` and
+`LibC>>memCopy:to:size:`. Not missing libraries; `build-x86/` stages both
+x86_64 dylibs. A bare eval is simply not a valid environment for that test.
+
+## OLDER — WIP (2026-08-22 23:50) — late session: eval exit status, and a libgit2 trap that ate an hour
 
 Three tiers as of `a8651f6a`. Two commits are LOCAL, NOT PUSHED:
 `0dc4f080` (eval exit status) and `a8651f6a` (package clone reporting).
