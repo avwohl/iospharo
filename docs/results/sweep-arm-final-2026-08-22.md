@@ -174,24 +174,32 @@ is ours:
       docs/vm-compat-bugs.md; WeakAnnouncerTest reproduces it in 13 s). Four
       subscriptions with nil subscribers survive. GENUINELY OURS.
 
-### Attempted fix for testNoOrphanPackage, not landed
+### FIXED: testNoOrphanPackage — the runner now declares its own package
 
-Giving 'Tests-Runner' a declaring baseline would make the harness conform to
-the image's packaging contract rather than hide the failure. Two attempts both
-failed on Pharo 13 class-definition API, in a scratch image:
+Landed in `scripts/pharo-headless-test` (`cb12897`, bumped here as `4c83f3cd`).
+The runner installs `BaselineOfTestsRunner` declaring `'Tests-Runner'`, so the
+package it injects is no longer an orphan. Verified by filing the script into a
+fresh image and running the test in the same process:
 
-    BaselineOf subclass: #BaselineOfTestsRunner ... package: ...
-        -> Error: Instance of BaselineOf class did not understand
-           #subclass:instanceVariableNames:classVariableNames:package:
+    filedIn
+    baselineInstalled=true runnerInstalled=true
+    testNoOrphanPackage -> PASS
 
-    (BaselineOf << #BaselineOfTestsRunner) package: 'BaselineOfTestsRunner'
-        -> the class is not installed; the next `Smalltalk at:` raises
-           KeyNotFound: key #BaselineOfTestsRunner not found in SystemEnvironment
+    (was: TestFailure: an Array(a Package(Tests-Runner)) should have been empty)
 
-Whoever picks this up: find the API BaselineOf actually accepts in Pharo 13
-(and note the new baseline's OWN package must be declared too, or the test just
-moves to complaining about `BaselineOfTestsRunner`). Worth one test per arch,
-so it is low priority -- but it is a real harness defect, not a VM one.
+This is a real FAIL -> PASS on BOTH architectures, and it fixes the harness
+rather than hiding anything: the test exists to catch generated packages left
+behind, and ours was one.
+
+Two API notes that cost three attempts, worth keeping:
+
+  * `(BaselineOf << #X) package: 'X'` answers a **ShiftClassBuilder** and
+    installs nothing. It needs an explicit `install`. Both earlier attempts
+    failed silently this way — the class simply did not exist afterwards.
+  * `BaselineOf subclass:instanceVariableNames:classVariableNames:package:` is
+    **not understood** by `BaselineOf class` in Pharo 13.
+  * The new baseline's own package (`BaselineOfTestsRunner`) does NOT then
+    trip the test — measured, not assumed.
 
 ## 2026-08-23: arm64's 7 TIMEOUTs re-run at timeoutScale=20
 
