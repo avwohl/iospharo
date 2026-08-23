@@ -72,10 +72,23 @@ PACKAGES=(
   # that is already IN the base image -- this entry has never actually loaded
   # anything from that URL.
   #
-  # theseion/Fuel is the surviving repository: it exists, its default branch
-  # is master, and its .project says `srcDirectory: 'repository'`.  That much
-  # is verified over the GitHub API.  The Metacello load itself is NOT tested
-  # -- if it turns out to add classes, the 19 passes below will move.
+  # theseion/Fuel is the surviving repository and it does clone -- but its
+  # BASELINE is broken too, so Fuel is currently unloadable from ANY upstream.
+  # Measured 2026-08-22:
+  #
+  #   pharo-project/pharo-fuel  404 on the page, 401 on .git/info/refs;
+  #                             libgit2 sits in http_stream_read 17+ min
+  #   theseion/Fuel             clones, loads Fuel-Core, then in 37 s:
+  #                             "KeyNotFound: key 'Fuel-Core-Tests' not found"
+  #                             -- BaselineOfFuel names Fuel-Core-Tests but the
+  #                             repository ships Fuel-Tests-Core.  There is no
+  #                             'core' group either ("Name not found: core").
+  #
+  # Kept pointed here anyway because failing in 37 s with a clear error beats
+  # hanging the whole tier for 17 minutes.  Either way this entry's 2 classes /
+  # 19 passes come from the Fuel ALREADY IN the base image, not from a load --
+  # which is also true of the 2026-08-17 run that recorded "load 4 s".
+  # Do not spend time on it again without first checking upstream is fixed.
   "Fuel|Metacello new baseline: 'Fuel'; repository: 'github://theseion/Fuel:master/repository'; load.|Fuel"
 )
 
