@@ -291,12 +291,32 @@ on this path and there is finally a repro to bisect the suppressors against.
 If it does NOT, this whole line of investigation is unsupported and the three
 surviving mechanisms below go back to being reading, not evidence.
 
-**It did not.** `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`, x86_64: `DNU=0 ok=6 of 6`.
-The amplifier does not reach this workload either, so per the sentence above
-the three surviving mechanisms are demoted: plausible readings of the source,
-NOT evidence about this DNU. The honest status of this entry is **one
-unreproduced failure with a good log and no established cause** — 0
-reproductions in 16 default-config runs and 0 in 6 amplified ones.
+**Not on x86 — but 4 of 4 on arm64.** `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`:
+
+    x86_64   DNU=0  ok=6  of 6
+    arm64    DNU=4  ok=0  of 4      every run
+
+(An earlier revision of this paragraph said "the amplifier does not reach this
+workload either". That was written from the x86 half while the arm half was
+still running, and it was wrong.)
+
+Two things follow, and they point in opposite directions:
+
+  * **The 2026-06-19 double-pop fix is load-bearing on arm64.** Opt out of it
+    and cold startup corrupts on every run, with exactly this DNU shape —
+    `#+` sent to `false`, `#includes:` sent to `IdentitySet class`, inside
+    `ExternalObject class>>installSubclasses` / `WorkingSession>>startup:`.
+    A wrong receiver in a correctly-shaped frame. That is a useful standing
+    validation of a fix that had none.
+  * **It is NOT the mechanism for the x86 `cull:` DNU.** x86 does not exhibit
+    the bug even with the double-pop deliberately restored, so whatever
+    x86 does on this path, it is not this. The arch split is the opposite way
+    round from the failure being chased.
+
+So the three surviving mechanisms stay demoted: readings of the source, not
+evidence about this DNU. Its honest status is **one unreproduced failure with
+a good log and no established cause** — 0 in 16 default-config runs, 0 in 6
+amplified ones.
 
 Start by getting a repro, not by acting on the mechanisms. The package tier
 hit this twice in one day while 22 deliberate attempts did not, which points
