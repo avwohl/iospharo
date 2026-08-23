@@ -5383,7 +5383,13 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
                     }
                 }
             }
-            prevEnd = reinterpret_cast<uint8_t*>(o) + o->totalSize();
+            // Advance from the object's BASE, not its header.  For an
+            // overflow object `o` is the header at base+8 while totalSize()
+            // already counts the overflow word, so using `o` here overshot the
+            // true end by 8 -- while objStart above DOES apply the correction.
+            // The same base-vs-header inconsistency produced two of the bugs
+            // already fixed in this path.
+            prevEnd = objStart + o->totalSize();
         }
         // Validate what we just built.  This distinguishes the two possible
         // cycle sources: present HERE means rebuild itself linked a chunk into
