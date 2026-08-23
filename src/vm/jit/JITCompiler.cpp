@@ -11,6 +11,7 @@
 #include "SistaV1.hpp"
 #include "sista/SistaRuntime.hpp"
 #include "asmjit/AsmjitT1.hpp"
+#include <chrono>
 #include "../DebugSettings.hpp"
 #include "../DebugVars.hpp"
 #include "../ObjectMemory.hpp"
@@ -1522,6 +1523,12 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
         // exactly what a fresh site does.  Same shape as the eviction scrub
         // in allocateWithEviction, including the PMS slot-0 re-derive.
         if (!GET_DEBUG_BOOL(PHARO_NO_RECOMPILE_IC_RETARGET)) {
+            // Cost instrumentation: this is a FULL ZONE SCAN per recompile
+            // (every IC entry of every method), so on a large method
+            // population it is O(zone) work multiplied by the recompile
+            // count.  Accumulate and report under the trace knob so the
+            // price is measured, not assumed.
+            auto _scrubT0 = std::chrono::steady_clock::now();
             static constexpr uint64_t J2J_BIT = 1ULL << 60;
             static constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
             const uint64_t oldEntry = (uint64_t)(uintptr_t)oldCode;
@@ -1545,6 +1552,21 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
                         interp_.jitRuntime().rederiveSiteForICData(
                             q->compiledMethodOop, slots);
                     }
+                }
+            }
+            {
+                auto _dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - _scrubT0).count();
+                static uint64_t scrubTotalUs = 0;
+                static uint64_t scrubCalls = 0;
+                scrubTotalUs += (uint64_t)_dt;
+                scrubCalls++;
+                if (trace && (scrubCalls % 200) == 0) {
+                    fprintf(stderr, "[RECOMP-IC-COST] %llu scans, %.3f s total, "
+                            "%.0f us/scan\n",
+                            (unsigned long long)scrubCalls,
+                            scrubTotalUs / 1e6,
+                            (double)scrubTotalUs / (double)scrubCalls);
                 }
             }
             if (scrubbed && trace) {
