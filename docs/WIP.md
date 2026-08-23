@@ -1,65 +1,59 @@
-# WIP (2026-08-23 02:00) — all three tiers at measured arm/x86 parity
+# WIP (2026-08-23 04:00) — three tiers at measured parity; residual fully attributed
 
-Commits `0dc4f080`..`841d47a9` are LOCAL and NOT PUSHED.
+Commits `0dc4f080`..`eb117684` are LOCAL and NOT PUSHED (27, plus two in the
+`scripts/pharo-headless-test` submodule).
 
-## Where the three tiers stand
+## Final state of the three tiers
 
-    tier         arm64                    x86_64
-    VM C++       4/4 green                4/4 green
-    SUnit        98.79% (27 F, 24 E)      98.80% (25 F, 22 E)
-    packages     9382 P / 16 F / 18 E     9382 P / 16 F / 18 E  (identical)
+    tier       arm64                       x86_64
+    VM C++     4/4 green                   4/4 green
+    packages   9382 P / 16 F / 18 E        9382 P / 16 F / 18 E   (identical)
+    SUnit      800 P / 13 F / 3 E / 1 T    798 P / 15 F / 4 E / 1 T
+               (30 residual classes, fake-GUI image, runner path)
 
-The package tier is now byte-identical across architectures. Both gaps that
-made x86_64 look worse were **fixed bounds sized for arm64**, not VM defects:
+**No demonstrated VM computation error remains in either tier's residual.**
+Every non-pass is attributed by name in
+`docs/results/sweep-{arm,x86}-final-2026-08-22.md`.
 
-  * XMLParser's 5 errors vs arm's 1 were `TestTookTooMuchTime` against SUnit's
-    default 10 s per-test limit. The tests take 8.7-8.9 s on arm64 and 11.6 s
-    on x86_64 — arm at 88% of the allowance, x86 at 116%. Raising it gives
-    6359 pass / 0 err on BOTH, exactly as predicted.
-  * PolyMath's 59-test gap was `PER_CLASS_TIMEOUT` sized for arm64.
+## Fixed this session
 
-New knob `PER_TEST_TIMEOUT` in `scripts/package-tests-selfhosted.sh`, default
-0 = leave the image's 10 s alone, so nothing changes unless asked.
+  * **eval mode exits 71, not 0, when the eval never completed** (`0dc4f080`).
+    This is what recorded XMLParser's x86 abort as `load rc=0 ... DID-NOT-PERSIST`.
+  * **Package harness reports `CLONE-FAILED` vs `DID-NOT-PERSIST`** (`a8651f6a`).
+  * **Two ReleaseTest failures the harness scored against itself**, both arches:
+    `testNoOrphanPackage` (runner now declares `Tests-Runner` in a baseline) and
+    `testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented` (optional
+    protocol via `perform:`). Submodule `cb12897`, `d188523`.
+  * **`PER_TEST_TIMEOUT` knob** for the package tier, default 0 = unchanged.
 
-## No x86_64-only SUnit defect exists — all 13 TIMEOUTs are bounds
+## Both x86 "gaps" were arm-sized bounds, not defects
 
-I claimed one earlier today and it did not survive checking.
-`NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` run alone with
-a 900 s limit PASSES on both arches:
+XMLParser's 5 errors vs arm's 1 were `TestTookTooMuchTime` against SUnit's 10 s
+default (8.7-8.9 s on arm, 11.6 s on x86). Raising it gives **6359 pass / 0 err
+on BOTH**, exactly as predicted. PolyMath's 59-test gap was `PER_CLASS_TIMEOUT`.
+All 13 x86 SUnit TIMEOUTs are bounds too — the slowest, at 3.3 billion sends,
+passes on both arches (arm 230 s, x86 378 s, 1.64x).
 
-    arm64    230358 ms   3.34 billion sends   PASS
-    x86_64   378238 ms   3.64 billion sends   PASS
+## Still genuinely open
 
-1.64x wall clock, send counts within 9% — Rosetta slowdown on an enormous
-test. Its `TIMEOUT(prim-stuck)` marker is misleading: sampling the x86 process
-shows 99% CPU in ordinary interpretation (`interpret` -> `dispatchBytecode` ->
-`returnValue` -> `tryJITResumeInCaller` -> `primitiveFullClosureValue`), send
-counter advancing ~11 M/s. Nothing blocked in a C primitive.
+  * `cull:` DNU — **0 reproductions in 24 runs**. `b887d81f` matches its
+    symptom and measurably changed `canSkipJ2JSave` (22.4% -> 1.3%), but with
+    no repro that is a hypothesis, not a result.
+  * Old-space fragmentation (12x); `makeFreeChunk` fix necessary but not
+    sufficient.
+  * Whether ~8.8 s is reasonable for those XMLParser tests at all — needs a
+    stock-Cog number this host cannot produce.
 
-**arm64 did not pass it in the sweep — it LOST the class** (header present
-after a `CYCLE-LOOP-RESTART`, zero per-test rows in `all_detail.txt`). I read
-"absent from the non-PASS list" as "passed", which is exactly the
-"a zero also comes from a run that never ran" trap already in memory.
+## Traps this session paid for (all now in docs/memory)
 
-So the SUnit tier has no demonstrated x86_64-only defect. The residual on both
-arches remains the characterized set (GUI flakes, CI-skipped tests, one
-internet test, harness self-naming) — see the sweep docs.
-
-## Read NAMES, not COUNTS (this bit me twice today)
-
-`docs/results/sweep-x86-final-2026-08-22.md` carries two corrections because I
-attributed a `P:4 F:1` summary line to the wrong test, twice. Per-test names
-are in `/tmp/sunit_test_detail.txt` and the package runner's `result.txt`.
-A `P:4 F:1` line names no test at all.
-
-## Characterized, not a defect: `testUsingMethodsFFI`
-
-Passes in both sweeps. Fails only in a bare `eval` on x86_64 because it asserts
-that some FFI method has already RUN (Pharo rewrites an FFI method on first
-call, dropping the push-self). Same image, same clean eval: arm64 has 7 such
-methods, x86_64 has 0 — five FreeType, plus `libgit2_init` and
-`LibC>>memCopy:to:size:`. Not missing libraries; `build-x86/` stages both
-x86_64 dylibs. A bare eval is simply not a valid environment for that test.
+  * An x86 VM **copied out of `build-x86/`** loses libgit2 and fails every
+    `github://` load while exiting 0.
+  * **Read NAMES, not COUNTS** — a `P:4 F:1` line names no test; it cost two
+    wrong attributions and three doc corrections.
+  * Driving the fake-GUI config from a bare `eval` **wedges** the VM (skips
+    `startUp:`'s Morphic suspension). Use the runner path.
+  * `on: Exception do:` catches `ProvideAnswerNotification` and reports it as
+    the failure — resume notifications when isolating a test.
 
 ## OLDER — WIP (2026-08-22 23:50) — late session: eval exit status, and a libgit2 trap that ate an hour
 
