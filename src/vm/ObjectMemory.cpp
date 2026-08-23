@@ -3183,6 +3183,21 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
 
 void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,
                                             std::vector<Oop>& out) {
+    // classIndex 0 is what makeFreeChunk stamps into every FREE CHUNK, and it
+    // is also what indexOfClass answers as its "not found" sentinel
+    // (ObjectMemory.cpp, `return 0;  // Not found`).  Those two meanings
+    // collide: asking for the instances of a class that has no class-table
+    // entry would otherwise collect every free chunk in the heap and hand them
+    // to the image as objects.  Nothing is ever an instance of class 0.
+    //
+    // Measured 2026-08-23: with PHARO_OLDSPACE_FREELIST=1 this is exactly how
+    // class-shape migration died -- Pharo's migrateInstancesTo: asks
+    // `oldClass allInstances`, the freshly created class has no table entry
+    // (it was never instantiated -- see the classTable_ note in Primitives.cpp),
+    // so targetClassIndex was 0 and the image got an Array of free chunks.  The
+    // first one reached #isReadOnlyObject and took a classIndex-0 DNU.
+    if (classIndex == 0) return;
+
     auto scanRegion = [&](uint8_t* start, uint8_t* end) {
         uint8_t* scan = start;
         while (scan < end) {
@@ -3242,6 +3257,21 @@ void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,
 
 void ObjectMemory::collectInstancesOfClassInEden(uint32_t classIndex,
                                                  std::vector<Oop>& out) {
+    // classIndex 0 is what makeFreeChunk stamps into every FREE CHUNK, and it
+    // is also what indexOfClass answers as its "not found" sentinel
+    // (ObjectMemory.cpp, `return 0;  // Not found`).  Those two meanings
+    // collide: asking for the instances of a class that has no class-table
+    // entry would otherwise collect every free chunk in the heap and hand them
+    // to the image as objects.  Nothing is ever an instance of class 0.
+    //
+    // Measured 2026-08-23: with PHARO_OLDSPACE_FREELIST=1 this is exactly how
+    // class-shape migration died -- Pharo's migrateInstancesTo: asks
+    // `oldClass allInstances`, the freshly created class has no table entry
+    // (it was never instantiated -- see the classTable_ note in Primitives.cpp),
+    // so targetClassIndex was 0 and the image got an Array of free chunks.  The
+    // first one reached #isReadOnlyObject and took a classIndex-0 DNU.
+    if (classIndex == 0) return;
+
     // Same scan, young allocation area only.  Its caller (the code-zone
     // eviction pin scan) caches the whole-heap result per GC and re-walks
     // ONLY this region on every round, because eden is the only place an
