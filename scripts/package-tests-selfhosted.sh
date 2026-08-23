@@ -40,6 +40,29 @@ TEST_TIMEOUT=${TEST_TIMEOUT:-900}
 # PolyMath scores.  Re-run alone with a 900 s bound it answers exactly what
 # arm64 answers: 58 ran, 57 passed, 1 error.  Use 360+ for x86_64.
 PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
+# Seconds for SUnit's OWN per-test limit (TestCase class>>defaultTimeLimit,
+# enforced by runCaseManaged).  0 = leave the image default alone, which is
+# 10 s.  This is NOT the same bound as PER_CLASS_TIMEOUT above: that one is
+# ours and covers a whole class, this one is Pharo's and covers one test.
+#
+# Measured 2026-08-23, XMLParser's five testAttributeDefaultValue* cases:
+#
+#     test                               arm64      x86_64    limit
+#     testAttributeDefaultValueNmtokens   7004 ms             10000 ms
+#     testAttributeDefaultValueEntity     8734 ms   11595 ms  10000 ms
+#     testAttributeDefaultValueEntities   8784 ms             10000 ms
+#     testAttributeDefaultValueIDRef      8856 ms             10000 ms
+#     testAttributeDefaultValueIDRefs     8916 ms             10000 ms
+#
+# arm64 at ~88% of the allowance, x86_64 at ~116%, so x86_64 reported five
+# `TestTookTooMuchTime` errors where arm64 reported one -- the entire arm/x86
+# gap in the package tier, and nothing to do with VM computation.
+#
+# Raise it to compare architectures on equal terms.  But note these tests use
+# 88% of the allowance on the FAST arch, and it is NOT established that ~8.8 s
+# is reasonable for them; if stock Cog runs them in a fraction of that, the
+# real finding is a VM performance gap and raising this only hides it.
+PER_TEST_TIMEOUT=${PER_TEST_TIMEOUT:-0}       # seconds; 0 = image default (10)
 # REUSE_FROM=<dir>: skip the Metacello load and take each package's already
 # loaded pkg.image from a previous run's work directory. Spur images are
 # architecture-neutral, so an image loaded by the arm64 VM runs unchanged under
@@ -232,6 +255,7 @@ for entry in "${PACKAGES[@]}"; do
     timeout "$TEST_TIMEOUT" "$VM" "$D/pkg.image" eval "
 | pat pre added classes s tp tf te tt |
 pat := '$PATTERN'.
+$PER_TEST_TIMEOUT > 0 ifTrue: [ TestCase defaultTimeLimit: $PER_TEST_TIMEOUT seconds ].
 s := WriteStream on: String new.
 tp := 0. tf := 0. te := 0. tt := 0.
 classes := (TestCase allSubclasses
