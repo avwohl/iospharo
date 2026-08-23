@@ -268,9 +268,9 @@ Measured, 150 s cutoff (all three observed failures happened inside 54 s, so
 a run that clears 150 s has cleared the window):
 
     arm64    would-load 8   DNU 0   DNS 0   other 0   of 8
-    x86_64   would-load 7   DNU 0   DNS 0   other 0   of 7 so far
+    x86_64   would-load 8   DNU 0   DNS 0   other 0   of 8
 
-**Zero reproductions in fifteen runs.** The "roughly half the time" in the
+**Zero reproductions in sixteen runs.** The "roughly half the time" in the
 earlier revision of this entry came from one failure in two samples and was
 small-sample noise, not a rate. That kills the suppressor A/B outright: with
 no baseline failures there is nothing for `PHARO_T1_X86_NO_XMETHOD` or
