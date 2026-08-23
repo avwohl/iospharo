@@ -173,6 +173,27 @@ for entry in "${PACKAGES[@]}"; do
     base_size=$(stat -f%z "$BASE" 2>/dev/null || stat -c%s "$BASE" 2>/dev/null || echo 0)
     grew=grew
     [ "$size" -le "$base_size" ] && grew=DID-NOT-PERSIST
+    # Distinguish "the clone never happened" from "the VM failed the load".
+    # Both produce an unchanged image, and DID-NOT-PERSIST alone has been read
+    # as a VM defect more than once.  The clone failure looks like:
+    #     Error: IceGenericError: no error message set by libgit2
+    # and the load then exits in 4-5 s having done nothing.
+    #
+    # The commonest cause is NOT the network.  FFI resolves bare library names
+    # through getLibSearchPaths(), which searches THE EXECUTABLE'S OWN DIRECTORY
+    # FIRST (src/vm/FFI.cpp).  Only build-x86/ holds an x86_64 libgit2.dylib;
+    # /opt/homebrew/lib/libgit2.dylib is arm64-only.  So an x86_64 VM COPIED
+    # anywhere else falls back to the arm64 dylib, dlopen refuses it, and every
+    # github:// load fails instantly -- while the same binary run from
+    # build-x86/ loads fine, and any arm64 VM works from anywhere because the
+    # homebrew dylib matches it.  Measured 2026-08-22, after a copy of the x86
+    # VM in a scratch dir failed 5/5 on XMLParser and NeoJSON alike with a plain
+    # `git clone` of the same URLs still returning 0.
+    #
+    # Run x86_64 VMs from build-x86/, or stage libgit2*.dylib beside them.
+    if grep -qE "IceGenericError|libgit2|failed to resolve address" "$D/load.log" 2>/dev/null; then
+        grew="CLONE-FAILED(network, not the VM)"
+    fi
     printf '%-12s load rc=%-3s %4ds  image=%sMB %s\n' \
         "$PKG" "$load_rc" "$((t1-t0))" "$((size/1024/1024))" "$grew" >> "$SUMMARY"
     fi
