@@ -211,3 +211,55 @@ and, from inside any image,
     Smalltalk garbageCollect.
     SystemNavigation default allObjectsDo: [ :o | tot := tot + o sizeInMemory. n := n + 1 ].
     'liveBytes=', tot printString, ' objects=', n printString
+
+## 2026-08-23: the pins identified, and why candidate 2 is the fix
+
+Enumerated from inside the loaded NeoJSON package image (245 MB file) after a
+full GC, using `allObjectsDo:` + `isPinned`:
+
+    PIN count=6
+    PIN 6 x ByteArray sz=32
+
+**Six 32-byte ByteArrays strand 146 MB.** Their size and class say FFI:
+`ByteArray>>pinInMemory` is how Pharo holds a callout parameter buffer still
+while C looks at it.
+
+And our pin never relocates. `Interpreter::primitivePin`
+(`src/vm/Primitives.cpp:11199`) is, in full, follow-forwarders then
+
+    ObjectHeader* header = rcvr.asObjectPtr();
+    bool wasPinned = header->isPinned();
+    header->setPinned(shouldPin);
+
+i.e. it sets the bit **wherever the object already sits**. If that address is
+high in old space, `planCompactSavingForwarders` must jump the destination
+finger up to it and abandon everything below — which is exactly the
+`inplace=758823 tomove=0 pinned=9` plan recorded above.
+
+Spur does not do this: `pinObject` COPIES the object to a low address and
+`become:`s it, precisely because at pin time nothing holds the address yet —
+taking the address is what the caller is about to do. That is candidate 2, and
+this measurement is what makes it the right one: the objects being pinned are
+tiny and few, so relocating them is cheap, and they are the entire cause.
+
+### Specification for whoever implements it
+
+In `primitivePin`, when `shouldPin && !wasPinned` and the receiver lives in old
+space above the live set:
+
+  1. allocate a copy low (free list, or a small dedicated pinned region near
+     `oldSpaceStart`),
+  2. copy the header and body,
+  3. mark the COPY pinned,
+  4. install a forwarding pointer from the original to the copy so existing
+     references follow (`followForwarded` already exists and `primitivePin`
+     already calls it on entry).
+
+Do NOT try to move pinned objects during compaction instead — by then the
+caller may hold the address, which is the whole reason the object is pinned.
+Relocation is only safe at pin time.
+
+Validate against the numbers already in this file: the NeoJSON image should
+fall from 245 MB toward ~90 MB, and XMLParser from 1.15 GB toward ~100 MB.
+Treat GC changes carefully — an eviction change in this project cost a 7x
+regression once — so run both test tiers before and after.
