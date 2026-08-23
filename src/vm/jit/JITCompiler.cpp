@@ -1506,6 +1506,52 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
         // whenever the replacement was allocated at a lower address.
         // (stats is a heap side-table, so no W^X window is needed.)
         if (old->stats) old->stats->flags |= kSuperseded;
+        // Existing callers are still wired to the OLD code.  A monomorphic
+        // J2J site branches straight to icData[2]'s entry address without
+        // consulting the MethodMap, so it never notices the replacement and
+        // keeps running tier 1 forever -- including the very site whose
+        // call count triggered this recompile (the count fires at exactly
+        // ==500, so it never re-queues either).  Measured before this
+        // scrub: 597 recompiles stranded 1242 IC entries across 369 methods.
+        //
+        // Clear those entries rather than retargeting them in place: the
+        // extra word also carries specialization bits derived from the old
+        // JITMethod, and per-version properties (canSkipJ2JSave and friends)
+        // need not match.  Zeroing sends the next send through the ordinary
+        // miss path, which re-derives everything against the new version --
+        // exactly what a fresh site does.  Same shape as the eviction scrub
+        // in allocateWithEviction, including the PMS slot-0 re-derive.
+        if (!GET_DEBUG_BOOL(PHARO_NO_RECOMPILE_IC_RETARGET)) {
+            static constexpr uint64_t J2J_BIT = 1ULL << 60;
+            static constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
+            const uint64_t oldEntry = (uint64_t)(uintptr_t)oldCode;
+            size_t scrubbed = 0;
+            for (JITMethod* q = zone_.firstMethod(); q; q = q->nextInZone) {
+                if (q->numICEntries == 0 || !q->icBuffer) continue;
+                uint8_t* icStart = q->icZoneStart();
+                for (uint32_t i = 0; i < q->numICEntries; i++) {
+                    uint64_t* slots = reinterpret_cast<uint64_t*>(
+                        icStart + i * IC_BYTES_PER_SITE);
+                    bool slot0Scrubbed = false;
+                    for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
+                        uint64_t ex = slots[e * 3 + 2];
+                        if (!(ex & J2J_BIT)) continue;
+                        if ((ex & ADDR_MASK) != oldEntry) continue;
+                        slots[e * 3 + 2] = 0;
+                        scrubbed++;
+                        if (e == 0) slot0Scrubbed = true;
+                    }
+                    if (slot0Scrubbed) {
+                        interp_.jitRuntime().rederiveSiteForICData(
+                            q->compiledMethodOop, slots);
+                    }
+                }
+            }
+            if (scrubbed && trace) {
+                fprintf(stderr, "[RECOMP-IC] retargeted %zu stranded IC "
+                        "entries off superseded code\n", scrubbed);
+            }
+        }
         if (trace) {
             fprintf(stderr,
                     "[RECOMP-OUT] sel=#%s newCode=%p newCanBail=%d "
