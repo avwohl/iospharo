@@ -165,6 +165,25 @@ static constexpr uint8_t kLateSpecRecompiledOnce     = 0x01;
 // would otherwise re-run compile() (early-bail → compilationsFailed_++) forever
 // (~5000/sec asmjit thrash on reflective/Fuel workloads).
 static constexpr uint8_t kRecompileFailed            = 0x02;
+// bit 2: this JITMethod has been REPLACED by a newer compile of the same
+// CompiledMethod (recompile() succeeded).  Its code stays mapped and
+// executable -- other methods' ICs may still hold a J2J entry address into
+// it, and it may be live on the stack -- but it must no longer own the
+// MethodMap entry for its oop.
+//
+// Without this, rebuildMethodMap() (run after every GC) re-inserts EVERY
+// Compiled method keyed by compiledMethodOop, so the superseded tier-1
+// version and its tier-2 replacement collide.  MethodMap::insert updates
+// in place, and the zone list is ordered by ADDRESS, so the winner is
+// whichever version sits higher in memory.  While the zone still
+// bump-allocates that is always the new one (benign); once eviction starts
+// filling the free list, a replacement can land BELOW the method it
+// replaced and the stale tier-1 version silently reclaims the map entry,
+// undoing the recompile at every subsequent GC.
+//
+// Latent until 2026-08-22: the free list is only reached after bump is
+// exhausted, and nothing filled it until eviction was wired up.
+static constexpr uint8_t kSuperseded                 = 0x04;
 
 // ===== PMS SEND-SITE PATCH MAP RECORD =====
 //

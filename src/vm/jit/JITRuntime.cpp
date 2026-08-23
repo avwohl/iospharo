@@ -5075,11 +5075,39 @@ void JITRuntime::rebuildMethodMap() {
     if (!initialized_) return;
     methodMap_.clear();
     JITMethod* m = codeZone_.firstMethod();
+    size_t skippedSuperseded = 0;
     while (m) {
+        // Skip versions that recompile() has replaced.  They stay mapped and
+        // executable (live stack frames / IC J2J entries still reach them),
+        // but the map entry for their oop belongs to the replacement.  The
+        // list is ordered by ADDRESS and insert() updates in place, so
+        // without this a superseded tier-1 method allocated ABOVE its
+        // tier-2 replacement -- which free-list reuse makes routine once
+        // eviction runs -- reclaims the entry on every GC.
         if (m->state == MethodState::Compiled) {
-            methodMap_.insert(m->compiledMethodOop, m);
+            if (m->stats && (m->stats->flags & kSuperseded)) {
+                skippedSuperseded++;
+            } else {
+                methodMap_.insert(m->compiledMethodOop, m);
+            }
         }
         m = m->nextInZone;
+    }
+    if (skippedSuperseded && GET_DEBUG_BOOL(PHARO_TRACE_RECOMPILE_FLOW)) {
+        // How many of those are actively DANGEROUS -- i.e. sit higher in the
+        // address-ordered zone list than their own replacement, and so would
+        // win the last-writer-wins insert if they were not skipped?  Nonzero
+        // only once eviction starts recycling the free list.
+        size_t wouldHaveStolen = 0;
+        for (JITMethod* q = codeZone_.firstMethod(); q; q = q->nextInZone) {
+            if (q->state != MethodState::Compiled) continue;
+            if (!q->stats || !(q->stats->flags & kSuperseded)) continue;
+            JITMethod* live = methodMap_.lookup(q->compiledMethodOop);
+            if (live && (uintptr_t)q > (uintptr_t)live) wouldHaveStolen++;
+        }
+        fprintf(stderr, "[RECOMP-MAP] rebuildMethodMap skipped %zu superseded"
+                " (%zu outrank their replacement)\n",
+                skippedSuperseded, wouldHaveStolen);
     }
 }
 

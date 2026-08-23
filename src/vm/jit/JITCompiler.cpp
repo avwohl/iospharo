@@ -1497,6 +1497,15 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
         newMethod->tier = 2;  // Mark as recompiled
         makeExecutable(newMethod, newMethod->totalSize);
         recompilations_++;
+        // `old` is deliberately NOT freed: its code may be live on the
+        // stack and other methods' ICs can still hold a J2J entry address
+        // into it.  But it must stop owning the MethodMap entry for this
+        // oop, or rebuildMethodMap() (after every GC) will re-insert it
+        // alongside `newMethod` -- same key, address-ordered list, last
+        // writer wins -- and hand the entry back to the tier-1 version
+        // whenever the replacement was allocated at a lower address.
+        // (stats is a heap side-table, so no W^X window is needed.)
+        if (old->stats) old->stats->flags |= kSuperseded;
         if (trace) {
             fprintf(stderr,
                     "[RECOMP-OUT] sel=#%s newCode=%p newCanBail=%d "
