@@ -21,18 +21,29 @@ made x86_64 look worse were **fixed bounds sized for arm64**, not VM defects:
 New knob `PER_TEST_TIMEOUT` in `scripts/package-tests-selfhosted.sh`, default
 0 = leave the image's 10 s alone, so nothing changes unless asked.
 
-## The one genuine x86_64 defect found today
+## No x86_64-only SUnit defect exists — all 13 TIMEOUTs are bounds
 
-`NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` reports
-`TIMEOUT(prim-stuck)` even at `timeoutScale=60` (600 s per test, 630 s
-watchdog). The runner emits that marker only when the test AND its watchdog are
-both stuck — `run_sunit_tests.st:1027`, "blocking C++ primitive, or scheduler
-dead". **It passes on arm64.** This is a hang inside a primitive, not a wrong
-answer, and it is the sharpest open x86_64 lead — far more tractable than the
-`cull:` DNU, which is still 0-for-24.
+I claimed one earlier today and it did not survive checking.
+`NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` run alone with
+a 900 s limit PASSES on both arches:
 
-The other 12 of x86_64's 13 sweep TIMEOUTs are bound artifacts: re-run at
-`timeoutScale=20` the nine timed-out classes give 167 pass, 0 fail, 0 error.
+    arm64    230358 ms   3.34 billion sends   PASS
+    x86_64   378238 ms   3.64 billion sends   PASS
+
+1.64x wall clock, send counts within 9% — Rosetta slowdown on an enormous
+test. Its `TIMEOUT(prim-stuck)` marker is misleading: sampling the x86 process
+shows 99% CPU in ordinary interpretation (`interpret` -> `dispatchBytecode` ->
+`returnValue` -> `tryJITResumeInCaller` -> `primitiveFullClosureValue`), send
+counter advancing ~11 M/s. Nothing blocked in a C primitive.
+
+**arm64 did not pass it in the sweep — it LOST the class** (header present
+after a `CYCLE-LOOP-RESTART`, zero per-test rows in `all_detail.txt`). I read
+"absent from the non-PASS list" as "passed", which is exactly the
+"a zero also comes from a run that never ran" trap already in memory.
+
+So the SUnit tier has no demonstrated x86_64-only defect. The residual on both
+arches remains the characterized set (GUI flakes, CI-skipped tests, one
+internet test, harness self-naming) — see the sweep docs.
 
 ## Read NAMES, not COUNTS (this bit me twice today)
 

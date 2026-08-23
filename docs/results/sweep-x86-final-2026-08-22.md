@@ -119,7 +119,7 @@ Seven of the nine pass completely once given time. Anyone comparing the two
 architectures should raise `timeoutScale` for x86_64 the same way
 `PER_BATCH_TIMEOUT` and the package tier's `PER_TEST_TIMEOUT` are raised.
 
-### CORRECTION x2: 12 of the 13 are bound artifacts; ONE is a real hang
+### CORRECTIONS: all 13 are bound artifacts — no x86-only defect
 
 This section has been wrong twice, both times from reading summary COUNTS
 instead of per-test NAMES — the exact trap
@@ -128,21 +128,41 @@ per-test picture, from `/tmp/sunit_test_detail.txt`:
 
     test                                  arm sweep  x86 sweep  x86 @scale60  x86 alone
     testUsingMethods                      PASS       TIMEOUT    PASS          PASS (48s)
+    (arm64 "LOST" = class header present, zero per-test rows: a cycle restart)
     testNoUnusedInstanceVariablesLeft     PASS       TIMEOUT    PASS          -
-    testNoUnusedTemporaryVariablesLeft    PASS       TIMEOUT    TIMEOUT       -
+    testNoUnusedTemporaryVariablesLeft    LOST       TIMEOUT    TIMEOUT       PASS (378s)
     testUsingMethodsFFI                   PASS       PASS       FAIL          FAIL
 
   * **Twelve of x86_64's thirteen TIMEOUTs are the bound.** They pass once
     given time. `testUsingMethods` in particular takes only 48 s run alone —
     it was never close to a real hang.
 
-  * **One is not: `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft`.**
-    At `timeoutScale=60` (600 s per test, 630 s watchdog) it still reports
-    `TIMEOUT(prim-stuck)`, which the runner emits only when the test AND its
-    watchdog are both stuck (`run_sunit_tests.st:1027` — "blocking C++
-    primitive, or scheduler dead"). It passes on arm64. **This is the one
-    genuine x86_64-only defect in the SUnit tier**, and it is a hang inside a
-    primitive rather than a wrong answer.
+  * **The thirteenth is not a defect either — it is the same story, larger.**
+    `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` run alone
+    with a 900 s limit **PASSES on both architectures**:
+
+        arm64    230358 ms   3.34 billion sends   PASS
+        x86_64   378238 ms   3.64 billion sends   PASS
+
+    1.64x wall clock with send counts within 9% — ordinary Rosetta slowdown on
+    a genuinely enormous test, not an x86 pathology.
+
+    Its `TIMEOUT(prim-stuck)` label is a misnomer here. Sampling the x86_64
+    process mid-run shows it at 99% CPU in ordinary interpretation
+    (`interpret` -> `dispatchBytecode` -> `returnValue` ->
+    `tryJITResumeInCaller` -> `primitiveFullClosureValue` -> `activateBlock`),
+    with the send counter advancing ~11 M/s. Nothing is blocked in a C
+    primitive; the watchdog simply never gets to run either.
+
+    **arm64 did not pass this class in the sweep — it lost it.** `all_results`
+    has the `=== NoUnusedVariablesLeftTest ===` header preceded by
+    `CYCLE-LOOP-RESTART`, and `all_detail.txt` has ZERO per-test rows for it.
+    Absence from the non-PASS list is not a pass, which is how it briefly got
+    written up here as "passes on arm64".
+
+    So: **all thirteen x86_64 TIMEOUTs are bound artifacts, and no x86_64-only
+    SUnit defect was found.** A test needing 230 s on the fast arch cannot fit
+    a 50 s limit or an 80 s watchdog on either.
 
 An earlier revision of this section claimed `testUsingMethods` "does not run
 out of time at 600 s — it fails". That was wrong: the 1 FAIL in that batch's
