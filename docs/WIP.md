@@ -1,4 +1,99 @@
-# WIP (2026-08-22 07:30) — post-reboot session: what the three tiers actually score
+# WIP (2026-08-22 23:50) — late session: eval exit status, and a libgit2 trap that ate an hour
+
+Three tiers as of `a8651f6a`. Two commits are LOCAL, NOT PUSHED:
+`0dc4f080` (eval exit status) and `a8651f6a` (package clone reporting).
+
+## VM C++ tier — green on BOTH arches, re-verified after the exit-status change
+
+    binary                arm64   x86_64
+    test_sista_ir         rc=0    rc=0
+    test_asmjit_t1_stub   rc=0    rc=0
+    test_class_table      PASSED  PASSED
+    test_relaunch         3/3     3/3
+
+Remember these need an image argument; without one they print a usage line and
+exit 1, which reads exactly like a failure.
+
+## FIXED: an eval that never completed reported success
+
+`main()` ended in an unconditional `return 0`, so a killed eval process, the
+idle-deadline guard, and "startup.st never executed" were all rc=0. That is
+what recorded XMLParser's x86_64 abort as
+
+    XMLParser  load rc=0  54s  image=52MB DID-NOT-PERSIST
+
+`Interpreter::evalReachedQuit_` is set on the two real-quit paths; eval mode
+without it now prints why and returns 71 (70 for the leftover-script case).
+Verified no false positives on `3 + 4`, `eval --save`, and
+`snapshot:andQuit:`; true positive `Processor activeProcess terminate` -> 71.
+
+## The trap that cost an hour: an x86 VM copied out of build-x86 loses libgit2
+
+`getLibSearchPaths()` searches THE EXECUTABLE'S OWN DIRECTORY FIRST. Only
+`build-x86/` holds an x86_64 `libgit2.dylib`; homebrew's is arm64-only. So an
+x86_64 VM copied anywhere else fails EVERY `github://` load in 4-5 s with
+`IceGenericError: no error message set by libgit2` — and exits 0. An arm64 VM
+works from any directory because the homebrew dylib matches it.
+
+I copied the x86 VM to a scratch dir to A/B two builds and then formed three
+wrong theories in a row — "PHARO_DET_SCHED breaks libgit2", "GitHub is
+throttling", "intermittent x86-only libgit2 failure, a real VM bug" — before
+the 2x2 control showed the variable was the binary's DIRECTORY:
+
+    copy of x86 VM, scratch dir   XMLParser + NeoJSON   5/5 fail in 4-5 s
+    build-x86/test_load_image     XMLParser             clone fine, ran 150 s
+    build-rel arm64, any dir      XMLParser             clone fine, ran 200 s
+    plain `git clone`, same URLs  rc=0
+
+**Re-run the previously-passing configuration NOW when a failure appears
+mid-session.** The variable that changed is often the harness.
+
+The package script now reports `CLONE-FAILED(network, not the VM)` instead of
+`DID-NOT-PERSIST` when it sees the libgit2 signature. This does NOT explain the
+earlier x86_64 XMLParser abort — that log has no libgit2 error and does have
+the `cull:` DNU. Checked, not assumed.
+
+## DROPPED: the evictLRU second-pass change
+
+Measured on two workloads, no benefit either time:
+
+    small zone (1MB, 300+ rounds)   8s / 277 methods  vs  7s / 286
+    192MB zone (XMLParser load)     344s / 5769       vs  340s / 5542
+
+The 192MB load only reached 4 eviction rounds, so pass 2 barely runs there.
+Rather than ship an unmeasured eviction-policy change into a session where
+eviction bugs already cost a 7x regression, the change was discarded. The
+analysis stands if someone finds a workload that fills the zone AND advances
+the epoch.
+
+## `PHARO_DET_SCHED` note
+
+It is the right first tool for timing-sensitive JIT bugs, but a run under it
+still needs a working libgit2 — a DET_SCHED run that dies in 6 s with an
+IceGenericError is the dylib trap above, not the scheduler.
+
+## The x86_64 `cull:` DNU — still unreproduced, now 0 for 24
+
+16 default + 6 amplified + 2 today. The arm amplifier's DNUs (`#superclass` on
+`cls=False`/`nil`, 10 per run, 4/4) are a DIFFERENT deliberately-induced
+corruption, not this bug — 0 `cull:` markers in any of them. So the amplifier
+was never a handle on it. `b887d81f`'s classifier fix matches the symptom
+exactly (PushFullBlock/PushClosure misclassified -> canSkipJ2JSave wrongly
+true -> a non-block in a block slot) and measurably changed behaviour —
+
+    pre-fix   canSkipJ2JSave: 1220/5446    qualify (22.4%)
+    post-fix  canSkipJ2JSave: 2055/159870  qualify (1.3%)
+
+— but with no reproduction, "b887d81f fixes the cull: DNU" is a hypothesis,
+not a result. Do not write it up as fixed.
+
+## Running now
+
+Full x86_64 package tier, started 23:49, `WORK=<scratch>/pkg-x86-final`,
+`PER_CLASS_TIMEOUT=420 LOAD_TIMEOUT=1800` (x86 needs ~2x arm; the default 120
+is arm-sized and its expiry is indistinguishable from test failures).
+
+## OLDER — WIP (2026-08-22 07:30) — post-reboot session: what the three tiers actually score
 
 Everything below was measured at HEAD (`26ad35b3`) on the reboot-surviving
 binaries (`build-rel` arm64, `build-x86` x86_64 under Rosetta) and the
