@@ -289,3 +289,30 @@ relocation-on-pin becomes a small change on top of it. Attempting candidate 2
 alone means inventing a second low-address allocator — a dedicated pinned
 region reserved near `oldSpaceStart` — which is more invasive than fixing the
 allocator that is already half-written.
+
+
+## 2026-08-23: candidate 1 is DONE — the free list works, so candidate 2 is unblocked
+
+`PHARO_OLDSPACE_FREELIST` now functions. Six bugs had to be fixed; the last was
+the one that mattered:
+
+    collectInstancesOfClass matched classIndex 0, and indexOfClass answers 0 as
+    its NOT-FOUND sentinel, so `allInstances` of a class with no class-table
+    entry returned an Array of FREE CHUNKS. Pharo's class-shape migration asks
+    exactly that, and died on the first chunk.
+
+Measured with the knob on:
+
+    300-class SUnit batch   150s  4861 pass  0 fail  0 error  1 timeout
+    same, knob off          139s  4861 pass  0 fail  0 error  1 timeout
+    NeoJSON package load    20s   rc=0
+    VM binaries             pass both ways
+
+So there is now a working low allocator, which is what candidate 2
+(relocate pinned objects at pin time, Spur-style) was blocked on. The
+implementation spec above stands; the affordability measurement (638 pin calls
+per package load) stands; and the dependency noted there is now satisfied.
+
+The knob remains DEFAULT-OFF pending a broader soak — a full SUnit sweep and
+the package tier on both arches — because this file's own history is a warning
+about shipping GC changes on partial evidence.
