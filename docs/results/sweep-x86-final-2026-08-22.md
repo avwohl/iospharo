@@ -65,3 +65,24 @@ merged.
 
 Anyone repeating this: set `PER_BATCH_TIMEOUT=1800` for x86_64. The default
 is sized for arm64.
+
+
+## The residual, re-measured against the fake-GUI image
+
+The same 30 classes that scored non-zero in the arm64 sweep, run here against
+an image with `setup_fake_gui.st` filed in ahead of the runner:
+
+    x86_64   30 classes   829 tests   800 P   13 F   1 E
+    arm64    30 classes   829 tests   800 P   13 F   2 E
+
+The two architectures land on the same number, and on the same core set:
+`ReleaseTest` (2, harness), `StDebugger*`, `StSpotter*`,
+`SystemDependenciesTest`, `WeakAnnouncerTest`, `ZnClientTest`,
+`FTTableMorphTest`. Where they differ it is confined to the GUI-timing
+flakes this repo already documents as flipping run to run — x86 shows
+`SpJobListPresenterTest` and `StTranscriptPresenterTest` where arm shows
+`LinkInstallerTest`, `StDebuggerActionModelTest` and `TKTWorkerTest`.
+
+Four of the classes common to both are on Pharo's own
+`skipOnPharoCITestingEnvironment` list, one reaches the public internet, one
+is image dependency drift. None is a demonstrated VM computation error.
