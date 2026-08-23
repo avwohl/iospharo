@@ -5377,6 +5377,14 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
                     // zeroBody=false: the gap is already zeros (that is why
                     // ObjectScanner walked over it) or an older free chunk;
                     // memsetting 148 MB on every fullGC buys nothing.
+                    // NOTE 2026-08-23: these gaps were verified to be
+                    // genuinely all-zero.  A temporary check that scanned each
+                    // gap for non-zero words before creating the chunk fired
+                    // ZERO times across a full run, so rebuild is NOT writing
+                    // free-chunk headers over live memory -- one more theory
+                    // for the PHARO_OLDSPACE_FREELIST wedge, refuted.  The
+                    // check was removed because it costs an O(148 MB) scan per
+                    // fullGC.
                     if (ObjectHeader* c = makeFreeChunk(prevEnd, gap, false)) {
                         addToFreeList(c, gap);
                         gaps++; gapBytes += gap;
