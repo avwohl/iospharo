@@ -854,6 +854,8 @@ extern "C" void pharo_dumpPrimSeq();
 
 extern "C" size_t g_pinCalls;
 extern "C" size_t g_pinNewlyPinned;
+extern "C" size_t g_pinRelocated;
+extern "C" size_t g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned, g_pinSkipNoChunk, g_pinSkipNotLower;
 
 int main(int argc, char* argv[]) {
 #ifndef _WIN32
@@ -1637,8 +1639,11 @@ int main(int argc, char* argv[]) {
     PHARO_EXIT_STEP("socketPluginShutdown");
     socketPluginShutdown();
     if (GET_DEBUG_BOOL(PHARO_PIN_STATS)) {
-        fprintf(stderr, "[PIN-STATS] primitivePin calls=%zu newlyPinned=%zu\n",
-                g_pinCalls, g_pinNewlyPinned);
+        fprintf(stderr, "[PIN-STATS] primitivePin calls=%zu newlyPinned=%zu "
+                        "relocatedLow=%zu skip[notObj=%zu young=%zu pinned=%zu noChunk=%zu notLower=%zu]\n",
+                g_pinCalls, g_pinNewlyPinned, g_pinRelocated,
+                g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned,
+                g_pinSkipNoChunk, g_pinSkipNotLower);
     }
 
     PHARO_EXIT_STEP("all shutdown steps complete");

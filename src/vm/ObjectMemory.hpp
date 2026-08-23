@@ -538,6 +538,14 @@ public:
     /// Pin an object so it won't be moved by GC
     void pinObject(Oop obj);
 
+    /// Move an old-space object DOWN into a reclaimed gap and forward the
+    /// original to it, so that a subsequent pin cannot strand the space below
+    /// it.  Answers the new oop, or the original unchanged if no low chunk is
+    /// available.  Only safe to call BEFORE anything takes the object's
+    /// address -- which is exactly what pinning is for.  See
+    /// docs/gc-oldspace-fragmentation-2026-08-22.md.
+    Oop relocateToLowSpace(Oop original);
+
     /// Make an object immutable
     void makeImmutable(Oop obj);
 

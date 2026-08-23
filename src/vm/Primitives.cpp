@@ -11196,7 +11196,9 @@ PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
 // Primitive 184: Pin or unpin an object
 // Takes 1 argument: boolean (true = pin, false = unpin)
 // Returns: true if was pinned before, false if wasn't
-extern "C" { size_t g_pinCalls = 0; size_t g_pinNewlyPinned = 0; }
+extern "C" { size_t g_pinCalls = 0; size_t g_pinNewlyPinned = 0; size_t g_pinRelocated = 0;
+             size_t g_pinSkipNotObj = 0, g_pinSkipYoung = 0, g_pinSkipPinned = 0,
+                    g_pinSkipNoChunk = 0, g_pinSkipNotLower = 0; }
 
 PrimitiveResult Interpreter::primitivePin(int argCount) {
     // Official VM signature: receiver pin: aBoolean
@@ -11226,6 +11228,21 @@ PrimitiveResult Interpreter::primitivePin(int argCount) {
 
     // Follow forwarding pointers (created by become:)
     rcvr = memory_.followForwarded(rcvr);
+
+    // Spur relocates on pin rather than pinning in place: at pin time nothing
+    // holds the address yet, and an object pinned high in old space strands
+    // everything below it from sliding compaction (12x on the XMLParser
+    // image -- docs/gc-oldspace-fragmentation-2026-08-22.md).  Opt-in while
+    // new; needs PHARO_OLDSPACE_FREELIST, which is where the low chunks are.
+    if (shouldPin && GET_DEBUG_BOOL(PHARO_PIN_RELOCATE)
+            && GET_DEBUG_BOOL(PHARO_OLDSPACE_FREELIST)
+            && rcvr.isObject() && !rcvr.asObjectPtr()->isPinned()) {
+        Oop moved = memory_.relocateToLowSpace(rcvr);
+        if (moved.rawBits() != rcvr.rawBits()) {
+            g_pinRelocated++;
+            rcvr = moved;
+        }
+    }
 
     ObjectHeader* header = rcvr.asObjectPtr();
     bool wasPinned = header->isPinned();

@@ -344,3 +344,39 @@ Instantiating a class registers it, so a class that HAS instances is found and
 its instances are migrated. `#()` only comes back for classes with no
 instances, where it is the correct answer. No default-path defect, and the
 classIndex-0 guard masks nothing.
+
+
+## 2026-08-23: candidate 2 implemented — and measured to hook the WRONG event
+
+`ObjectMemory::relocateToLowSpace` + `PHARO_PIN_RELOCATE` implement the spec
+above: at pin time, copy the object into a reclaimed low gap, carry the mark
+bit, re-apply the old->young barrier, `becomeForward` the original, and only
+ever move DOWNWARD. It is correct and harmless (NeoJSON load rc=0 with it on),
+but on a real package load it **never fires**:
+
+    primitivePin calls=638 newlyPinned=625 relocatedLow=0
+    skip[ notObj=0  young=439  pinned=0  noChunk=186  notLower=0 ]
+
+439 + 186 = 625, i.e. every single one was skipped, for two reasons:
+
+  * **young=439 (70%)** — the object is still in EDEN at pin time.
+    `ByteArray>>pinInMemory` is called on a buffer immediately after
+    allocating it, long before any tenuring. Relocating "low in old space"
+    is meaningless then.
+  * **noChunk=186 (30%)** — genuinely in old space, but the free list had no
+    chunk to give. The gaps only appear after a fullGC has run and rebuilt the
+    list, so early in a load there is nothing to move into.
+
+**So pin time is the wrong hook.** The pins that end up stranding old space are
+young objects that get TENURED while pinned, and tenuring is what decides where
+they land. The corrected design is:
+
+  1. At tenure/promotion, if the object being promoted is PINNED, allocate its
+     old-space home from the free list (low) rather than by bumping
+     `oldSpaceFree_`. That is the event that actually places these six
+     32-byte buffers.
+  2. Keep pin-time relocation for the old-space minority, but only once a
+     fullGC has populated the list — it is a no-op before then.
+
+The code is left in place, default-off, because it is correct as far as it
+goes and step 2 still wants it. Do not delete it; re-point step 1 at tenuring.

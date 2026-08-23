@@ -546,6 +546,7 @@ DEBUG_BOOL(PHARO_TRACE_EXEC_PRIM)
 DEBUG_BOOL(PHARO_TRACE_EXIT)
 DEBUG_BOOL(PHARO_PIN_STATS)   // count primitivePin/Unpin calls, report at exit
 DEBUG_BOOL(PHARO_FREECHUNK_REFS)  // on a classIndex-0 DNU, scan the heap and name every object holding a pointer to the free chunk
+DEBUG_BOOL(PHARO_PIN_RELOCATE)    // at pin time, move an old-space object DOWN into a reclaimed gap and forward the original, Spur-style, so pins stop stranding the space below them. Requires PHARO_OLDSPACE_FREELIST (that is where the low chunks come from). See docs/gc-oldspace-fragmentation-2026-08-22.md
 DEBUG_BOOL(PHARO_TRACE_OP_VALUE1)
 DEBUG_BOOL(PHARO_TRACE_PER_BC_SP)
 DEBUG_BOOL(PHARO_TRACE_PRIM207)

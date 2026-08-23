@@ -1539,6 +1539,64 @@ bool ObjectMemory::isValidObject(Oop obj) const {
 
 // ===== OBJECT MODIFICATION =====
 
+extern "C" size_t g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned,
+                  g_pinSkipNoChunk, g_pinSkipNotLower;
+
+Oop ObjectMemory::relocateToLowSpace(Oop original) {
+    // Spur does not pin an object where it happens to sit: pinObject COPIES it
+    // and become:s it, because at pin time nothing holds the address yet --
+    // taking the address is what the caller is about to do.  We pinned in
+    // place, so six 32-byte FFI buffers scattered between +166 MB and +208 MB
+    // stranded 146 MB that sliding compaction could never reclaim (12x on the
+    // XMLParser image).  Moving the object low first keeps the pins out of the
+    // compactor's way.
+    if (!original.isObject()) { g_pinSkipNotObj++; return original; }
+    ObjectHeader* src = original.asObjectPtr();
+    if (!isOldObject(src)) { g_pinSkipYoung++; return original; }
+    if (src->isPinned()) { g_pinSkipPinned++; return original; }
+
+    const bool isOverflow = src->hasOverflowSlots();
+    uint8_t* srcBase = reinterpret_cast<uint8_t*>(src) - (isOverflow ? 8 : 0);
+    const size_t size = src->totalSize();
+
+    ObjectHeader* dstBase = allocateFromFreeList(size);
+    if (!dstBase) { g_pinSkipNoChunk++; return original; }
+    uint8_t* dstBytes = reinterpret_cast<uint8_t*>(dstBase);
+    if (dstBytes >= srcBase) {
+        // Only a DOWNWARD move helps; anything else just churns.  The chunk is
+        // already unlinked, so hand it back rather than leaking it.
+        makeFreeChunk(dstBytes, size, /*zeroBody=*/false);
+        addToFreeList(reinterpret_cast<ObjectHeader*>(dstBytes), size);
+        g_pinSkipNotLower++;
+        return original;
+    }
+
+    std::memcpy(dstBytes, srcBase, size);
+    ObjectHeader* copy = reinterpret_cast<ObjectHeader*>(
+        dstBytes + (isOverflow ? 8 : 0));
+    copy->setPinned(true);
+    copy->setMarked(src->isMarked());
+    copy->setRemembered(false);
+
+    Oop copyOop = oopFromPointer(copy);
+
+    // memcpy duplicated the slots verbatim; if any point into new space the
+    // copy needs the old->young barrier that storePointer would have applied.
+    if (src->isPointersObject()) {
+        size_t np = pointerSlotsOf(copy);
+        Oop* slots = copy->slots();
+        for (size_t i = 0; i < np; ++i) {
+            if (slots[i].isObject() && isYoung(slots[i])) {
+                rememberObject(copyOop);
+                break;
+            }
+        }
+    }
+
+    becomeForward(original, copyOop);
+    return copyOop;
+}
+
 void ObjectMemory::pinObject(Oop obj) {
     if (obj.isObject()) {
         obj.asObjectPtr()->setPinned(true);
