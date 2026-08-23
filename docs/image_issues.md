@@ -302,3 +302,19 @@ Fix upstream is to make the collection removable before removing from it:
 
 and drop the dead line above it. **Not patched here** — it affects one reflection
 method and its test, not runtime behaviour.
+
+## `DefaultExecutionEnvironment` does not implement `#watchDogProcess` (2026-08-23)
+
+`ReleaseTest>>testUnknownProcesses` fails with
+
+    MessageNotUnderstood: DefaultExecutionEnvironment >> #watchDogProcess
+
+on both architectures. The test asks the current execution environment for its
+watchdog process; `DefaultExecutionEnvironment` in this Pharo 13 image has no
+such method. Nothing to do with the VM, and — despite the name — nothing to do
+with the test runner's own processes either, which is how it was previously
+lumped in with the harness self-pollution failures.
+
+Upstream wishlist: either implement `#watchDogProcess` on
+`DefaultExecutionEnvironment` or have the test tolerate an environment that
+does not provide one.
