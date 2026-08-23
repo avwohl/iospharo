@@ -343,3 +343,60 @@ the runner's own startup path** — use the documented prep (`setup_fake_gui.st`
 into the prep step ahead of the runner, then a bare launch so SessionManager
 fires `SUnitRunner>>startUp:`). The four classes that did report before the
 wedge are recorded above; the rest of that run produced no data.
+
+## 2026-08-23: definitive post-fix residual, measured through the runner path
+
+Built an image with `setup_fake_gui.st` AND the fixed runner filed in, snapshot
+it, then bare-launched so `SessionManager` fires `SUnitRunner>>startUp:` (the
+documented path — see the wedge note above for why a bare `eval` is not
+equivalent). `timeoutScale=30` (300 s per test, 330 s watchdog), the same 30
+residual classes:
+
+    Classes: 30   Pass: 800   Fail: 13   Error: 3   Skip: 12   Timeout: 1
+    Total: 829
+
+**Both harness fixes hold.** `testNoOrphanPackage` and
+`testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented` are absent
+from the failure list entirely; `ReleaseTest` is 40 P / 2 F. The headline FAIL
+count did not drop because other GUI tests flipped in the same run — which this
+file already documents them doing. Read the names, not the count.
+
+The complete residual, by name:
+
+    ERROR  FTTableMorphTest>>testCanAlternateRowColors
+    ERROR  TKTWorkerTest>>testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected
+    ERROR  TKTWorkerTest>>testWorkerProcessDiesAfterWorkerIsCollected
+    FAIL   LinkInstallerTest>>testPropagateNewClassScopedLinksOnMethodNode
+    FAIL   ReleaseTest>>testNoDeadSubscriptions
+    FAIL   ReleaseTest>>testUnknownProcesses
+    FAIL   StDebuggerActionModelTest>>testEventAfterProceed
+    FAIL   StDebuggerInspectorTest>>testUpdateLayoutForContextsWithAssertionFailure
+    FAIL   StDebuggerTest>>testIsInSelectedContextPackage
+    FAIL   StDebuggerTest>>testUpdateLayoutForContextsIfAssertionFailure
+    FAIL   StSpotterModelTest>>testAnnounceQueryEndedIsSentOnce
+    FAIL   StSpotterModelTest>>testSpotterModelShouldWaitToPerformActualSearch
+    FAIL   StSpotterTest>>testOpenSpotterRefreshesPreviewOnce
+    FAIL   SystemDependenciesTest>>testExternalUIDependencies
+    FAIL   WeakAnnouncerTest>>testNoDeadWeakSubscriptions
+    FAIL   ZnClientTest>>testQueryGoogle
+    TIME   ReleaseTest>>testNoShadowedVariablesInMethods
+
+Attribution, each with its evidence elsewhere in these docs:
+
+  * **Not ours, established (6):** `testNoDeadSubscriptions` and
+    `WeakAnnouncerTest>>testNoDeadWeakSubscriptions` (pharo#2471; our
+    finalization chain measures working end to end),
+    `testUnknownProcesses` (image MNU on
+    `DefaultExecutionEnvironment>>#watchDogProcess`),
+    `ZnClientTest>>testQueryGoogle` (reaches the public internet), and the two
+    Spotter cases on upstream's `skipOnPharoCITestingEnvironment` list.
+  * **Context-dependent, pass in isolation (2):** both `TKTWorkerTest` errors
+    PASS run alone with a 600 s limit — TaskIt workers are sensitive to other
+    live processes.
+  * **Slow, not stuck (1):** `testNoShadowedVariablesInMethods` is another
+    whole-image scan; its sibling needed 230 s on arm64.
+  * **Remaining GUI/debugger cases (8):** `StDebugger*`, `StSpotterModel`,
+    `LinkInstaller`, `SystemDependencies`, `FTTableMorph`. Not investigated
+    individually; this file records them flipping run to run.
+
+**No demonstrated VM computation error in the set.**
