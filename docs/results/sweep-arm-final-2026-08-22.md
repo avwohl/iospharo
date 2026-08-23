@@ -267,3 +267,34 @@ other two, which is the point of doing this on both arches:
 Note the general lesson: TIMEOUT rows are not just "slow" — raising the bound
 converts most to passes but can also expose F/E underneath. Neither arch's
 TIMEOUT count should be read as "nothing to see".
+
+## 2026-08-23: how much of the residual is "tests upstream skips"? Only 5 of 51
+
+`docs/vm-compat-bugs.md` flagged this as worth deciding separately: our sweeps
+do not set `PHARO_CI_TESTING_ENVIRONMENT`, so we run every test Pharo's own CI
+skips, and some of our failures may be tests upstream has already given up on.
+
+Censused arm64's 51 residual FAIL+ERROR tests (from `all_detail.txt`), checking
+each test method for a `#skipOnPharoCITestingEnvironment` or `#longTestCase`
+send:
+
+    total=51  guarded=5  other=46  notfound=0
+
+The five upstream skips:
+
+    SpJobListPresenterTest>>testJobIsFinishedWhenWaitingMoreThanWorkBlockDuration
+    StDebuggerTest>>testDynamicVariableEvaluation
+    StSpotterModelTest>>testAnnounceQueryEndedIsSentOnce
+    StSpotterTest>>testOpenSpotterRefreshesPreviewOnce
+    WeakAnnouncerTest>>testNoDeadWeakSubscriptions
+
+So setting `PHARO_CI_TESTING_ENVIRONMENT` would remove **5** failures and make
+the numbers comparable to upstream's own contract — but **46 of 51 are tests
+upstream runs and expects to pass**, so the guard explains far less of the
+residual than "these are just tests Pharo skips" would suggest. Worth knowing
+before anyone reaches for that env var as a way to improve the score.
+
+Note `WeakAnnouncerTest>>testNoDeadWeakSubscriptions` is on the list, which is
+consistent with `ReleaseTest>>testNoDeadSubscriptions` citing pharo#2471: both
+halves of the dead-weak-subscription question are things upstream declines to
+assert on CI.
