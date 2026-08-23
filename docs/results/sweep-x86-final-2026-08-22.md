@@ -115,12 +115,35 @@ The runner already scales this: `timeoutScale` (default 5) sets
 
     batch total: 167 pass, 0 fail, 0 error, 3 skip, 2 timeout
 
-**Zero failures and zero errors across all nine.** Seven of the nine pass
-completely once given time; the two that remain are whole-image analyses
-(`testNoUnusedTemporaryVariablesLeft`, `testUsingMethods`) that walk every
-method in the image, and neither is on arm64's timeout list — again the ~2x
-Rosetta factor, not a divergence in behaviour.
-
-So none of x86_64's 13 sweep TIMEOUTs was a defect. Anyone comparing the two
+Seven of the nine pass completely once given time. Anyone comparing the two
 architectures should raise `timeoutScale` for x86_64 the same way
 `PER_BATCH_TIMEOUT` and the package tier's `PER_TEST_TIMEOUT` are raised.
+
+### CORRECTION: the last two are NOT timeout artifacts — they are real, and x86-only
+
+An earlier version of this section said "none of x86_64's 13 sweep TIMEOUTs
+was a defect", on the strength of the scale=20 run above. Pushing the two
+survivors to `timeoutScale=60` (600 s per test, 630 s watchdog) shows that
+conclusion was wrong for both:
+
+    SelfVariableTest            5 tests, 4 P, 1 FAIL          (not a timeout)
+    NoUnusedVariablesLeftTest   TIMEOUT(prim-stuck)           (not the watchdog)
+
+`SelfVariableTest>>testUsingMethods` does not run out of time at 600 s — it
+**fails**. And `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft`
+reports `prim-stuck`, which the runner emits when the test AND its watchdog
+are both stuck (`run_sunit_tests.st:1027` — "blocking C++ primitive, or
+scheduler dead"), not when a test is merely slow.
+
+Both PASS on arm64:
+
+    test                                             arm64   x86_64
+    SelfVariableTest>>testUsingMethods               PASS    TIMEOUT@80s, FAIL@600s
+    NoUnusedVariablesLeftTest>>testNoUnusedTempo...  PASS    TIMEOUT, prim-stuck@630s
+    NoUnusedVariablesLeftTest>>testNoUnusedInsta...  PASS    TIMEOUT
+
+So the 80 s watchdog was MASKING two genuine x86_64-only defects as timeouts,
+which is exactly the failure mode this file warns about in the other
+direction. The remaining eleven TIMEOUTs are bound artifacts; these two are
+not, and they are the sharpest open x86_64 leads in the SUnit tier — a
+deterministic failure with a message, and a hang inside a primitive.
