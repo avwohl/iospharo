@@ -119,31 +119,62 @@ Seven of the nine pass completely once given time. Anyone comparing the two
 architectures should raise `timeoutScale` for x86_64 the same way
 `PER_BATCH_TIMEOUT` and the package tier's `PER_TEST_TIMEOUT` are raised.
 
-### CORRECTION: the last two are NOT timeout artifacts — they are real, and x86-only
+### CORRECTION x2: 12 of the 13 are bound artifacts; ONE is a real hang
 
-An earlier version of this section said "none of x86_64's 13 sweep TIMEOUTs
-was a defect", on the strength of the scale=20 run above. Pushing the two
-survivors to `timeoutScale=60` (600 s per test, 630 s watchdog) shows that
-conclusion was wrong for both:
+This section has been wrong twice, both times from reading summary COUNTS
+instead of per-test NAMES — the exact trap
+`scripts/package-tests-selfhosted.sh`'s header warns about. The verified
+per-test picture, from `/tmp/sunit_test_detail.txt`:
 
-    SelfVariableTest            5 tests, 4 P, 1 FAIL          (not a timeout)
-    NoUnusedVariablesLeftTest   TIMEOUT(prim-stuck)           (not the watchdog)
+    test                                  arm sweep  x86 sweep  x86 @scale60  x86 alone
+    testUsingMethods                      PASS       TIMEOUT    PASS          PASS (48s)
+    testNoUnusedInstanceVariablesLeft     PASS       TIMEOUT    PASS          -
+    testNoUnusedTemporaryVariablesLeft    PASS       TIMEOUT    TIMEOUT       -
+    testUsingMethodsFFI                   PASS       PASS       FAIL          FAIL
 
-`SelfVariableTest>>testUsingMethods` does not run out of time at 600 s — it
-**fails**. And `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft`
-reports `prim-stuck`, which the runner emits when the test AND its watchdog
-are both stuck (`run_sunit_tests.st:1027` — "blocking C++ primitive, or
-scheduler dead"), not when a test is merely slow.
+  * **Twelve of x86_64's thirteen TIMEOUTs are the bound.** They pass once
+    given time. `testUsingMethods` in particular takes only 48 s run alone —
+    it was never close to a real hang.
 
-Both PASS on arm64:
+  * **One is not: `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft`.**
+    At `timeoutScale=60` (600 s per test, 630 s watchdog) it still reports
+    `TIMEOUT(prim-stuck)`, which the runner emits only when the test AND its
+    watchdog are both stuck (`run_sunit_tests.st:1027` — "blocking C++
+    primitive, or scheduler dead"). It passes on arm64. **This is the one
+    genuine x86_64-only defect in the SUnit tier**, and it is a hang inside a
+    primitive rather than a wrong answer.
 
-    test                                             arm64   x86_64
-    SelfVariableTest>>testUsingMethods               PASS    TIMEOUT@80s, FAIL@600s
-    NoUnusedVariablesLeftTest>>testNoUnusedTempo...  PASS    TIMEOUT, prim-stuck@630s
-    NoUnusedVariablesLeftTest>>testNoUnusedInsta...  PASS    TIMEOUT
+An earlier revision of this section claimed `testUsingMethods` "does not run
+out of time at 600 s — it fails". That was wrong: the 1 FAIL in that batch's
+counts was `testUsingMethodsFFI`, a different test.
 
-So the 80 s watchdog was MASKING two genuine x86_64-only defects as timeouts,
-which is exactly the failure mode this file warns about in the other
-direction. The remaining eleven TIMEOUTs are bound artifacts; these two are
-not, and they are the sharpest open x86_64 leads in the SUnit tier — a
-deterministic failure with a message, and a hang inside a primitive.
+### `testUsingMethodsFFI` is a precondition, not an x86 defect
+
+It PASSES in both sweeps, so it contributes nothing to the published numbers.
+It fails only in a bare clean eval on x86_64 — and it passes there on arm64 —
+because of what it asserts:
+
+    var := self class lookupVar: #self.
+    self assert: (var usingMethods anySatisfy: [:method |
+        method isFFIMethod and: [ method readsSelf not ]])
+
+i.e. "some FFI method has already been RUN", since Pharo rewrites an FFI
+method on first call and the rewritten form no longer pushes self. Same image,
+same clean eval, identical method populations:
+
+    arch     usingMethods   isFFIMethod   FFI with readsSelf=false
+    arm64         103942           744          7
+    x86_64        103942           744          0
+
+The seven arm64 rewrites are `FT2Library>>ffiInitFreeType:`,
+`FT2Library>>ffiNewFace:fromMemory:size:index:`,
+`FT2Library>>ffiGetBitmap:fromOutline:`, `FT2Face>>ffiLoadChar:flags:`,
+`FT2Face>>ffiSetPixelWidth:height:`, `LGitLibrary>>libgit2_init` and
+`LibC>>memCopy:to:size:` — five FreeType, one libgit2, one libc.
+
+Not a missing-library problem: `build-x86/` stages x86_64 `libfreetype` and
+`libgit2` (and the FFI stubs in `FFI.cpp` only register when the real library
+is absent), and `LibC>>memCopy:to:size:` is plain libc either way. So the
+difference is which FFI calls the image makes during startup on each arch, not
+whether the rewrite works. Worth understanding, but it is not a failure — and
+it means a bare `eval` is NOT a valid environment for this test.
