@@ -174,6 +174,35 @@ is ours:
       docs/vm-compat-bugs.md; WeakAnnouncerTest reproduces it in 13 s). Four
       subscriptions with nil subscribers survive. GENUINELY OURS.
 
+### FIXED: two of ReleaseTest's four FAILs were the harness, and are now gone
+
+Both were the runner failing tests it exists only to RUN, on both
+architectures. Verified together by filing the script into a fresh image and
+running both in the same process:
+
+    filedIn
+    testNoOrphanPackage                                       -> PASS
+    testThatThereAreNoSelectorsRemainingThatAreSentButNot...  -> PASS
+
+**`testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented`** named
+the runner's own methods:
+
+    an OrderedCollection('SUnitRunner class>>#runAllTests'
+                         'SUnitRunner class>>#startUp:') should have been empty
+
+The unimplemented selectors are `#vmRegisterAsDelayRecovery` (which this
+script COMPILES one line above the send, so nothing implements it until then)
+and `#startCycleLoop` (sent to `FakeGUI`, which exists only when
+`setup_fake_gui.st` was filed in; both sends already guarded by `ifNotNil:`).
+Both are optional protocol, now sent via `perform:` — the standard idiom —
+which addresses what the test is pointing at rather than dodging it.
+
+So `ReleaseTest` on both arches drops from 4 FAILs to 2, and the two that
+remain are NOT ours: `testUnknownProcesses` (image MNU on
+`DefaultExecutionEnvironment>>#watchDogProcess`) and `testNoDeadSubscriptions`
+(pharo#2471; our finalization chain measures working — see
+`docs/vm-compat-bugs.md`).
+
 ### FIXED: testNoOrphanPackage — the runner now declares its own package
 
 Landed in `scripts/pharo-headless-test` (`cb12897`, bumped here as `4c83f3cd`).
