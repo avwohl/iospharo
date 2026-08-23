@@ -298,3 +298,17 @@ Note `WeakAnnouncerTest>>testNoDeadWeakSubscriptions` is on the list, which is
 consistent with `ReleaseTest>>testNoDeadSubscriptions` citing pharo#2471: both
 halves of the dead-weak-subscription question are things upstream declines to
 assert on CI.
+
+**Read the 46 against the right baseline.** These 51 come from the RAW sweep,
+which runs the Spec/Morphic classes with no GUI environment — and most of the
+46 are exactly those (`SpListCommonPropertiestTest` 5,
+`SpTableCommonPropertiestTest` 3, the `SpTreeTableAdapter*` family 2 each,
+`StTranscriptPresenterTest` 3, `StDebuggerTest` 3, …). Re-measured against an
+image with `setup_fake_gui.st` filed in ahead of the runner, the same 30
+classes score **829 tests, 800 P, 13 F, 1–2 E** on both arches. So the honest
+count of open non-GUI-environment failures is ~14, not 46, and the guarded-5
+should be weighed against that.
+
+What this census does establish is narrower and still useful: reaching for
+`PHARO_CI_TESTING_ENVIRONMENT` would remove five failures, not a large slice,
+so it is not a shortcut to a better score.
