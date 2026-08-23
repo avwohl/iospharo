@@ -262,9 +262,56 @@ intermittent (a single passing run proves nothing):
     PHARO_T1_NO_CALLER_RESUME=1  disables the documented x86 per-send sp leak
     PHARO_T1_XMETHOD_MAX_IC=0    restores leaf-only callees
 
-Baseline rate is being measured first; arm64 has already come back 8/8 clean,
-which is consistent with the asymmetry above but does not on its own
-distinguish between these four.
+### The rate is not ~50% — it is 0 in 15, and that changes the method
+
+Measured, 150 s cutoff (all three observed failures happened inside 54 s, so
+a run that clears 150 s has cleared the window):
+
+    arm64    would-load 8   DNU 0   DNS 0   other 0   of 8
+    x86_64   would-load 7   DNU 0   DNS 0   other 0   of 7 so far
+
+**Zero reproductions in fifteen runs.** The "roughly half the time" in the
+earlier revision of this entry came from one failure in two samples and was
+small-sample noise, not a rate. That kills the suppressor A/B outright: with
+no baseline failures there is nothing for `PHARO_T1_X86_NO_XMETHOD` or
+friends to suppress, and any "it passed 8/8 with the knob" would be
+measuring nothing.
+
+So the lever has to work the other way. `PHARO_T1_NO_CHAIN_RESUME_PLAIN`
+(debug_vars.h:123) opts OUT of the 2026-06-19 "COLD-BOOT DOUBLE-POP FIX",
+deliberately restoring
+
+    "cold IC-miss nArgs>0 sends (do:-loop at:/value:) over-popped
+     = the nested do:/on:do: cold-startup operand SHIFT"
+
+which is our symptom class stated in the codebase's own words — and our
+failure is a cold `cull:` (nArgs=1) inside `ifNotNil:ifNil:` (nArgs=2). If
+setting it makes the DNU frequent, the operand-shift class is confirmed live
+on this path and there is finally a repro to bisect the suppressors against.
+If it does NOT, this whole line of investigation is unsupported and the three
+surviving mechanisms below go back to being reading, not evidence.
+
+### What a 12-agent adversarial pass established about the mechanism
+
+Three exclusions, all verified against source, all high confidence:
+
+  * `#ifNotNil:ifNil:` and `#cull:` are not inlined or special-cased anywhere
+    in the JIT. The only nil-check peephole is an arch-neutral interpreter
+    fusion in `op_dup` that never materialises a block.
+  * `argCount` is a compile-time constant from the opcode on both sides. The
+    recorded dump proves it independently: `pushFrame` nil-fills
+    `numTemps - argCount`, and `Object>>ifNotNil:ifNil:` has numTemps=2, so
+    argCount=1 would have left FP[2]=nil — it holds an object. Only
+    argCount=2 fits. **The bad value was already in the arg slot when the
+    frame was activated.**
+  * The block-value stencil specialisation is dead code in a default build
+    (asmjit-T1 short-circuits before `applyICSpecialization`).
+
+Two candidates were REFUTED by the verify pass and are not worth re-deriving:
+a claimed x86 resume-override single-point-of-failure (contradicted by
+`t1ICProbe` defaulting true at DebugSettings.cpp:117), and a claimed no-op
+`bailMatJ2J` (contradicted by the per-`tryJITActivation` JITState/J2J slice
+lifetime at Interpreter.cpp:27750, 27877-27888).
 
 Where to look: the load stops inside a libgit2 `github://` clone, which is
 also where `Fuel` sits for 17 minutes against a repository that no longer
