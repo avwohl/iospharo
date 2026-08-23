@@ -129,7 +129,7 @@ That is more coverage, but it means some of our failures are tests upstream
 has already given up on, and they should not be counted against the VM
 without checking for that guard first.
 
-## NEW 2026-08-22 — a package load aborts SILENTLY, mid-dependency, and the VM still exits 0 (BOTH arches)
+## NEW 2026-08-22 — x86_64: a SmallInteger reaches `cull:` in a JIT'd `ifNotNil:ifNil:` after a J2J return
 
 Filed first as "x86_64 only, dies with 'only integers should be used as
 indices'". Three tests later that description is wrong in almost every
@@ -194,9 +194,41 @@ consequences drawn for the package numbers (that XMLParser's arm-pass /
 x86-fail split was a coin flip, and that PolyMath's 59-test gap is the same
 variance) do not follow from this evidence and should not be relied on.
 
-An experiment that classifies outcomes rather than counting them — N runs
-per arch, each labelled would-load / DNS / silent / other-error — is running;
-its result belongs here.
+### And the "silent" x86_64 run is not silent either — it is a JIT displacement
+
+Reading `verb-2`'s log all the way through rather than its tail, the failure
+is a `doesNotUnderstand`, logged under `[DNU-*]` markers rather than
+`Error:`, which is why every grep so far had missed it:
+
+    [DNU-RCVR] #cull: rcvr=0x11 cls=SmI ... depth=5
+    [DNU-STACK]   [0] Context>>privRefresh
+    [DNU-STACK]   [1] TFStringType>>freeValueIfNeeded:
+    [DNU-STACK]   [current] #ifNotNil:ifNil: fd=1
+    [DNU]   rcvr is SmallInteger 2
+    [DNU]   arg[0] = 0x9 (SmallInt)                  <- SmallInteger 1
+    [DNU-JIT] lastJitReturn: method=#allocatedStrings retVal=...(obj 0)
+    [DNU-JIT]   [0] #privRefresh <<JIT>>
+    [DNU-JIT]   [1] #freeValueIfNeeded: <<JIT>>
+
+`ifNotNil:ifNil:` sends `cull:` to its block argument, and the receiver of
+that send is **SmallInteger 2**. Both frames are JIT-compiled, and the JIT
+had just returned from `#allocatedStrings`. A non-block sitting in a block
+slot immediately after a J2J return is operand-stack displacement — the same
+shape as defect `#1` in this file (the WarpBlt expression-stack displacement,
+`bf3f6c58`, "one phantom operand per phi").
+
+So the three failures classify as:
+
+    armverb-2   arm64    3 s   DNS, environmental, prints IceGenericError
+    verb-2      x86_64  54 s   JIT displacement: SmallInteger reaches cull:
+    pkg-x86     x86_64  31 s   "only integers should be used as indices"
+                               -- plausibly the same displacement landing on
+                               an indexing primitive instead, NOT established
+
+None of this is "a package load aborts silently". The VM exits 0 because the
+image's error handler runs, reports, and the eval never reaches its snapshot
+— which is a real reporting weakness worth fixing on its own, but it is a
+consequence, not the defect.
 
 Where to look: the load stops inside a libgit2 `github://` clone, which is
 also where `Fuel` sits for 17 minutes against a repository that no longer
