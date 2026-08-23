@@ -177,8 +177,28 @@ Two more, smaller, in the same function:
     only because a heap `Oop` and its address have the same bits and `nil`
     is 0 — worth making explicit rather than relying on it.
 
-None of this is fixed here. It is written down because the analysis is the
-expensive part and it was done with the machine busy elsewhere.
+### The sizing bug IS fixed — and the stall survives it
+
+All three were corrected (`makeFreeChunk` takes the two header words into
+account, `allocateFromFreeList` measures the remainder from the chunk's true
+start, and a chunk is only accepted on an exact fit or a >=16-byte
+leftover). Then measured:
+
+    SUnit batch 1-50, knob OFF   774 tests, 772 P, 0 F, 0 E
+                                 byte-identical to the day's baseline
+    NeoJSON load, knob ON        still stalls: 80 s elapsed, ~17,520
+                                 bytecodes executed (219 steps/s)
+
+So the mis-sizing was real and worth fixing on its own — `sweepGC` builds
+large free chunks through that function and has been describing them 8 bytes
+too long — but it is **not** what stalls the allocator. Something else in
+that path is still wrong, and the knob stays OFF.
+
+Whoever picks this up: the remaining suspect list is empty, which means the
+next step is instrumentation rather than reading. Log every
+`allocateFromFreeList` hit (chunk address, chunk size, request, remainder)
+for the first few hundred allocations and find the first one whose result
+cannot be re-parsed by `ObjectScanner`.
 
 ## Reproducing
 

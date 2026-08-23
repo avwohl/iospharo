@@ -129,7 +129,7 @@ That is more coverage, but it means some of our failures are tests upstream
 has already given up on, and they should not be counted against the VM
 without checking for that guard first.
 
-## NEW 2026-08-22 — a package load aborts SILENTLY, mid-dependency, and the VM still exits 0
+## NEW 2026-08-22 — a package load aborts SILENTLY, mid-dependency, and the VM still exits 0 (BOTH arches)
 
 Filed first as "x86_64 only, dies with 'only integers should be used as
 indices'". Three tests later that description is wrong in almost every
@@ -166,12 +166,22 @@ rc=0 as success.
     failed the same way with no such error, so that message is one
     manifestation, not the cause.
 
-### Still open
+### It is NOT x86-specific — arm64 does it too, in 3 seconds
 
-Whether it is x86-specific at all. arm64 loaded XMLParser once, in the
-package tier — one sample against a failure rate that looks like ~50% on
-x86. The same two-run experiment is running on arm64; until it reports,
-"x86_64 only" is an assumption, not a result.
+The same two-run experiment on arm64:
+
+    armverb-1  rc=0  354 s  image 1226 MB   loaded
+    armverb-2  rc=0    3 s  image   52 MB   did nothing
+
+So both architectures abort silently at roughly the same rate, and the
+"x86_64 only" framing this entry started with was an artifact of one sample
+per arch. Two consequences for the package numbers recorded the same day:
+
+  * XMLParser succeeding on arm64 and failing on x86_64 in the package tier
+    was the coin landing differently, not an architecture difference.
+  * PolyMath's 59-test / 1-timeout gap between the arches may be the same
+    variance. It has NOT been re-run, so do not read it as a divergence
+    without doing so.
 
 Where to look: the load stops inside a libgit2 `github://` clone, which is
 also where `Fuel` sits for 17 minutes against a repository that no longer
