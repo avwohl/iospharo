@@ -412,3 +412,46 @@ Attribution, each with its evidence elsewhere in these docs:
     wrong value.
 
 **No demonstrated VM computation error in the set.**
+
+## 2026-08-23: the seven never-investigated SUnit residual failures, diagnosed
+
+These seven had only the label "GUI/debugger cases known to flip run to run".
+Run individually at a 300 s bound against the fake-GUI image:
+
+    LinkInstallerTest>>testPropagateNewClassScopedLinksOnMethodNode   PASS
+    StDebuggerActionModelTest>>testEventAfterProceed                  PASS
+    StDebuggerInspectorTest>>testUpdateLayout...WithAssertionFailure  Got 4 instead of 2
+    StDebuggerTest>>testUpdateLayoutForContextsIfAssertionFailure     Got 4 instead of 2
+    StDebuggerTest>>testIsInSelectedContextPackage
+        Got #DoIt instead of #runTestCaseUnderWatchdog:
+    StSpotterModelTest>>testSpotterModelShouldWaitToPerformActualSearch  Assertion failed
+    SystemDependenciesTest>>testExternalUIDependencies   Given Collections do not match!
+
+**Two pass in isolation**, so they are pure context dependence.
+
+**The two "Got 4 instead of 2" are Spec LAYOUT tests, not VM stack tests.** The
+source settles it:
+
+    currentLayout := debugger inspector layout.
+    expectedLayout := StDebuggerInspector new assertionFailureLayout.
+    StDebuggerInspector maximizeAssertionSpec: false.
+    self assert: currentLayout children size equals: ...
+
+The number is a count of layout CHILDREN, and `maximizeAssertionSpec:` is
+CLASS-SIDE global state which the test sets *after* capturing the layout. Any
+earlier test leaving that flag in the other position changes the count. That is
+ordinary order-dependence in Spec's own tests — a mechanism for the "flips run
+to run" behaviour rather than a restatement of it. (An earlier guess that these
+showed the VM materialising extra contexts was wrong; the assertion never looks
+at the call stack.)
+
+**`testIsInSelectedContextPackage` inspects the enclosing call stack** and
+compares the selector it finds. Under the runner that is
+`runTestCaseUnderWatchdog:`; under a bare `eval` it is `#DoIt`. Whatever wraps
+the test shows up in its answer, so it reports on the harness, not the VM.
+
+The remaining two are a Spotter timing assertion and a UI-dependency list
+mismatch, neither touching VM computation.
+
+**None of the seven is a VM computation error**, and that is now backed by a
+message and a mechanism for each rather than a shared label.
