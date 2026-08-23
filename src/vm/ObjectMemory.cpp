@@ -3739,6 +3739,17 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
 
 // ===== FREE LIST HELPERS =====
 
+// A free-list link is terminated with Oop::nil(), and **nil IS an object**:
+// `next.isObject()` answers true for it, so decoding the terminator as a chunk
+// pointer yields heap base (0x7000000000), whose slot 0 is also nil -- a
+// self-loop.  Measured 2026-08-23: the list was cyclic immediately after
+// rebuild, with the LAST of 8 correctly-linked gaps pointing at heap base.
+// Every reader of a link must go through here.
+static inline ObjectHeader* freeListLinkToChunk(Oop link) {
+    if (!link.isObject() || link.isNil()) return nullptr;
+    return link.asObjectPtr();
+}
+
 ObjectHeader* ObjectMemory::makeFreeChunk(uint8_t* addr, size_t size, bool zeroBody) {
     // A free chunk has classIndex=0 and stores its size in slots.
     // Minimum free chunk is 16 bytes (8-byte header + 8-byte next pointer).
@@ -3823,7 +3834,7 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
             if (chunk) {
                 // Pop from list
                 Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
-                freeLists_[sizeInSlots] = next.isObject() ? next.asObjectPtr() : nullptr;
+                freeLists_[sizeInSlots] = freeListLinkToChunk(next);
                 if (!freeLists_[sizeInSlots]) {
                     freeListsMask_ &= ~(1ULL << sizeInSlots);
                 }
@@ -3867,7 +3878,7 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                 if (prevChunk) {
                     if (prevChunk->slotCount() > 0) prevChunk->slotAtPut(0, next);
                 } else {
-                    freeLists_[0] = next.isObject() ? next.asObjectPtr() : nullptr;
+                    freeLists_[0] = freeListLinkToChunk(next);
                 }
                 if (!freeLists_[0]) {
                     freeListsMask_ &= ~1ULL;
@@ -3890,12 +3901,21 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                     }
                 }
 
-                return chunk;
+                // Return the chunk's BASE, not `chunk`.  makeFreeChunk answers
+                // addr+8 for an overflow chunk (the count word sits at addr),
+                // and the caller treats this result exactly like the bump
+                // path's `oldSpaceFree_` -- the START of the allocation.
+                // Returning the shifted pointer laid the new object at
+                // chunkBase+8 while `remainder` above was measured from
+                // chunkBase, so the object's last 8 bytes overlapped the
+                // remainder chunk's header: heap corruption that shows up
+                // later as a garbage link in the free list.
+                return reinterpret_cast<ObjectHeader*>(chunkBase);
             }
             // Advance
             Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
             prevChunk = chunk;
-            chunk = next.isObject() ? next.asObjectPtr() : nullptr;
+            chunk = freeListLinkToChunk(next);
 
             // Floyd: advance the slow pointer every other step.  If it ever
             // meets the fast one the list loops back on itself.
@@ -3910,11 +3930,21 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                     reported = true;
                     fprintf(stderr,
                             "[FREELIST-CYCLE] large-chunk free list loops at %p "
-                            "(request %zu bytes) -- abandoning the walk and "
-                            "falling back to bump allocation\n",
+                            "(request %zu bytes) -- DROPPING the large-chunk "
+                            "list and falling back to bump allocation\n",
                             (void*)chunk, size);
                     fflush(stderr);
                 }
+                // DROP the list rather than merely abandoning this walk.
+                // Returning nullptr alone leaves the cycle in place, so every
+                // later allocation re-walks it to detection: measured
+                // 2026-08-23, a NeoJSON load with the knob on still ran but at
+                // ~240k bytecodes/s (213 M steps in 890 s) instead of
+                // finishing in 23 s.  A list known to be corrupt is worth
+                // nothing; forgetting it costs only the reuse it was going to
+                // provide, which is the pre-knob behaviour.
+                freeLists_[0] = nullptr;
+                freeListsMask_ &= ~1ULL;
                 return nullptr;
             }
         }
@@ -5342,6 +5372,51 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
                 }
             }
             prevEnd = reinterpret_cast<uint8_t*>(o) + o->totalSize();
+        }
+        // Validate what we just built.  This distinguishes the two possible
+        // cycle sources: present HERE means rebuild itself linked a chunk into
+        // its own list twice (or added overlapping chunks); absent here but
+        // reported later by allocateFromFreeList's Floyd guard means the cycle
+        // is created by the split/unlink path during allocation.
+        {
+            ObjectHeader* fast = freeLists_[0];
+            ObjectHeader* slow2 = fast;
+            bool adv = false, cyclic = false;
+            size_t len = 0;
+            while (fast) {
+                Oop nx = fast->slotCount() > 0 ? fast->slotAt(0) : Oop::nil();
+                fast = freeListLinkToChunk(nx);
+                len++;
+                if (adv && slow2) {
+                    Oop sn = slow2->slotCount() > 0 ? slow2->slotAt(0) : Oop::nil();
+                    slow2 = freeListLinkToChunk(sn);
+                }
+                adv = !adv;
+                if (fast && fast == slow2) { cyclic = true; break; }
+            }
+            if (cyclic) {
+                fprintf(stderr, "[FREELIST-BUILD] list is ALREADY cyclic right "
+                        "after rebuild (%zu links walked, %zu gaps added)\n",
+                        len, gaps);
+                // Dump the first nodes with their links so the aliasing is
+                // visible rather than guessed at.
+                ObjectHeader* n = freeLists_[0];
+                for (size_t i = 0; i < 12 && n; i++) {
+                    Oop nx = n->slotCount() > 0 ? n->slotAt(0) : Oop::nil();
+                    fprintf(stderr,
+                            "[FREELIST-NODE] %2zu chunk=%p slots=%u total=%zu "
+                            "overflow=%d -> %p\n",
+                            i, (void*)n, (unsigned)n->slotCount(),
+                            (size_t)n->totalSize(), (int)n->hasOverflowSlots(),
+                            nx.isObject() ? (void*)nx.asObjectPtr() : nullptr);
+                    n = freeListLinkToChunk(nx);
+                }
+                fflush(stderr);
+            } else if (GET_DEBUG_BOOL(PHARO_GC_LOG)) {
+                fprintf(stderr, "[FREELIST-BUILD] acyclic, %zu links, %zu gaps\n",
+                        len, gaps);
+                fflush(stderr);
+            }
         }
         if (gaps && GET_DEBUG_BOOL(PHARO_GC_LOG)) {
             fprintf(stderr, "[GC-FREELIST] %zu gaps, %zu MB reclaimed for reuse "
