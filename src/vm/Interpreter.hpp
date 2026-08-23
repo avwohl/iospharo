@@ -2813,7 +2813,12 @@ private:
     PrimitiveResult primitiveValueUninterruptably(int argCount);   // 203
 
     // Process/system primitives (172, 179, 230, 231)
-    PrimitiveResult primitiveSetGCSemaphore(int argCount);         // 172
+    // NOT primitive 172: generated_primitives.inc maps 172 to
+    // primitiveFetchNextMourner, matching cointerp's /* 172 */ and the
+    // image's `<primitive: 172>` in FinalizationProcess class>>
+    // primitiveFetchMourner.  The old `// 172` here cost a wrong
+    // root-cause guess on 2026-08-23.
+    PrimitiveResult primitiveSetGCSemaphore(int argCount);
     PrimitiveResult primitiveRelinquishProcessor(int argCount);    // 230
     PrimitiveResult primitiveFormat(int argCount);                 // 231
 
