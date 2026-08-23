@@ -137,3 +137,58 @@ So a full sweep run against a fake-GUI image would land near **13 F / 2 E**
 rather than 27 F / 25 E. That has NOT been run end to end — this is the 30
 residual classes measured directly, which is the same population but not the
 same experiment.
+
+## 2026-08-23: ReleaseTest's failures, each cause named
+
+These have been carried as "harness self-pollution" collectively. Run
+individually with a 1200 s limit, they are three DIFFERENT causes and only one
+is ours:
+
+    testNoOrphanPackage
+        TestFailure: an Array(a Package(Tests-Runner)) should have been empty
+
+      OURS. The test asserts every package in the organizer is declared by some
+      BaselineOf:
+
+          self assertEmpty: (self packageOrganizer packages reject: [ :package |
+              package isUndefined or: [ declaredPackages includes: package name ] ])
+
+      and its own comment says it exists "to detect generated packages that are
+      not removed by the #tearDowns" -- exactly what `run_sunit_tests.st:91`
+      does by defining SUnitRunner into package 'Tests-Runner'. This is the
+      harness contaminating a whole-image test, not a VM defect.
+
+    testUnknownProcesses
+        MessageNotUnderstood: DefaultExecutionEnvironment >> #watchDogProcess
+
+      NOT ours and not about the runner's processes at all -- the image's
+      DefaultExecutionEnvironment does not implement #watchDogProcess. An image
+      bug; belongs in docs/image_issues.md.
+
+    testNoDeadSubscriptions
+        TestFailure: Got an Array(a WeakAnnouncementSubscription (nil subscribes
+        to ClassRemoved) ... MethodRemoved ... MethodAdded ... MethodModified)
+        instead of #().
+
+      The known dead-weak-subscription/finalization issue, already tracked (see
+      docs/vm-compat-bugs.md; WeakAnnouncerTest reproduces it in 13 s). Four
+      subscriptions with nil subscribers survive. GENUINELY OURS.
+
+### Attempted fix for testNoOrphanPackage, not landed
+
+Giving 'Tests-Runner' a declaring baseline would make the harness conform to
+the image's packaging contract rather than hide the failure. Two attempts both
+failed on Pharo 13 class-definition API, in a scratch image:
+
+    BaselineOf subclass: #BaselineOfTestsRunner ... package: ...
+        -> Error: Instance of BaselineOf class did not understand
+           #subclass:instanceVariableNames:classVariableNames:package:
+
+    (BaselineOf << #BaselineOfTestsRunner) package: 'BaselineOfTestsRunner'
+        -> the class is not installed; the next `Smalltalk at:` raises
+           KeyNotFound: key #BaselineOfTestsRunner not found in SystemEnvironment
+
+Whoever picks this up: find the API BaselineOf actually accepts in Pharo 13
+(and note the new baseline's OWN package must be declared too, or the test just
+moves to complaining about `BaselineOfTestsRunner`). Worth one test per arch,
+so it is low priority -- but it is a real harness defect, not a VM one.
