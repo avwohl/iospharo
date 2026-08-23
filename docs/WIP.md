@@ -68,7 +68,11 @@ framework:
     knob off 421 ms   |   knob on: does not finish in 240 s
 
 Ten hypotheses are closed BY TEST and listed in the knob's own comment in
-`src/vm/debug_vars.h` — read it before spending time here. What remains is the
+`src/vm/debug_vars.h` — read it before spending time here. Note one claim made
+and then RETRACTED there: that compaction never moves anything without the
+knob. Measured on the real workload it moves ~16.9k objects either way
+(off: tomove=16937, on: tomove=16935), so relocation is not newly enabled by
+the knob. What remains is the
 image-side migration path (`Metaclass>>addSlot:` -> `copyObject:to:`).
 
 ## Still genuinely open
