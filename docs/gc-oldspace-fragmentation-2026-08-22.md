@@ -263,3 +263,29 @@ Validate against the numbers already in this file: the NeoJSON image should
 fall from 245 MB toward ~90 MB, and XMLParser from 1.15 GB toward ~100 MB.
 Treat GC changes carefully — an eviction change in this project cost a 7x
 regression once — so run both test tiers before and after.
+
+### Two facts measured 2026-08-23 that shape the implementation
+
+**1. The call rate is affordable.** `PHARO_PIN_STATS=1` over a complete NeoJSON
+package load:
+
+    [PIN-STATS] primitivePin calls=638 newlyPinned=625
+
+`becomeForward` is an EAGER full-heap walk (`ObjectMemory.cpp:1604` —
+`allObjectsDo` replacing references), so the cost is one walk per relocation.
+625 worst case is affordable for a load that already takes ~30 s, and it drops
+much further once relocation is restricted to receivers **already in old
+space**: fresh callout buffers are young, and only 6 pins remain at rest.
+
+**2. Candidate 2 DEPENDS ON candidate 1.** Relocating low needs somewhere low
+to put the object, and there is no working low allocator today.
+`allocateFromFreeList` exists but the post-compaction gaps are only put on the
+free list under `PHARO_OLDSPACE_FREELIST`, which `debug_vars.h` itself marks
+EXPERIMENTAL AND CURRENTLY BROKEN (it stalls a load at ~17,520 bytecodes).
+
+So the order of work is: **fix the free list first** (candidate 1, which the
+existing `rebuildFreeListAfterCompact` comment already promises), then
+relocation-on-pin becomes a small change on top of it. Attempting candidate 2
+alone means inventing a second low-address allocator — a dedicated pinned
+region reserved near `oldSpaceStart` — which is more invasive than fixing the
+allocator that is already half-written.
