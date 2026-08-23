@@ -467,12 +467,29 @@ None of them is in the arena at +53276 KB, and `tenuredLow=2` accounts for two
 different objects that did not survive. **So the four 32-byte pins that strand
 old space never pass through scavenge tenuring at all.**
 
-That is the next question, and it is now sharply posed: how does a 32-byte
-pinned ByteArray get into old space at +183..+226 MB without being tenured by
-`tenureIfYoung`? Instrument `allocateRaw`'s Old case (and any other old-space
-allocation path) to log allocations that are, or shortly become, pinned. Once
-that route is known, point it at `allocatePinnedLow` exactly as tenuring now
-is, and the arena will finally hold all of them.
+**The earlier skip census already answers how they get there** — no further
+instrumentation needed. Of 625 newly-pinned objects, 439 were young at pin time
+and 186 were ALREADY IN OLD SPACE (`skip[young=439 ... noChunk=186]`). Those
+186 are objects that were tenured normally while UNPINNED and only pinned
+later, in place. The four survivors are among them.
+
+So the remaining problem is not "find the allocation route" but: **how do you
+move an object that is already old when it gets pinned?** Two options, and
+neither is free:
+
+  * **At pin time.** Needs `becomeForward`, and that CRASHES here — measured,
+    rc=133 in 3 s — because it rewrites references mid-primitive while the
+    interpreter holds oops for the call in flight. Would need a safe
+    alternative to a full-heap become at that point.
+  * **At a GC safepoint.** Let a full GC treat pins as movable when
+    `callbackDepth_ == 0` and slide them low, updating references through the
+    forwarding machinery it already runs. Principled -- GC moving objects and
+    fixing references is exactly its job -- but it breaks the promise pinning
+    makes to any C code holding the address, so it is only sound when no FFI
+    call is outstanding. That condition is checkable.
+
+This is a design decision rather than a measurement, which is why it stops
+here.
 
 Validated at this step: `class_table` ALL TESTS PASSED and `test_relaunch` 3/3
 with `PHARO_PIN_RELOCATE=1`, and 3/3 with it off.
