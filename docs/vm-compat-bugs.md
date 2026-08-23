@@ -2370,3 +2370,55 @@ Residual TraitTest delta vs Cog (32 vs 40 P) and RGMethodDefinitionTest at
 JIT IC-probe bug is documented in docs/jit-sunit-fullrun.md and fixed by
 PHARO_T1_NO_IC_PROBE=1).
 
+
+## 2026-08-23 — dead weak subscriptions: what is established, and what is not
+
+`ReleaseTest>>testNoDeadSubscriptions` fails on both arches with four
+`WeakAnnouncementSubscription`s whose subscriber is nil:
+
+    ClassRemoved    WeakMessageSend(#classRemovedEventOccurs: -> nil)
+    MethodRemoved   WeakMessageSend(#removedEventOccurs:      -> nil)
+    MethodAdded     WeakMessageSend(#addedEventOccurs:        -> nil)
+    MethodModified  WeakMessageSend(#modifiedEventOccurs:     -> nil)
+
+Measured (arm64, `codeChangeAnnouncer subscriptions subscriptions`):
+
+    after 3 x garbageCollect        total=54  dead=4
+    after 3 more + 300ms delays     total=54  dead=4
+
+So they survive six full GCs. **The weak clearing itself works** — the
+subscriber slot IS nil. What never happens is the REMOVAL of the subscription
+from the registry.
+
+Mechanism as it stands in this image (Pharo 13):
+
+  * The old `WeakArray` finalization API is gone: `WeakArray class` has zero
+    selectors matching `inal`.
+  * Pharo 13 uses `FinalizationProcess` (class-side only, `allInstances` = 0)
+    with `#primitiveFetchMourner`, `#mournLoopWith:`,
+    `#runningFinalizationProcess`, `#restartFinalizationProcess`.
+  * `WeakMessageSend` is **weak but NOT an ephemeron** (`isWeak=true`,
+    `isEphemeronClass=false`).
+  * `WeakAnnouncementSubscription` implements `#finalize`.
+  * `SubscriptionRegistry` has only `#remove:` and `#removeSubscriber:` — there
+    is **no lazy self-cleaning path**, so removal must come from finalization
+    actually invoking `#finalize`.
+
+Our `drainMournQueueNatively` (`Interpreter.cpp:22894`) claims to re-push
+non-WKA mourners — `WeakSubscription` is named in its comment — for image-side
+dispatch via primitive 172, while dropping WeakArray mourners and handling WKAs
+natively. Whether these four ever reach that queue is NOT yet measured.
+
+**NOT established, and important before anyone calls this a VM defect:** the
+test's own comment says upstream skipped it on Pharo's CI —
+`https://github.com/pharo-project/pharo/issues/2471`. So it is a
+known-troublesome test upstream, and this host has no runnable Cog to compare
+against. Do not write this up as "our VM fails to finalize" without either a
+stock-VM number or direct evidence that these four are enqueued as mourners and
+dropped.
+
+Next concrete step: instrument the drain to log the class of every mourner it
+sees, run the reproducer (`WeakAnnouncerTest>>testNoDeadWeakSubscriptions`,
+13 s in isolation), and check whether `WeakMessageSend` /
+`WeakAnnouncementSubscription` appear at all. That distinguishes "never
+enqueued" from "enqueued and mishandled", which are different bugs.
