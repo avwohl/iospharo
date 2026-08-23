@@ -318,3 +318,37 @@ lumped in with the harness self-pollution failures.
 Upstream wishlist: either implement `#watchDogProcess` on
 `DefaultExecutionEnvironment` or have the test tolerate an environment that
 does not provide one.
+
+## XMLParser calls `whichCategoryIncludesSelector:`, removed in Pharo 13 (2026-08-23)
+
+Eight `XMLWriterTest` tests fail identically on BOTH architectures — the single
+largest cluster in the package tier's residual:
+
+    testOnFormatter, testFormattingProlog, testFormattingElementDeclarations,
+    testFormattingAttributeDeclarations, testFormattingContent,
+    testFormattingEntityDelcarations, testFormattingPIs,
+    testFormattingUnsafeTagWriters
+
+all with
+
+    MessageNotUnderstood: XMLWriterFormatter class >> #whichCategoryIncludesSelector:
+
+**Not a VM defect, and proven so rather than assumed.** The selector is
+implemented by NOTHING in the image:
+
+    allImplementorsOf: #whichCategoryIncludesSelector:  ->  #()
+    XMLWriterFormatter class respondsTo:  ->  false
+    ClassDescription/Behavior includesSelector:  ->  false
+
+so the MNU is the correct answer. Pharo 13 renamed it in the
+category -> protocol sweep; the replacements present in the image are
+
+    #protocolNameOfSelector:      (the direct equivalent)
+    #protocolOfSelector:
+
+**Upstream fix belongs in XMLParser**, not here: its test helper should call
+`protocolNameOfSelector:`. We deliberately do NOT shim the old selector back
+into the image — re-adding an API Pharo removed, to make a third-party test
+pass, would improve the score without making this VM any more correct.
+
+Counted in the package tier as 8 of the 18 errors per architecture.
