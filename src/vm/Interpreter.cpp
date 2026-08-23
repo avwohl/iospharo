@@ -15686,8 +15686,47 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         "origSel=#%s method_=#%s\n",
                         (unsigned long long)rcvr.rawBits(), rKind, cIdx,
                         origSel.c_str(), memory_.selectorOf(method_).c_str());
-                    // classIdx==0 = forwarder corpse: word1 is the forwarding
-                    // target; resolve its class to name what got becomed.
+                    // classIdx==0 is a FREE CHUNK (makeFreeChunk), not a
+                    // forwarder -- forwarders are ForwardedClassIndex==8.  Who
+                    // still points at freed memory is the whole question, so
+                    // scan the heap for referrers and name them.
+                    if (cIdx == 0 && rcvr.isObject() && rcvr.rawBits() > 0x10000
+                            && memory_.isValidPointer(rcvr)
+                            && GET_DEBUG_BOOL(PHARO_FREECHUNK_REFS)) {
+                        uint64_t target = rcvr.rawBits();
+                        int shown = 0;
+                        memory_.allObjectsDo([&](Oop o) {
+                            if (shown >= 8) return;
+                            if (!o.isObject() || !memory_.isValidPointer(o)) return;
+                            ObjectHeader* oh = o.asObjectPtr();
+                            if (oh->classIndex() == 0) return;   // another chunk
+                            size_t n = oh->slotCount();
+                            if (n > 100000) return;
+                            for (size_t i = 0; i < n; i++) {
+                                Oop sv = memory_.fetchPointer(static_cast<int>(i), o);
+                                if (sv.rawBits() == target) {
+                                    fprintf(stderr,
+                                        "[FREECHUNK-REF] holder=0x%llx cls=%s "
+                                        "slot=%zu/%zu\n",
+                                        (unsigned long long)o.rawBits(),
+                                        memory_.classNameOf(memory_.classOf(o)).c_str(),
+                                        i, n);
+                                    shown++;
+                                    break;
+                                }
+                            }
+                        });
+                        if (shown == 0) {
+                            fprintf(stderr, "[FREECHUNK-REF] NO heap object "
+                                    "references 0x%llx -- it came from a VM-side "
+                                    "root, a stack slot, or a JIT cache\n",
+                                    (unsigned long long)target);
+                        }
+                        fflush(stderr);
+                    }
+                    // Legacy note: this next block assumed classIdx==0 meant a
+                    // forwarder corpse.  It does not (see above); kept because
+                    // its word1 dump is still informative.
                     if (cIdx == 0 && rcvr.isObject() && rcvr.rawBits() > 0x10000
                             && memory_.isValidPointer(rcvr)) {
                         uint64_t w0 = reinterpret_cast<uint64_t*>(rcvr.rawBits())[0];

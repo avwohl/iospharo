@@ -3850,6 +3850,10 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                 if (!freeLists_[sizeInSlots]) {
                     freeListsMask_ &= ~(1ULL << sizeInSlots);
                 }
+                if (GET_DEBUG_BOOL(PHARO_FREECHUNK_REFS)) {
+                    fprintf(stderr, "[FREELIST-ALLOC-EXACT] %p size=%zu\n",
+                            (void*)chunk, size);
+                }
                 return chunk;
             }
         }
@@ -3913,6 +3917,10 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
                     }
                 }
 
+                if (GET_DEBUG_BOOL(PHARO_FREECHUNK_REFS)) {
+                    fprintf(stderr, "[FREELIST-ALLOC] %p size=%zu (chunk was %zu)\n",
+                            (void*)chunkBase, size, chunkSize);
+                }
                 // Return the chunk's BASE, not `chunk`.  makeFreeChunk answers
                 // addr+8 for an overflow chunk (the count word sits at addr),
                 // and the caller treats this result exactly like the bump
