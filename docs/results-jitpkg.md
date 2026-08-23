@@ -517,9 +517,14 @@ primitive. Captured signature: `/tmp/systime_delay_bug.txt`.
 
 ### 5. strings — 0 new bugs (known WideString bug)
 
-All 3 candidates are the already-documented WideString-WriteStream bug
-(WIP.md): `StringTest>>testOnlyLetters`, `testWithInternalLineEndings`,
+All 3 candidates were the WideString-WriteStream bug:
+`StringTest>>testOnlyLetters`, `testWithInternalLineEndings`,
 `testWithUnixLineEndings`. Same failure JIT on/off; not a JIT bug.
+
+**That bug is FIXED** — `d5608fd4` (2026-06-01), "fix: WideString corruption in
+synthetic WriteStream>>nextPut:". This paragraph used to cite it as
+"already-documented ... (WIP.md)", which was the only surviving pointer to it
+and read as though it were still open. Do not re-investigate these three.
 
 ## Pending isolation triage
 
