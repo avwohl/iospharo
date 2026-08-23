@@ -341,6 +341,25 @@ Fairness comes from the shared external class list — neither runner's
 source has test-class symbols as literals, so
 `ClassQueryTest>>testAllCallsOn` counts the same senders on both VMs.
 
+**The stock Cog VM cannot start on this machine (2026-08-23).** The VM from
+`get.pharo.org/64/130+vm` aborts at startup on ANY image, pristine included:
+
+    [ERROR] allocateHeap: Could not allocate codeZone in the expected place
+            (0x320000000), got 0x7000000000
+    [ERROR] error: Error allocating / Aborting the execution of the VM
+    Segmentation fault: 11                                        -> rc=255
+
+It wants its JIT code zone at a fixed address Darwin 27 will not grant. So the
+stock-Cog baseline above is not obtainable here, and any prep routed through
+`/tmp/harness/pharo` silently does nothing — the image saves WITHOUT
+SUnitRunner and every later suite launch writes no results file at all, which
+looks exactly like a scheduler wedge. Check for the codeZone error first.
+
+**`eval --save` is a stock-VM flag our VM does not implement.** Under our VM
+the fileIn runs but is never persisted (`package-tests-selfhosted.sh` has said
+so since it was written). End the prep with `Smalltalk snapshot: true andQuit:
+true` instead, and confirm by file size.
+
 **startup.st CWD trap (cost half a day, 2026-07-04):** Pharo's
 StartupPreferencesLoader executes `startup.st` from the CURRENT
 DIRECTORY. A stale eval-mode `startup.st` (staged by `test_load_image
@@ -363,13 +382,22 @@ Also remember our VM's eval mode touches /tmp/sunit_run_completed.txt
     cp scripts/pharo-headless-test/test_classes.txt /tmp/sunit_test_classes.txt
 
     # --- custom VM ---
-    # prep: install SUnitRunner + SessionManager startup handler
-    /tmp/harness/pharo /tmp/harness/Pharo.image eval --save \
-      "'$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
+    # prep: install SUnitRunner + SessionManager startup handler.
+    # NOT with the stock VM and NOT with `eval --save` — see the warning
+    # below; both silently no-op.  Prep with OUR VM + an explicit snapshot,
+    # onto a COPY so the pristine image stays clean.
+    cp /tmp/harness/Pharo.image   /tmp/harness/Pharo-jit.image
+    cp /tmp/harness/Pharo.changes /tmp/harness/Pharo-jit.changes
+    ./build/test_load_image /tmp/harness/Pharo-jit.image eval \
+      "'$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
+       Smalltalk snapshot: true andQuit: true"
+    # verify it took: a prepped Pharo 13 image jumps ~54 MB -> ~73 MB
+    ls -la /tmp/harness/Pharo-jit.image
     # run: no eval args — SessionManager fires SUnitRunner>>startUp: on resume
-    ./build/test_load_image /tmp/harness/Pharo.image
+    ./build/test_load_image /tmp/harness/Pharo-jit.image
 
     # --- stock-Cog baseline (separate image, run_sunit_cog.st executes inline) ---
+    # UNAVAILABLE on this machine as of 2026-08-23 — see the warning below.
     /tmp/harness/pharo /tmp/harness/Pharo.image eval \
       "'$PWD/scripts/pharo-headless-test/run_sunit_cog.st' asFileReference fileIn"
 
