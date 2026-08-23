@@ -1,3 +1,79 @@
+# WIP (2026-08-23) — two JIT recompile defects found by audit; harness was broken
+
+**The stock Cog VM cannot start on this machine.** It aborts on ANY image,
+pristine included, wanting its code zone at a fixed address Darwin 27 will not
+grant (`allocateHeap: Could not allocate codeZone in the expected place
+(0x320000000), got 0x7000000000` -> SIGSEGV, rc=255). Two consequences: the
+documented SUnit prep silently did nothing (image saved WITHOUT SUnitRunner ->
+no results file at all, which reads exactly like a scheduler wedge), and the
+Delta-cog baseline is not obtainable here at all. Compounding it, `eval --save`
+is a stock-VM flag ours does not implement, so even under our VM the fileIn ran
+but was never persisted. CLAUDE.md now documents a working prep (our VM, onto a
+copy, ending in an explicit snapshot; confirm by size, ~54 MB -> ~73 MB).
+Verified end to end: 3-class batch 395/395 P.
+
+Two real defects came out of auditing the eviction/recompile/IC paths, both
+found by reading rather than by reproduction. Note what was NOT wrong, so it
+does not get re-audited: the MonoJ2J receiver-class guard is present and shared
+across arches; the eviction IC scrub does exist (inline in
+`allocateWithEviction`, not in `scrubEvictedCodeRanges`) and covers all 6
+entries per site; T2 ICs are flushed in `recoverAfterGC`; and the two
+compile-failure `freeMethod` calls free a method that was never published.
+
+## 1. A superseded method could reclaim its MethodMap entry after GC
+
+`recompile()` removes the old JITMethod from the map, compiles a replacement,
+and deliberately does not free the old one -- its code can be live on the stack,
+and other methods' ICs may still hold a J2J entry into it. But it left the old
+version `state == Compiled` with the same `compiledMethodOop`, and
+`rebuildMethodMap()` -- which runs after EVERY GC -- re-inserts every Compiled
+method under that key. `MethodMap::insert` updates in place and the zone list is
+ordered by ADDRESS, so the winner was whichever version sat higher in memory.
+
+While the zone bump-allocates that is always the replacement, which is why this
+never showed. Once eviction recycles the free list, a replacement can land BELOW
+the method it replaced and the stale tier-1 version reclaims the entry at the
+next GC, undoing the recompile permanently. Latent until 2026-08-22:
+`allocate()` reaches the free list only after bump is exhausted, and nothing
+filled the free list until eviction was wired up.
+
+Fixed by marking the old version `kSuperseded` (bit 2 of
+`JITMethodStats::flags` -- a heap side-table; JITMethod itself is size-locked to
+TrampolineAsm.S JM_SIZE and cannot grow) and skipping superseded methods in
+rebuildMethodMap. Measured, varying only the code-zone size:
+
+```
+zone 64MB   599 superseded    0 outrank their replacement (no eviction)
+zone 12MB    36 superseded    8 outrank their replacement
+zone  6MB    13 superseded    1 outrank their replacement
+x86  12MB   267 superseded   19 outrank their replacement
+```
+
+So with eviction active, 8-22% of recompiled methods were reverting to tier 1.
+
+## 2. Recompiling a method did not redirect its existing callers
+
+A monomorphic J2J site branches straight to the entry address in `icData[2]`
+and never consults the MethodMap, so nothing about a recompile reached the call
+sites already wired to the old code. They kept running the superseded tier-1
+body indefinitely -- including the site whose call count triggered the
+recompile, which cannot re-queue it either because that counter fires on
+`== 500` exactly.
+
+Probed over every IC entry in the zone: of 597 recompiles, **369 left at least
+one caller stranded, 1242 IC entries in total**. `recompile()` now scrubs them,
+mirroring the eviction scrub including the PMS slot-0 re-derive. It clears
+rather than retargets, because the extra word carries specialization bits
+derived from the old JITMethod and per-version properties (`canSkipJ2JSave`)
+need not match. Opt out: `PHARO_NO_RECOMPILE_IC_RETARGET`.
+
+**This is a consistency fix, not a speedup.** Measured A/B it is flat:
+inject:into: loop 4.38/4.40s on vs 4.38/4.38s off; `28 benchFib` 3.37/3.38s on
+vs 3.39/3.39s off. Checked separately that it does not increase dropped IC
+patches: `PHARO_IC_PATCH_DEBUG=1` reports zero "STALE pending slot dropped".
+
+---
+
 # WIP (2026-08-23 04:00) — three tiers at measured parity; residual fully attributed
 
 Commits `0dc4f080`..`eb117684` are LOCAL and NOT PUSHED (27, plus two in the
