@@ -791,7 +791,18 @@ public:
     }
 
     /// Set the free pointer (for image loading)
-    void setOldSpaceFreePointer(uint8_t* ptr) { oldSpaceFree_ = ptr; }
+    void setOldSpaceFreePointer(uint8_t* ptr) {
+        oldSpaceFree_ = ptr;
+        // Carve the pin arena the moment the image is in place, while
+        // oldSpaceFree_ is still just past the loaded image.  Carving it
+        // lazily on first demand put it at +199,499 KB on a NeoJSON load --
+        // ~195 MB in, above most of what it was supposed to sit below -- which
+        // is why the first version saved only ~6% instead of reclaiming the
+        // stranded 146 MB.  Cheap and idempotent; a no-op unless
+        // PHARO_PIN_RELOCATE is on.
+        ensurePinArena();
+    }
+    void ensurePinArena();
 
     /// Addresses of the eden bump cells, for the JIT inline-alloc emit
     /// (PHARO_T1_INLINE_NEW_ASM). The emitted code loads/stores edenFree_ and

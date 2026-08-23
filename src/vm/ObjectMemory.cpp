@@ -1539,6 +1539,25 @@ bool ObjectMemory::isValidObject(Oop obj) const {
 
 // ===== OBJECT MODIFICATION =====
 
+void ObjectMemory::ensurePinArena() {
+    if (pinArenaStart_) return;
+    if (!GET_DEBUG_BOOL(PHARO_PIN_RELOCATE)) return;
+    if (!oldSpaceStart_ || !oldSpaceFree_ || !oldSpaceEnd_) return;
+    constexpr size_t kPinArenaBytes = 256 * 1024;
+    if (oldSpaceFree_ + kPinArenaBytes > oldSpaceEnd_) return;
+    pinArenaStart_ = oldSpaceFree_;
+    pinArenaFree_  = oldSpaceFree_;
+    pinArenaEnd_   = oldSpaceFree_ + kPinArenaBytes;
+    oldSpaceFree_ += kPinArenaBytes;
+    std::memset(pinArenaStart_, 0, kPinArenaBytes);
+    if (GET_DEBUG_BOOL(PHARO_GC_LOG) || GET_DEBUG_BOOL(PHARO_PIN_STATS)) {
+        fprintf(stderr, "[PIN-ARENA] carved %zu KB at +%td KB\n",
+                kPinArenaBytes / 1024,
+                (ptrdiff_t)((pinArenaStart_ - oldSpaceStart_) / 1024));
+        fflush(stderr);
+    }
+}
+
 ObjectHeader* ObjectMemory::allocatePinnedLow(size_t size) {
     // Pinned objects are immovable, so WHERE they land decides how much of old
     // space sliding compaction can ever reclaim: a pin high in the heap makes
@@ -1554,13 +1573,8 @@ ObjectHeader* ObjectMemory::allocatePinnedLow(size_t size) {
     // above it, so the finger only ever abandons the arena itself.
     if (size == 0) return nullptr;
     if (!pinArenaStart_) {
-        constexpr size_t kPinArenaBytes = 256 * 1024;
-        if (oldSpaceFree_ + kPinArenaBytes > oldSpaceEnd_) return nullptr;
-        pinArenaStart_ = oldSpaceFree_;
-        pinArenaFree_  = oldSpaceFree_;
-        pinArenaEnd_   = oldSpaceFree_ + kPinArenaBytes;
-        oldSpaceFree_ += kPinArenaBytes;   // hand the range to the arena
-        std::memset(pinArenaStart_, 0, kPinArenaBytes);
+        ensurePinArena();                 // normally already done at image load
+        if (!pinArenaStart_) return nullptr;
     }
     if (pinArenaFree_ + size > pinArenaEnd_) return nullptr;  // full: caller bumps
     ObjectHeader* out = reinterpret_cast<ObjectHeader*>(pinArenaFree_);

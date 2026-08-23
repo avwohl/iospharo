@@ -440,3 +440,39 @@ place: the arena, the free list, and the measured costs.
 
 Validated: VM binaries pass with `PHARO_PIN_RELOCATE=1` (sista_ir,
 class_table, relaunch 3/3) and with it off (relaunch 3/3).
+
+
+### Arena placement was wrong, and the pins that matter never reach it
+
+Carving the arena lazily on first demand put it **at +199,499 KB** on a NeoJSON
+load -- ~195 MB in, i.e. ABOVE most of what it was supposed to sit below. That
+is why the first version saved only ~6%. Carving it in
+`setOldSpaceFreePointer` instead, the moment the image is in place, puts it
+where it belongs:
+
+    PIN-ARENA carved 256 KB at +53276 KB     (just past the loaded image)
+
+But the pin census at the final GC shows the arena is still not catching the
+objects that matter:
+
+    pinned @+559 KB    size=8208     (from the image itself)
+    pinned @+567 KB    size=8208
+    pinned @+12690 KB  size=2097168
+    pinned @+183164 KB size=32       <-- these four are the 146 MB
+    pinned @+183917 KB size=32
+    pinned @+211291 KB size=32
+    pinned @+226003 KB size=32
+
+None of them is in the arena at +53276 KB, and `tenuredLow=2` accounts for two
+different objects that did not survive. **So the four 32-byte pins that strand
+old space never pass through scavenge tenuring at all.**
+
+That is the next question, and it is now sharply posed: how does a 32-byte
+pinned ByteArray get into old space at +183..+226 MB without being tenured by
+`tenureIfYoung`? Instrument `allocateRaw`'s Old case (and any other old-space
+allocation path) to log allocations that are, or shortly become, pinned. Once
+that route is known, point it at `allocatePinnedLow` exactly as tenuring now
+is, and the arena will finally hold all of them.
+
+Validated at this step: `class_table` ALL TESTS PASSED and `test_relaunch` 3/3
+with `PHARO_PIN_RELOCATE=1`, and 3/3 with it off.
