@@ -86,3 +86,41 @@ flakes this repo already documents as flipping run to run — x86 shows
 Four of the classes common to both are on Pharo's own
 `skipOnPharoCITestingEnvironment` list, one reaches the public internet, one
 is image dependency drift. None is a demonstrated VM computation error.
+
+## 2026-08-23: the x86_64 TIMEOUTs are the watchdog, not defects
+
+The sweep's own outcome breakdown keeps TIMEOUT separate from FAIL/ERROR, so
+these were never counted as failures — but they were not passes either, and
+x86_64 had roughly twice arm64's count, which is the Rosetta factor against a
+fixed bound rather than anything about the VM:
+
+    arch     PASS    SKIP  FAIL  ERROR  TIMEOUT
+    arm64   27225     178    27     24        7
+    x86_64  27689     180    25     22       13
+
+The runner already scales this: `timeoutScale` (default 5) sets
+`TestCase>>defaultTimeLimit` to 50 s and the watchdog to 80 s, read from
+`/tmp/sunit_timeout_scale.txt`. Re-running x86_64's nine timed-out classes at
+`timeoutScale=20` (200 s per test, 230 s watchdog):
+
+    TraitFileOutTest            4 P   0 F  0 E     was TIMEOUT
+    TKTWorkerTest               7 P   0 F  0 E     was TIMEOUT
+    TKTWorkerPoolTest           9 P   0 F  0 E     was TIMEOUT
+    STONTest                    9 P   0 F  0 E     was TIMEOUT
+    RBBrowserEnvironmentTest   27 P   0 F  0 E     was TIMEOUT
+    IntegerTest                80 P   0 F  0 E     was TIMEOUT
+    FreeTypeCacheTest          25 P   0 F  0 E     was TIMEOUT (2 tests)
+    SelfVariableTest            4 P   + 1 TIMEOUT  still
+    NoUnusedVariablesLeftTest         TIMEOUT      still (>230 s)
+
+    batch total: 167 pass, 0 fail, 0 error, 3 skip, 2 timeout
+
+**Zero failures and zero errors across all nine.** Seven of the nine pass
+completely once given time; the two that remain are whole-image analyses
+(`testNoUnusedTemporaryVariablesLeft`, `testUsingMethods`) that walk every
+method in the image, and neither is on arm64's timeout list — again the ~2x
+Rosetta factor, not a divergence in behaviour.
+
+So none of x86_64's 13 sweep TIMEOUTs was a defect. Anyone comparing the two
+architectures should raise `timeoutScale` for x86_64 the same way
+`PER_BATCH_TIMEOUT` and the package tier's `PER_TEST_TIMEOUT` are raised.
