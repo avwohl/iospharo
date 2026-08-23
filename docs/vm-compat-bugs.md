@@ -2417,8 +2417,39 @@ against. Do not write this up as "our VM fails to finalize" without either a
 stock-VM number or direct evidence that these four are enqueued as mourners and
 dropped.
 
-Next concrete step: instrument the drain to log the class of every mourner it
-sees, run the reproducer (`WeakAnnouncerTest>>testNoDeadWeakSubscriptions`,
-13 s in isolation), and check whether `WeakMessageSend` /
-`WeakAnnouncementSubscription` appear at all. That distinguishes "never
-enqueued" from "enqueued and mishandled", which are different bugs.
+### MEASURED: our finalization chain works end to end, so this is not it
+
+Ran the 13 s reproducer under `PHARO_GC_EPH_DEBUG=1` (34 tests, 32 P, 1 F,
+1 S — the documented signature). The existing `[DRAIN-n]` and `[POP-FIN]`
+diagnostics answer the question without new instrumentation:
+
+    [DRAIN-1] initial=11 processed=11 wka=2  wkaarr-drop=1 kept=8
+    [DRAIN-2] initial=3  processed=3  wka=0  wkaarr-drop=3 kept=0
+    [DRAIN-3] initial=14 processed=14 wka=12 wkaarr-drop=2 kept=0
+    [DRAIN-4] initial=6  processed=6  wka=0  wkaarr-drop=0 kept=6
+    [DRAIN-5] initial=1  processed=1  wka=0  wkaarr-drop=1 kept=0
+
+    [POP-FIN] x17, signal->pop latency=0ms
+
+So mourners ARE enqueued, the finalization semaphore IS signalled, and the
+image's `FinalizationProcess` IS fetching them — 17 pops at 0 ms latency. The
+process itself is alive (`runningFinalizationProcess` answers `a Process in
+FinalizationProcess class>>finalizationProcess`).
+
+The primitive wiring is correct too, which is worth recording because the
+header comment is misleading: `Interpreter.hpp:2816` annotates
+`primitiveSetGCSemaphore` with `// 172`, but the generated table
+(`src/ios/generated_primitives.inc:180`) maps
+`primitiveTable_[172] = &Interpreter::primitiveFetchNextMourner`, matching the
+reference (`cointerp-cpp.c:2277`, `/* 172 */ primitiveFetchNextMourner`) and
+matching what the image calls (`<primitive: 172 error: 'ec'>`). **That stale
+`// 172` comment should be fixed or dropped — it invites exactly the wrong
+conclusion.**
+
+**Conclusion: the four dead subscriptions are never enqueued as mourners at
+all**, which follows from `WeakMessageSend` being weak but NOT an ephemeron —
+the GC nils its receiver slot and that is the end of it; nothing asks the
+announcer to drop the subscription. Combined with upstream skipping this test
+on their own CI (pharo#2471), the evidence does not support calling this a VM
+defect, and it should not be counted against the VM without a stock-Cog
+comparison this host cannot run.
