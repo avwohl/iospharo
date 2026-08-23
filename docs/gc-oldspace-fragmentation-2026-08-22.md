@@ -380,3 +380,30 @@ they land. The corrected design is:
 
 The code is left in place, default-off, because it is correct as far as it
 goes and step 2 still wants it. Do not delete it; re-point step 1 at tenuring.
+
+
+### And tenure time does not work either — the low space does not exist yet
+
+Moved the placement to `tenureIfYoung` (the event the skip census pointed at):
+a pinned object being promoted asks `allocateFromFreeList` for its old-space
+home instead of bumping `oldSpaceFree_`. Measured on the same load:
+
+    base    rc=0  29s  image=240MB  tenuredLow=0
+    reloc   rc=0  19s  image=237MB  tenuredLow=0
+
+**Zero.** Same underlying reason as the earlier `noChunk=186`: the free list is
+built by `rebuildFreeListAfterCompact`, which only runs after a fullGC has
+compacted. During a package load the pins are placed long before that, so at
+the moment a low home is wanted there are no gaps on the list at all.
+
+This is chicken-and-egg, and it rules out BOTH hooks as specified:
+
+    pin time     70% of pins are still in eden      -> nothing to relocate
+    tenure time  free list is empty that early      -> nowhere low to go
+
+So candidate 2 cannot be built on the free list alone. It needs the option this
+file originally called "more invasive": a small region reserved for pinned
+objects near `oldSpaceStart_` at image load, independent of whether any GC has
+run. That reservation is the actual prerequisite; the relocation and tenure
+code (both default-off, both correct, both measured harmless) are ready to use
+it the moment a low home exists.

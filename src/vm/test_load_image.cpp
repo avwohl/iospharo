@@ -856,6 +856,7 @@ extern "C" size_t g_pinCalls;
 extern "C" size_t g_pinNewlyPinned;
 extern "C" size_t g_pinRelocated;
 extern "C" size_t g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned, g_pinSkipNoChunk, g_pinSkipNotLower;
+extern "C" size_t g_pinTenuredLow;
 
 int main(int argc, char* argv[]) {
 #ifndef _WIN32
@@ -1644,6 +1645,7 @@ int main(int argc, char* argv[]) {
                 g_pinCalls, g_pinNewlyPinned, g_pinRelocated,
                 g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned,
                 g_pinSkipNoChunk, g_pinSkipNotLower);
+        fprintf(stderr, "[PIN-STATS] tenuredLow=%zu\n", g_pinTenuredLow);
     }
 
     PHARO_EXIT_STEP("all shutdown steps complete");

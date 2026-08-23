@@ -1541,6 +1541,7 @@ bool ObjectMemory::isValidObject(Oop obj) const {
 
 extern "C" size_t g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned,
                   g_pinSkipNoChunk, g_pinSkipNotLower;
+extern "C" size_t g_pinTenuredLow;
 
 Oop ObjectMemory::relocateToLowSpace(Oop original) {
     // Spur does not pin an object where it happens to sit: pinObject COPIES it
@@ -2034,7 +2035,26 @@ GCResult ObjectMemory::scavenge() {
         uint8_t* srcStart = p - (overflow ? 8 : 0);
         size_t copySize = size;  // totalSize includes overflow word
 
-        if (oldSpaceFree_ + copySize > oldSpaceEnd_) {
+        // A PINNED object tenured by bumping oldSpaceFree_ lands at the TOP
+        // of old space, and a pin there strands everything below it from
+        // sliding compaction permanently -- six 32-byte FFI buffers cost
+        // 146 MB on a NeoJSON image and 12x on XMLParser
+        // (docs/gc-oldspace-fragmentation-2026-08-22.md).  Tenuring is the
+        // event that actually PLACES these buffers: measured, 439 of 625
+        // newly-pinned objects are still in eden when pinned, so pin-time
+        // relocation never sees them.  Give a pinned promotion a low
+        // free-list chunk instead, so the pin lands out of the compactor's
+        // way in the first place.
+        uint8_t* destStart = nullptr;
+        if (obj->isPinned()
+                && GET_DEBUG_BOOL(PHARO_PIN_RELOCATE)
+                && GET_DEBUG_BOOL(PHARO_OLDSPACE_FREELIST)) {
+            if (ObjectHeader* low = allocateFromFreeList(copySize)) {
+                destStart = reinterpret_cast<uint8_t*>(low);
+                g_pinTenuredLow++;
+            }
+        }
+        if (!destStart && oldSpaceFree_ + copySize > oldSpaceEnd_) {
             // Old-space OOM during tenure.  The old "bail — caller retries"
             // contract was FICTION (silent-cap audit 2026-07-03): every call
             // site detects tenure only via oop-changed, which is identical
@@ -2056,9 +2076,11 @@ GCResult ObjectMemory::scavenge() {
             fflush(stderr);
             std::abort();
         }
-        uint8_t* destStart = oldSpaceFree_;
+        if (!destStart) {
+            destStart = oldSpaceFree_;
+            oldSpaceFree_ += copySize;
+        }
         std::memcpy(destStart, srcStart, copySize);
-        oldSpaceFree_ += copySize;
         ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
             destStart + (overflow ? 8 : 0));
         forward[obj] = newHdr;

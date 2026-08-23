@@ -11198,7 +11198,8 @@ PrimitiveResult Interpreter::primitiveIsPinned(int argCount) {
 // Returns: true if was pinned before, false if wasn't
 extern "C" { size_t g_pinCalls = 0; size_t g_pinNewlyPinned = 0; size_t g_pinRelocated = 0;
              size_t g_pinSkipNotObj = 0, g_pinSkipYoung = 0, g_pinSkipPinned = 0,
-                    g_pinSkipNoChunk = 0, g_pinSkipNotLower = 0; }
+                    g_pinSkipNoChunk = 0, g_pinSkipNotLower = 0;
+             size_t g_pinTenuredLow = 0; }
 
 PrimitiveResult Interpreter::primitivePin(int argCount) {
     // Official VM signature: receiver pin: aBoolean
