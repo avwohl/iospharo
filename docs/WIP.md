@@ -34,6 +34,43 @@ on BOTH**, exactly as predicted. PolyMath's 59-test gap was `PER_CLASS_TIMEOUT`.
 All 13 x86 SUnit TIMEOUTs are bounds too — the slowest, at 3.3 billion sends,
 passes on both arches (arm 230 s, x86 378 s, 1.64x).
 
+## The free-list / fragmentation investigation (2026-08-23, late)
+
+`PHARO_OLDSPACE_FREELIST` is the prerequisite for the pinned-object relocation
+that would take package images from 1.15 GB toward ~100 MB. It was marked
+EXPERIMENTAL AND CURRENTLY BROKEN. State now:
+
+**Five real bugs found and fixed** (all default-safe; the knob is still off):
+
+  * the unlink stored a RAW native pointer into a heap slot that is read back
+    as an encoded Oop, so a mid-list removal wrote 0;
+  * `allocateFromFreeList` returned the shifted `chunk` (base+8 for overflow
+    chunks) where the caller expects the allocation base, overlapping the
+    remainder's header by 8 bytes;
+  * **nil is an object** — every link reader used `next.isObject()`, so the
+    `Oop::nil()` terminator decoded to heap base whose own link is nil: the
+    self-loop that caused the hang;
+  * `allObjectsDo` handed free chunks (classIndex 0) to callers;
+  * `rebuildFreeListAfterCompact` advanced `prevEnd` from the header rather
+    than the object base.
+
+The hang is gone: the allocation workload went 240 s-timeout -> 3 s, a NeoJSON
+load 900 s-timeout -> 20 s, VM binaries pass with the knob on and off, and a
+300-class SUnit batch gives 4858 pass / 0 fail / 0 error.
+
+**It is still not usable, and the remaining defect is NOT in the free list.**
+Class-shape mutation dies with a classIndex-0 DNU whose receiver address is
+byte-identical to a logged `[FREELIST-GAP]` range. Minimal reproducer, no test
+framework:
+
+    ((Object << #ZZShapeProbe) package: 'ZZProbe') install.
+    1 to: 8 do: [ :i | cls addInstVarNamed: 'v' , i printString ].
+    knob off 421 ms   |   knob on: does not finish in 240 s
+
+Ten hypotheses are closed BY TEST and listed in the knob's own comment in
+`src/vm/debug_vars.h` — read it before spending time here. What remains is the
+image-side migration path (`Metaclass>>addSlot:` -> `copyObject:to:`).
+
 ## Still genuinely open
 
   * `cull:` DNU — **0 reproductions in 24 runs**. `b887d81f` matches its
