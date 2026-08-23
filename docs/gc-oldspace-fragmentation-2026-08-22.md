@@ -407,3 +407,36 @@ objects near `oldSpaceStart_` at image load, independent of whether any GC has
 run. That reservation is the actual prerequisite; the relocation and tenure
 code (both default-off, both correct, both measured harmless) are ready to use
 it the moment a low home exists.
+
+
+### The pin arena: first measurable win, and its limit
+
+Carve a 256 KB arena the first time a pin needs an old-space home
+(`ObjectMemory::allocatePinnedLow`) and tenure pinned objects into it. Unlike
+the free list it exists during a load, which was the blocker.
+
+    base (no arena)   image=240MB   tenuredLow=0
+    arena             image=226MB   tenuredLow=2
+    arena, rerun      image=234MB   tenuredLow=2
+
+So it works and it is the first change to move the number — but only two pins
+are captured, and the resting pinned count is six. The saving (~6-14 MB of
+240 MB) is a fraction of the 146 MB the analysis says is stranded, because the
+other four pins reach old space by some route other than scavenge tenuring and
+are still placed wherever they land.
+
+**Do NOT feed pin-time relocation from the arena.** Tried: the VM crashes in
+3 s (rc=133) on a NeoJSON load. `relocateToLowSpace` runs inside `primitivePin`
+and ends in `becomeForward`, a full-heap walk that rewrites references while
+the interpreter still holds oops for the primitive in flight. The tenure path
+is safe precisely because it runs inside scavenge, where moving objects is
+already the contract. That asymmetry is the reason the two hooks behave
+differently and is worth remembering.
+
+Next, for whoever continues: find how the other four pins arrive in old space
+(they are not tenured by scavenge — instrument `allocateRaw`'s Old case for
+pinned receivers) and route those through the arena too. Everything else is in
+place: the arena, the free list, and the measured costs.
+
+Validated: VM binaries pass with `PHARO_PIN_RELOCATE=1` (sista_ir,
+class_table, relaunch 3/3) and with it off (relaunch 3/3).

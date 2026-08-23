@@ -546,6 +546,17 @@ public:
     /// docs/gc-oldspace-fragmentation-2026-08-22.md.
     Oop relocateToLowSpace(Oop original);
 
+    /// Carve-once arena for PINNED objects, kept as low in old space as
+    /// possible so a pin never strands the region below it.  Answers nullptr
+    /// when disabled or exhausted, in which case callers fall back to bump
+    /// allocation.  See docs/gc-oldspace-fragmentation-2026-08-22.md.
+    ObjectHeader* allocatePinnedLow(size_t size);
+  private:
+    uint8_t* pinArenaStart_ = nullptr;
+    uint8_t* pinArenaFree_  = nullptr;
+    uint8_t* pinArenaEnd_   = nullptr;
+  public:
+
     /// Make an object immutable
     void makeImmutable(Oop obj);
 

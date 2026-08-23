@@ -1539,6 +1539,35 @@ bool ObjectMemory::isValidObject(Oop obj) const {
 
 // ===== OBJECT MODIFICATION =====
 
+ObjectHeader* ObjectMemory::allocatePinnedLow(size_t size) {
+    // Pinned objects are immovable, so WHERE they land decides how much of old
+    // space sliding compaction can ever reclaim: a pin high in the heap makes
+    // the destination finger jump to it and abandon everything below.  Six
+    // 32-byte FFI buffers cost 146 MB on a NeoJSON image, 12x on XMLParser.
+    //
+    // The free list cannot supply a low home during a load -- it is built by
+    // rebuildFreeListAfterCompact, which only runs after a fullGC, and the
+    // pins are placed long before that (measured: tenuredLow=0, noChunk=186).
+    // So carve a small arena ONCE, the first time a pin needs a home, and put
+    // every later pin in it.  It sits at whatever oldSpaceFree_ was then --
+    // early in the run, hence low -- and everything allocated afterwards is
+    // above it, so the finger only ever abandons the arena itself.
+    if (size == 0) return nullptr;
+    if (!pinArenaStart_) {
+        constexpr size_t kPinArenaBytes = 256 * 1024;
+        if (oldSpaceFree_ + kPinArenaBytes > oldSpaceEnd_) return nullptr;
+        pinArenaStart_ = oldSpaceFree_;
+        pinArenaFree_  = oldSpaceFree_;
+        pinArenaEnd_   = oldSpaceFree_ + kPinArenaBytes;
+        oldSpaceFree_ += kPinArenaBytes;   // hand the range to the arena
+        std::memset(pinArenaStart_, 0, kPinArenaBytes);
+    }
+    if (pinArenaFree_ + size > pinArenaEnd_) return nullptr;  // full: caller bumps
+    ObjectHeader* out = reinterpret_cast<ObjectHeader*>(pinArenaFree_);
+    pinArenaFree_ += size;
+    return out;
+}
+
 extern "C" size_t g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned,
                   g_pinSkipNoChunk, g_pinSkipNotLower;
 extern "C" size_t g_pinTenuredLow;
@@ -1560,6 +1589,13 @@ Oop ObjectMemory::relocateToLowSpace(Oop original) {
     uint8_t* srcBase = reinterpret_cast<uint8_t*>(src) - (isOverflow ? 8 : 0);
     const size_t size = src->totalSize();
 
+    // Deliberately NOT the pin arena.  Feeding this path arena memory made the
+    // VM crash in 3 s (rc=133) on a NeoJSON load: relocateToLowSpace runs
+    // inside primitivePin and finishes with becomeForward, a full-heap walk
+    // that rewrites references while the interpreter still holds oops for the
+    // primitive in flight.  The tenure-time placement below is safe because it
+    // runs inside scavenge, where that is already the contract.  Leave this on
+    // the free list only -- it is a no-op during a load, which is harmless.
     ObjectHeader* dstBase = allocateFromFreeList(size);
     if (!dstBase) { g_pinSkipNoChunk++; return original; }
     uint8_t* dstBytes = reinterpret_cast<uint8_t*>(dstBase);
@@ -2049,7 +2085,9 @@ GCResult ObjectMemory::scavenge() {
         if (obj->isPinned()
                 && GET_DEBUG_BOOL(PHARO_PIN_RELOCATE)
                 && GET_DEBUG_BOOL(PHARO_OLDSPACE_FREELIST)) {
-            if (ObjectHeader* low = allocateFromFreeList(copySize)) {
+            ObjectHeader* low = allocatePinnedLow(copySize);
+            if (!low) low = allocateFromFreeList(copySize);
+            if (low) {
                 destStart = reinterpret_cast<uint8_t*>(low);
                 g_pinTenuredLow++;
             }
