@@ -316,3 +316,31 @@ per package load) stands; and the dependency noted there is now satisfied.
 The knob remains DEFAULT-OFF pending a broader soak — a full SUnit sweep and
 the package tier on both arches — because this file's own history is a warning
 about shipping GC changes on partial evidence.
+
+### Soak results for the working free list (2026-08-23)
+
+    VM binaries      sista_ir, class_table, relaunch 3/3 with the knob ON;
+                     class_table + relaunch 9/9 cycles with it OFF
+    SUnit 300 classes  knob ON  150s  4861 pass  0 fail  0 error  1 timeout
+                       knob OFF 139s  4861 pass  0 fail  0 error  1 timeout
+    package tier     NeoJSON 116 pass / Mustache 47 / Grease 554, ALL matching
+                     the recorded baselines exactly, 0 fail 0 error throughout
+                     (Grease loads in 36s against 71s at baseline)
+
+Image sizes are unchanged (245/173/450 MB against 245/172/432 MB), which is
+expected: reusing the gaps stops the heap GROWING past them but cannot lower
+`oldSpaceFree_` below the top pin. Shrinking the file is what candidate 2
+buys, and candidate 2 is what the free list was needed for.
+
+### A "silent no-op" that is NOT a bug
+
+While hunting the above it looked as though class-shape migration might do
+nothing on the default path, because `allInstances` answers `#()` for a class
+with no class-table entry. Checked directly:
+
+    MIG allInstancesBefore=1 instSizeBefore=0 instSizeAfter=1 instClass=ZZMig
+
+Instantiating a class registers it, so a class that HAS instances is found and
+its instances are migrated. `#()` only comes back for classes with no
+instances, where it is the correct answer. No default-path defect, and the
+classIndex-0 guard masks nothing.
