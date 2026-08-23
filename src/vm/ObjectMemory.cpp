@@ -3834,8 +3834,26 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
 
     // Try large chunk list (first fit)
     if (freeListsMask_ & 1ULL) {
-        ObjectHeader** prev = &freeLists_[0];
+        // `prevChunk == nullptr` means the head pointer itself is the link to
+        // update; otherwise the link lives in prevChunk's slot 0 and MUST be
+        // written as an encoded Oop.  The old code kept an ObjectHeader** into
+        // the heap and stored a RAW pointer through it, so unlinking a mid-list
+        // chunk wrote 0 (from `nullptr`) into the previous chunk's slot 0.
+        // Read back through slotAt(0) that 0 decodes to heap base
+        // (0x7000000000), whose own slot 0 is also 0 -- a self-loop, which is
+        // exactly the cycle the guard below reports.
+        ObjectHeader* prevChunk = nullptr;
         ObjectHeader* chunk = freeLists_[0];
+        // Floyd cycle guard.  A cycle in the large-chunk list makes this walk
+        // spin forever with the interpreter holding the CPU: measured
+        // 2026-08-23 with PHARO_OLDSPACE_FREELIST=1, the VM froze at exactly
+        // 17,520 bytecode steps at 99% CPU, and every sample was inside this
+        // function (via primitiveNewWithArg -> allocateBytes).  Detect it and
+        // fall back to bump allocation rather than hang; the same list is
+        // walked again on the next allocation, so a one-shot report is enough
+        // to know the list is corrupt without drowning the log.
+        ObjectHeader* slow = chunk;
+        bool advanceSlow = false;
         while (chunk) {
             size_t chunkSize = chunk->totalSize();
             // Require an exact fit or a leftover big enough to become its
@@ -3846,7 +3864,11 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
             if (chunkSize == size || (chunkSize > size && chunkSize - size >= 16)) {
                 // Unlink
                 Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
-                *prev = next.isObject() ? next.asObjectPtr() : nullptr;
+                if (prevChunk) {
+                    if (prevChunk->slotCount() > 0) prevChunk->slotAtPut(0, next);
+                } else {
+                    freeLists_[0] = next.isObject() ? next.asObjectPtr() : nullptr;
+                }
                 if (!freeLists_[0]) {
                     freeListsMask_ &= ~1ULL;
                 }
@@ -3872,8 +3894,29 @@ ObjectHeader* ObjectMemory::allocateFromFreeList(size_t size) {
             }
             // Advance
             Oop next = chunk->slotCount() > 0 ? chunk->slotAt(0) : Oop::nil();
-            prev = reinterpret_cast<ObjectHeader**>(&chunk->slots()[0]);
+            prevChunk = chunk;
             chunk = next.isObject() ? next.asObjectPtr() : nullptr;
+
+            // Floyd: advance the slow pointer every other step.  If it ever
+            // meets the fast one the list loops back on itself.
+            if (advanceSlow && slow) {
+                Oop sNext = slow->slotCount() > 0 ? slow->slotAt(0) : Oop::nil();
+                slow = sNext.isObject() ? sNext.asObjectPtr() : nullptr;
+            }
+            advanceSlow = !advanceSlow;
+            if (chunk && chunk == slow) {
+                static bool reported = false;
+                if (!reported) {
+                    reported = true;
+                    fprintf(stderr,
+                            "[FREELIST-CYCLE] large-chunk free list loops at %p "
+                            "(request %zu bytes) -- abandoning the walk and "
+                            "falling back to bump allocation\n",
+                            (void*)chunk, size);
+                    fflush(stderr);
+                }
+                return nullptr;
+            }
         }
     }
 
