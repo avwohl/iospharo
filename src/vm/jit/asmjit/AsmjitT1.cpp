@@ -12390,9 +12390,25 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (isReal && !jm->canBailMidMethod) {
             bool prevArith = false;
             forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
-                // ExtSend/ExtSuperSend (0xEA/0xEB): real dispatched sends that
-                // isPhase4SendOp/numSendSites OMIT + the x86 emit bails on.
-                if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend)
+                // The x86 emit bails on EVERY opcode >= ExtendA (0xE0..0xFD)
+                // -- see the `if (op >= SistaV1::ExtendA) loopBail(...)` in
+                // emitMethodBytes's x86 branch.  This classifier used to count
+                // only ExtSend/ExtSuperSend (0xEA/0xEB) out of that whole
+                // range, so PushFullBlock (0xF9) and PushClosure (0xFA) --
+                // the two bytecodes that put a CLOSURE on the stack -- were
+                // emitted as mid-method bails and then classified as if the
+                // method could not bail at all.  canSkipJ2JSave therefore went
+                // TRUE for them, which is precisely the leak the arith comment
+                // below describes: the bail resumes into the interp with the
+                // cross-method inline-J2J save un-popped.
+                //
+                // arm64 does not have this hole because its branch emits
+                // PushFullBlock natively into ExitBlockCreate (AsmjitT1.cpp
+                // ~10869) instead of bailing, and x86HasMidBail is not
+                // computed there at all.
+                //
+                // Match the emitter: anything it bails on counts.
+                if (op >= SistaV1::ExtendA)
                     x86HasMidBail = true;
                 // Inline arith/compare specials (0x60-0x6F) take the SmI fast
                 // path but BAIL (EXIT_ARITH_OVERFLOW) for non-SmI operands
