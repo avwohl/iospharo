@@ -3152,7 +3152,19 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
                 continue;
             }
 
-            callback(oopFromPointer(obj));
+            // Free chunks are NOT Smalltalk objects: they carry classIndex 0
+            // (see makeFreeChunk) and have no class, so handing one to the
+            // image is fatal.  Measured 2026-08-23 with
+            // PHARO_OLDSPACE_FREELIST=1: class-shape migration
+            // (Metaclass>>addSlot: -> copyObject:to:) enumerated the heap,
+            // reached free chunk 0x700008ba20, sent it #isReadOnlyObject and
+            // took a doesNotUnderstand with classIdx=0 -- killing the process
+            // and wedging the run.  This never bit before because without the
+            // knob the post-compaction gaps stay zero-filled and are skipped
+            // by the zero-word path above; the knob writes real headers there.
+            if (obj->classIndex() != 0) {
+                callback(oopFromPointer(obj));
+            }
 
             // Advance past the object
             scan += size;
