@@ -99,3 +99,41 @@ they cannot be read as "Cog passes this".
 
 `OCClassBuilderTest` and `RSLinesTest`, both in the pre-reboot residual, are
 clean in this run.
+
+
+## The residual, re-measured against the fake-GUI image
+
+All 30 classes that scored a non-zero F or E in the sweep above, re-run
+against an image with `scripts/pharo-headless-test/setup_fake_gui.st` filed
+in ahead of the runner:
+
+    == 30 classes   829 tests   800 P   13 F   2 E
+
+against **27 F + 25 E = 52** for those same classes in the plain sweep. The
+prelude removes 39 of the 52. Every `Sp*` adapter passes; what remains is:
+
+    class                        F   E   what it is
+    LinkInstallerTest            1   0   GC-history dependent, NOT the JIT
+    WeakAnnouncerTest            1   0   dead weak subscriptions; CI-skipped upstream
+    StDebuggerTest               2   0   one of them CI-skipped upstream
+    StSpotterModelTest           2   0   one of them CI-skipped upstream
+    StSpotterTest                1   0   CI-skipped upstream
+    StDebuggerActionModelTest    1   0   GUI/debugger timing
+    StDebuggerInspectorTest      1   0   GUI/debugger timing
+    ReleaseTest                  2   0   harness artifacts (was 4 without the prelude)
+    SystemDependenciesTest       1   0   image dependency drift, filed upstream
+    ZnClientTest                 1   0   testQueryGoogle reaches the public internet
+    FTTableMorphTest             0   1   still fails with a display present
+    TKTWorkerTest                0   1   task-kernel timing
+                                --  --
+                                13   2
+
+Nothing in that list is a demonstrated VM computation error. Four are tests
+Pharo's own CI does not run, one needs the internet, one is image drift, two
+are harness artifacts, and `LinkInstallerTest` is separately characterised as
+GC-history dependent with the JIT ruled out on both settings.
+
+So a full sweep run against a fake-GUI image would land near **13 F / 2 E**
+rather than 27 F / 25 E. That has NOT been run end to end — this is the 30
+residual classes measured directly, which is the same population but not the
+same experiment.
