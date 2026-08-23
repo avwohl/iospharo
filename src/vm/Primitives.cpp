@@ -5298,6 +5298,10 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     ::flushImageOutputBuffer();
 
     running_ = false;
+    // A real quit was taken -- the eval reached its exitSuccess.  Anything that
+    // stops the VM without coming through here leaves this false, and eval mode
+    // exits non-zero at the end of main.
+    evalReachedQuit_ = true;
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] running_ = false\n");
     }

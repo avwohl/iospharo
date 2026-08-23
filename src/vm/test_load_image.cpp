@@ -1565,6 +1565,7 @@ int main(int argc, char* argv[]) {
     // report no result at all (N workers sharing one working directory, each
     // clobbering the others' startup.st).  Say so instead of exiting 0 in
     // silence.
+    int exitCode = 0;
     if (!startupStPath.empty()) {
         if (std::ifstream leftover{startupStPath}) {
             leftover.close();
@@ -1574,12 +1575,30 @@ int main(int argc, char* argv[]) {
                          "Another process running from this same working "
                          "directory most likely overwrote or removed it; give "
                          "each concurrent run its own directory." << std::endl;
+            exitCode = 70;
         }
         std::remove(startupStPath.c_str());
     }
 
+    // An eval that never reached a quit primitive did not finish.  The command's
+    // process can be killed outright -- a doesNotUnderstand in a forked Metacello
+    // load terminates it with no exception reaching the top level -- and the VM
+    // then runs out of runnable processes and falls through to here.  Reporting 0
+    // for that is what let `XMLParser  load rc=0  54s  image=52MB DID-NOT-PERSIST`
+    // be recorded as a successful load: every consumer downstream, this repo's own
+    // package harness included, reads rc=0 as success.  Fail loudly instead.
+    if (evalMode && !interpreter.evalReachedQuit()) {
+        std::cerr << "ERROR: eval did not complete — the VM stopped without any "
+                     "quit primitive being taken, so the expression never reached "
+                     "its exitSuccess. The command's process was most likely "
+                     "terminated (a doesNotUnderstand in a forked process does "
+                     "this silently). Exit status is non-zero so callers do not "
+                     "record this as a successful run." << std::endl;
+        if (exitCode == 0) exitCode = 71;
+    }
+
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
-        fprintf(stderr, "[EXIT-TRACE] main returning 0\n");
+        fprintf(stderr, "[EXIT-TRACE] main returning %d\n", exitCode);
     }
     pharo_dumpPrimSeq();
     std::cout << "\n=== Test Complete ===" << std::endl;
@@ -1615,5 +1634,5 @@ int main(int argc, char* argv[]) {
     PHARO_EXIT_STEP("socketPluginShutdown");
     socketPluginShutdown();
     PHARO_EXIT_STEP("all shutdown steps complete");
-    return 0;
+    return exitCode;
 }

@@ -154,6 +154,28 @@ DID-NOT-PERSIST`.
 Everything downstream — the harness, the summary, anyone reading it — treats
 rc=0 as success.
 
+#### FIXED 2026-08-22: eval mode now exits non-zero when the eval never completed
+
+`main()` in `test_load_image.cpp` ended in an unconditional `return 0`, so
+every way an eval can die short of a quit primitive — the command's process
+being terminated by a DNU, the idle-deadline guard at
+`Interpreter.cpp`'s `cg_exit`, or `startup.st` never being executed at all —
+was reported as success. The pre-existing "eval never ran" guard already
+printed `ERROR:` for the third of those and then returned 0 anyway.
+
+`Interpreter::evalReachedQuit_` is now set on the two paths that take a real
+quit (`primitiveQuit`'s `running_ = false`, and the deferred-quit honouring in
+the bytecode checkpoint). At exit, eval mode with the flag still false prints
+what happened and returns **71**; the leftover-`startup.st` guard returns
+**70**. Non-eval modes are untouched and still return 0.
+
+Verified: `3 + 4`, `eval --save`, and `Smalltalk snapshot: true andQuit: true`
+all still exit 0 (no false positives on the shapes the harness actually runs),
+and `test_class_table` / `test_relaunch` still pass.
+
+This does not fix the abort itself — it makes the abort impossible to record
+as a pass. The intermittent `cull:` DNU below is the separate, still-open bug.
+
 ### What was ruled out on the way, each by measurement
 
   * *"x86_64 cannot load XMLParser."* It can: 709 s, 1265 MB image, 0 errors,

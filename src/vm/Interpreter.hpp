@@ -423,6 +423,9 @@ public:
     /// script's own `Smalltalk exitSuccess` would kill the VM before the
     /// command-line handler this run queued ever gets the CPU.
     void setEvalStartupScript(const std::string& path) { evalStartupScript_ = path; }
+    // False at exit in eval mode means the eval never completed; see
+    // evalReachedQuit_.
+    bool evalReachedQuit() const { return evalReachedQuit_; }
     const std::vector<std::string>& imageArguments() const { return imageArguments_; }
 
     /// Set/get VM parameters (returned by primitiveGetAttribute at negative indices)
@@ -1266,6 +1269,13 @@ private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
     std::string evalStartupScript_;   // see setEvalStartupScript
     bool evalQuitDeferred_ = false;   // one-shot: the deferral already happened
+    // Did a real quit (Smalltalk exitSuccess / snapshot:andQuit:) actually
+    // fire?  An eval that dies some other way -- a DNU killing the command's
+    // process, the idle-deadline guard, the script never being executed --
+    // used to fall out of interpret() and reach main's unconditional
+    // `return 0`.  A load that did nothing then reported success, which is
+    // how XMLParser's x86_64 abort was recorded as `load rc=0` for weeks.
+    bool evalReachedQuit_ = false;
     // Wall-clock bound on that deferral.  An idle image executes very few
     // bytecodes, so a step-count deadline would never arrive; and if nothing
     // ever consumes the script (no command-line handler was queued) the VM

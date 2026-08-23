@@ -4015,6 +4015,8 @@ void Interpreter::interpret() {
                             "(callbacks unwound)\n");
             fflush(stderr);
             running_ = false;
+            // This IS the real quit primitiveQuit could not take inline.
+            evalReachedQuit_ = true;
             goto cg_exit;
         }
 
