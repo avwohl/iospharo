@@ -166,22 +166,37 @@ rc=0 as success.
     failed the same way with no such error, so that message is one
     manifestation, not the cause.
 
-### It is NOT x86-specific — arm64 does it too, in 3 seconds
+### CORRECTION (same evening): the arm64 failure was DNS, a different cause
 
-The same two-run experiment on arm64:
+`de6e1138` claimed "it is NOT x86-specific — arm64 does it too, in 3
+seconds", on the strength of this pair:
 
     armverb-1  rc=0  354 s  image 1226 MB   loaded
     armverb-2  rc=0    3 s  image   52 MB   did nothing
 
-So both architectures abort silently at roughly the same rate, and the
-"x86_64 only" framing this entry started with was an artifact of one sample
-per arch. Two consequences for the package numbers recorded the same day:
+That was wrong, and the commit asserting it is already pushed. Reading
+`armverb-2`'s log properly — the error is above the JIT-statistics block at
+the tail, which is where I had been looking — it says:
 
-  * XMLParser succeeding on arm64 and failing on x86_64 in the package tier
-    was the coin landing differently, not an architecture difference.
-  * PolyMath's 59-test / 1-timeout gap between the arches may be the same
-    variance. It has NOT been re-run, so do not read it as a divergence
-    without doing so.
+    Error: IceGenericError: failed to resolve address for github.com:
+           nodename nor servname provided, or not known
+
+That is a DNS resolution failure. Environmental, and it PRINTS. So the three
+observed failures have three different causes:
+
+    armverb-2   arm64    3 s   DNS: cannot resolve github.com
+    verb-2      x86_64  54 s   no error of any kind          <-- the silent one
+    pkg-x86     x86_64  31 s   "only integers should be used as indices"
+
+arm64 still has ZERO confirmed instances of the silent mode. Whether that
+mode is x86-specific is therefore OPEN again, not refuted, and the
+consequences drawn for the package numbers (that XMLParser's arm-pass /
+x86-fail split was a coin flip, and that PolyMath's 59-test gap is the same
+variance) do not follow from this evidence and should not be relied on.
+
+An experiment that classifies outcomes rather than counting them — N runs
+per arch, each labelled would-load / DNS / silent / other-error — is running;
+its result belongs here.
 
 Where to look: the load stops inside a libgit2 `github://` clone, which is
 also where `Fuel` sits for 17 minutes against a repository that no longer
