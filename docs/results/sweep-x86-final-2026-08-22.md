@@ -198,3 +198,38 @@ is absent), and `LibC>>memCopy:to:size:` is plain libc either way. So the
 difference is which FFI calls the image makes during startup on each arch, not
 whether the rewrite works. Worth understanding, but it is not a failure — and
 it means a bare `eval` is NOT a valid environment for this test.
+
+## 2026-08-23: post-fix residual on x86_64, against arm64
+
+Same prepped image as the arm64 run (Spur images are architecture-neutral):
+`setup_fake_gui.st` + the fixed runner, snapshot, bare-launched through
+`SUnitRunner>>startUp:`. `timeoutScale=60` to give x86_64 the equivalent
+headroom of arm64's 30, since Rosetta runs ~2x slower.
+
+    arch     classes  pass  fail  error  skip  timeout
+    arm64      30      800    13     3    12      1
+    x86_64     30      798    15     4    12      1
+
+**x86_64's set is arm64's plus exactly three**, and none is a demonstrated VM
+defect:
+
+    TKTWorkerTest>>testWorkerProcessIsWorkingUntilAllTasksAreDone     ERROR
+        TaskIt worker timing; PASSES run alone with a 600 s limit (measured on
+        arm64 earlier today, same test).
+
+    SpJobListPresenterTest>>testJobIsFinishedWhenWaitingMoreThanWorkBlockDuration
+        FAIL. A duration test by its own name, and one of the five on
+        upstream's `skipOnPharoCITestingEnvironment` list.
+
+    EpFileOutModificationsTest>>testMethodModificationWithWideString  FAIL
+        PASSES run alone on BOTH arches. Not an encoding difference.
+
+    (Isolating that last one needs `on: Notification do: [ :n | n resume ]`:
+     the test raises `ProvideAnswerNotification: 'Filed out to: ...'`, and a
+     bare `on: Exception do:` catches it and reports it as though it were the
+     failure. It is not.)
+
+So the two architectures' residuals differ only by three timing/context-
+dependent cases, and the shared 17 are the set attributed by name in
+`sweep-arm-final-2026-08-22.md` — 6 established not-ours, 2 that pass in
+isolation, 1 slow whole-image scan, 8 known-flaky GUI/debugger cases.
