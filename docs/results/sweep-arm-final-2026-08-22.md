@@ -192,3 +192,41 @@ Whoever picks this up: find the API BaselineOf actually accepts in Pharo 13
 (and note the new baseline's OWN package must be declared too, or the test just
 moves to complaining about `BaselineOfTestsRunner`). Worth one test per arch,
 so it is low priority -- but it is a real harness defect, not a VM one.
+
+## 2026-08-23: arm64's 7 TIMEOUTs re-run at timeoutScale=20
+
+Same treatment x86_64's nine got (see `sweep-x86-final-2026-08-22.md`):
+200 s per test, 230 s watchdog, classes taken from the sweep's own TIMEOUT rows.
+
+    IntervalTest                  260 P   0 F  0 E     was TIMEOUT
+    MCSmalltalkhubRepositoryTest    1 P   0 F  0 E     was TIMEOUT
+    STONTest                        9 P   0 F  0 E     was TIMEOUT
+    TKTWorkerPoolTest               9 P   0 F  0 E     was TIMEOUT
+    TraitMethodDescriptionTest      4 P   0 F  0 E     was TIMEOUT
+    ReleaseTest                    38 P   4 F  0 E  1 S  + 1 TIMEOUT
+    TKTWorkerTest                   5 P   0 F  2 E     was TIMEOUT
+
+    batch: 326 pass, 4 fail, 2 error, 1 timeout
+
+Five of seven pass completely. The bound was hiding real information in the
+other two, which is the point of doing this on both arches:
+
+  * `ReleaseTest` — the 4 FAILs are the ones characterized above by name
+    (`testNoDeadSubscriptions`, `testNoOrphanPackage`,
+    `testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented`,
+    `testUnknownProcesses`), plus `testNoShadowedVariablesInMethods` still
+    TIMEOUT at 230 s — another whole-image scan.
+
+  * `TKTWorkerTest` — 2 ERRORs the watchdog had been masking:
+    `testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected` and
+    `testWorkerProcessIsWorkingUntilAllTasksAreDone`.
+
+    **Both PASS run alone** with a 600 s limit, so they are context-dependent
+    under the runner (TaskIt worker tests are sensitive to other live
+    processes), not demonstrated VM defects. Same shape as
+    `testUsingMethodsFFI`. Recorded because a TIMEOUT row hid them entirely,
+    not because they are known to be ours.
+
+Note the general lesson: TIMEOUT rows are not just "slow" — raising the bound
+converts most to passes but can also expose F/E underneath. Neither arch's
+TIMEOUT count should be read as "nothing to see".
