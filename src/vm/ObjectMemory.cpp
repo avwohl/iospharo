@@ -5388,6 +5388,10 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
                     if (ObjectHeader* c = makeFreeChunk(prevEnd, gap, false)) {
                         addToFreeList(c, gap);
                         gaps++; gapBytes += gap;
+                        if (GET_DEBUG_BOOL(PHARO_GC_LOG)) {
+                            fprintf(stderr, "[FREELIST-GAP] %p .. %p (%zu)\n",
+                                    (void*)prevEnd, (void*)(prevEnd + gap), gap);
+                        }
                     }
                 }
             }
