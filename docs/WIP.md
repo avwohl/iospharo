@@ -15,28 +15,31 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now
+## Right now (2026-09-02)
 
-A full-suite arm64 SUnit sweep is in flight — `scripts/sunit-sweep.sh`, one
-batch of 2047 (not 50: batch size changes the answer, see that script's header),
-`PHARO_CODE_ZONE_MB=192`, `PHARO_MAX_OLD_SPACE_MB=12288`,
-`PER_BATCH_TIMEOUT=14400`, output in `/tmp/sweep-arm-out`. At 1547 class groups
-it reads P=22973 F=6 E=2 S=106.
+Fresh clone on the Mac (only the Command Line Tools installed, no Xcode).
+Infrastructure rebuilt from nothing: `scripts/build-macos-slices.sh` makes the
+two `macos-arm64_x86_64` slices the CMake trees need (the full xcframework
+scripts cannot run without iOS SDKs); `build-rel` (arm64) and `build-x86`
+(x86_64) configured and built with the JIT on; x86_64 cairo/libgit2 bottles
+staged beside `build-x86/test_load_image`; `libTestLibrary.dylib` built for
+both arches; a fresh Pharo 13.1 image (`4f7563d`) prepped with the runner via
+explicit snapshot (54 -> 79 MB, `SUnitRunner` present).
 
-The raised old-space ceiling is the point of this run. Two earlier attempts
-today died at ~945 groups with
+The `scripts/pharo-headless-test` submodule pointer (`749ce14`) was never
+pushed; a fresh clone cannot fetch it.  Re-created as `ed885c8` from the
+write-up below (same change: the selector skip list is empty).  Still local
+until the submodule is pushed.
 
-    [VM] FATAL: old space exhausted during scavenge tenure (272 free of 4294967296)
-    [HEAP-CENSUS] 11010394 objs  3867298 KB  Context
-    [HEAP-CENSUS]   2184887 objs   119486 KB  Error
+**First defect found by the C++ tier: a heap-use-after-free in the shared
+lifter** (`SistaBuilder.cpp` Pass 5) -- `test_sista_ir` rc=139 on x86_64,
+passing by luck on arm64.  Fixed and ASan-verified on both arches; see
+`docs/changes.md` 2026-09-02.
 
-This is **not new and not a regression**: the 2026-08-22 sweep record already
-says `batch 601-650 crashed (rc=134): old space exhausted`, and
-`PHARO_MAX_OLD_SPACE_MB` exists for exactly this ("the full 2k-class catalog
-peaks near 4 GB", `src/vm/debug_vars.h:47`).
-
-Not yet run since today's JIT changes: the x86_64 SUnit sweep, and the package
-tier on either arch.
+An arm64 SUnit sweep is in flight (`STEP=50 PER_BATCH_TIMEOUT=1800`,
+`PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000
+PHARO_MAX_OLD_SPACE_MB=12288`), output under the session scratchpad
+`sweep-arm/`.  x86_64 sweep and the package tier on both arches follow.
 
 ## Where the three tiers stand
 

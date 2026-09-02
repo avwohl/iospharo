@@ -3284,14 +3284,24 @@ public:
             out_.dispatchableBlocks = dispatchSnapshot;
             for (const auto& entry : dispatchSnapshot) {
                 uint32_t targetBlockId = entry.second;
-                const Block& targetBlock = out_.blockAt(targetBlockId);
 
-                // Count phi nodes in target block.
-                size_t phiCount = 0;
-                for (uint32_t vid : targetBlock.values) {
+                // Copy the target's leading phi value ids OUT of the
+                // block before creating anything.  newBlock() and
+                // newValue() below push_back into out_.blocks and
+                // out_.values, and either can reallocate; a Block& (or
+                // Value&) taken here would then point into freed
+                // memory.  This was the x86_64 test_sista_ir SIGSEGV of
+                // 2026-09-02: the second phi walk read
+                // targetBlock.values from a freed buffer whose begin
+                // pointer had become 2.  arm64 passed only because the
+                // freed buffer still held its old bytes -- ASan reports
+                // the same heap-use-after-free on both.
+                std::vector<uint32_t> targetPhis;
+                for (uint32_t vid : out_.blockAt(targetBlockId).values) {
                     if (out_.values[vid].op != Op::kPhi) break;
-                    phiCount++;
+                    targetPhis.push_back(vid);
                 }
+                const size_t phiCount = targetPhis.size();
 
                 // Create the loader pseudo-block.
                 uint32_t loaderId = out_.newBlock(/*sourceBc=*/-1);
@@ -3320,14 +3330,11 @@ public:
                 // operands (one per phi).  Pass 4 already wired phis
                 // from earlier predecessors; we add this loader's
                 // contribution now as an additional predecessor.
-                size_t phiSlot = 0;
-                for (uint32_t phiVid : targetBlock.values) {
-                    Value& phiV = out_.values[phiVid];
-                    if (phiV.op != Op::kPhi) break;
+                for (size_t phiSlot = 0; phiSlot < targetPhis.size(); phiSlot++) {
+                    Value& phiV = out_.values[targetPhis[phiSlot]];
                     if (phiSlot < loaderOutgoing.size()) {
                         phiV.operands.push_back(loaderOutgoing[phiSlot]);
                     }
-                    phiSlot++;
                 }
 
                 // Replace the (target_bcOff, target_block_id) entry

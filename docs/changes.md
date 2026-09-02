@@ -1,5 +1,32 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-09-02 — lifter use-after-free in multi-entry loader construction
+
+`test_sista_ir` segfaulted on x86_64 (rc=139, no output because stdout was
+block-buffered) and passed on arm64.  The crash is in shared C++, not in
+either backend: `LinearLifter::run` Pass 5 (`SistaBuilder.cpp`, "append
+loader pseudo-blocks for multi-entry dispatch") took
+`const Block& targetBlock = out_.blockAt(targetBlockId)` and then called
+`out_.newBlock()` and `out_.newValue()`, which push_back into
+`out_.blocks` / `out_.values`.  The push reallocated the blocks vector, and
+the second walk over `targetBlock.values` read the freed buffer -- on x86_64
+its begin pointer had become 2, hence `KERN_INVALID_ADDRESS at 0x2`.
+
+    x86_64 release   rc=139 before   45/45 PASS after
+    arm64  release   45/45 before    45/45 after     (passed by luck: the
+                                                     freed bytes were intact)
+    ASan, both arches: heap-use-after-free in LinearLifter::run before,
+                       clean after
+
+In the live VM this path runs for every per-bytecode region with an interior
+backward-jump target (`PHARO_NO_SISTA_PER_BC=1` is the isolating knob), so
+a reallocation there wired the loader's phi operands from stale memory on
+whichever arch and allocator happened to reuse the block.  The target's
+leading phi ids are now copied out before anything is created.  Found by
+running the C++ tier on a fresh clone; confirmed and verified with
+`-fsanitize=address` builds of `test_sista_ir` for both arches
+(`build-x86-asan`, `build-arm-asan`).
+
 ## 2026-08-19 — arm64 JIT crash: a W^X violation in tryExecute
 
 Every Apple Silicon run of a hot, runtime-compiled counted loop crashed:
