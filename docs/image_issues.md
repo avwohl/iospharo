@@ -224,6 +224,29 @@ check in waitTimeoutMilliseconds:; (c) make the Delay scheduler's
 backend loop survive per-delay errors instead of dying with the first
 poisoned delay.
 
+## `OCClassBuilderTest>>testCreateNormalClassWithTraitComposition` names a trait that no longer exists (2026-09-02)
+
+Pharo 13.1 build 745 (`Pharo-13.1.0+SNAPSHOT.build.745.sha.4f7563d`, the
+`get.pharo.org/64/130` image on 2026-09-02) fails this test deterministically,
+alone or in a suite, on our VM:
+
+    OCCodeError: 'Undeclared variable'
+      OCUndeclaredVariableNotice(OCNotice)>>signalError
+      OpalCompiler>>checkNotice: ... OpalCompiler>>evaluate
+      ShiftClassBuilder>>buildFromAST:
+
+The test compiles a class definition whose trait composition names fifteen
+test traits.  Fourteen exist; `TAsStringCommaAndDelimiterTest` does not:
+
+    (#(TAddForUniquenessTest ... TSetArithmetic)
+        reject: [:n | Smalltalk globals includesKey: n ])
+    -> #(#TAsStringCommaAndDelimiterTest)
+
+so the compiler is right to refuse it.  Not a VM defect: a missing global is
+the same on any VM.  Not patched -- it is one test, and the fix belongs
+upstream (drop or rename the trait in the test's definition string).  Counted
+as 1 E in `OCClassBuilderTest` in every sweep on this image build.
+
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 
 Accepted residuals from the 2026-07-06 catalog (#8, 99.92%).  Each was
