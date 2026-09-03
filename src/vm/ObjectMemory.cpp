@@ -2124,6 +2124,20 @@ GCResult ObjectMemory::scavenge() {
                 copySize,
                 (ptrdiff_t)(oldSpaceEnd_ - oldSpaceFree_),
                 (ptrdiff_t)(oldSpaceEnd_ - oldSpaceStart_));
+            // Say whether the circuit breaker was even in play.  Working this
+            // out after the fact cost an hour on 2026-09-02: the absence of a
+            // [LOW-SPACE] line has three different meanings -- the image never
+            // armed prim 125, the crossing was never observed, or it was
+            // latched and never delivered -- and the log could not tell them
+            // apart.  Now it can.
+            fprintf(stderr,
+                "[VM] low-space breaker at abort: threshold=%zu bytes (%s), "
+                "crossing latched=%s\n",
+                lowSpaceThresholdBytes_,
+                lowSpaceThresholdBytes_ ? "armed by the image via prim 125"
+                                        : "DISARMED — the image never installed "
+                                          "a LowSpaceWatcher (bare eval mode does not)",
+                lowSpaceCrossed_ ? "yes, but never delivered" : "no");
             dumpHeapCensus(25);   // say WHAT filled the heap before dying
             fflush(stderr);
             std::abort();
