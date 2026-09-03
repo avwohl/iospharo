@@ -21,6 +21,17 @@ Cog   (stock, x86)             12778    4     96            <- buggier per-test 
   than Cog on the tests both run (error=1 vs Cog's 96 errors + 4 fails). The
   ~84-test pass gap to Cog is tests Cog runs that our harness skips, not
   failures.
+
+  > **2026-09-02 — the "tests Cog runs that our harness skips" now has a
+  > cause.** Our runner iterated `allTestSelectors` and ran
+  > `testClass selector: sel`, so every `ParametrizedTestCase` subclass
+  > contributed one test per selector where Cog's suite contributes one per
+  > selector *per parameter case* — and, worse, ran unconfigured
+  > (`parametersToUse` nil), which is where nine Spec adapter classes'
+  > `SubscriptOutOfBounds: 1 in #()` came from. Fixed in the submodule
+  > (`9145af6`); see defect #24 in `docs/vm-compat-bugs.md`. So this pass gap
+  > was never neutral bookkeeping: part of it was the harness running tests
+  > wrong and scoring the result against the VM.
 - **x86 JIT introduces ZERO deterministic regressions.** The 4 x86 "regressions
   vs Cog" were each re-run in isolation + interp-vs-JIT and classified:
   - `ProcessMonitorTestServiceTest>>testFailTestWhen…` — PASS in isolation on
