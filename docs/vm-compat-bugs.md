@@ -1945,7 +1945,10 @@ takes Cog **76.5 s**, so the trait block is genuinely heavy work, not a
 trivial suite our VM trips over.
 
 Next: run the block one class at a time (chunks of five is enough to bracket
-it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.
+it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
+`PHARO_MAX_OLD_SPACE_MB=1024` for the hunt — the storm took 758 s to reach the
+FATAL at 12288 and should take about a twelfth of that at 1024, and the census
+ratios that identify it do not depend on the absolute counts.
 
 ### 24. ~~Sixteen GUI-adapter classes fail for us and pass on headless Cog~~ — RECLASSIFIED 2026-09-02: nine of them are a HARNESS gap, four are ours
 

@@ -141,6 +141,13 @@ which waits on the sweep's pid; the rest are by hand.
     explains the trait batch dying.  If it does answer `NO-HUSK`, there is a
     second trigger and the per-class hunt is the way in.
 
+    **Hunt with a small heap.**  The storm took 758 s to reach the FATAL at
+    `PHARO_MAX_OLD_SPACE_MB=12288`; at 1024 it should abort in roughly a
+    twelfth of that, which turns a bisection over 39 classes from an evening
+    into minutes.  The census shape is the same either way — it is the ratios
+    (1.00 closures and 5.01 Contexts per Error) that identify it, not the
+    absolute counts.
+
     Two halves of that fix were re-checked by reading, 2026-09-02, so do not
     re-derive them: `collectInstancesOfClass` still skips forwarded objects
     (`ObjectMemory.cpp:3386`, `!obj->isForwarded()`), and both
