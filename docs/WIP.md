@@ -43,7 +43,14 @@ loses -- and both emit a clean `Total:` on their own line, including the one
 that TIMED OUT, which is the case that used to splice.  Use `sunit2.image` for
 the next sweep: it is worth 2 classes and 20 tests.
 
-Two open items with work queued: **defect #27** (a ByteSymbol receiver running
+**The largest single chunk of the residual has an untried lever.**  The
+"no display" family is ~9 F and ~16 E across `Sp*`/`St*` classes (defects
+#24/#25).  `CLAUDE.md` records that prepping with `setup_fake_gui.st` BEFORE
+the runner takes 64 GUI classes to a 94.6% pass rate -- and **no sweep image
+this project has measured was prepped with it**, including 2026-09-03's.  A
+probe now preps one both ways and runs the 14 affected classes against each.
+
+Three open items with work queued: **defect #27** (a ByteSymbol receiver running
 `BlockClosure>>value:` -- once per sweep, so being chased with
 `PHARO_T1_VALIDATE_IC` instrumentation rather than a repro), and the five
 x86-only `XMLParser` attribute-default errors.
