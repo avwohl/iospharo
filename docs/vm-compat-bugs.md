@@ -2318,6 +2318,7 @@ fix was clean.  The full arm64 sweep said otherwise within four batches:
     fix 1 + storm guard         11 non-clean      55 non-clean
     fix 1 + fix 2 + guard       12, 12 non-clean  --
     fix 1 bailing, not resuming 11, 11 non-clean  --
+    fix 1 REVERTED, fix 2+guard  0,  0 non-clean  --
 
 Fix 2 adds nothing on top: the damage is all fix 1's.
 
