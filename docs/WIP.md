@@ -96,6 +96,17 @@ batch entirely), or the sweep is running the binary that would be replaced.
     Index 1911 is `TonelWriterV3Test`; 1951 is `UndefinedPackageTest`; the
     classes in between are the trait tests (see the sweep report).  Start with
     the `Trait*` block, not with a blind batch re-run.
+
+    **Run `scripts/pharo-headless-test/storm_repro_husk_freeze.st` first** — it
+    is a one-command answer to the most likely hypothesis.
+    `docs/history/arm-context-storm-2026-07.md` identifies the storm's trigger
+    as a **trait-class rebuild with live instances leaving a stale husk** that a
+    `freeze` handler re-hits, eliminated by `62417f43`
+    (becomeForward-leaves-forwarder) and `296bba26`
+    (classOf-follows-forwarders).  Both are still default-on.  The repro must
+    answer `NO-HUSK`; anything else says the trigger fix has regressed and
+    explains the trait batch dying.  If it does answer `NO-HUSK`, there is a
+    second trigger and the per-class hunt is the way in.
  3. **Verify the low-space breaker actually fires.**  The "before" evidence is
     already on record (12 GB consumed, zero `[LOW-SPACE]` lines).  For "after":
     `PHARO_MAX_OLD_SPACE_MB=512 ./build-rel/test_load_image <image> eval
