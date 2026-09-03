@@ -56,12 +56,20 @@ That leaves ONE open correctness question in the whole residual -- defect #27,
 the ByteSymbol mis-dispatch, at one test per sweep -- plus a performance
 question about how slow those image scans are against Cog.
 
-**The largest single chunk of the residual has an untried lever.**  The
-"no display" family is ~9 F and ~16 E across `Sp*`/`St*` classes (defects
-#24/#25).  `CLAUDE.md` records that prepping with `setup_fake_gui.st` BEFORE
-the runner takes 64 GUI classes to a 94.6% pass rate -- and **no sweep image
-this project has measured was prepped with it**, including 2026-09-03's.  A
-probe now preps one both ways and runs the 14 affected classes against each.
+**The untried lever works, and it is worth most of the remaining residual.**
+Prepping with `setup_fake_gui.st` before the runner, measured on the 15
+affected classes with everything else identical:
+
+    prep                          classes   PASS   FAIL  ERROR  SKIP
+    runner only                     15       209    13     16     7
+    setup_fake_gui.st + runner      15       232     6      0     7
+
+Every ERROR goes away and the FAILs more than halve.  `CLAUDE.md` has recorded
+this for months and no sweep image this project measured was prepped with it.
+A full sweep on a fake-GUI-prepped image is running -- the same image also
+carries the `Total:`-splice fix, and the VM carries the new defect-#27
+detector.  Expected residual if it holds at scale: roughly 11 F / 7 E over
+2045 classes, against today's 18 F / 28 E over 2043.
 
 Three open items with work queued: **defect #27** (a ByteSymbol receiver running
 `BlockClosure>>value:` -- once per sweep, so being chased with
