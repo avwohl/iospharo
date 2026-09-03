@@ -476,7 +476,11 @@ extern "C" __attribute__((noinline)) void pharo_cascade_bp(
     asm volatile("" ::: "memory");
 }
 
-namespace pharo { namespace jit {
+namespace pharo {
+
+// See the definition next to dumpSendChain: per-site cannotReturn: tallies.
+extern uint64_t g_cannotReturnSite[6];
+ namespace jit {
 class JITRuntime;
 void dumpBailGateHisto(ObjectMemory& mem);
 void dumpBailGateNamedICs(ObjectMemory& mem, JITRuntime& rt,
@@ -2251,6 +2255,20 @@ void Interpreter::dumpJITStats() {
 #endif
 }
 
+// Which cannotReturn: site fired, counted per site.  The storm loop runs
+// through ONE of six of them and the six differ in what they mean -- an NLR
+// whose home context was found but whose homeSender was nil, an NLR whose home
+// was never found, a plain method return off the top of the chain, a block
+// return with no outer, a context-activation return.  The fatal dump prints
+// the tallies so a single storm says which.  Only two of the six arm the
+// per-process count/deadline guard, which is why a loop through the others
+// never self-limits.
+uint64_t g_cannotReturnSite[6] = {0, 0, 0, 0, 0, 0};
+static const char* const kCannotReturnSiteName[6] = {
+    "nlr-homeSender-nil", "nlr-ctxchain-homeSender-nil", "return-top-of-chain(guarded)",
+    "returnFromMethod-no-sender", "returnFromBlock-no-outer", "activateContext-no-sender",
+};
+
 // Innermost frames of the ACTIVE process at a fatal heap abort.  The census
 // tells you 2.6M Contexts and 517K Errors were live; it cannot tell you which
 // loop signalled them, and two separate sessions have stalled on exactly that
@@ -2269,6 +2287,19 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
     fprintf(stderr, "[SEND-CHAIN]   running  #%s rcvr=0x%llx\n",
             memory_.selectorOf(method_).c_str(),
             (unsigned long long)receiver_.rawBits());
+    {
+        uint64_t tot = 0;
+        for (int i = 0; i < 6; i++) tot += g_cannotReturnSite[i];
+        if (tot) {
+            fprintf(stderr, "[SEND-CHAIN] cannotReturn: sends by site (%llu total):",
+                    (unsigned long long)tot);
+            for (int i = 0; i < 6; i++)
+                if (g_cannotReturnSite[i])
+                    fprintf(stderr, "  %s=%llu", kCannotReturnSiteName[i],
+                            (unsigned long long)g_cannotReturnSite[i]);
+            fprintf(stderr, "\n");
+        }
+    }
     size_t lo = (frameDepth_ > maxFrames) ? (frameDepth_ - maxFrames) : 0;
     for (size_t i = frameDepth_; i > lo; i--) {
         const SavedFrame& sf = savedFrames_[i - 1];
@@ -7785,6 +7816,7 @@ void Interpreter::returnValue(Oop value) {
                         stackPointer_ = stackBase_;
                         push(activeContext_);
                         push(savedValue);
+                        g_cannotReturnSite[0]++;
                         sendSelector(selectors_.cannotReturn, 1);
                     }
                 }
@@ -7870,6 +7902,7 @@ void Interpreter::returnValue(Oop value) {
                             }
                             push(activeContext_);  // receiver: the returning context
                             push(value);           // arg: the value being returned
+                            g_cannotReturnSite[1]++;
                             sendSelector(selectors_.cannotReturn, 1);
                             return;
                         }
@@ -8019,6 +8052,7 @@ terminate_process:
                 stackPointer_ = stackBase_;
                 push(activeContext_);  // receiver: the context that cannot return
                 push(value);           // arg: the value that was being returned
+                g_cannotReturnSite[2]++;
                 sendSelector(selectors_.cannotReturn, 1);
                 return;
             }
@@ -9005,6 +9039,7 @@ void Interpreter::returnFromMethod() {
         }
         push(activeContext_);  // receiver: the context that cannot return
         push(value);           // arg: the value that was being returned
+        g_cannotReturnSite[3]++;
         sendSelector(selectors_.cannotReturn, 1);
         return;
     }
@@ -9195,6 +9230,7 @@ void Interpreter::returnFromBlock() {
     }
     push(activeContext_);  // receiver: the context that cannot return
     push(value);           // arg: the value that was being returned
+    g_cannotReturnSite[4]++;
     sendSelector(selectors_.cannotReturn, 1);
 }
 
@@ -21512,6 +21548,7 @@ bool Interpreter::executeFromContext(Oop context) {
         stackPointer_ = framePointer_ + 1;
         push(context);
         push(memory_.specialObject(SpecialObjectIndex::NilObject));
+        g_cannotReturnSite[5]++;
         sendSelector(selectors_.cannotReturn, 1);
         return true;  // context was activated (cannotReturn: handler will run)
     }

@@ -15,6 +15,44 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-09-03, 02:45)
+
+**Defect #23 (the arm64 Context storm) is root-caused down to its loop and its
+emit, and one candidate fix is in and NOT yet vindicated.**  In order:
+
+- The storm is the JIT's: `PHARO_NO_JIT=1` storms 0 of 8 where the shipped
+  build storms 6 of 8, same script, same conditions.
+- The loop is `Context>>cannotReturn:` -> `error:` -> `signal:` -> `signal`,
+  and `signal` scans a sender chain with no `on:do:` in it.  Captured by the
+  new `Interpreter::dumpSendChain`, which runs at the old-space-exhaustion
+  FATAL and prints both the native frames and the materialized context chain
+  with primitive 199/198 frames marked.
+- `PHARO_T1_NO_INLINE_J2J=1` storms 0 of 6 against BASE's 4 of 6 in the same
+  script, and its clean runs take the same 3-4 s, so it is not buying the
+  result with slowness.
+- A real unsoundness was found on the default path: the chain loop's
+  `ExitBlockCreate` handler called `createFullBlockWithLiteral` with J2J saves
+  still pending, and `enableJ2J()` below it then DROPPED them.  Fixed
+  (`7724f3fe`) by materializing first.
+- **The A/B says that fix is not the storm.**  Interleaved, 4 CPU hogs holding
+  the load steady, matched binaries: base 3 storms of 5, fixed 2 of 5 so far.
+  The fix stands on its own merits -- dropped saves are dropped frames -- but
+  defect #23 is still open.
+
+Next instrument, already built and queued behind the A/B: six per-site
+counters on the `cannotReturn:` sends, printed in the fatal dump.  Only two of
+the six sites arm the per-process count/deadline guard, which is why a loop
+through the other four never self-limits; the tally says which one the storm
+runs through.
+
+Two measurement rules learned tonight, both the hard way:
+
+- **The storm rate tracks machine load.**  BASE was 6 of 8 with the package
+  tier running, 4 of 6 later, and 1 of 6 idle.  A blocked A-then-B bisect is
+  therefore unreadable; interleave the arms and hold the load.
+- **Two SUnit runner jobs share `/tmp/sunit_*.txt`.**  A second repro loop
+  started next to a running one hijacks it.  Chain them, do not overlap them.
+
 ## Right now (2026-09-02)
 
 Fresh clone on the Mac (only the Command Line Tools installed, no Xcode).
