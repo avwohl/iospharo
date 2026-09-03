@@ -2257,7 +2257,20 @@ image does not understand.  A Morphic DNU under a display-less resume is
 usually a missing plugin primitive answering nil where a Form or an event
 buffer is expected.
 
-### 26. ~~The threaded-FFI batch never exits~~ — ROOT-CAUSED + FIXED 2026-09-02 (unbuilt), 1800 s per sweep per arch
+### 26. ~~The threaded-FFI batch never exits~~ — FIXED and VERIFIED 2026-09-03: 1800 s -> 54 s
+
+    before   rc=124   1800 s   (55 s of work, 1730 s idle)
+    after    rc=0        54 s   51 of 51 classes reported
+
+    [primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must unwind first
+    [primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must unwind first
+    [primitiveQuit] Honouring deferred quit from the callback loop
+                    (grace period expired; callback did not unwind)
+
+Clean exit, so the plain return out of the nested loop unwound fine and the
+`CallbackComplete` fallback noted below is not needed.  That is ~29 minutes
+recovered per sweep per architecture.  Raw in
+`docs/results/sweep-arm-2026-09-02/defect26-verification.txt`.
 
 Sweep batch 1801-1850 is the single largest wall-clock item in a full sweep and
 has never been filed.  It contains the threaded-FFI block —

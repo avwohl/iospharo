@@ -1,0 +1,15 @@
+# Defect #26 verification, 2026-09-03 — batch 1801-1850 re-run with the bounded quit
+
+=== defect #26: re-run arm batch 1801-1850 with the bounded quit ===
+before the fix: 1800 s (killed), of which ~1730 s idle after the quit
+rc=0 elapsed=54s
+--- quit trace ---
+[primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must unwind first
+[primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must unwind first
+[primitiveQuit] Honouring deferred quit from the callback loop (grace period expired; callback did not unwind)
+--- runner landmarks ---
+--- classes reported ---
+51
+--- verdict ---
+--- verdict ---
+FIXED: clean exit

@@ -20,6 +20,11 @@ The trace had been in the logs the whole time, buried in 4 MB of periodic JIT
 stats: `[primitiveQuit] Deferred: 1 callback(s) outstanding`, five times on
 arm64 and sixty-one on x86_64.
 
+**VERIFIED 2026-09-03: 1800 s -> 54 s, rc=0, all 51 classes**, with
+`[primitiveQuit] Honouring deferred quit from the callback loop (grace period
+expired; callback did not unwind)` in the log.  The clean exit also settles
+that the plain return out of the nested loop unwinds fine.
+
 Fixed by recording `g_stepNum` at the first deferral and honouring the quit
 after `kQuitGraceSteps` (2M bytecodes) whether or not the callback unwound —
 from the nested callback loop as well as the checkpoint, since that is the only
@@ -33,7 +38,10 @@ every retired libffi closure and `ffi_cif` after that point is buried and never
 freed.
 
 **A block's home could not be found when the home method is a trait copy**
-(defect #22).  The inline non-local return walks the executing
+(defect #22).  **VERIFIED 2026-09-03: `RSLinesTest` 18 P / 0 F / 0 E with the
+JIT and without it**, against 16 P / 2 E on arm64 and 17 P / 1 E on x86_64
+before.  Both modes, so the defect was in the shared home resolution and not in
+a JIT specialisation.  The inline non-local return walks the executing
 `CompiledBlock`'s `outerCode` chain to a `CompiledMethod` and matches that oop
 against the frames.  For a trait method that identity can never hold: a class
 using a trait gets its own `CompiledMethod`, but the copy SHARES the trait's
