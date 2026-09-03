@@ -30720,6 +30720,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 frameDepth_ = baseDepth + site5Done;
                 chainCallDepth += site5Done;
+                // The saves are now SavedFrames, so clear the live-chain
+                // marker -- exactly what the materializeJ2J lambda does, and
+                // this handler `continue`s back into the loop without it, so
+                // the next materialize walks the SAME saves a second time.
+                // That is a duplicate activation: two frames for one
+                // #methodNode call, two returns, and the second landing in the
+                // context the first killed.  The lambda's own comment says
+                // leaving the marker set is what produced the 2026-06-09
+                // xmethod-at-scale corruption; this site simply never got the
+                // same treatment.  Opt-in until A/B'd.
+                if (GET_DEBUG_BOOL(PHARO_J2J_SITE5_CLEAR_DEPTH)) {
+                    state.j2jDepth = 0;
+                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(_stateSaves2);
+                }
                 // Sync interpreter from innermost frame
                 if (state.jitMethod) {
                     state.method = Oop::fromRawBits(
