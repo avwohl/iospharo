@@ -87,6 +87,17 @@ The history lives in `docs/history/`; nothing was deleted.
   IS delivered from this loop as of `3c75aca5`, which matters more here than
   on the main path precisely because everything allocated here is tenured.
 
+  **And the window is not one callback long.**  `callbackDepth_` is decremented
+  only by `primitiveCallbackReturn` and the two worker-timeout
+  `[XTCB-DEAD-POP]` paths, so an invocation the image abandons is never popped
+  — `TFCallbacksTest`'s old-session test does exactly that, by design.  Sweep
+  batch 1801-1850 therefore runs its remaining ~25 test classes INSIDE the
+  nested loop: no scavenge (everything tenured on the spot), no `interpret()`
+  checkpoint, and until `3c75aca5` no low-space latch either.  So this is not a
+  cost paid by the odd long callback; it is a mode a whole batch can fall into
+  and stay in.  Defect #26 in `docs/vm-compat-bugs.md` covers the quit half of
+  the same stuck counter.
+
 ## The primitive surface is much larger than the primitive table
 
 Audited 2026-09-02, recorded so nobody re-derives it and reads it as breakage:
