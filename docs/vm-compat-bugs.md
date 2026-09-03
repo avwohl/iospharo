@@ -2095,6 +2095,14 @@ and its UI process suspended gives `SpListCommonPropertiestTest` 18 P / 5 E,
 our exact failure set (#24, `cog-defect24-repro.txt`).  Nine classes of the
 2026-09-02 residual are downstream of this suspension.
 
+**Ruled out by reading (2026-09-02), so do not spend time on it:** the loop is
+`[ aBlock value ] whileTrue: [ self doOneCycle. Processor yield ]`, so an
+obvious theory is that our `Processor yield` fails to rotate the pri-80 queue
+and lets the loop monopolise it.  It does not — `primitiveYield`
+(`Primitives.cpp:9552`) appends the active process to the BACK of its priority
+list and then wakes the highest-priority ready process, which is Cog's
+behaviour, including the no-other-process-at-this-priority early exit.
+
 **Where to start:** get the DNU selectors.  The runner suspends the loop before
 they can be observed, so run a headless resume WITHOUT the suspension — file
 the runner in and immediately resume the UI process, or run a bare image with
