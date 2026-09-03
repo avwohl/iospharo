@@ -107,11 +107,25 @@ batch entirely), or the sweep is running the binary that would be replaced.
     answer `NO-HUSK`; anything else says the trigger fix has regressed and
     explains the trait batch dying.  If it does answer `NO-HUSK`, there is a
     second trigger and the per-class hunt is the way in.
- 3. **Verify the low-space breaker actually fires.**  The "before" evidence is
-    already on record (12 GB consumed, zero `[LOW-SPACE]` lines).  For "after":
+ 3. **Verify the low-space breaker actually fires — NOT with a bare `eval`.**
+    The "before" evidence is on record (12 GB consumed, zero `[LOW-SPACE]`
+    lines).  The obvious "after" test is
     `PHARO_MAX_OLD_SPACE_MB=512 ./build-rel/test_load_image <image> eval
-    "<contents of scripts/pharo-headless-test/storm_repro_freeze_recursion.st>"`
-    -- expect a `[LOW-SPACE]` line instead of the tenure FATAL.
+    "<storm_repro_freeze_recursion.st>"`, and it is **expected to print
+    nothing**: `docs/history/arm-context-storm-2026-07.md` records that the
+    mitigation is disarmed in bare eval mode, because the image never runs
+    `installLowSpaceWatcher` there, so prim 125 is never armed and neither the
+    old sampled check nor the new latch can arm either.  The post-sweep script
+    runs it anyway as a control; a silent result there is NOT evidence against
+    the fix.
+
+    The real test is the runner path, which does install the watcher (the
+    2026-09-02 batch log shows the VM inside `#lowSpaceWatcher` at step 161M).
+    So verification and investigation are the same run: re-run the trait block
+    on the rebuilt binary.  If the storm recurs, `[LOW-SPACE]` lines must
+    appear — plural, because the image re-arms after each one and its action
+    (`signalException: OutOfMemory`) is an `Error` the hog's handler can
+    swallow.
  4. **Verify the runner watchdog fix.**  Re-prep an image with the current
     submodule (`7830936`) and run a class with a known timeout
     (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line start.
