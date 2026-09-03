@@ -3345,6 +3345,17 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                         -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, x86HasMidBail)));
                     a.test(r10, r10);
                     a.jnz(notJ2J);                        // mid-bailing callee -> bail
+                    // hasBlockCreate exclusion (defect #23, opt-in) -- twin of
+                    // the arm64 gate.  A callee that creates a block, entered by
+                    // inline-J2J, builds the closure while the caller's saves are
+                    // pending, so its outerContext chain is missing every
+                    // J2J-hidden caller.
+                    if (GET_DEBUG_BOOL(PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE)) {
+                        a.movzx(r10d, byte_ptr(r9,
+                            -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, hasBlockCreate)));
+                        a.test(r10, r10);
+                        a.jnz(notJ2J);                    // block-creating callee -> bail
+                    }
                 } else {
                 a.movzx(r10d, byte_ptr(r9,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
@@ -7019,6 +7030,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         emitGateBail((uint64_t)&g_xgate_bail_b47);
                         a.bind(ok);
                     } else {
+                        a.cbnz(w4, j2jBailSelf2);
+                    }
+                    // hasBlockCreate — defect #23, opt-in.  A callee that
+                    // creates a block, entered by inline-J2J, builds that
+                    // closure while the caller's saves are still pending, so
+                    // the closure's outerContext chain is missing every
+                    // J2J-hidden caller and a non-local return through it lands
+                    // nowhere.  The BV inline prep already refuses nested
+                    // closures for the same reason one layer down (see hasNLR's
+                    // PushFullBlock arm).  Opt-in because it costs inlining on
+                    // block-heavy code: PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE.
+                    if (GET_DEBUG_BOOL(PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE)) {
+                        a.ldrb(w4, ptr(x10,
+                            (int)offsetof(JITMethod, hasBlockCreate)));
                         a.cbnz(w4, j2jBailSelf2);
                     }
                     // canBailMidMethod — mid-method bails corrupt the
@@ -12218,6 +12243,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->hasRecvFieldAccess= false;
     jm->hasRecvFieldWrite = false;
     jm->hasLitVarWrite    = false;
+    jm->hasBlockCreate    = false;   // set by the PushFullBlock scan below
     jm->maxRecvFieldIndex = 0;
     jm->isSpliceTarget    = false;
     // Prologue-leaf methods are NOT stub-on-entry: the prologue is the
@@ -12289,6 +12315,23 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 }
             }
             jm->hasNLR = nlr;
+            {   // defect #23: does this method create a block?  A closure built
+                // while the caller's inline-J2J saves are still pending captures
+                // an outerContext whose sender chain stops at the innermost
+                // materialized frame -- every J2J-hidden caller is missing from
+                // it, and a non-local return through such a closure lands
+                // nowhere.  Naive scan; over-bailing is safe.
+                bool bc_create = false;
+                if (isReal) {
+                    for (size_t i = 0; i < bcLen; i++) {
+                        if (bc[i] == SistaV1::PushFullBlock
+                                || bc[i] == SistaV1::PushClosure) {
+                            bc_create = true; break;
+                        }
+                    }
+                }
+                jm->hasBlockCreate = bc_create;
+            }
             {   // 2026-06-20: detect captured REMOTE-temp access (0xFB/0xFC/0xFD).
                 // BV inline drops remote-temp STORES when the block runs in a
                 // foreign frame (value'd from do:/collect:/etc.) — the write to a
