@@ -558,6 +558,34 @@ IMAGE LOADER bug, and the tell was in the image header all along —
 `scripts/image-segments.py <image>` answers it in milliseconds.  **Check the
 other packages in #2a/#2b for multi-segment before assuming anything else.**
 
+#### The table above is stale — five of the 13 were re-measured on 2026-08-13
+
+Acting on exactly that lesson closed most of #2a, and the results sat in the
+repo-root `WIP.md` (now `docs/history/wip-root-2026-08-13.md`) rather than
+here, which is why this defect still reads as 13 packages.  Freshly loaded,
+all with segment support:
+
+    package                            cog                 ours
+    mumez-pharo-acp                    168 P/0 F/2 E       168 P/0 F/2 E   EXACT
+    moosetechnology-famix             1293 P/5 F/2 E      1292 P/5 F/2 E/1 T
+    fedeloch-ume                      times out at 1200s  loads + runs (6 segments)
+    moosetechnology-famixtagging         0 P/115 E           0 P/115 E    broken pkg, parity
+    apptivegrid-soil                   464 P/6 F/1 E      runs; bounded by #6
+
+`famix` was never a hang and `famixtagging` fails identically on both VMs, so
+it should never have been counted as ours.  `ume` prints
+`[IMGLOAD-MULTISEG] 6 segments` and boots where it used to answer "Interpreter
+initialization failed".  `soil`'s SIGABRT was `544740ac` — super sends did not
+honour `objectAsMethod`.
+
+Still open from the two lists: `evref-bl-mcp`, `pillar-markup-pillar`,
+`tomooda-viennatalk`, `moosetechnology-gitprojecthealth` (2a), and `jrpc` /
+`anthropic-sdk` (2b) — the latter two no longer "exit 0 after CLASSES" but
+fail on sockets instead (`EADDRINUSE` on the ~12th server start;
+`primSocketReceiveDataAvailable:` inside a threaded Zn mock).  Nobody has
+re-run the six against a current build, and there is no live Cog baseline on
+this host to compare them to.
+
 **2026-08-13: acted on that lesson — two more closed, and the family is
 smaller than it looked.**  Each package reloaded from scratch with stock Cog,
 segment-checked, then run on both VMs:
@@ -1059,6 +1087,30 @@ deltas against Cog. The `refersToLiteral:`/`scanFor:` primitives (`aad03bc0`)
 did not close it; `scripts/perf-activation/README.md` lists four untried
 ablations. The SUnit runner carries an image-side memoize workaround for the
 same wall.
+
+Still open and unchanged on the rebuilt host — the 2026-09-02 arm64 sweep hit
+it three times, and every one of the five TIMEOUTs in that run except the two
+network tests belongs to this defect:
+
+    NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft   80 s
+    ReleaseTest>>testNoShadowedVariablesInMethods                   80 s
+    ReleaseTest>>testNoNullCharacter                                80 s
+
+The first two are named in the list above; `testNoNullCharacter` is a new
+member of the family (a whole-image source scan, same shape).
+
+**Now with the other half of the ratio (2026-09-02).**  The same classes on
+stock Cog v10.3.9, same image, headless:
+
+    NoUnusedVariablesLeftTest     3 tests   Cog  12.0 s   ours killed at 80 s
+    ReleaseTest (whole class)    43 tests   Cog  24.5 s   ours 2 killed at 80 s
+    MCSmalltalkhubRepositoryTest  1 test    Cog   1.6 s   ours killed at 80 s
+
+So the wall is at least 6.7x on the cheapest of them and at least 50x on
+`MCSmalltalkhubRepositoryTest`, and those are lower bounds twice over: the 80 s
+is a kill, not a completion, and this Cog is x86_64 under Rosetta against a
+native arm64 build of ours.  Raw in
+`docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
 
 ### 7. `rko281-restoreforpharo` ~50x slower than Cog on live SQLite — MEDIUM
 
@@ -1723,6 +1775,1182 @@ to be one: for anything that ends without output, elapsed time and exit status
 have to be recorded, because "produced no result" and "did not terminate" are
 different findings that look identical in a log.
 
+### 22. ~~`RSLinesTest` — `BlockCannotReturn` on a four-frame non-local return~~ — FIXED and VERIFIED 2026-09-03
+
+    RSLinesTest, JIT on          18 P / 0 F / 0 E    (was 16 P / 2 E on arm64,
+    RSLinesTest, PHARO_NO_JIT=1  18 P / 0 F / 0 E     17 P / 1 E on x86_64)
+
+Both modes, so the defect was in the shared home resolution and not in a JIT
+specialisation — the `PHARO_NO_JIT` bisect this entry called for is answered by
+the fix itself.  Our VM reports the same shape the fix targets:
+
+    RSAbstractLine >> markersIncludesPoint:
+       methodClass      = RSAbstractLine
+       block outerCode  = RSTMarkeable>>#markersIncludesPoint:
+       outerCode == m   = false
+
+Raw in `docs/results/sweep-arm-2026-09-02/defect22-verification.txt`.  The
+analysis that got there is kept below, refutations included.
+
+Two errors in the 2026-09-02 arm64 sweep and one in the x86_64 sweep
+(`testMarkersIncludesPoint` on both, `testMarkerOffset` on arm only), so the
+defect is **arch-independent** — as a home-resolution bug in shared C++ should
+be.  It is the only newcomer in that residual that is VM-visible rather than
+display-, network- or image-related:
+
+    ERROR: testMarkerOffset          (BlockCannotReturn: )
+    ERROR: testMarkersIncludesPoint  (BlockCannotReturn: )
+
+The non-local return in question is short and entirely synchronous — read out
+of this image's `.sources`:
+
+    RSLine>>includesPoint:            ^ self hasBorder and: [ ... or: [ self markersIncludesPoint: aPoint ] ]
+    RSShape>>markersIncludesPoint:    self markerShapesInPositionDo: [ :m |
+                                          (m shape preciseIncludesPoint: aPoint) ifTrue: [ ^ true ] ]
+    RSLine>>markerShapesInPositionDo: self markerEnd ifNotNil: [ :marker | marker withEnd: cp do: aBlock ]
+    RSMarker>>withEnd:controlPoints:do:  ... self setPositionTo: to vector: to-from do: aBlock
+    RSMarker>>setPositionTo:vector:do:   ... aBlock value: shape
+
+`ifNotNil:` with a literal block is inlined by the compiler, so the `^ true`
+returns through four live method activations to a home that is still on the
+stack.  `BlockCannotReturn` means the VM decided that home was gone.  Not the
+#15 depth family (that was a 200-frame cap on the context-NLR home search,
+raised to 70000; this is four frames), and not the Build-80
+`HasBeenReturnedFrom` resume case, which is about resuming an already-returned
+context rather than returning to a live one.
+
+**Intermittent**: clean in the 2026-08-22 sweep, present in the pre-reboot
+residual and in this one.  Reach for `PHARO_DET_SCHED=1` before adding
+instrumentation.
+
+#### CONFIRMED 2026-09-02 — Cog passes, and the mechanism is measured
+
+Stock Cog v10.3.9 (x86_64 under Rosetta) runs `RSLinesTest` **18 P / 0 F /
+0 E**.  So this is ours.  And the mechanism is no longer a guess — asking the
+image directly:
+
+    RSAbstractLine >> markersIncludesPoint:
+       methodClass       = RSAbstractLine
+       inner blocks      = 1
+       block outerCode   = RSTMarkeable>>#markersIncludesPoint:     <-- the TRAIT
+       outerCode == m    = false
+
+The class's own copy of the trait method carries a `CompiledBlock` whose
+`outerCode` still names the **trait's** method.  Our inline NLR resolves the
+`^ true`'s home by matching that method oop against
+`savedFrames_[si].savedMethod` (`Interpreter.cpp:8470`), and the frame on the
+stack holds `RSAbstractLine`'s copy — so the match cannot succeed, the
+context-chain search finds nothing either, and the VM sends `cannotReturn:` on
+a home that is alive.  Raw in
+`docs/results/sweep-arm-2026-09-02/cog-defect22-evidence.txt`.
+
+**Blast radius, measured over the whole image:**
+
+    23963   methods with inner CompiledBlocks
+     3278   of those, some block's outerCode is a DIFFERENT method (13.7%)
+      677   of those, that block performs a non-local return   <-- can hit this
+
+677 installed methods can take this path, and the list is not exotic: it starts
+with `findOriginMethodOf:` / `findOriginClassOf:` on the metaclass of every
+traited class, i.e. the traits infrastructure itself.  That the suite still
+passes 27461 tests says the defect needs the `^` to actually fire, not merely
+to exist.
+
+The fix belongs in the home resolution.  Spur's model is identity-based — a
+`FullBlockClosure` knows its `outerContext` — and our code has a dynamic
+fallback that uses exactly that, tried only after the static `outerCode`
+method-oop match fails, with a comment warning that `closure_` can be stale on
+JIT-resident block returns.  So `PHARO_NO_JIT=1` separates "the fallback is
+never reached" from "the fallback is reached with a stale closure".
+
+#### The original hypothesis, kept for the record (2026-09-02)
+
+`markersIncludesPoint:` and `markerShapesInPositionDo:` are each defined
+**twice** in this image, and the second owner is a trait:
+
+    markersIncludesPoint: aPoint       RSAbstractLine   +  RSTMarkeable
+    markerShapesInPositionDo: aBlock   RSAbstractLine   +  RSTMarkeable
+
+`RSTMarkeable`'s own class comment says "I am a trait to create markers in some
+especific classes", and the image stores two separate sources for each
+selector, so two `CompiledMethod`s exist rather than one shared object.
+
+The inline NLR resolves the `^ true`'s home by matching the **method oop** of
+the block's static `outerCode` literal against `savedFrames_[si].savedMethod`
+(`Interpreter.cpp:8470`).  So the question that decides this defect is one an
+`eval` answers in a line: does `RSAbstractLine>>markersIncludesPoint:`'s inner
+`CompiledBlock` have an `outerCode` that is *that* method, or the trait's?  If
+it is the trait's, the identity match cannot succeed against the frame actually
+on the stack, the context-chain search finds nothing either, and the VM sends
+`cannotReturn:` — `BlockCannotReturn` on a home that is demonstrably alive.
+
+    (RSAbstractLine >> #markersIncludesPoint:) literals
+        detect: [ :l | l isCompiledBlock ] ifNone: [ nil ]
+        -> then compare `that outerCode == (RSAbstractLine >> #markersIncludesPoint:)`
+
+This is a hypothesis with a one-line check, not a finding.  What IS established
+is that the two selectors on the failing return each exist twice with a trait
+as one owner, and that the VM's home resolution is an oop-identity match.
+
+The code already knows this failure shape.  The comment at
+`Interpreter.cpp:8432` describes it for a different cause ("the CompiledBlock
+is SHARED between methods ... so outerCode points at the stale original") and
+adds a dynamic fallback that retries from the running closure's captured
+`outerContext`.  The same comment says why that fallback can miss: "closure_
+need not correspond to the frame being returned from (JIT-resident block
+returns reach here with a stale closure_)".
+
+So the first bisect is `PHARO_NO_JIT=1`.  Passing there points at the stale
+`closure_` on the JIT-resident return, i.e. the dynamic fallback failing to
+rescue a trait-copied home; failing there too points at the static
+`outerCode`/method-oop identity match itself.  Either way the fix is in the
+home resolution, not in a T1 specialization.
+
+Note this puts both of the 2026-09-02 newcomers on trait method copies — the
+other being the storm that killed the batch containing all 27 `Trait*Test`
+classes.
+
+### 23. The Context storm — Cog runs the block clean, we exhaust the heap — HIGH, arm64-only, non-deterministic
+
+Reproduces in **18 s** at `PHARO_MAX_OLD_SPACE_MB=1024`.  It is NOT the trait
+tests — the accumulation is already running in the Tonel block, and the 27
+trait classes are clean in isolation on our VM.  The bisect below is
+self-contradictory because the storm is timing-dependent, so `PHARO_DET_SCHED=1`
+is the next instrument.  Details in order below.
+
+The arm64 sweep's batch 1901-1950 died at index 1912 with
+
+    [VM] FATAL: old space exhausted during scavenge tenure (16 free of 12884901888)
+    [HEAP-CENSUS] 33363299 objs  Context / 6656491 objs Error / 6664295 objs FullBlockClosure
+
+taking 39 classes with it — all 27 `Trait*Test` plus `TrueTest`, `Tutorial*`,
+`UDPSocket*`, `UUID*` and `Undefined*`.  Census and analysis in
+`docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`; the ratios say an
+unbounded recursion that signals and catches an `Error` at every level and
+never unwinds (1.00 closures per Error, 5.01 Contexts per Error).
+
+**And the x86_64 sweep ran the whole block without storming** (2026-09-03):
+batch 1901-1950 completed in 270 s with all 51 classes.  So the storm is
+**arm64-only** in this pair of runs — which narrows it a great deal, and makes
+`PHARO_DET_SCHED=1` on arm the obvious next instrument.  It also means the
+trait block finally has one of our own measurements to compare against Cog:
+
+    TraitTest             53 P / 1 F   testTraitsUsersSanity [Assertion failed]
+    TraitFileOutTest       2 P / 2 E   FileDoesNotExistException — the test
+                                        writes its fileOut into the CWD
+    TraitInTraitClassTest  1 P / 1 T
+    the other 24 classes   clean
+
+`TraitTest>>testTraitsUsersSanity` is the selector behind the entry this file
+has carried since 2026-06-01.  See `docs/results/sweep-x86-2026-09-03.md`.
+
+**And it is not an arbitrary assertion — it is a whole-image invariant on
+exactly the state a trait rebuild touches:**
+
+    testTraitsUsersSanity
+        Smalltalk allClassesAndTraits do: [ :each |
+            self assert: (each traits allSatisfy: [ :t | t traitUsers includes: each ]) ].
+        Smalltalk globals allTraits do: [ :each |
+            self assert: (each traitUsers allSatisfy: [ :b | b traits includes: each ]) ]
+
+Every class must be listed by the traits it uses, and every trait's users must
+still use it.  The test runs late in the trait block, after two dozen classes
+have created and rebuilt traits through `ShiftClassBuilder`.  So the failure
+says our trait rebuilds leave `traitUsers` inconsistent — stale state left
+behind by a rebuild, which is the SAME family as this defect's trigger
+(a trait-class rebuild with live instances leaving a husk).
+
+That is the cheapest handle on this defect so far, and it does not need the
+storm: run the trait block and then evaluate the two assertions directly.  On
+x86_64 the invariant breaks without any storm; on arm64 the storm arrives
+first.  One mechanism, two escalations, is the hypothesis to test.
+
+**Stock Cog runs the same 27 classes clean, in seconds:**
+
+    27 classes   270 tests   0 F   0 E        (Cog v10.3.9, x86_64 under Rosetta)
+    TraitTest alone: 54 P / 0 F / 0 E
+
+Raw in `docs/results/sweep-arm-2026-09-02/cog-trait-baseline.txt`.  So this is
+ours, not the image and not the harness.  It also finally settles the entry
+under "Confirmed our-VM bugs" that has read "`TraitTest` 54P/0/0 on Cog, errors
+on ours — not yet drilled" since 2026-06-01: same class, same Cog number, and
+now a mechanism-shaped symptom to chase.
+
+What is already ruled out by reading (2026-09-02), so do not re-derive it: the
+2026-07 husk-trigger fixes are all still in place —
+`collectInstancesOfClass` skips forwarded objects (`ObjectMemory.cpp:3386`),
+and `becomeForward`-leaves-forwarder and classOf-follows-forwarders are
+default-on with opt-out knobs only (`:1803`, `:1895`, `:558`).  See
+`docs/history/arm-context-storm-2026-07.md`, which identifies the storm's
+trigger as exactly a trait-class rebuild with live instances.
+
+**A correlation worth carrying into the hunt:** `[DIAG-TIMER] ... timerSem=nil`
+— the Delay scheduler's timer semaphore gone — appears in only 7 of the arm64
+sweep's 41 batches, once each, EXCEPT in the two pathological ones:
+
+    batch 1901-1950 (this storm)          16 occurrences
+    batch 1801-1850 (defect #26's hang)   22 occurrences
+    five other batches                     1 each
+
+A dead Delay scheduler means `valueWithin:onTimeout:` never fires, so anything
+that retries under a timeout retries forever — which is the shape of an
+unbounded recursion that signals and catches an Error at every level.  Whether
+that is cause or consequence here is not established; it is a place to look
+early, and `PHARO_DET_SCHED=1` makes the ordering reproducible.
+
+#### CORRECTION 2026-09-03: it is not the trait tests, it is the Tonel ones
+
+Two runs settle this, and both contradict the "start at `TraitChangesTest`"
+reading below.
+
+*The trait classes are innocent in isolation.*  All 27 of them on our VM
+against the pristine base image, with the `traitUsers` invariant re-checked
+after each: **0 violations at all 28 checkpoints, `TraitTest` 54 P / 0 F / 0 E,
+no storm** — identical to Cog bar `TraitFileOutTest`'s working-directory
+artifact (`docs/results/sweep-x86-2026-09-03/ours-trait-invariant.txt`).
+
+*And the storm starts EARLIER than the class the 12 GB heap died on.*  Re-run
+batch 1901-1950 whole with the heap squeezed to 1024 MB and it reproduces in
+**18 seconds**:
+
+    rc=134, 8 of 51 classes, last reported TonelWriterV1Test (index 1909)
+    [HEAP-CENSUS] 2654994 Context / 516760 Error / 524728 FullBlockClosure
+
+Same 5.1 : 1 : 1 ratios as the sweep's 12 GB census.  A smaller heap fills
+sooner, so the class boundary it dies on moves earlier — 1909 here against 1912
+in the sweep.  **That means index 1912 was never the start; it was where a
+12 GB heap ran out.**  The accumulation is already running during the Tonel
+block:
+
+    1903 TonelParserTest      1907 TonelScannerTest
+    1904 TonelReaderTest      1908 TonelSourceScannerTest
+    1905 TonelReaderTraitCompositionTest
+    1906 TonelRepositoryTest  1909 TonelWriterV1Test
+
+which also explains why the trait block alone never storms.
+
+#### And the bisect says it is NON-DETERMINISTIC
+
+Seven runs at `PHARO_MAX_OLD_SPACE_MB=1024`, each a couple of seconds unless it
+storms:
+
+    1901-1902  Timespan only          rc=0     3s   clean
+    1903-1909  Tonel only             rc=0     4s   clean
+    1901-1905  prefix to 1905         rc=134  18s   2655142 Contexts  <-- STORM
+    1901-1907  prefix to 1907         rc=0     5s   clean
+    1901-1909  prefix to 1909         rc=0     4s   clean
+    1905-1905  TonelReaderTraitComp   rc=0     2s   clean
+    1909-1909  TonelWriterV1 alone    rc=0     2s   clean
+
+`1901-1905` storms while both of its supersets, `1901-1907` and `1901-1909`,
+run clean — so this is not a function of the class set.  It is timing, and it
+matches the Heisenbug character the 2026-07 dossier records ("2/10 real-catalog
+runs").  The storming run reported 3 classes before dying, i.e. it went down
+during index 1904 `TonelReaderTest`, and its census is the same 2.65M Contexts.
+
+**Rate, measured on the same range** (1901-1950's prefix 1901-1905, 1024 MB):
+
+    wall clock          1 of 3 runs storms      18 s when it does, 4 s when not
+    PHARO_DET_SCHED=1   0 of 3 runs storms      45 s every time
+
+So it is roughly a one-in-three race under the wall clock, and
+`PHARO_DET_SCHED=1` **suppresses** it rather than pinning it — the opposite of
+what that knob did for the aigraph transient CLAUDE.md cites.  Its 1024-bytecode
+yield quantum is far finer than the ~2 ms heartbeat it replaces, so the
+interleaving it produces is not the one that races.
+
+`PHARO_DET_SCHED_QUANTUM=N` widens that to N x 1024 bytecodes — coarser, closer
+to the wall-clock interleaving, still deterministic — and walking it up is the
+next thing to try: a quantum that storms every time turns this into a fixed
+repro.
+
+#### A DETERMINISTIC repro: `PHARO_DET_SCHED_QUANTUM=64`, identical to the object
+
+    quantum   runs  storms  time   Contexts at the abort
+    (wall)      3     1     18 s   2655137            (4 s when it does not fire)
+    1           3     0     45 s   —
+    4           2     0     4-6 s  —
+    16          5     3     18 s   2655263 / 2663681  NOT reliable -- see below
+    64          2     2     17 s   2655317 / 2655317  identical, needs more reps
+    256         1     1     18 s   2655312
+
+**Caveat added minutes later, and it matters.**  Six further quantum-16 reps,
+run while the x86_64 package tier was using the machine, went
+clean / storm / clean / storm / storm / clean — so quantum 16 is **5 of 8**
+overall, not 2 of 2, and its apparent reliability was luck.  DET_SCHED removes the heartbeat but NOT `Delay`, which is
+still wall-clock, so machine load still leaks in.  The quantum-64 pair was run
+before that contention started and has not been repeated under it.  **Treat
+"64 is deterministic" as promising and unconfirmed until it has six reps on an
+idle machine.**
+
+**Start from `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=64
+PHARO_MAX_OLD_SPACE_MB=1024` on batch 1901-1905.**  17 seconds, stormed both
+times it was run, and landed on the same Context count both times — which would
+make the whole execution repeatable rather than merely the outcome, and that is
+what makes lldb, a trace or an ablation usable.  Confirm the rate on an idle
+machine before relying on it; see the caveat below.
+
+#### It fires during `TonelReaderTest`, in every storming run
+
+The quantum-16 reps are worth more for WHERE they die than for the rate.  All
+five storming runs stop in the same two classes:
+
+    reps 1, 2, 4, 6   last marker `=== TonelReaderTest ===`               (index 1904)
+    rep 7             last marker `=== TonelReaderTraitCompositionTest ===` (1905)
+
+So the storm is not spread over "the Tonel block": it fires inside
+**`TonelReaderTest`**, occasionally slipping one class later.  Combined with
+the earlier runs — 1901-1902 never storms, 1903-1909 as a group never storms,
+1905 and 1909 alone never storm — the target is `TonelReaderTest` running after
+`TimespanDoTest`, `TimespanTest` and `TonelParserTest` have gone before it.
+
+The shape of the table is the finding in itself.
+
+#### It is the JIT's.  Three arms, eight reps each, same conditions
+
+Batch 1901-1905, `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=16
+PHARO_MAX_OLD_SPACE_MB=1024`, the three arms run back to back in one script so
+they share machine conditions:
+
+    arm                              storms   clean-run time
+    BASE (JIT on, as shipped)         6 of 8   3-4 s
+    PHARO_NO_JIT=1                    0 of 8   2-3 s
+    PHARO_JIT_EXCLUDE_EXC_INFRA=1     4 of 8   3-4 s
+
+**Interpreted, it does not storm at all.**  That moves defect #23 out of "some
+image or interpreter problem the JIT happens to expose" and into the JIT
+itself, which is where the /loop goal wants it.
+
+The honest caveat: `PHARO_NO_JIT` also changes timing wholesale, and this bug
+is timing-sensitive, so 0 of 8 is strong evidence rather than proof.  What
+makes it more than a timing artifact is the second arm — restoring the old
+hardcoded blacklist that refuses to JIT the exception/NLR core (`#signal`,
+`#signalerContext`, `#handleSignal:`, `#aboutToReturn:through:`, `#doesNotUnderstand:`)
+does NOT fix it.  So the storm is in JIT'd code, but not in the JIT'd exception
+core, and a rate that barely moves (6/8 -> 4/8) is what an unrelated knob looks
+like.
+
+#### The loop is `Error>>signal` looking for a handler it cannot find
+
+The first storm captured with the new dump answers the question the census
+never could:
+
+    [SEND-CHAIN] active-process frames, innermost first (depth=2, ...)
+    [SEND-CHAIN]   running  #findNextHandlerContext rcvr=0x165251a98
+    [SEND-CHAIN]   [    1] #nextHandlerContext     rcvr=0x165251bd8
+    [SEND-CHAIN]   [    0] #signal                 rcvr=0x165252318
+
+    Active process: 0x12a156458  priority=79
+
+That is the image's exception machinery: `Error>>signal` asks
+`Context>>nextHandlerContext`, which runs `findNextHandlerContext` up the
+sender chain looking for a context whose method is primitive 199
+(`BlockClosure>>on:do:`).  If that search comes back empty the error is
+unhandled, which signals again, and each turn of the loop costs exactly what
+the census shows: one `Error`, one `FullBlockClosure`, about five `Context`s.
+
+Note `depth=2`.  The native frame chain is only the tip — the recursion lives
+in the MATERIALIZED context chain, which is why 2.6M Contexts is the whole
+symptom.
+
+#### Inline J2J is the emit that does it: 0 storms of 6 with it off
+
+Five arms, six reps each, same batch and conditions:
+
+    arm                                 storms   clean-run time
+    BASE                                 4 of 6   4 s
+    PHARO_JIT_NO_BLOCKS=1                3 of 6   3-4 s
+    PHARO_T1_NO_INLINE_J2J=1             0 of 6   3-4 s
+    PHARO_NO_FRAME0_REUSE=1              4 of 4   (aborts before any class)
+
+`PHARO_T1_NO_INLINE_J2J` is the one that clears it, and it clears it without
+buying the result with slowness: its clean runs take the same 3-4 s as BASE's
+clean runs, so this is not "slower, therefore misses the window".
+`NO_FRAME0_REUSE` is not a second finding — it aborts with `classes=0`, before
+any class finishes, which is a different failure and needs its own look.
+
+That fits the send chain exactly.  Inline J2J emits a call into an already-JIT'd
+callee without the full frame push; if the elided frame is the `on:do:`
+activation, `findNextHandlerContext` walks a chain the handler is not in,
+finds nothing, and the signal recurses forever.  The next dump extends the
+walk to the materialized context chain and marks primitive 199/198 frames,
+which either confirms the handler is missing from the chain or refutes it.
+
+#### The chain is TRUNCATED, and the loop is a non-local return that cannot land
+
+A second storm, captured with the context walk, is the whole bug in eleven
+lines:
+
+    [SEND-CHAIN] active-process frames, innermost first (depth=4, ...)
+    [SEND-CHAIN]   running  #signal                                     rcvr=0x15db0dd20
+    [SEND-CHAIN]   [    3] #signal:                                     rcvr=0x15db0dd20
+    [SEND-CHAIN]   [    2] #error:                                      rcvr=0x15db0dd58
+    [SEND-CHAIN]   [    1] #cannotReturn:                               rcvr=0x15db0dd58
+    [SEND-CHAIN]   [    0] #runSingleTest:selector:timeout:priority:on: rcvr=0x12168e078
+    [SEND-CHAIN] materialized context chain from activeContext_=0x15db0dd58:
+    [SEND-CHAIN]   ctx[  0] 0x15db0dd58 #runSingleTest:selector:timeout:priority:on: prim=0
+    [SEND-CHAIN]   ctx[  1] 0x15db2a470 [] in #ifTrue:ifFalse:                        prim=0
+    [SEND-CHAIN] walked 2 contexts: 0 handler(s), 0 unwind(s)
+                 -- NO on:do: IN REACH, which is why signal never terminates
+
+Read it inside out.  `Context>>cannotReturn:` is the BlockCannotReturn path: a
+non-local return could not find its home, so the VM sends `cannotReturn:` per
+spec, which sends `error:` -> `signal:` -> `signal`.  `signal` then scans the
+sender chain for a handler and the chain is **two contexts long** — it ends at
+`[] in #ifTrue:ifFalse:` whose sender is nil.  Everything above that, including
+the `on:do:` the runner method's own selector advertises, is simply not in the
+chain.  No handler, so the unhandled-error path runs, which returns from a
+block whose home is equally unreachable, which is another `cannotReturn:`.
+One `Error`, one `FullBlockClosure` and about five `Context`s per turn, forever
+— which is the census, exactly.
+
+So defect #23 is not a separate bug from #22.  Both are the JIT losing the
+frame a non-local return needs; #22 lost the home method's identity and was
+fixable by matching literals, and #23 loses the sender chain outright.  The
+knob bisect points at inline J2J, which is precisely the emit that runs a
+callee WITHOUT pushing an interpreter frame.
+
+#### Fix: materialize pending J2J saves before building the closure
+
+The chain loop's `ExitBlockCreate` handler called `createFullBlockWithLiteral`
+with J2J saves still pending, and `enableJ2J()` further down then rebased the
+save slice and zeroed `j2jDepth` -- so those saves were not merely invisible to
+the closure's `outerContext`, they were silently DROPPED, and the
+`materializeJ2J()` after `tryResume` never saw them.  Materializing first is
+legal at that point because the JIT has already exited (`tryResume` returned
+this exit), which is exactly when every other handler consumes its saves.
+
+Measured interleaved -- base and fixed alternating rep by rep, four CPU hogs
+holding the load steady, matched binaries built from the same tree:
+
+    A/B                                  base      other arm
+    fix 1 only                         9 of 12    3 of 12
+    fix 1 + storm guard                7 of 10    0 of 10
+    fix 1 + guard + fix 2              8 of 10    0 of 10
+    guard + fix 2, fix 1 REVERTED      7 of 10    0 of 10   <- the one that counts
+
+The first three lines are void: fix 1 breaks 11 classes on batch 1-100 (below),
+and a change that breaks code can suppress a storm by breaking the path that
+reaches it.  **The last line is the result.**  With fix 1 reverted, the
+`cannotReturn:` storm guard alone takes the abort rate from 7 of 10 to 0 of 10,
+firing in 7 of those 10 runs -- every storm becomes one terminated process and
+the batch completes.  The same build scores 0 non-clean classes on batch 1-100,
+twice, matching the unfixed VM.
+
+Interleaving is not a nicety here.  The rate tracks machine load (6 of 8 with
+the package tier running, 4 of 6 later, 1 of 6 idle), so blocked A-then-B arms
+measure the load as much as the change.  An earlier read of this same A/B at
+five reps (base 3, fixed 2) said the fix did nothing; that was a coin-flip's
+worth of data.
+
+Three of thirty-two is not zero, and all three were on the fix-1-only build.
+
+#### What is still broken: the loop starts, the guard ends it
+
+A marginal A/B -- fix 1 alone against fix 1 + fix 2, 16 interleaved reps each
+under held load -- counting guard fires as well as aborts:
+
+    build            aborts    runs that tripped the guard    total guard fires
+    fix 1            0 of 16          7 of 16                       39
+    fix 1 + fix 2    0 of 16          8 of 16                       18
+
+So fix 2 does not change how OFTEN the dead-sender loop starts (7 runs against
+8) but roughly halves how many separate episodes a run has (39 fires against
+18).  Each fire is one process terminated, so that is fewer processes killed
+per run, and it settles the question the last note raised: fix 2 earns its
+place and does not make the loop more frequent.
+
+What neither fix does is stop the loop starting.  About half of all runs still
+trip the guard at its default burst of 64, complete the batch, and report every
+class.  The guard is therefore load-bearing, not a belt-and-braces addition,
+and defect #23's remaining question is unchanged: why does a return find its
+sender already dead when no unwind has run?  Every frame push now hands the
+materialized context over correctly -- `pushFrame` (both variants) and the J2J
+materializer are the only three -- so the next place to look is whether one
+activation is materialized TWICE, which would give two returns and a second one
+into a corpse.
+
+The second A/B's zero belongs to the FIX, not to the storm guard: the guard's
+`[CANNOT-RETURN-STORM]` line appears in none of those ten runs, so it never
+fired.  That is worth stating plainly because it means the guard is, as of this
+writing, an untested code path -- it cannot fire in a healthy run by
+construction.  Its burst limit is therefore a knob
+(`PHARO_CANNOT_RETURN_BURST`, default 64) so the path can be exercised
+deliberately.  The resume loop has the
+same `ExitBlockCreate` twin and does NOT materialize -- its handlers are
+documented to assume `depth==0` -- and a counter now says whether that
+assumption holds in practice.
+
+#### One site, 515,981 sends, and `Context>>freeze` as the allocator
+
+Six per-site counters on the `cannotReturn:` sends settle where the loop runs.
+One storm, one site:
+
+    [SEND-CHAIN] cannotReturn: sends by site (515981 total):
+                 return-into-dead-sender=515981
+
+That is the ordinary return path finding its SENDER context already dead -- pc
+nil, or the -1 `HasBeenReturnedFrom` sentinel an unwind writes.  And the full
+context chain at the abort shows why it never ends:
+
+    #freeze <- #freezeUpTo: ... #handleError:log: <- #handleError: <- #handleError:
+    <- #unhandledErrorAction <- #defaultAction <- #handleSignal: <- #signal
+    <- #signalForException: <- #raiseUnhandledError <- #defaultAction
+    <- #handleSignal: <- #signal <- #signal: <- #error: <- #cannotReturn:
+    <- #runSingleTest:selector:timeout:priority:on: <- [] in #ifTrue:ifFalse:
+
+`Context>>freeze` COPIES the whole context chain so the error can be logged,
+and the chain is one full round deeper every time round.  That is the
+allocator: 2.6M Contexts, 517K Errors, 517K FullBlockClosures, one round each.
+
+Four of the six sites had no bound at all.  The VM already carries the rule at
+the fifth -- "Too many cannotReturn: events, the error handler is not
+terminating, fall through to terminate the process" -- so
+`cannotReturnStormGuard` now applies it to the four that lacked it: 64 sends
+from one process inside a 2,000,000-step window, then terminate that process.
+
+**That is a bound, not a diagnosis.**  The open question is why a JIT'd frame
+returns into a context an earlier unwind already killed.  Two sites write that
+corpse marker -- the NLR home search in `returnValue`, and
+`handleContextNLRUnwind`'s kill of `startCtx..ensureCtx` -- and both are now
+counted, so the next storm says which unwind left the frame behind.
+
+#### Fix 1's first form was a regression, and only the full sweep caught it
+
+Every A/B above ran the same five-class batch, and every one of them said the
+fix was clean.  The full arm64 sweep said otherwise within four batches:
+
+    binary                       batch 1-100      sweep's first 408 classes
+    unfixed (2026-09-02)         0, 0 non-clean   --
+    fix 1 + storm guard         11 non-clean      55 non-clean
+    fix 1 + fix 2 + guard       12, 12 non-clean  --
+    fix 1 bailing, not resuming 11, 11 non-clean  --
+    fix 1 REVERTED, fix 2+guard  0,  0 non-clean  --
+
+Fix 2 adds nothing on top: the damage is all fix 1's.
+
+and the failures are the shifted-operand-stack signature, not anything to do
+with storms: `NonBooleanReceiver: proceed for truth` and
+`MessageNotUnderstood` with a receiver that is not the intended one
+(`SmallInteger >> #byteSize`, `MCWorkingCopy >> #detect:ifNone:`), 304 and 424
+of them respectively.
+
+The first guess was that the RESUME did it -- `enableJ2J()` further down the
+handler rebases the save slice the JIT is about to resume onto, which is
+harmless while the saves are simply dropped and looks unsafe once they are live
+frames.  Wrong: materializing and then BAILING to the interpreter instead of
+resuming scores the same 11 non-clean, twice.
+
+So converting live J2J saves into interpreter frames is not valid at this exit
+at all, whatever happens afterwards, and **fix 1 is reverted**.  The hole it
+was aimed at is real and still open -- a closure built here captures a chain
+missing every J2J-hidden caller, 481 times in a 20-second run, and the counter
+that says so is kept.  Closing it needs a way to give the closure a complete
+`outerContext` WITHOUT consuming the saves the JIT still owns.
+
+The lesson is about measurement, not about J2J: **a five-class repro batch
+cannot tell you a fix is safe.**  It can only tell you whether the bug it
+reproduces still fires.
+
+#### Both candidate fixes measured: neither closes the hole
+
+One binary, four configurations, 10 storm reps each under held load, plus the
+batch-1-100 smoke test on every one:
+
+    configuration              smoke      aborts   guard fired   DUP-FRAME
+    defaults                   0 / 1*      0/10       7/10          --
+    block-create gate ON       0, 0        0/10       5/10        10/10
+    site5 depth-clear ON       0, 0        0/10       6/10        10/10
+    both ON                    0, 0        0/10       8/10        10/10
+
+(* one default rep flagged `BlockClosureTest` 47 P / 1 F -- a `valueWithin:`
+timing test, and four CPU hogs were holding the load.  That is the smoke test
+being run under deliberate contention, not a regression.)
+
+Aborts are 0 everywhere because the guard is doing that job.  The tell was
+meant to be the guard's FIRING rate, and it does not move: 5, 6 and 8 against
+the default's 7, on ten reps each.  Neither candidate closes the hole, and both
+stay opt-in with these numbers recorded at the knob.
+
+#### RETRACTED: the "duplicate activation" was the detector's own false positive
+
+The section below claimed 27 (later 126) duplicate activations, all
+`#methodNode`.  With the site tag added, every one of them comes from a single
+materialize site -- `"j2jBase materialize"` -- and that site does not duplicate
+anything.  It REBUILDS a region: it writes frames at an explicit
+`j2jBaseFrameDepth + i` and only afterwards sets `frameDepth_` to
+`base + totalFrames`, discarding whatever sat above.  The detector scanned
+downward from `frameDepth_`, so it was comparing each freshly written frame
+against the copies that rebuild was about to throw away, and flagged every
+rebuild.
+
+Fixed: the scan now starts from the index of the frame being written, so it can
+only see frames BELOW it -- ones that survive into the same frame set, which is
+what a genuine duplicate would be.
+
+Two things that followed from the false positive are also void.  The
+`PHARO_J2J_SITE5_CLEAR_DEPTH` candidate was aimed at a duplicate that the
+detector was inventing; measured, it changes nothing (guard fires 6 of 10
+against the default's 7, DUP-FRAME unchanged at 10 of 10).  And the reasoning
+that "one activation represented twice" explains the dead-sender loop has no
+evidence behind it any more.
+
+What survives: the `ExitJ2JCall` handler really does `continue` without
+clearing `state.j2jDepth` or re-basing the cursor, and `enableJ2J()` really
+does have only three call sites, none of them that path.  That is still an
+inconsistency worth understanding.  It is just not the thing the detector was
+seeing.
+
+#### The duplicate is real, and it has a name: `#methodNode` (RETRACTED, see above)
+
+The duplicate-activation detector fired on its first sweep.  27 hits across the
+first eight batches -- every batch has some -- and every one of them is the
+same shape:
+
+    [DUP-FRAME #1] J2J save for #methodNode materialized onto fp=0x773a012d80,
+                   which frame 56 already holds
+
+Same frame pointer AND same method as a frame already on the stack, at depths
+53-83.  Two different activations of one method have different frame pointers,
+and a save is pushed per J2J call and popped on return, so two pending saves
+naming one caller frame is one activation represented twice -- exactly the
+shape the dead-sender loop needs: two returns, the second landing in the
+context the first killed.
+
+Worth being precise about what this does NOT say.  Those same eight batches are
+408 classes at 6633 P / 0 F / 0 E, so the duplicate is usually harmless: both
+frames return, the second one finds a dead context, sends `cannotReturn:`, and
+the image handles it.  It becomes defect #23 only when the resulting error
+cannot find a handler.
+
+So the next question is narrow and answerable: why are two J2JSaves for one
+`#methodNode` activation pending at once?  A save pushed twice, or a pop that
+did not happen.
+
+#### What a real fix looks like, and why neither candidate was taken tonight
+
+The hole is precise: a closure created while J2J saves are pending captures an
+`outerContext` whose sender chain is missing every J2J-hidden caller.  The
+counter says it happens 481 times in a 20-second run.  Two ways to close it,
+both real work, neither validated:
+
+1. **Refuse to inline-J2J a callee that creates a block.**  There is direct
+   precedent in this file's own emitter: the BV inline prep already refuses
+   blocks containing `SistaV1::PushFullBlock` / `PushClosure` because "creates
+   nested closures whose outerContext would point at the BV-inlined block's
+   not-quite-real frame, breaking nested-block semantics" -- the same defect,
+   one inlining layer down.  Wants a `hasBlockCreate` flag on `JITMethod` set
+   by the compile-time bytecode scan, a byte load in the xmethod gate chain
+   beside `isStubOnEntry` and `canBailMidMethod`, and a knob to A/B it
+   (`PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE`) since it costs inlining on
+   block-heavy code.
+
+2. **Build the missing contexts without consuming the saves.**  A variant of
+   `materializeFrameStack` that walks `savedFrames_` AND the pending J2JSaves
+   to produce a complete sender chain, leaving `j2jDepth` and the save slice
+   alone.  The trap is duplication: nothing links the context built this way to
+   the frame the save is materialized into later, so the same activation gets
+   two contexts -- and two contexts for one activation is precisely the
+   "returning into a dead sender" symptom being fixed.  It would need the save
+   record to carry its context, which means growing `J2JSave` and moving
+   stencil offsets.
+
+Option 1 is the one with precedent.  Neither was attempted tonight because
+each needs the batch-1-100 smoke test plus the storm A/B to validate, and the
+machine was committed to a full sweep.
+
+#### The fatal now says WHO, not just WHAT
+
+The census has twice been unable to name the loop behind a Context storm:
+"2.6M Contexts, 517K Errors, 524K FullBlockClosures" says an unbounded
+signal/catch recursion and stops there.  `Interpreter::dumpSendChain` now runs
+at the old-space-exhaustion FATAL, after the census, printing the active
+process's innermost 60 frames.  It is deliberately minimal — the abort fires
+INSIDE a scavenge, so it reads only selectors (out of CompiledMethods, which
+live in old space) and prints receivers as raw oops rather than dereferencing
+them through possibly-forwarded pointers.  The storm needs a yield
+interval of roughly 16 x 1024 bytecodes or coarser; at 4 x 1024 and finer it
+never fires, and the ~2 ms wall-clock heartbeat only lands in the window about
+a third of the time.  Quantum 16 storms every time but not identically
+(2655263 vs 2663681), so a little wall-clock input survives there — Delays, most
+likely — and 64 removes even that.
+
+**Practical note on the knob**: at quantum 1 it costs ~15x.  The 5-class range
+goes 4 s -> 45 s, and a whole 51-class batch does not finish — one attempt
+reached 14 of 51 classes in 900 s.  At quantum 4 the cost is back to 4-6 s.  So
+DET_SCHED at the default quantum is usable for a handful of classes and not for
+a batch; widen it or narrow the range.  Raw in `docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
+
+Note the Context count barely moves across storms — 2654994, 2655137, 2655142 —
+because it is set by the heap size, not by the bug; do not read it as a
+signature.
+
+#### The breaker DOES fire in the storm — once — and that is the problem
+
+I read this wrong twice, so the evidence first.  Both storm runs contain
+
+    [LOW-SPACE] threshold crossed #1 (free=22 MB) — signaling LowSpaceSemaphore
+
+exactly once, and then
+
+    [VM] low-space breaker at abort: threshold=0 bytes (DISARMED ...)
+
+The threshold is zero at the abort **because the breaker disarmed itself on
+delivery** — Cog's one-shot contract, where the image re-arms from
+`lowSpaceWatcher`'s tail.  It is not "never armed", which is what a bare
+`threshold=0` reading suggested and what an earlier version of this entry said.
+(The diagnostic now prints the delivery count so the two cannot be confused
+again.)
+
+22 MB free is exactly the effective threshold the fix computes —
+`max(400000, min(one eden, reservation/16))` with a 1 GB reservation — so the
+mechanism worked as designed.  What did not happen is the image stopping the
+hog: `[DIAG-TIMER] ... timerSem=nil` right beside it says the Delay scheduler is
+already dead, so the P60 `lowSpaceWatcher` cannot run to re-arm, and the storm
+spends the last 22 MB.  The queue dump names the culprit:
+
+    [DIAG-QUEUE] P79 proc=... susp=Error>>or:
+
+That print is `<receiver class>>><method selector>` of the process's suspended
+context (`Interpreter.cpp:4529-4540`), so what is solid is: **the storming
+process is at P79 and its suspended context's receiver is an `Error`.**  Read
+the selector with care — `or:` is compiler-inlined when its argument is a
+literal block, so a context whose method is `or:` is unusual, and
+`selectorOf` on a `CompiledBlock` does not answer what it does on a method.
+Do not build on the selector until it is confirmed from a live process dump.
+
+The census puts a tight constraint on any explanation: **one `FullBlockClosure`
+per `Error`** (516808 : 524544, a ratio of 1.015) and **5.1 `Context`s per
+`Error`**.  Whatever the loop is, each turn of it allocates exactly one closure
+and one Error.  One firing at 22 MB is not
+enough headroom for a process minting ~150k Contexts a second, and after that
+firing there is no second chance.  (In a bare `eval` it does, and the
+breaker fires 462 times; the 2026-07 dossier has this exactly backwards.)  The
+latch fix is still right and still needed, but it cannot help a run where the
+image never arms the threshold.
+
+**Startup ORDER is not the reason** — measured, so nobody re-derives it: in an
+image with the runner filed in, `SessionManager default startupList` puts
+`ProcessorScheduler` at #5 and `SUnitRunner` at #50 of 56.  The scheduler's
+handler, which calls `installLowSpaceWatcher`, runs long before the runner's.
+
+What that leaves is *when the arming actually happens*.
+`installLowSpaceWatcher` only FORKS: it creates
+`[ self lowSpaceWatcher ] newProcess` at `Processor lowIOPriority` (60) and
+resumes it.  The `primSignalAtBytesLeft:` call is inside `lowSpaceWatcher`, so
+the threshold is armed only once that **P60 process first gets the CPU** — and
+the runner forks its tests at P79/P80.  In a bare `eval` there is little to
+compete with and it arms (462 firings); in a batch it can lose the race, and a
+storm that starts ~18 s in gets there first.  Consistent with both
+observations: the batch-1801 log shows the watcher reaching
+`#lowSpaceThreshold` at step 161M, i.e. it does eventually run, while the
+1024 MB storm aborts with `threshold=0` well before that.
+
+So the remaining question is a scheduling one, and `PHARO_DET_SCHED=1` makes it
+observable.  The other candidate, `lowSpaceWatcher`'s own guard bailing with
+"Not enough memory to launch the lowSpaceWatcher", needs
+`garbageCollectMost`/`garbageCollect` to answer under 400000; ours return
+`freeOldSpaceBytes()`, which is billions here, so it is unlikely.
+
+#### (superseded) Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
+is generated from the image and archived at
+`docs/results/sweep-arm-2026-09-02/class-index-map.txt`.  It reproduces
+`TOTAL=2047` exactly, and
+
+    1911  TonelWriterV3Test      <- last class the dead batch reported
+    1912  TraitChangesTest       <- the storm starts here or after
+    1951  UndefinedPackageTest   <- first class of the next batch
+
+The two `*Test` classes in that range the runner drops as abstract are
+`TraitAbstractTest` and `TraitTestCase`, which is why 41 candidates leave 39
+missing.
+
+And `TraitChangesTest` is not an arbitrary starting point — it is the trigger
+family.  Every one of its tests drives `ShiftClassBuilder` to create and then
+REBUILD a trait:
+
+    t1 := self newTrait: #T1 with: { }.
+    builder := ShiftClassBuilder new name: #T1; beTrait; traitComposition: TEmpty; ...
+    builder oldClass: t1.
+    builder tryToFillOldClass. builder detectBuilderEnhancer.
+    builder builderEnhancer validateRedefinition: builder oldClass.
+    builder validateSuperclass. builder compareWithOldClass.
+
+which is exactly what `docs/history/arm-context-storm-2026-07.md` identifies as
+the storm's trigger: a trait-class rebuild with live instances leaving a stale
+husk that a `freeze` handler re-hits.  Twenty-seven classes of that in a row,
+each re-creating `#T1`, is a lot of obsolete traits.
+
+The rest of that range on Cog is also on record (same file): `TrueTest`,
+`Tutorial*`, `UDPSocket*`, `UUID*`, `Undeclared*` and `Undefined*` are all
+clean and take milliseconds, so nothing else in the batch is a candidate.
+Note `TraitAbstractTest suite` aggregates the whole block — 273 tests, and it
+takes Cog **76.5 s**, so the trait block is genuinely heavy work, not a
+trivial suite our VM trips over.
+
+**Chunks of five do NOT reproduce it** (2026-09-03): all eight chunks covering
+1912-1950 ran clean, 135 s for the whole 39 classes that the sweep never got
+to.  That is a property of the hunt, not
+evidence against the defect — `sunit-sweep.sh` relaunches from a pristine image
+per chunk, and the storm needs the accumulated state of many trait rebuilds in
+ONE image.  The sweep runs all 51 classes in a single VM; the hunt must too.
+
+So bisect by CLASS COUNT within one image, not by fresh chunks: run
+1901-1950 whole (it storms), then 1901-1930, then 1901-1920, and so on.  The
+`traitUsers` invariant above is the cheaper instrument for the same question —
+`scripts/pkg-jit-test/probe_trait_users_sanity.st` runs all 27 classes in one
+image and re-checks the invariant after each, so it names the first class that
+breaks it without needing the storm at all.  Stock Cog scores 0 violations at
+all 28 checkpoints
+(`docs/results/sweep-x86-2026-09-03/cog-trait-invariant-baseline.txt`).
+
+Then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
+`PHARO_MAX_OLD_SPACE_MB=1024` for the hunt — the storm took 758 s to reach the
+FATAL at 12288 and should take about a twelfth of that at 1024, and the census
+ratios that identify it do not depend on the absolute counts.
+
+### 24. Fourteen classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
+
+Carried through several sweeps as "the missing display" and therefore as a
+residual that could not be helped.  The 2026-09-02 Δcog says otherwise: stock
+Cog v10.3.9, **headless**, on the same pristine Pharo 13.1 image, with no
+fake-GUI prelude, scores 0 F / 0 E on every one of them.
+
+    class                                    Cog        ours (arm64 sweep)
+    SpAthensAdapterTest                      18P/0F/0E   8P/0F/1E
+    SpComponentListAdapterTest               16P/0/0     7P/0/1
+    SpListCommonPropertiestTest              46P/0/0    18P/0/5
+    SpTableCommonPropertiestTest             34P/0/0    14P/0/3
+    SpTreeAdapterMultipleSelectionTest       40P/0/0    18P/0/2
+    SpTreeTableAdapterMultiColumnMultiSel..  40P/0/0    18P/1/1
+    SpTreeTableAdapterMultiColumnTest        40P/0/0    18P/1/1
+    SpTreeTableAdapterSingleColumnMultiSel.. 40P/0/0    18P/1/1
+    SpTreeTableAdapterSingleColumnTest       40P/0/0    17P/1/1
+    FTTableMorphTest                          1P/0/0     0P/0/1
+    StDebuggerActionModelTest                54P/0/0    53P/1/0
+    StSpotterModelTest                        2P/0/0     0P/2/0
+    StTranscriptPresenterTest                 5P/0/0     2P/3/0
+
+The dominant error on our side is `SubscriptOutOfBounds: 1 in #()` reaching for
+an adapter's widget list, plus `MessageNotUnderstood: receiver of "x" is nil`.
+
+#### Ruled out: the parameterisation (2026-09-02, and I got this wrong first)
+
+The nine `Sp*` classes descend from `ParametrizedTestCase`, their suites are
+exactly twice their selector count, and our runner ran exactly half of what Cog
+ran — so the obvious story was that the runner builds
+`testClass selector: sel`, whose `parametersToUse` really is nil, leaving the
+adapter with no backend.  I filed that, wrote a runner change for it, and it is
+**wrong**.  `ParametrizedTestCase>>setUp` carries a workaround for precisely
+this case:
+
+    (self parametersToUse isEmpty and: [self class testParameters isNotEmpty])
+        ifTrue: [ self class testParameters expandMatrix first
+                    do: [ :aParameter | aParameter applyTo: self ] ]
+
+so a bare instance applies the first parameter set anyway.  Measured on Cog
+along the runner's own path — a bare `SpListCommonPropertiestTest` driven by
+`runCase` passes **23 of 23** selectors.  The change was reverted
+(submodule `ad78260`).  Do not re-derive this: an instance dump showing
+`parametersToUse = nil` is not evidence, because `setUp` fills it in.
+
+What the parameterisation DOES explain is the count difference, and only that:
+our 23 against Cog's 46 is one case per selector versus the whole matrix.
+Image-wide that is a real coverage gap — 241 of the 2047 concrete test classes
+are parameterised, their selectors total 2074 and their suites 12641, so 10567
+cases have never been run by this harness — but it is a coverage gap, not a
+cause of these failures.  (`scripts/package-tests-selfhosted.sh` already runs
+`c suite run`, so the package tier is unaffected either way.)
+
+#### ROOT CAUSE, reproduced on stock Cog: Morphic installed, UI process suspended
+
+Two wrong hypotheses first, both refuted by test rather than argument, and both
+worth not re-deriving:
+
+  * *No display.*  Cog passes these with `Display` nil, `UIManager default` =
+    `NonInteractiveUIManager` and `isHeadless` true.
+  * *No `WorldMorph`.*  Nilling `World` on Cog gives 2 P / 21 F, every one
+    `MessageNotUnderstood: receiver of "displayScaleFactor" is nil` — not our
+    signature at all.
+
+The answer is the third thing.  On stock Cog, install `MorphicUIManager` and
+then **suspend its UI process**:
+
+    UIManager default = MorphicUIManager
+    uiProcess suspended? = true
+    pass=18 fail=5
+       testChangeListInPresenterUpdatesWidget                    SubscriptOutOfBounds: 1 in #()
+       testDoubleClickActivatesRowInDoubleClickActivationMode    SubscriptOutOfBounds: 1 in #()
+       testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
+       testSetColumnTitleInPresenterPutsColumnHeaderMorph        SubscriptOutOfBounds: 1 in #()
+       testSingleClickActivatesRowInSingleClickActivationMode    SubscriptOutOfBounds: 1 in #()
+
+That is our arm64 sweep's result for this class exactly — same count, same five
+selectors, same messages.  Leave the UI process RUNNING and Cog is back to
+23 / 23, so it is the suspension and nothing else: the widget refreshes are
+deferred to the UI process, and with it suspended the assertions read an empty
+list.
+
+**The same condition reproduces most of the rest of the bucket**, which is why
+this entry is no longer about nine classes:
+
+    class                      Cog suspended            ours (arm64 sweep)
+    FTTableMorphTest           0P/1F SubscriptOOB       0P/1E, same test+message
+    StTranscriptPresenterTest  2P/3F "Got '' ..."       2P/3F, same three
+    SpAthensAdapterTest        8P/1F MNU "x" is nil     8P/1E, same test+message
+    SpComponentListAdapterTest 7P/1F SubscriptOOB       7P/1E, same test+message
+    StDebuggerTest            63P/4F                    58P/3F, all three among them
+    StDebuggerInspectorTest   10P/1F                    same — but Cog fails it
+                                                        UNSUSPENDED too: parity
+    StSpotterTest              2P/1F                    same — parity likewise
+    ---- not reproduced: still ours ----
+    StDebuggerActionModelTest 55P/0F                    53P/1F testEventAfterProceed
+    StSpotterModelTest         2P/0F                    0P/2F
+
+Of those last two, the x86_64 sweep narrows it further:
+`StDebuggerActionModelTest` is **clean on x86_64** — the only class in 1800
+covered classes that is non-clean on arm and clean on x86 — so its single
+`testEventAfterProceed [Denial failed]` is timing, not logic.
+`StSpotterModelTest` fails on both arches and passes on Cog suspended or not —
+but reading its two tests closes it out rather than leaving it open:
+
+  * `testAnnounceQueryEndedIsSentOnce` opens with
+    `self skipOnPharoCITestingEnvironment`, so Pharo's own CI does not run it;
+    our sweeps do, because they do not set `PHARO_CI_TESTING_ENVIRONMENT`.
+  * `testSpotterModelShouldWaitToPerformActualSearch` forks the search and then
+    asserts it has NOT started for 5 x 50 ms and HAS started 300 ms later — a
+    250-to-550 ms scheduling window and nothing else.
+
+So both are wall-clock, one of them upstream-skipped.  With that, every
+non-pass in the 2026-09-02 arm64 residual is attributed, and none of the GUI
+ones is a VM computation error.
+
+Counting the whole 2026-09-02 arm64 residual against that: **9 of the 21 FAILs
+and 17 of the 21 ERRORs are downstream of this one suspension.**  Three more
+FAILs are parity with Cog (image issues), and three are genuinely ours and
+unexplained — `StDebuggerActionModelTest>>testEventAfterProceed` and
+`StSpotterModelTest`'s two.
+
+Raw in `docs/results/sweep-arm-2026-09-02/cog-defect24-repro.txt`.
+
+**Restoring `NonInteractiveUIManager` afterwards does not help** — tested:
+install Morphic, suspend the UI process, then set `NonInteractiveUIManager` back
+as default, and it is still 18 P / 5 E with the same five.  So the operative
+state is not which manager is installed but a Morphic world that was **started
+and then stopped**; nothing restarts the deferred work.  A pristine image that
+never installed Morphic passes 23 / 23.
+
+That points at the prep as the cheapest harness-side lever: our prepped image
+is snapshotted with a live Morphic world (which is why the resume restarts a
+render loop at all), where a stock headless boot has none.  Prepping with
+`NonInteractiveUIManager` and no live world before `snapshot:andQuit:` would
+leave nothing for the runner to suspend.  Untested — it needs our VM.
+
+**And our runner suspends it deliberately.**  `run_sunit_tests.st`'s
+`startUp:` does it as its very first action, and says why:
+
+> Suspend the saved WorldMorph render loop FIRST, before any other startup
+> work.  On our custom VM the headless resume restarts MorphicRenderLoop at
+> pri-80; it busy-spins `WorldState>>drawWorld:` (Morphic DNUs), starves the
+> pri-80 Delay scheduler, and the scheduler dies (timerSem=nil) → only-idle
+> wedge before any test runs.
+
+So the chain is complete, and the defect is not where it was filed:
+
+    our VM's headless resume restarts MorphicRenderLoop
+      -> it busy-spins with Morphic DNUs and kills the Delay scheduler   <- THE DEFECT
+      -> the runner suspends the UI process to survive that
+      -> deferred widget refreshes never run
+      -> nine Sp* classes fail, and got labelled "the missing display"
+
+`setup_fake_gui.st` clears the bucket because it starts a UI process again.
+
+**What is proven and what is not.**  Proven: the suspended-UI-process state
+reproduces our exact failure set on stock Cog.  Taken from the runner's own
+comment, not re-measured tonight: that our headless resume installs Morphic and
+that the render loop DNUs.
+
+**Measured 2026-09-03, and on a PRISTINE image we are identical to Cog:**
+
+    ours: {NonInteractiveUIManager. true. 1. WorldMorph. UndefinedObject}
+    Cog:  #(NonInteractiveUIManager  true  1  WorldMorph  UndefinedObject)
+
+(`UIManager default class`, `isHeadless`, `WorldMorph allInstances size`,
+`World class`, `Display class`.)  So there is no environment difference in a
+bare boot at all, and the divergence has to come from the PREPPED image —
+which is snapshotted with a live Morphic world, and is why the resume has a
+render loop to restart and the runner has one to suspend.  That promotes
+"prep with `NonInteractiveUIManager` and no world before `snapshot:andQuit:`"
+from a cheaper lever to **the** thing to try.  Then chase the
+`WorldState>>drawWorld:` DNUs — **now filed separately as defect #25**, because
+a pri-80 busy-spin that kills the Delay scheduler is a defect in its own right.
+Fixing it retires nine classes of residual without touching Spec.
+
+Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
+`cog-parameterized-check.txt`.
+
+### 25. The resumed `MorphicRenderLoop` busy-spins on Morphic DNUs and kills the Delay scheduler — NEW 2026-09-02, MEDIUM
+
+The root behind #24, promoted out of a runner comment because it is a VM
+divergence and has been costing us a residual bucket for months.
+
+`run_sunit_tests.st`'s `startUp:` suspends the saved `WorldMorph` render loop
+as its very FIRST action, ahead of everything else, and says why:
+
+> On our custom VM the headless resume restarts `MorphicRenderLoop` at pri-80;
+> it busy-spins `WorldState>>drawWorld:` (Morphic DNUs), starves the pri-80
+> Delay scheduler, and the scheduler dies (timerSem=nil) → only-idle wedge
+> before any test runs.  The same suspension lived inside `runAllTests` but ran
+> ~111 lines too late (after the deferred timer bootstrap at step 25M).
+
+Stock Cog on the same image resumes headless with `UIManager default` =
+`NonInteractiveUIManager`, `Display` nil, and no such spin.  So either our
+resume path installs Morphic where Cog does not, or the render loop it starts
+DNUs where Cog's would not — and the DNUs are the part to chase, because a
+busy-spin at pri-80 that starves the Delay scheduler is a scheduling defect on
+its own, quite apart from Spec.
+
+**Cost, now measured:** with the UI process suspended, every widget refresh
+that Spec defers to it never runs.  Reproduced on stock Cog — Morphic installed
+and its UI process suspended gives `SpListCommonPropertiestTest` 18 P / 5 E,
+our exact failure set (#24, `cog-defect24-repro.txt`).  Nine classes of the
+2026-09-02 residual are downstream of this suspension.
+
+**Ruled out by reading (2026-09-02), so do not spend time on it:** the loop is
+`[ aBlock value ] whileTrue: [ self doOneCycle. Processor yield ]`, so an
+obvious theory is that our `Processor yield` fails to rotate the pri-80 queue
+and lets the loop monopolise it.  It does not — `primitiveYield`
+(`Primitives.cpp:9552`) appends the active process to the BACK of its priority
+list and then wakes the highest-priority ready process, which is Cog's
+behaviour, including the no-other-process-at-this-priority early exit.
+
+**Where to start:** get the DNU selectors.  The runner suspends the loop before
+they can be observed, so run a headless resume WITHOUT the suspension — file
+the runner in and immediately resume the UI process, or run a bare image with
+`PHARO_MAX_STEPS` low — and read what `WorldState>>drawWorld:` sends that the
+image does not understand.  A Morphic DNU under a display-less resume is
+usually a missing plugin primitive answering nil where a Form or an event
+buffer is expected.
+
+### 26. ~~The threaded-FFI batch never exits~~ — FIXED and VERIFIED 2026-09-03: 1800 s -> 54 s
+
+    before   rc=124   1800 s   (55 s of work, 1730 s idle)
+    after    rc=0        54 s   51 of 51 classes reported
+
+    [primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must unwind first
+    [primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must unwind first
+    [primitiveQuit] Honouring deferred quit from the callback loop
+                    (grace period expired; callback did not unwind)
+
+Clean exit, so the plain return out of the nested loop unwound fine and the
+`CallbackComplete` fallback noted below is not needed.  That is ~29 minutes
+recovered per sweep per architecture.  Raw in
+`docs/results/sweep-arm-2026-09-02/defect26-verification.txt`.
+
+Sweep batch 1801-1850 is the single largest wall-clock item in a full sweep and
+has never been filed.  It contains the threaded-FFI block —
+`TFCallbacksTest`, `TFUFFICallbackTest`, `TFUFFIConcurrencyTest`, the
+`TFUFFI*Marshalling*` families — plus `Step*Test` and `TCPSocket*Test`.
+
+    arm64 2026-09-02   rc=124, 1800 s, classes=51, completed=yes
+    x86_64 2026-09-02  same, and idling at ~1% CPU when observed at +20 min
+    stock Cog          the whole block: 429 tests, 0 F / 0 E, ~7.4 s total
+
+Exactly one batch per sweep shows the trace — a grep for
+`[primitiveQuit] Deferred` across all 41 arm64 batch logs hits only
+`batch_1801.log` — so the cost is one occurrence, not a per-batch tax.
+
+**It is a 55-second batch.**  The `[PROGRESS]` lines in the arm64 batch log
+date the first `[primitiveQuit] Deferred` to between 50 s and 60 s in, and then
+run to 1790 s — so the batch does its work in under a minute and **idles for
+1730 s** waiting to be killed.  The fix recovers essentially the whole of it,
+per sweep per architecture.
+
+The tests are not the problem, and the results file proves how far it got —
+the batch writes its per-class results, its `=== BATCH TOTAL ===` block
+(1306 P / 1 F / 0 E / 10 S), its completion marker, and `=== BATCH COMPLETE ===`.
+Only then does it fail to exit, and the harness kills it at
+`PER_BATCH_TIMEOUT`.  So this is a **shutdown hang**, not a test failure, and
+it costs 30 minutes of every sweep on every architecture — an hour a night at
+the current cadence.
+
+#### ROOT CAUSE — the deferred quit is never honoured, and the trace was in the log
+
+Two dead ends first: the runner's own comment says *"exitSuccess goes through
+SessionManager shutdown which may not reach primitiveQuit"*, and that is not
+true of Pharo 13 — `SmalltalkImage>>exitSuccess` is `self exit: 0` and
+`exit:` is `<primitive: 113>`, the very same primitive as `quitPrimitive`.  No
+SessionManager shutdown is involved.
+
+So primitive 113 runs, and our `primitiveQuit` does this:
+
+    if (callbackDepth_ > 0) {
+        fprintf(stderr, "[primitiveQuit] Deferred: %d callback(s) outstanding, "
+                        "C frames must unwind first\n", (int)callbackDepth_);
+        pendingQuit_ = true;
+        return PrimitiveResult::Success;
+    }
+
+and `pendingQuit_` is honoured in exactly one place — the `interpret()`
+checkpoint — under `pendingQuit_ && callbackDepth_ == 0`.  Both halves fail
+here:
+
+  * `TFCallbacksTest`'s old-session test **abandons a same-thread invocation by
+    design**, so `callbackDepth_` stays 1 for the rest of the run and the
+    condition can never become true;
+  * and a VM parked in `enterInterpreterFromCallback`'s nested loop is not
+    running the `interpret()` checkpoint at all, so nothing even looks.
+
+The evidence was in the logs the whole time, buried in 4 MB of periodic JIT
+stats — `[primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must
+unwind first`, five times in the arm64 batch and sixty-one in the x86_64 one.
+
+**Fixed 2026-09-02** by bounding the deferral: `primitiveQuit` records
+`g_stepNum` when it first defers, and both the `interpret()` checkpoint and the
+nested callback loop honour the quit once `kQuitGraceSteps` (2M bytecodes) have
+passed, whether or not the callback unwound.  Stranding a C frame matters while
+the VM keeps running; it does not matter when the process is exiting anyway,
+and Cog simply exits.  Unbuilt as of this writing.
+
+**What to watch for when verifying.**  Clearing `running_` makes the nested
+loop exit and `enterInterpreterFromCallback` RETURN to the callback trampoline
+— which is the same path any other `stopVM()` already takes out of that loop,
+but the C caller of an ABANDONED callback may no longer be there to return to.
+So the batch may end rc=0 (clean) or it may end rc=139.  Either beats rc=124
+after 1800 s, and the difference tells us whether the abandoned invocation
+still has live C frames: if it crashes, the next thing to try is the exit the
+loop's own abandonment path uses — it restores the suspended process and then
+`throw pharo::CallbackComplete{}`, with the comment *"C++ exception (not
+siglongjmp): unwinds through all C++"* — rather than a plain return.
+
+Worth knowing either way: `callbackDepth_` is decremented ONLY by
+`primitiveCallbackReturn` and by the two `[XTCB-DEAD-POP]` paths (worker
+timeouts).  A same-thread invocation the image abandons is never popped by
+construction, so the depth cannot come back to zero on its own.  That is why
+bounding the deferral, rather than waiting for the depth, is the fix.
+
+**And the quit is not the only thing that stalls on it.**
+`Interpreter::drainCallbackGraveyard()` opens with `if (callbackDepth_ != 0)
+return;` — so once `TFCallbacksTest` has abandoned an invocation, every retired
+libffi closure and `ffi_cif` for the REST OF THE RUN is buried and never freed.
+Small per entry and not fatal, but unbounded in principle, and it is a second
+symptom of the same stuck counter.  A deeper fix that popped the depth on
+abandonment would clear both; bounding the quit only clears the one that costs
+30 minutes a sweep.
+
+The mechanism is already described in our own source.  `Interpreter.cpp`'s
+`enterInterpreterFromCallback` comment says an *"abandoned same-thread
+invocation (TFCallbacksTest's old-session test, by design) parks everything
+after it inside this loop"*.  A VM parked in that nested loop has left the main
+`interpret()` loop, so whatever asks it to quit is not being seen — the loop
+polls `hasPendingSignals`, `checkTimerSemaphore`, the xtcb adoption drain and
+(since `3c75aca5`) the low-space latch, but nothing that ends the session.
+
+Two things to check, in order: whether `running_` / the quit path is observed
+by that loop at all, and whether the abandoned invocation can be reaped at
+image-quit time instead of parking forever.  Raw Cog numbers in
+`docs/results/sweep-arm-2026-09-02/cog-tf-callback-baseline.txt`.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
@@ -1757,9 +2985,25 @@ LEAD 18. ~~`updatePointersAfterCompact` walks survivor space to `newSpaceEnd_`~~
     condition for restoring it (a copying survivor's live watermark, never
     `newSpaceEnd_`) is written at the site.  The eden scan already ends at
     `edenFree_`, a real watermark.
-LEAD 19. ARM "context storm" prevention was proven on a constructed analogue, never
-    on the storm. Catalog #10 is cited twice as proof and has no artifact in
-    the repo — find the log or stop citing it.
+LEAD 19. CLOSED 2026-09-02 — the prevention did not work, and there is now an
+    artifact.  The 2026-08-22 low-space circuit breaker (`22fcb0e7`) never
+    fired on the first real storm we have a log for: arm64 sweep batch
+    1901-1950 ran old space from 12 GB free down to 16 bytes with 33.4M
+    Contexts / 6.66M Errors and printed no `[LOW-SPACE]` line at all.  The
+    artifact this lead asked for is now in the repo:
+    `docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`.  Root cause is structural, not a
+    tuning miss: the threshold was sampled on the interpreter's per-1024-
+    bytecode checkpoint, but old space is consumed almost entirely by scavenge
+    tenure, in steps of up to one eden (22 MB on that image).  Pharo arms the
+    threshold at `lowSpaceThreshold` = 400000 bytes, so a step lands inside the
+    observable window 400000/22003584 ≈ 1.8% of the time; the other 98.2% the
+    next tenure overruns `oldSpaceEnd_` and aborts before any checkpoint runs.
+    Fixed by latching the crossing at the two sites that advance
+    `oldSpaceFree_` and consuming the latch at the checkpoint, with the
+    effective threshold raised to max(image threshold, one eden) so the image
+    is interrupted while one more worst-case scavenge can still be absorbed.
+    Still to verify against a live storm — the reproduction is queued behind
+    the x86_64 sweep.
 LEAD 20. Six Win64 debug-gated helper call sites fixed by reasoning, never executed.
 LEAD 21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
 LEAD 22. SoundPlugin waveOut backend implemented, never runtime-verified.
@@ -1812,8 +3056,12 @@ image issues. The Cog comparison shows many are real, fixable VM defects.
 ## Confirmed our-VM bugs (Cog passes, ours errors)
 
     class                   Cog          our VM      notes
-    SystemEnvironmentTest   217P/0/0     79P/138E    boolean mis-eval (below)
-    TraitTest               54P/0/0      errors      not yet drilled
+    SystemEnvironmentTest   217P/0/0     217P/0/0    FIXED — our number is from
+                                                     the 2026-09-02 arm64 sweep
+                                                     and is now exact parity;
+                                                     "79P/138E" below is 2026-06
+    TraitTest               54P/0/0      errors      now defect #23; Cog number
+                                                     re-confirmed 2026-09-02
 
 ## Out of scope (Cog also fails)
 
@@ -2453,3 +3701,209 @@ announcer to drop the subscription. Combined with upstream skipping this test
 on their own CI (pharo#2471), the evidence does not support calling this a VM
 defect, and it should not be counted against the VM without a stock-Cog
 comparison this host cannot run.
+
+## NOT A DEFECT (#28 withdrawn) — the four XMLParser failures are SUnit's own time limit
+
+`TestCase>>debug`, which does not trap, finally names the exception:
+
+    DBG testAttributeDefaultValueEntity     TestTookTooMuchTime:
+    DBG testAttributeDefaultValueIDRef      TestTookTooMuchTime:
+    DBG testAttributeDefaultValueEntities   TestTookTooMuchTime:
+    DBG testAttributeDefaultValueIDRefs     TestTookTooMuchTime:
+    DBG testAttributeDefaultValueNmtokens   OK
+
+`TestTookTooMuchTime` is SUnit's per-test `timeLimit`, and a TestResult records
+it as an ERROR.  So these are not functional failures: they are the same
+Rosetta-slowness story as the sweep's TIMEOUTs, arriving through SUnit's clock
+instead of the harness's.  The stack is string-heavy DTD work --
+`XMLAttributeValidator>>furtherNormalizeAttributeValue:`, `String>>format:`,
+`WideString>>copyFrom:to:` -- which is exactly where a 2x-slower machine shows
+up first.
+
+That also resolves the earlier puzzle cleanly: `runCase` passes because it does
+not apply the time limit; `run` and `debug` do.  And it means the package
+tier's x86-vs-arm ERROR gap (24 against 17) is mostly this, not codegen.
+
+**Withdrawn as a defect.**  What is left is a performance question shared with
+the two whole-image scans below, and it belongs with them.
+
+## (former) Defect #28 — four XMLParser attribute-default tests fail on x86_64 only
+
+`XMLParserTest>>testAttributeDefaultValue{Entity,IDRef,Entities,IDRefs}` error
+on x86_64 and pass on arm64.  Reproduced in isolation 2026-09-03, same image,
+same five selectors, each VM in its own directory:
+
+    arm64    5 of 5 pass
+    x86_64   4 error, testAttributeDefaultValueNmtokens passes
+
+The full package run reports five (Nmtokens joins them there), so the fifth is
+timing-sensitive and the other four are not.
+
+**Narrowed the same morning, and it is not the test body.**  Running the same
+five selectors through `TestCase>>runCase` -- which is setUp, the test method,
+tearDown, and nothing else -- passes 5 of 5 on x86_64.  Only
+`(XMLParserTest selector: sel) run` fails, and `run` adds the TestResult
+machinery and the class's test RESOURCES around the case.  So the failure lives
+in the resource/setup path.
+
+That also explains why the package tier sees it and the SUnit runner does not:
+`package-tests-selfhosted.sh` runs `c suite run`, and `run_sunit_tests.st` runs
+`runCase`.
+
+This is the last unexplained arch-specific failure in the package tier and the
+only reproducible one anywhere: every other arm-vs-x86 difference in the
+2026-09-03 sweeps is a Rosetta timeout, a wall-clock assertion, a symbol the
+test dylib does not export, or a flake.
+
+Two earlier attempts to isolate it died on the harness rather than the tests --
+a stale `startup.st` in the shared working directory, then eval mode's
+`startup.st` staging colliding between two VMs in one directory.  Both are the
+same trap from `CLAUDE.md`, met twice.  Giving each VM its own directory fixed
+it.
+
+Next: the exception class and message (the first probe printed only the failing
+test's identity), and the `PHARO_NO_JIT=1` fork, which is one run and decides
+whether this is the x86 JIT's at all.
+
+## The three arm64 TIMEOUTs, measured: none is a correctness bug
+
+A TIMEOUT counts as a failure for the goal, so the three in the 2026-09-03
+arm64 sweep were run again with the per-test bound raised
+(`SUNIT_TIMEOUT_MULT=8`):
+
+    NoUnusedVariablesLeftTest      3 P / 0 F / 0 E    class wall 308 s
+    MCSmalltalkhubRepositoryTest   1 E                class wall  64 s
+                                   ZipArchiveError: can't find EOCD position
+    ReleaseTest                    40 P / 2 F / 1 T   class wall 467 s
+                                   TIMEOUT(prim-stuck): testNoShadowedVariablesInMethods
+
+So:
+
+- **`NoUnusedVariablesLeftTest` is simply slow.**  Given time it passes 3 of 3.
+  It scans every method in the image for unused temporaries.
+- **`MCSmalltalkhubRepositoryTest` is not a timeout at all.**  With time it
+  fails differently -- `ZipArchiveError: can't find EOCD position`, i.e. the
+  archive it fetched is empty or truncated.  Smalltalkhub is long dead; this is
+  a test that needs a remote resource that no longer exists.
+- **`ReleaseTest>>testNoShadowedVariablesInMethods` is capped, not hung.**  The
+  runner's `TIMEOUT(prim-stuck)` fires when the hard wait expires, and that
+  wait is `min(seconds * 2 * mult, maxPerTest)` with `maxPerTest` defaulting to
+  300 s -- so the multiplier cannot lift it past 300 s.  The class needs
+  `Smalltalk globals at: #SUnitMaxPerTestSeconds put: <bigger>` to finish, not
+  a bigger multiplier.  It is another whole-image scan.
+
+None of the three is a JIT correctness defect.  Two are slow whole-image scans
+and one is a dead remote resource.  What is still worth knowing is HOW slow the
+two scans are against Cog -- that is a JIT performance question, not a
+correctness one, and it is the only thing left in this group.
+
+## Defects #24/#25 — the display family: `setup_fake_gui.st` in the prep fixes most of it
+
+The largest single group in the residual is the "no display" family, ~13 F and
+~16 E across `Sp*`/`St*` classes.  `CLAUDE.md` has recorded the lever for
+months -- "For Spec presenter tests, inject `setup_fake_gui.st` into the prep
+step BEFORE the runner... without it, ~350 Spec tests fail with 'receiver of
+activate is nil'; with it, 94.6% pass rate on 64 GUI classes" -- and **no sweep
+image this project has measured was prepped with it**, 2026-09-03's included.
+
+Measured 2026-09-03 on the 15 affected classes, same VM, same day, the only
+difference being the prep:
+
+    prep                          classes   PASS   FAIL  ERROR  SKIP
+    runner only                     15       209    13     16     7
+    setup_fake_gui.st + runner      15       232     6      0     7
+
+**Every error goes away** and the failures more than halve.  That is 16 E and
+7 F off the sweep residual, which is most of what is left after the storm was
+bounded.
+
+Note what this does NOT say.  It does not fix a VM defect -- it gives the image
+the Display and World that Morphic needs, which is what defect #24 identified
+when the same failures reproduced on Cog with `MorphicUIManager` installed and
+its UI process suspended.  The remaining 6 FAILs are the interesting ones now:
+they survive a working fake GUI.
+
+**Confirmed at scale.**  In the fake-GUI sweep, **all 178 `Sp*` classes are
+clean**, and the first 9 `St*` classes are too.  The previous sweep had nine
+`Sp*`/`St*` classes non-clean between them.  At 1703 classes the running totals
+are 22789 P / 2 F / 1 E / 3 T, against 2 F / 10 E at the same point without the
+prep, and the only two non-clean classes so far are `OCClassBuilderTest` (the
+build-745 image issue) and `ReleaseTest` (shared with Cog).
+
+`FTTableMorphTest`, which errored with the same `SubscriptOutOfBounds: 1 in #()`
+signature as the family, is clean too -- so it belonged to this group all
+along.
+
+## Defect #27 — a ByteSymbol runs `BlockClosure>>value:`
+
+`RSRoassalTest>>testOpen`, arm64, 2026-09-03 sweep:
+
+    ERROR: testOpen (MessageNotUnderstood: Message not understood:
+                     ByteSymbol >> #numArgsError:)
+      >> ByteSymbol(Object)>>doesNotUnderstand: #numArgsError:
+      >> ByteSymbol(BlockClosure)>>value:
+      >> Array(SequenceableCollection)>>do:
+      >> SystemWindow(Morph)>>announceOpened
+
+Read the second line carefully.  The parenthesised class is where the METHOD
+lives, so this is a **ByteSymbol receiver running `BlockClosure>>value:`**.
+ByteSymbol's superclass chain is Symbol -> ByteString -> String ->
+ArrayedCollection; it never reaches BlockClosure, so no lookup can produce
+that pair.  It is a mis-dispatch -- an inline cache or method cache hit that
+did not verify the receiver's class -- and `numArgsError:` is simply the first
+thing `BlockClosure>>value:` sends to a receiver that is not a block.
+
+**Not caused by tonight's changes.**  The same signature is in the 2026-09-02
+baseline's failing-selectors list, on a different class:
+`SpTableCommonPropertiestTest>>testChangeListInPresenterUpdatesWidget`.  Two
+different call sites, same shape, so it is a live defect that moves around with
+timing rather than a property of one test.
+
+Both sightings go through `SequenceableCollection>>do:` with a Symbol where a
+block is expected -- `#foo value: each` is idiomatic Pharo and perfectly legal
+(Symbol implements `value:`).  So the send site is polymorphic between
+`BlockClosure` and `Symbol`, which is exactly where a monomorphic IC that skips
+its class guard would go wrong.
+
+**Two instruments tried, both dead ends, and the second nearly lied.**
+
+A targeted repro is hopeless: the defect appears about once per 2043-class
+sweep, so four reps of the two suspect classes see nothing, and four reps of
+nothing is not evidence.  Abandoned after one rep.
+
+`PHARO_T1_VALIDATE_IC` looked like the right instrument -- `validateICTarget`
+re-looks-up the selector in the receiver's class and reports a mismatch, which
+is exactly this shape.  Three reps reported zero mismatches.  **That zero was
+meaningless**: the validator now announces itself on its first call, and no run
+printed the line, so it was never reached at all.  The knob covers only the
+chain loop's `ExitSendCached` path with `sendArgCount >= 0`, which these runs
+never take, and a send dispatched entirely inside emitted code never passes
+through it.
+
+So the instrument that can see this has to sit where the emitted monomorphic IC
+dispatches, not in the chain loop.  That is the next thing to build, and it is
+worth building carefully: a per-send class check is not free.
+
+Worth ruling out first, cheaply: `classOf` returning the wrong class for a
+moment (a GC or become artifact) would produce exactly this pair without any IC
+being at fault.
+
+**Third instrument, and it needed two corrections before it could be believed.**
+The victim-side check -- reaching `BlockClosure>>value:`'s primitive with a
+receiver that is not a closure -- is the right idea, because it does not depend
+on guessing which dispatch path is at fault.  Its first version was wrong twice:
+
+- it sat AFTER the primitive's failure exits, so the receiver it was built to
+  catch could never have reached it (a non-closure fails the slot-2 numArgs
+  read and returns first);
+- it treated `FullBlockClosure` as the only closure class, so its first sweep
+  reported four hits and all four were `CleanBlockClosure` -- a perfectly good
+  closure.
+
+Both were caught by the detector's own output, because it printed the receiver's
+class name rather than a bare count.  A count would have read as four
+confirmations of defect #27.
+
+**The four MISDISPATCH lines in the 2026-09-03 fake-GUI sweep are those false
+positives**, not sightings.  The corrected detector is in `build-rel` and was
+not in the binary that sweep runs.

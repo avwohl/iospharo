@@ -1,0 +1,14 @@
+NeoJSON      load rc=0     16s  image=237MB grew
+NeoJSON      test rc=0      3s  RESULT classes=11 pass=116 fail=0 err=0 timeout=0
+Mustache     load rc=0     10s  image=171MB grew
+Mustache     test rc=0      2s  RESULT classes=1 pass=47 fail=0 err=0 timeout=0
+XMLParser    load rc=0    239s  image=1258MB grew
+XMLParser    test rc=0    292s  RESULT classes=159 pass=6359 fail=0 err=0 timeout=0
+Grease       load rc=0     43s  image=442MB grew
+Grease       test rc=0     41s  RESULT classes=37 pass=554 fail=0 err=0 timeout=0
+PolyMath     load rc=0    145s  image=877MB grew
+PolyMath     test rc=0    272s  RESULT classes=117 pass=1392 fail=2 err=16 timeout=1
+DataFrame    load rc=0     60s  image=605MB grew
+DataFrame    test rc=0      4s  RESULT classes=27 pass=839 fail=14 err=0 timeout=0
+Fuel         load rc=0     45s  image=52MB DID-NOT-PERSIST
+Fuel         test rc=0      4s  RESULT classes=2 pass=19 fail=0 err=0 timeout=0

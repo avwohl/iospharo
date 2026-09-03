@@ -1,0 +1,55 @@
+sweep start 2026-09-02 16:29:51
+  vm      /Users/wohl/src/iospharo-jit/build-rel/test_load_image  (arm64)
+  image   /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/1bd8ced5-99da-4d16-8712-30a8a47e55ff/scratchpad/work/sunit.image
+  sources /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/1bd8ced5-99da-4d16-8712-30a8a47e55ff/scratchpad/work/Pharo13.1-64bit-4f7563d.sources
+  total=2047 step=50 timeout=1800s
+batch     1-50    rc=0     12s  classes=51   completed=yes
+batch    51-100   rc=0     25s  classes=51   completed=yes
+batch   101-150   rc=0     36s  classes=51   completed=yes
+batch   151-200   rc=0     64s  classes=51   completed=yes
+batch   201-250   rc=0     27s  classes=51   completed=yes
+batch   251-300   rc=0     20s  classes=51   completed=yes
+batch   301-350   rc=0     45s  classes=51   completed=yes
+batch   351-400   rc=0     52s  classes=51   completed=yes
+batch   401-450   rc=0     57s  classes=51   completed=yes
+batch   451-500   rc=0     75s  classes=51   completed=yes
+batch   501-550   rc=0     89s  classes=51   completed=yes
+batch   551-600   rc=0     34s  classes=51   completed=yes
+batch   601-650   rc=0     26s  classes=51   completed=yes
+batch   651-700   rc=0    100s  classes=50   completed=yes
+batch   701-750   rc=0     21s  classes=51   completed=yes
+batch   751-800   rc=0     30s  classes=51   completed=yes
+batch   801-850   rc=0    156s  classes=51   completed=yes
+batch   851-900   rc=0     21s  classes=51   completed=yes
+batch   901-950   rc=0     64s  classes=51   completed=yes
+batch   951-1000  rc=0     26s  classes=51   completed=yes
+batch  1001-1050  rc=0    325s  classes=51   completed=yes
+batch  1051-1100  rc=0     87s  classes=51   completed=yes
+batch  1101-1150  rc=0     12s  classes=51   completed=yes
+batch  1151-1200  rc=0     39s  classes=51   completed=yes
+batch  1201-1250  rc=0     52s  classes=51   completed=yes
+batch  1251-1300  rc=0     18s  classes=51   completed=yes
+batch  1301-1350  rc=0     27s  classes=51   completed=yes
+batch  1351-1400  rc=0    309s  classes=51   completed=yes
+batch  1401-1450  rc=0     63s  classes=51   completed=yes
+batch  1451-1500  rc=0     32s  classes=51   completed=yes
+batch  1501-1550  rc=0    603s  classes=51   completed=yes
+batch  1551-1600  rc=0    278s  classes=51   completed=yes
+batch  1601-1650  rc=0    258s  classes=51   completed=yes
+batch  1651-1700  rc=0    334s  classes=51   completed=yes
+batch  1701-1750  rc=0    251s  classes=51   completed=yes
+batch  1751-1800  rc=0    443s  classes=51   completed=yes
+batch  1801-1850  rc=124 1800s  classes=51   completed=yes
+batch  1851-1900  rc=0    196s  classes=50   completed=yes
+batch  1901-1950  rc=134  758s  classes=10   completed=no
+batch  1951-2000  rc=0     66s  classes=51   completed=yes
+batch  2001-2047  rc=0    328s  classes=48   completed=yes
+sweep done 2026-09-02 18:30:59
+=== TOTALS ===
+  classes 2005
+  tests   27682
+  PASS    27453
+  FAIL    21
+  ERROR   21
+  SKIP    182
+  rate    99.17%

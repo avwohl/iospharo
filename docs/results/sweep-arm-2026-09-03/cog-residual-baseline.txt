@@ -1,0 +1,582 @@
+=== Stock Cog SUnit run ===
+Classes to run: 28
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/843c94fb-e30b-4972-adab-c1ede07553bb/scratchpad/cog-residual/c.image
+Started: 2026-09-03T08:14:45.267712-04:00
+
+=== FTTableMorphTest ===
+  RUN: testCanAlternateRowColors
+Total: 1 P:1 F:0 E:0 S:0
+
+=== LibTTYTest ===
+  RUN: test1
+  RUN: test2
+  RUN: test3
+  RUN: test4
+  RUN: test5
+Total: 5 P:5 F:0 E:0 S:0
+
+=== MCSmalltalkhubRepositoryTest ===
+  RUN: testVersionFromFileNamed
+Total: 1 P:1 F:0 E:0 S:0
+
+=== NoUnusedVariablesLeftTest ===
+  RUN: testNoUnusedClassVariablesLeft
+  RUN: testNoUnusedInstanceVariablesLeft
+  RUN: testNoUnusedTemporaryVariablesLeft
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OCClassBuilderTest ===
+  RUN: testCreateEphemeronClassNamed
+  RUN: testCreateEphemeronClassWithAll
+  RUN: testCreateImmediateClassNamed
+  RUN: testCreateImmediateClassWithAll
+  RUN: testCreateNilSubclass
+  RUN: testCreateNormalClassNamed
+  RUN: testCreateNormalClassSuperClass
+  RUN: testCreateNormalClassWithClassVariable
+  RUN: testCreateNormalClassWithIV
+  RUN: testCreateNormalClassWithPackage
+  RUN: testCreateNormalClassWithSharedPools
+  RUN: testCreateNormalClassWithTrait
+  RUN: testCreateNormalClassWithTraitComposition
+  ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+  RUN: testCreateTraitUsingAnotherSingleTrait
+  RUN: testCreateTraitUsingAnotherTraitComposition
+  RUN: testCreateTraitWithoutOtherTraits
+  RUN: testCreateVariableByteClassNamed
+  RUN: testCreateVariableByteClassWithAll
+  RUN: testCreateVariableClassNamed
+  RUN: testCreateVariableClassWithAll
+  RUN: testCreateVariableWordClassNamed
+  RUN: testCreateVariableWordClassWithAll
+  RUN: testCreateWeakClassNamed
+  RUN: testCreateWeakClassWithAll
+  RUN: testDefaultResolve
+  RUN: testUseUndefinedClass
+Total: 26 P:25 F:0 E:1 S:0
+
+=== ReleaseTest ===
+  RUN: testAllClassPoolBindingAreClassVariables
+  RUN: testAllClassPoolBindingHaveDefiningClass
+  RUN: testAllGlobalBindingAreGlobalVariables
+  RUN: testAllInstanceVariablesDefiningClass
+  RUN: testAllInstanceVariablesOwningClass
+  RUN: testAllInstanceVariablesStartLowercase
+  RUN: testAllSharedVariablesOwningClass
+  RUN: testClassesShadow
+  RUN: testExistingPackageNamesDoesNotContainIllegalCharacters
+  RUN: testExplicitRequirementMethodsShouldBeImplementedInTheirUsers
+  RUN: testInstanceSideMethodsWithNilKeyInLastLiteral
+  RUN: testKeyClassesArePresentInStartupList
+  RUN: testLayoutIntegrity
+  RUN: testLocalMethodsOfTheClassShouldNotBeRepeatedInItsTraits
+  RUN: testManifestNamesAccordingToPackageNames
+  RUN: testMethodsContainNoHalt
+  RUN: testNoDeadSubscriptions
+  RUN: testNoEmptyPackages
+  RUN: testNoEquivalentSuperclassMethods
+  RUN: testNoLiteralIsPinnedInMemory
+  RUN: testNoNilAssignmentInInitializeMethod
+  RUN: testNoNullCharacter
+  RUN: testNoOrphanPackage
+  RUN: testNoPackagesOverride
+  RUN: testNoPeriodInMethodSignature
+  RUN: testNoShadowedVariablesInMethods
+  RUN: testNoSuperInitializeOnClassSideInitialization
+  RUN: testObsoleteClasses
+  RUN: testOnlyWeakSubscriptions
+  RUN: testPackageOrganizer
+  RUN: testPharoVersionFileExists
+  FAIL: testPharoVersionFileExists [Assertion failed]
+  RUN: testProperManifestClasses
+  RUN: testRatioOfCommentedClasses
+  SKIP: testRatioOfCommentedClasses ()
+  RUN: testShouldFileLocatorBeBeforeSystemSettingsPersistenceInStartupList
+  RUN: testShouldWorldMorphBeAfterFontClassesInStartupList
+  RUN: testTestCasesEndsWithTestOrTestCase
+  RUN: testThatAllMethodsArePackaged
+  RUN: testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented
+  RUN: testUndeclared
+  RUN: testUndefinedPackageShouldBeEmpty
+  RUN: testUnknownProcesses
+  ERROR: testUnknownProcesses (MessageNotUnderstood: Message not understood: DefaultExecutionEnvironment >> #watchDogProcess)
+  RUN: testUnpackagedClasses
+  RUN: testVersionInImageHeaderIsCorrect
+  RUN: testWorldMenuHasHelpForAllEntries
+Total: 44 P:41 F:1 E:1 S:1
+
+=== RSRoassalTest ===
+  RUN: testInitializeInRoassal
+  RUN: testOpen
+  RUN: testOpenOnce
+  RUN: testRemoveInteractionIfPresent
+  RUN: testSubscriberClass
+  RUN: testsRsValue
+Total: 6 P:6 F:0 E:0 S:0
+
+=== SpAthensAdapterTest ===
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testContextMenu
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testPresentersBlockReceivesAthensCanvas
+  RUN: testResizeMakesCanvasResize
+  RUN: testShowPresenterShowsWidget
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 9 P:9 F:0 E:0 S:0
+
+=== SpComponentListAdapterTest ===
+  RUN: testAddPresenterAddsWidget
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testEmptyPresenterHasEmptyAdapter
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testShowPresenterShowsWidget
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 8 P:8 F:0 E:0 S:0
+
+=== SpListCommonPropertiestTest ===
+  RUN: testChangeListInPresenterUpdatesWidget
+  RUN: testChangingFromMultipleToSingleSelection
+  RUN: testChangingFromSingleToMultipleSelection
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testDoubleClickActivatesRowInDoubleClickActivationMode
+  RUN: testEnabledAffectWidget
+  RUN: testFirstVisibleRowIsInitiallyFirstRow
+  RUN: testHidePresenterHidesWidget
+  RUN: testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph
+  RUN: testRightClickShowsMenu
+  RUN: testRightClickShowsMenuWhenThereAreNoItems
+  RUN: testScrollDownToNonExistingIndexScrollsBottomToLastIndex
+  RUN: testScrollDownToPosteriorIndexScrollsBottomToIndex
+  RUN: testScrollUpToNegativeIndexScrollsTopToFirstIndex
+  RUN: testScrollUpToPreviousIndexScrollsTopToIndex
+  RUN: testSelectingANotVisibleItemDoesNotScroll
+  RUN: testSetColumnTitleInPresenterPutsColumnHeaderMorph
+  RUN: testSetColumnTitleInPresenterShowsThemInWidget
+  RUN: testShowPresenterShowsWidget
+  RUN: testSingleClickActivatesRowInSingleClickActivationMode
+  RUN: testTypePerformsSearch
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 23 P:23 F:0 E:0 S:0
+
+=== SpTableCommonPropertiestTest ===
+  RUN: testAddColumnInPresenterAddsItToWidget
+  RUN: testChangeListInPresenterUpdatesWidget
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testDoubleClickActivatesRowInDoubleClickActivationMode
+  RUN: testEnabledAffectWidget
+  RUN: testFirstVisibleRowIsInitiallyFirstRow
+  RUN: testHideColumnHeadersInPresenterHidesThemInWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testListWithoutColumnsHasSingleColumn
+  RUN: testRightClickShowsMenu
+  RUN: testRightClickShowsMenuWhenThereAreNoItems
+  RUN: testShowColumnHeadersInPresenterShowsThemInWidget
+  RUN: testShowPresenterShowsWidget
+  RUN: testSingleClickActivatesRowInSingleClickActivationMode
+  RUN: testTypePerformsSearch
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 17 P:17 F:0 E:0 S:0
+
+=== SpTreeAdapterMultipleSelectionTest ===
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testClickDoesNotAccumulatesSelection
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testRightClickShowsMenu
+  RUN: testSelectManyIndexesKeepsAllSelected
+  RUN: testSelectPresenterIndexOutsideRangeUnsetsSelectedIndexInWidget
+  RUN: testSelectPresenterIndexSetsSelectedIndexInWidget
+  RUN: testSelectPresenterItemSetsSelectedIndexInWidget
+  SKIP: testSelectPresenterItemSetsSelectedIndexInWidget ()
+  RUN: testSelectPresenterWithScrollingMakeSelectedItemVisible
+  RUN: testSelectPresenterWithoutScrollingDoesNotScroll
+  RUN: testSelectWidgetIndexRaisesSelectionIndexChangeEventOnce
+  RUN: testSelectWidgetIndexRaisesSelectionIndexChangeEventWithSelectedIndex
+  RUN: testShiftClicktAccumulatesSelection
+  RUN: testShowPresenterShowsWidget
+  RUN: testStringColumnsShouldBeNonEditable
+  RUN: testSubscribeToEventDoesNotRaiseEvent
+  RUN: testUnselectAllInWidgetRaisesEmptySelectionChangeEvent
+  RUN: testUnselectAllInWidgetRaisesSelectionIndexChangeEventOnce
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 21 P:20 F:0 E:0 S:1
+
+=== SpTreeTableAdapterMultiColumnMultiSelectionTest ===
+  RUN: testAfterOpeningEmptyLazyChildrenExpandIconVanish
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testChangingRootsResetsSelection
+  RUN: testChangingRootsUpdateWidget
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testItemsWithoutChildrenDoNotHaveExpandIcon
+  RUN: testLazilyComputeChildrenDoesNotComputeChildren
+  RUN: testRightClickShowsMenu
+  RUN: testSelectItemRaiseEvent
+  RUN: testSelectItemSelectsTheGivenElement
+  RUN: testSelectItemSelectsTheGivenElementAndExpandsTheBranches
+  RUN: testSelecting2ElementsUpdatesThePresenterCorrectly
+  RUN: testSelectingAPathUpdatesSelectionInPresenter
+  RUN: testSelectingOutOfRangeKeepOldSelection
+  RUN: testShowPresenterShowsWidget
+  RUN: testShowingColumnDisplayColumn
+  RUN: testStartsWithoutSelection
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 20 P:20 F:0 E:0 S:0
+
+=== SpTreeTableAdapterMultiColumnTest ===
+  RUN: testAddingColumnUpdatesWidget
+  RUN: testAfterOpeningEmptyLazyChildrenExpandIconVanish
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testChangingRootsResetsSelection
+  RUN: testChangingRootsUpdateWidget
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testItemsWithoutChildrenDoNotHaveExpandIcon
+  RUN: testLazilyComputeChildrenDoesNotComputeChildren
+  RUN: testRightClickShowsMenu
+  RUN: testSelectItemRaiseEvent
+  RUN: testSelectItemSelectsTheGivenElement
+  RUN: testSelectItemSelectsTheGivenElementAndExpandsTheBranches
+  RUN: testSelectingAPathUpdatesSelectionInPresenter
+  RUN: testSelectingOutOfRangeKeepOldSelection
+  RUN: testShowPresenterShowsWidget
+  RUN: testShowingColumnDisplayColumn
+  RUN: testStartsWithoutSelection
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 20 P:20 F:0 E:0 S:0
+
+=== SpTreeTableAdapterSingleColumnMultiSelectionTest ===
+  RUN: testAfterOpeningEmptyLazyChildrenExpandIconVanish
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testChangingRootsResetsSelection
+  RUN: testChangingRootsUpdateWidget
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testItemsWithoutChildrenDoNotHaveExpandIcon
+  RUN: testLazilyComputeChildrenDoesNotComputeChildren
+  RUN: testRightClickShowsMenu
+  RUN: testSelectItemRaiseEvent
+  RUN: testSelectItemSelectsTheGivenElement
+  RUN: testSelectItemSelectsTheGivenElementAndExpandsTheBranches
+  RUN: testSelecting2ElementsUpdatesThePresenterCorrectly
+  RUN: testSelectingAPathUpdatesSelectionInPresenter
+  RUN: testSelectingOutOfRangeKeepOldSelection
+  RUN: testShowPresenterShowsWidget
+  RUN: testShowingColumnDisplayColumn
+  RUN: testStartsWithoutSelection
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 20 P:20 F:0 E:0 S:0
+
+=== SpTreeTableAdapterSingleColumnTest ===
+  RUN: testAfterOpeningEmptyLazyChildrenExpandIconVanish
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testChangingRootsResetsSelection
+  RUN: testChangingRootsUpdateWidget
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testItemsWithoutChildrenDoNotHaveExpandIcon
+  RUN: testLazilyComputeChildrenDoesNotComputeChildren
+  RUN: testRightClickShowsMenu
+  RUN: testSelectItemRaiseEvent
+  RUN: testSelectItemSelectsTheGivenElement
+  RUN: testSelectItemSelectsTheGivenElementAndExpandsTheBranches
+  RUN: testSelectingAPathUpdatesSelectionInPresenter
+  RUN: testSelectingOutOfRangeKeepOldSelection
+  RUN: testShowPresenterShowsWidget
+  RUN: testShowingColumnDisplayColumn
+  RUN: testStartsWithoutSelection
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 19 P:19 F:0 E:0 S:0
+
+=== StDebuggerInspectorTest ===
+  RUN: testDefaultLayoutSpec
+  RUN: testMaximizeAssertionSpec
+  RUN: testMaximizedAssertionLayoutSpec
+  RUN: testMinimizedAssertionLayoutSpec
+  RUN: testSetAssertionLayoutSpec
+  RUN: testSetDefaultLayoutSpec
+  RUN: testShouldUpdateContext
+  RUN: testToggleMaximizeAssertionSpec
+  RUN: testUpdateLayoutForContextsWithAssertionFailure
+  FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+  RUN: testUpdateLayoutForContextsWithShouldntRaiseFailure
+  RUN: testUpdateLayoutForContextsWithoutAssertionFailure
+Total: 11 P:10 F:1 E:0 S:0
+
+=== StDebuggerTest ===
+  RUN: testAcceptCodeChangesForContext
+  RUN: testActionModelSubscription
+  RUN: testCancelCodeChangesFor
+  RUN: testClearUnsavedChanges
+  RUN: testClose
+  RUN: testCodeChangeAfterContextChange
+  RUN: testCodeSelectionAfterRestart
+  RUN: testCodeSelectionAfterStepping
+  RUN: testContextChangedAfterStepIn
+  RUN: testContextChangedAfterStepOverAndReturn
+  RUN: testContextTempVarList
+  RUN: testContextTempVarListUpdatesAfterRestartingContext
+  RUN: testContextTempVarListUpdatesTempsWhenEnteringOrLeavingInlinedBlocks
+  RUN: testContextTempVarListUpdatesTempsWhenEnteringOrLeavingInlinedBlocksWithRunTo
+  RUN: testContextUnchangedAfterStepOver
+  RUN: testCopyStackToClipboard
+  RUN: testCreateMissingMethodWithUnfilteredStackUpdatesCodePane
+  RUN: testDebuggerActionModel
+  RUN: testDebuggerApplication
+  RUN: testDebuggerDoesNotLogStackToFileSetting
+  RUN: testDiscardCodeChangesFor
+  RUN: testDynamicVariableEvaluation
+  RUN: testExceptionProvidesSameExceptionAsTheActionModelOne
+  RUN: testGenerateAndProceed
+  SKIP: testGenerateAndProceed (Does not work, I do not know why it looks like my test is executed several times with the same debugger)
+  RUN: testInitialCodeSelectionAfterStepping
+  RUN: testInterruptedContextProvidesSameContextAsTheActionModelOne
+  RUN: testInterruptedProcessProvidesSameProcessAsTheActionModelOne
+  RUN: testIsInSelectedContextClass
+  RUN: testIsInSelectedContextPackage
+  FAIL: testIsInSelectedContextPackage [Got #valueWithinMilliseconds:onTimeout: instead of #runTestCaseUnderWatchdog:.]
+  RUN: testNewDebuggerContext
+  RUN: testNewDebuggerContextFor
+  RUN: testOpenDebuggerWithLastKnownPosition
+  RUN: testPreserveLastKnownPositionIsFalse
+  RUN: testPreserveLastKnownPositionIsTrue
+  RUN: testPrintReceiverClassInContext
+  RUN: testReceiverChangedAfterStepIn
+  RUN: testReceiverChangedAfterStepOverAndReturn
+  RUN: testReceiverList
+  RUN: testReceiverUnchangedAfterStepOver
+  RUN: testRecordUnsavedCodeChanges
+  RUN: testRestartContext
+  RUN: testRestoreReceiverRawInspectionSelection
+  SKIP: testRestoreReceiverRawInspectionSelection ()
+  RUN: testRestoreReceiverRawInspectionSelectionAfterContextChange
+  SKIP: testRestoreReceiverRawInspectionSelectionAfterContextChange ()
+  RUN: testRestoreUnsavedCodeChanges
+  RUN: testReturnEnteredValue
+  SKIP: testReturnEnteredValue ()
+  RUN: testSaveCodeModification
+  RUN: testSaveReceiverRawInspectionSelection
+  SKIP: testSaveReceiverRawInspectionSelection ()
+  RUN: testSaveReceiverRawInspectionSelectionAfterContextChange
+  SKIP: testSaveReceiverRawInspectionSelectionAfterContextChange ()
+  RUN: testSavingQuickMethodWhenSteppingIntoStackSizeBeforeIsTheSameAfter
+  RUN: testSavingQuickMethodWhenSteppingIntoStaysInQuickMethod
+  RUN: testSelectLastStackElementWithMoreElements
+  RUN: testSelectLastStackElementWithoutMoreElements
+  RUN: testSessionProvidesSameAsTheActionModelOne
+  RUN: testSessionStackProvidesSameStackAsTheActionModelOne
+  RUN: testStackTableAfterReturn
+  RUN: testStackTableAfterStepIn
+  RUN: testStackTableInitialization
+  RUN: testStackTableSelectionChanged
+  RUN: testStackTableWithNewSession
+  RUN: testToolbarDisplayMode
+  RUN: testToolbarInDNUContext
+  RUN: testUnsavedCodeChanges
+  RUN: testUnsavedCodeChangesFor
+  RUN: testUpdateExtensionSubscription
+  FAIL: testUpdateExtensionSubscription [Got 1 instead of 4.]
+  RUN: testUpdateLayoutForContextsIfAssertionFailure
+  FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+  RUN: testUpdateSourceCodeFor
+  RUN: testValueOfLastKnownPositionIsChangedWhenWindowIsClosed
+Total: 67 P:58 F:3 E:0 S:6
+
+=== StSpotterModelTest ===
+  RUN: testAnnounceQueryEndedIsSentOnce
+  FAIL: testAnnounceQueryEndedIsSentOnce [Got 0 instead of 1.]
+  RUN: testSpotterModelShouldWaitToPerformActualSearch
+Total: 2 P:1 F:1 E:0 S:0
+
+=== StSpotterTest ===
+  RUN: testDefaultSearchStringIsSelectedWhenInsertsSelectionOptionEnabled
+  RUN: testOpenSpotterRefreshesPreviewOnce
+  RUN: testSearchingString
+Total: 3 P:3 F:0 E:0 S:0
+
+=== StTranscriptPresenterTest ===
+  RUN: testAnnouncementIsWritten
+  RUN: testClear
+  RUN: testFetchOld
+  RUN: testReset
+  RUN: testSmoke
+Total: 5 P:5 F:0 E:0 S:0
+
+=== SystemDependenciesTest ===
+  RUN: testCollectionsShouldNotDependOnRandom
+  RUN: testExternalBasicToolsDependencies
+  RUN: testExternalCompilerDependencies
+  RUN: testExternalDisplayDependencies
+  RUN: testExternalFileSystemDependencies
+  RUN: testExternalKernelDependencies
+  RUN: testExternalLocalMonticelloDependencies
+  RUN: testExternalMetacelloDependencies
+  RUN: testExternalMonticelloDependencies
+  RUN: testExternalMorphicCoreDependencies
+  RUN: testExternalMorphicDependencies
+  RUN: testExternalSUnitDependencies
+  RUN: testExternalSUnitKernelDependencies
+  RUN: testExternalSpec2Dependencies
+  RUN: testExternalUFFIDependencies
+  RUN: testExternalUIDependencies
+  FAIL: testExternalUIDependencies [Given Collections do not match!
+	additions : #('Reflectivity')
+	missing: #()
+]
+  RUN: testFilesShouldNotDependOnRandom
+Total: 17 P:16 F:1 E:0 S:0
+
+=== TKTCommonQueueWorkerPoolTest ===
+  RUN: testWorkerPoolCretesWorkersWhenExecutingATask
+  RUN: testWorkerPoolDoesNotExceedPoolSize
+  RUN: testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel
+  RUN: testWorkerPoolStopStopsWorkers
+  RUN: testWorkerPoolWorkersAreStoppedAfterPoolsCollection
+  RUN: testWorkerPoolWorkersProcessesAreStoppedAfterPoolsCollection
+  RUN: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection
+Total: 7 P:7 F:0 E:0 S:0
+
+=== TKTWorkerPoolTest ===
+  RUN: testPriorityAfterStart
+  RUN: testPrioritySetBeforeStart
+  RUN: testWorkerPoolCretesWorkersWhenExecutingATask
+  RUN: testWorkerPoolDoesNotExceedPoolSize
+  RUN: testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel
+  RUN: testWorkerPoolStopStopsWorkers
+  RUN: testWorkerPoolWorkersAreStoppedAfterPoolsCollection
+  RUN: testWorkerPoolWorkersProcessesAreStoppedAfterPoolsCollection
+  RUN: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection
+Total: 9 P:9 F:0 E:0 S:0
+
+=== TKTWorkerTest ===
+  RUN: testWorkerExceptionIsHandledByExceptionHandler
+  RUN: testWorkerProcessDiesAfterStop
+  RUN: testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected
+  RUN: testWorkerProcessDiesAfterWorkerIsCollected
+  RUN: testWorkerProcessIsWorkingUntilAllTasksAreDone
+  RUN: testWorkerRunsAlwaysInSameProcess
+  RUN: testWorkerRunsInSeparateProcess
+Total: 7 P:7 F:0 E:0 S:0
+
+=== TraitFileOutTest ===
+  RUN: testFileOutCategory
+  RUN: testFileOutTrait
+  RUN: testRecompiling
+  RUN: testRemovingMethods
+Total: 4 P:4 F:0 E:0 S:0
+
+=== WeakAnnouncerTest ===
+  RUN: testAccessingSubscribers
+  RUN: testAnnounceClass
+  RUN: testAnnounceInstance
+  RUN: testAnnounceWorkWithinExceptionHandlerBlocks
+  RUN: testAnnouncingReentrant
+  RUN: testConcurrentSuspendAllWhile
+  RUN: testHandleSubscriberClass
+  RUN: testNoArgBlock
+  RUN: testNoDeadWeakSubscriptions
+  RUN: testNoWeakBlock
+  ERROR: testNoWeakBlock (Error: Not currently available due to missing ephemerons support)
+  RUN: testPreparationAnnouncementDelivery
+  RUN: testPreparationAnnouncementDeliveryWhenNoSubscriptions
+  RUN: testPreventDuring
+  RUN: testSubscribeBlock
+  RUN: testSubscribeClassWithExclusion
+  RUN: testSubscribeOnSpecificAnnouncer
+  RUN: testSubscribeSend
+  RUN: testSubscribeSet
+  RUN: testSubscribeSetWithExclusion
+  RUN: testSubscribeSetWithExclusionOfMultipleAnnouncements
+  RUN: testSubscribeSetWithExclusionOfSetItem
+  RUN: testSubscribeSubclass
+  RUN: testSubscribersForClass
+  RUN: testSuspendAllWhile
+  RUN: testSuspendAllWhileStoring
+  RUN: testSuspendAllWhileStoringNested
+  RUN: testSymbolIdentifier
+  RUN: testTwoArgBlock
+  RUN: testUnsubscribeBlock
+  RUN: testUnsubscribeSend
+  RUN: testUnsubscribeSet
+  RUN: testWeakDoubleAnnouncer
+  RUN: testWeakObject
+  RUN: testWeakSubscription
+Total: 34 P:33 F:0 E:1 S:0
+
+=== ZnClientTest ===
+  RUN: testConnectionClose
+  RUN: testConnectionCloseOnReuseTimeout
+  RUN: testConstruction
+  RUN: testCookies
+  RUN: testCustomUserAgentString
+  RUN: testDownloadSmallHTML
+  RUN: testGetAfterPost
+  RUN: testGetForm
+  RUN: testGetGeoIP
+  RUN: testGetLargeWideStringHTML
+  RUN: testGetSmallHTML
+  RUN: testGetSmallHTMLBinary
+  RUN: testGetSmallHTMLOneShot
+  RUN: testGetSmallHTMLStreaming
+  RUN: testGetSmallHTMLTwice
+  RUN: testGetSmallHTMLUrlConstruction
+  RUN: testGetStreamingConnectionClose
+  RUN: testGetWideStringHTML
+  RUN: testHeadSmallHTML
+  RUN: testIfFailNonExistingHost
+  RUN: testIfFailNotFound
+  RUN: testIfFailWrongType
+  RUN: testIfModifiedSinceNotModified
+  RUN: testJsonRESTGet
+  RUN: testJsonRESTPost
+  RUN: testLogging
+  RUN: testOptions
+  RUN: testPatch
+  RUN: testPostForm
+  RUN: testPostMultipart
+  RUN: testPostMultipartBinary
+  RUN: testPostMultipartNonASCII
+  RUN: testPostTwice
+  RUN: testPrepareRequest
+  RUN: testProgress
+  RUN: testProgressNoIfFail
+  RUN: testQueryGoogle
+  FAIL: testQueryGoogle [Assertion failed]
+  RUN: testRedirect
+  RUN: testRedirectDontFollow
+  RUN: testRedirectWithCookies
+  RUN: testRedirectWithCustomHeader
+  RUN: testRelativeRedirect
+  RUN: testRelativeRedirect307
+  RUN: testRelativeRedirectUp
+  RUN: testSpecialPosts
+  RUN: testTimeout
+  RUN: testUploadSmallDocument
+  RUN: testUsernamePassword
+  RUN: testUsernamePasswordInUserInfo
+  RUN: testUsernamePasswordTwice
+Total: 50 P:49 F:1 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 28
+Pass: 440
+Fail: 8
+Error: 3
+Skip: 8
+Total: 459
+Finished: 2026-09-03T08:17:26.537697-04:00
+
+=== BATCH COMPLETE ===

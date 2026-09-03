@@ -261,6 +261,19 @@ public:
     void interpret();
     void stopVM(const char* reason);
     void dumpProcessQueues();
+
+    /// Innermost frames of the ACTIVE process, selectors only.  The heap
+    /// census says WHAT filled the heap; this says WHO.  Called from the
+    /// old-space-exhaustion FATAL, where a class histogram on its own
+    /// ("2.6M Contexts, 517K Errors") has twice failed to name the loop
+    /// that made them.
+    void dumpSendChain(const char* why, size_t maxFrames = 60);
+
+    /// Rate-limit repeated cannotReturn: sends from ONE process, terminating
+    /// it when the image's error handling demonstrably is not.  Returns true
+    /// if the process was terminated (the caller must return immediately and
+    /// NOT send cannotReturn:).
+    bool cannotReturnStormGuard(const char* site);
     void dumpTimerWedgeState();  // one-shot at first [TIMER-NOT-REARMED]; see timer-scheduler-wedge
     // Pin every JIT method live in ANY process's Smalltalk stack (incl. SUSPENDED
     // processes like the Delay timer runner), so CodeZone LRU eviction can't free
@@ -1155,6 +1168,12 @@ private:
     Oop lastCannotReturnProcess_;  // Process that triggered cannotReturn: (GC root)
     int cannotReturnCount_;        // Counter for cannotReturn: events per process
     uint64_t cannotReturnDeadline_; // Step deadline for cannotReturn: handling (0 = none)
+    // Storm guard for the UNGUARDED cannotReturn: sites (see
+    // cannotReturnStormGuard).  Separate from cannotReturnCount_ so it cannot
+    // perturb the count-<=2 rule the top-of-chain site already runs.
+    uint64_t cannotReturnStormCount_ = 0;
+    uint64_t cannotReturnStormStep_ = 0;
+    Oop      cannotReturnStormProcess_ = Oop::nil();
     int argCount_;
 
     // Sista V1 extension bytes (reset after each instruction)
@@ -1434,6 +1453,27 @@ private:
 
     // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
     size_t lowSpaceThreshold_ = 0;
+
+    /// True when `method` is a real CompiledMethod (not a CompiledBlock) whose
+    /// literal slots hold `lit`.  Used by the non-local
+    /// return to recognise a home method that is a TRAIT COPY: the copy is a
+    /// different CompiledMethod from the trait's, but shares its CompiledBlock,
+    /// so "holds the block we are returning from" is the identity that
+    /// survives the copy where an oop compare against the block's outerCode
+    /// cannot.  See defect #22 in docs/vm-compat-bugs.md.
+    bool methodHoldsLiteral(Oop method, Oop lit);
+
+    /// Deliver the image's low-space interrupt if ObjectMemory latched a
+    /// threshold crossing.  Called from both interpreter loops; see the
+    /// definition in Interpreter.cpp for why it is latched, not sampled.
+    void checkLowSpaceSignal();
+
+    /// How many times the low-space interrupt has been delivered this run.
+    /// The image re-arms after handling (`lowSpaceWatcher` ends in
+    /// `installLowSpaceWatcher`), so a hog that swallows the resulting
+    /// OutOfMemory keeps re-crossing; the trace is bounded rather than
+    /// per-crossing.
+    uint64_t lowSpaceSignalCount_ = 0;
 
     // VM start time for ioMSecs() - millisecond clock base
     std::chrono::steady_clock::time_point vmStartTime_ = std::chrono::steady_clock::now();
@@ -3283,7 +3323,6 @@ private:
     PrimitiveResult primitiveObjectPointsTo(int argCount);   // 132
 
     // Become primitives
-    PrimitiveResult primitiveBecome(int argCount);           // 72
     void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for becomeForward (one-way)
     void scanStackSwap(Oop a, Oop b);                       // Helper for two-way become (one pass)
 
@@ -3849,6 +3888,17 @@ private:
     /// qsort) are still live on the stack and must be allowed to unwind first.
     /// interpret() honours it once callbackDepth_ reaches zero.
     bool pendingQuit_ = false;
+    /// g_stepNum when pendingQuit_ was first set.  The deferral has to be
+    /// BOUNDED: a callback that never unwinds (TFCallbacksTest abandons one by
+    /// design) otherwise pins the VM forever with the quit pending — see
+    /// defect #26 in docs/vm-compat-bugs.md, 1800 s per sweep per arch.
+    uint64_t pendingQuitStep_ = 0;
+    /// Bytecodes of grace a deferred quit gives an outstanding callback to
+    /// unwind before it is honoured anyway.  2M is roughly a few milliseconds
+    /// of real work — long enough for a callback that IS going to return
+    /// (qsort's comparator, a progress hook) and nothing at all next to the
+    /// 1800 s the unbounded version cost.
+    static constexpr uint64_t kQuitGraceSteps = 2000000;
 
     /// Deferred callback return: set by primitiveCallbackReturn, consumed by
     /// the nested interpret loop in enterInterpreterFromCallback.

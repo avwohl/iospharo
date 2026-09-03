@@ -1,0 +1,27 @@
+# Defect #22 verification on OUR VM, 2026-09-03
+
+RSLinesTest, JIT on   : 18 P / 0 F / 0 E   (before the fix: 16 P / 2 E on arm, 17 P / 1 E on x86)
+RSLinesTest, PHARO_NO_JIT=1 : 18 P / 0 F / 0 E
+
+# The shape the fix resolves, read from our own VM:
+
+=== E. probe_trait_block_home on our VM ===
+rc=0
+RSAbstractLine >> markersIncludesPoint:
+   method oop     = 397373440
+   methodClass    = RSAbstractLine
+   inner blocks   = 1
+     block outerCode  = RSTMarkeable>>#markersIncludesPoint:
+     outerCode == m   = false
+RSTMarkeable >> markersIncludesPoint:
+   method oop     = 425228800
+   methodClass    = RSTMarkeable
+   inner blocks   = 1
+     block outerCode  = RSTMarkeable>>#markersIncludesPoint:
+     outerCode == m   = true
+RSAbstractLine >> markerShapesInPositionDo:
+   method oop     = 517671936
+   methodClass    = RSAbstractLine
+   inner blocks   = 0
+RSTMarkeable >> markerShapesInPositionDo:
+   method oop     = 856293888

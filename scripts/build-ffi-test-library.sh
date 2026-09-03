@@ -16,6 +16,12 @@ set -euo pipefail
 PHARO_VM_SRC="${PHARO_VM_SRC:-$HOME/esrc/pharo-vm}"
 SRC_DIR="$PHARO_VM_SRC/ffiTestLibrary"
 OUT_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)/build}"
+# Target arch. Defaults to the host. For the x86_64 (Rosetta) VM tree pass
+# ARCH=x86_64 rather than wrapping this script in `arch -x86_64`: the Command
+# Line Tools' xcrun shim is arm64-only, so an x86_64 shell cannot even launch
+# clang ("unable to load libxcrun ... need 'x86_64'"). Native clang with
+# -arch x86_64 is what actually works.
+ARCH="${ARCH:-$(uname -m)}"
 
 if [ ! -d "$SRC_DIR" ]; then
     echo "error: no ffiTestLibrary at $SRC_DIR" >&2
@@ -27,7 +33,7 @@ fi
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/libTestLibrary.dylib"
 
-clang -dynamiclib -O1 -arch "$(uname -m)" \
+clang -dynamiclib -O1 -arch "$ARCH" \
       -I"$SRC_DIR/includes" \
       -o "$OUT" \
       "$SRC_DIR"/src/*.c

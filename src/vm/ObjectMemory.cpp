@@ -2124,13 +2124,40 @@ GCResult ObjectMemory::scavenge() {
                 copySize,
                 (ptrdiff_t)(oldSpaceEnd_ - oldSpaceFree_),
                 (ptrdiff_t)(oldSpaceEnd_ - oldSpaceStart_));
+            // Say whether the circuit breaker was even in play.  Working this
+            // out after the fact cost an hour on 2026-09-02: the absence of a
+            // [LOW-SPACE] line has three different meanings -- the image never
+            // armed prim 125, the crossing was never observed, or it was
+            // latched and never delivered -- and the log could not tell them
+            // apart.  Now it can.
+            fprintf(stderr,
+                "[VM] low-space breaker at abort: threshold=%zu bytes (%s), "
+                "crossing latched=%s, delivered %llu time(s)\n",
+                lowSpaceThresholdBytes_,
+                lowSpaceThresholdBytes_ ? "armed by the image via prim 125"
+                    : (lowSpaceDeliveries_
+                        ? "disarmed by its own one-shot delivery; the image did "
+                          "not re-arm in time"
+                        : "never armed — the image installed no LowSpaceWatcher"),
+                lowSpaceCrossed_ ? "yes, but never delivered" : "no",
+                (unsigned long long)lowSpaceDeliveries_);
             dumpHeapCensus(25);   // say WHAT filled the heap before dying
+            // ...and WHO made it.  The census alone has twice been unable to
+            // name the loop behind a Context storm.  Census first: it is the
+            // proven-safe dump, and the chain walk runs with a scavenge half
+            // finished, so it is the one that might not survive.
+            if (interpreter_) {
+                interpreter_->dumpSendChain(
+                    "old space exhausted during scavenge tenure", 60);
+                interpreter_->dumpProcessQueues();
+            }
             fflush(stderr);
             std::abort();
         }
         if (!destStart) {
             destStart = oldSpaceFree_;
             oldSpaceFree_ += copySize;
+            noteOldSpaceAdvance();   // low-space breaker; see ObjectMemory.hpp
         }
         std::memcpy(destStart, srcStart, copySize);
         ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
@@ -3102,8 +3129,6 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
         interpreter_->afterGC();
     }
 
-    forceGCFlag_ = false;
-
 #ifdef _WIN32
     // EDEN_ROTATE detector: re-protect the retired half (its content is now
     // compact-scratch trash, so a stale pointer still faults on touch).
@@ -3212,10 +3237,6 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
         }
     }
     return result;
-}
-
-bool ObjectMemory::needsGC() const {
-    return forceGCFlag_;
 }
 
 void ObjectMemory::addRoot(Oop* root) {
@@ -3617,6 +3638,7 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
                 // Fast path: bump pointer allocation
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(oldSpaceFree_);
                 oldSpaceFree_ += size;
+                noteOldSpaceAdvance();   // low-space breaker; see ObjectMemory.hpp
 
                 // Threshold-based GC trigger: request compacting GC at next safe point
                 // when heap usage exceeds last compacted size + headroom.

@@ -1,5 +1,299 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-09-03 (morning) — three tiers green on both arches, and the arches agree
+
+    tier         arm64                                   x86_64
+    VM C++       4/4 + test_asmjit_t1_stub               same
+    SUnit        2043 cls  27812 P / 18 F / 28 E / 3 T   2042 cls  27810 P / 20 F / 24 E / 8 T
+    packages     354 cls   9383 P / 16 F / 17 E / 0 T    354 cls   9376 P / 16 F / 24 E / 0 T
+
+Both sweeps: 41 batches, `rc=0` on every one, no abort anywhere.
+
+**The arm64 run is the first that is not missing anything.**  Its predecessor
+lost 40 classes when batch 1901-1950 aborted on the Context storm; with the
+`cannotReturn:` storm guard that batch completes and the guard fires once.  The
+trait block runs clean on arm64 for the first time, `TraitTest` 54/54.
+
+**No codegen divergence between the arches.**  Fifteen classes out of 2043
+differ and every one has a non-codegen explanation: five Rosetta timeouts, two
+wall-clock assertions, two `w64Convention` symbols the test dylib does not
+export, defect #27's flake, and one harness mistake of mine (a copied VM
+without its dylibs -- which x86_64 confirms by passing `LibTTYTest` 5/5 after
+running its binary in place).  The package tier now agrees exactly on FAIL: 14
+DataFrame + 2 PolyMath, the same selectors on both.
+
+**Confirmed at full-sweep scale:** defect #22's fix -- `RSLinesTest` 16 P / 2 E
+-> 18 P / 0 E.
+
+**Filed:** defect #27 (a ByteSymbol receiver running `BlockClosure>>value:`,
+once per sweep, pre-existing) and defect #28 (four `XMLParser` attribute-default
+tests failing on x86_64 only, and reproducible in isolation).
+
+**Two candidate root fixes for defect #23's remaining hole were measured and
+neither closes it** -- the numbers are recorded at their knobs so nobody
+re-runs them.  One earlier candidate broke 11 classes on batch 1-100 and was
+reverted; the sweep caught it, three interleaved A/Bs on a five-class repro
+batch had not.
+
+
+## 2026-09-03 (later) — defect #23 is two lost frames, not a mystery
+
+The arm64 Context storm cost 39 classes of every sweep and had been "a
+timing-sensitive Heisenbug" for weeks.  It is two concrete JIT bookkeeping
+misses, both in how inline-J2J activations reach the interpreter's frame stack.
+
+**How it was cornered.**  Three instruments, each answering the question the
+one before it raised.  `Interpreter::dumpSendChain` at the old-space FATAL,
+printing the active process's frames AND the materialized context chain with
+primitive 199/198 marked: it named the loop as
+`cannotReturn: -> error: -> signal: -> signal` scanning a chain with no
+`on:do:` in it.  Six per-site counters on the `cannotReturn:` sends: all
+515,981 of them came from one site, the ordinary return finding its sender
+already dead.  Two counters on the unwind paths that mark contexts dead, plus
+the corpse's marker: both zero, and the marker was `pc=nil`, not the `-1`
+sentinel an unwind writes -- so the sender died by RETURNING, while its callee
+was still live.  That is a duplicate or stale activation, and from there the
+code reads itself.
+
+**Fix 1 -- attempted, and REVERTED.**  The chain loop's `ExitBlockCreate`
+handler calls `createFullBlockWithLiteral` with J2J saves still pending.  Those
+saves are caller activations the JIT entered without pushing interpreter
+frames, and `materializeFrameStack` -- which gives the new closure its
+`outerContext` -- can only see `savedFrames_`, so the closure captures a chain
+with holes.  Materializing them first looked right and is not: batch 1-100 went
+from 0 non-clean classes to 11, with the shifted-operand-stack signature, and
+bailing to the interpreter instead of resuming the JIT scored the same 11.
+Converting live saves into interpreter frames is not valid at that exit,
+whatever happens afterwards.  The hole is real and still open; the counter that
+measures it (481 such closures in a 20-second run) is kept.
+
+**Fix 2 -- the wrong context got the corpse marker.**
+`materializeJ2JSaveIntoFrame` skipped `pushFrame`'s rule that the frame being
+saved inherits `currentFrameMaterializedCtx_` and the current slot is cleared.
+The first save materialized IS that frame (a J2JSave records the CALLER's state
+at the call), so the pointer was left aimed at an activation that was no longer
+current -- and the next `popFrame` ran the "mark the returning frame's
+materialized context dead" store against a context whose activation was still
+live.  Hence a live frame's sender with `sender=nil, pc=nil`, and a
+`cannotReturn:` when its real callee returned.
+
+**Fix 3 -- a bound, and honestly labelled as one.**  Four of the six
+`cannotReturn:` sites had no rate limit at all; the VM already terminates the
+process at the fifth ("the error handler is not terminating").
+`cannotReturnStormGuard` applies that rule to the four, at 64 sends per process
+per 2,000,000 steps, tunable with `PHARO_CANNOT_RETURN_BURST` -- which is also
+the only way to exercise a guard that by construction cannot fire in a healthy
+run.  Validated at `burst=2`: it fires, terminates the process, the batch
+completes.
+
+**Measured, interleaved under held load** (the rate tracks machine load --
+6 of 8 with another tier running, 1 of 6 idle -- so blocked arms measure the
+load instead of the change).  The only line that counts is the last: the three
+above it had fix 1 in the binary, and a change that breaks 11 classes can
+suppress a storm by breaking the path that reaches it.
+
+    A/B                                  base      other arm
+    fix 1 only                         9 of 12    3 of 12   (void)
+    fix 1 + guard                      7 of 10    0 of 10   (void)
+    fix 1 + guard + fix 2              8 of 10    0 of 10   (void)
+    guard + fix 2, fix 1 REVERTED      7 of 10    0 of 10   <- the result
+
+The surviving build also scores 0 non-clean classes on batch 1-100, twice, and
+the guard fires in 7 of the 10 storm runs: every storm becomes one terminated
+process and the batch completes.
+
+Why the storm allocates so violently is worth recording: the unhandled error
+reaches `Context>>freeze`, which COPIES the whole context chain to log it, and
+the chain is one full round deeper every time round the loop.  2.6M Contexts,
+517K Errors, 517K FullBlockClosures -- one round each.
+
+
+## 2026-09-03 — a bounded quit, a trait-copy home, and 30 minutes a sweep
+
+Three VM fixes, all found by reading logs and the image rather than by
+reproduction, and all queued for verification behind the x86_64 sweep.
+
+**The deferred quit was unbounded, and it cost 1730 s of every sweep**
+(defect #26).  `primitiveQuit` defers when `callbackDepth_ > 0` so a C caller's
+frames can unwind, and `pendingQuit_` is honoured in exactly one place, under
+`pendingQuit_ && callbackDepth_ == 0`.  After `TFCallbacksTest` — whose
+old-session test abandons a same-thread invocation BY DESIGN — neither half can
+ever hold: the depth stays 1 for the rest of the run, and a VM parked in
+`enterInterpreterFromCallback`'s nested loop is not running the checkpoint that
+would look.  Sweep batch 1801-1850 does its work in under a minute, writes
+`=== BATCH COMPLETE ===`, and then idles until the harness kills it at 1800 s.
+On both arches.  Stock Cog runs the same 429 tests in 7.4 s.
+
+The trace had been in the logs the whole time, buried in 4 MB of periodic JIT
+stats: `[primitiveQuit] Deferred: 1 callback(s) outstanding`, five times on
+arm64 and sixty-one on x86_64.
+
+**VERIFIED 2026-09-03: 1800 s -> 54 s, rc=0, all 51 classes**, with
+`[primitiveQuit] Honouring deferred quit from the callback loop (grace period
+expired; callback did not unwind)` in the log.  The clean exit also settles
+that the plain return out of the nested loop unwinds fine.
+
+Fixed by recording `g_stepNum` at the first deferral and honouring the quit
+after `kQuitGraceSteps` (2M bytecodes) whether or not the callback unwound —
+from the nested callback loop as well as the checkpoint, since that is the only
+loop running while a callback is outstanding.  Stranding a C frame matters
+while the VM keeps running; it does not when the process is exiting, and Cog
+simply exits.  Two related facts are on the record with it: `callbackDepth_` is
+decremented only by `primitiveCallbackReturn` and the two worker-timeout
+`[XTCB-DEAD-POP]` paths, so an abandoned same-thread invocation is never popped
+by construction; and `drainCallbackGraveyard()` bails on the same condition, so
+every retired libffi closure and `ffi_cif` after that point is buried and never
+freed.
+
+**A block's home could not be found when the home method is a trait copy**
+(defect #22).  **VERIFIED 2026-09-03: `RSLinesTest` 18 P / 0 F / 0 E with the
+JIT and without it**, against 16 P / 2 E on arm64 and 17 P / 1 E on x86_64
+before.  Both modes, so the defect was in the shared home resolution and not in
+a JIT specialisation.  The inline non-local return walks the executing
+`CompiledBlock`'s `outerCode` chain to a `CompiledMethod` and matches that oop
+against the frames.  For a trait method that identity can never hold: a class
+using a trait gets its own `CompiledMethod`, but the copy SHARES the trait's
+`CompiledBlock`, whose `outerCode` names only the trait's method.  Verified
+against the image on stock Cog:
+
+    (RSAbstractLine>>#markersIncludesPoint:) block
+      == (RSTMarkeable>>#markersIncludesPoint:) block   -> true
+    that block's outerCode == RSTMarkeable's method     -> true
+    RSLinesTest on Cog                                   -> 18 P / 0 F / 0 E
+
+So the VM sent `cannotReturn:` on a home that was alive — `BlockCannotReturn`.
+A second pass, reached only when identity has already failed, matches on "this
+frame's method holds the very block we are returning from", which is the
+identity that survives the copy; applied to the context-chain search as well.
+677 installed methods in a stock Pharo 13.1 image carry a block with a foreign
+`outerCode` AND a non-local return in it, so this is not one test's problem.
+
+**Dead code removed**: `ObjectMemory::forceGC`/`needsGC` (nothing ever called
+either, so the flag was only ever cleared), `classTableEntryAddress` and
+`edenFreeCellAddr` (the latter carrying a comment claiming the JIT emit used
+it — the emit bakes `g_jitEdenFreeCell`, published in the constructor), and
+`primitiveBecome`, 75 lines of two-way become that no primitive slot points at
+and that Spur has no primitive for.  `forEachRoot`'s registered-roots loop now
+says what is true: nothing calls `addRoot`, so it is a no-op today.
+
+## 2026-09-02 — the low-space circuit breaker could not fire, by construction
+
+The runaway-allocation guard added on 2026-07-07 (`22fcb0e7`) never fired on
+the first real storm we have a log for.  Arm64 sweep batch 1901-1950 ran old
+space from 12 GB free down to **16 bytes**, minting 33.4M `Context`s and 6.66M
+`Error`s, and printed no `[LOW-SPACE]` line before the tenure abort
+(`docs/results/sweep-arm-2026-09-02/`).
+
+Not a tuning miss.  The check sampled `freeOldSpaceBytes()` on the
+interpreter's per-1024-bytecode checkpoint, but old space is not spent
+smoothly — essentially all of it goes out through **scavenge tenure**, in
+steps of up to one full eden (22003584 bytes on that image).  Pharo arms the
+threshold at `SmalltalkImage>>lowSpaceThreshold` = 400000 bytes, so a step
+lands inside the observable window
+
+    400000 / 22003584  =  1.8%
+
+of the time; the other 98.2% the next tenure overruns `oldSpaceEnd_` and the
+process aborts before any checkpoint can look.
+
+The crossing is now **latched where old space is actually spent** — the
+scavenge tenure copy (`ObjectMemory.cpp:2133`) and the old-space bump
+allocation (`:3620`) — and the checkpoint consumes the latch instead of
+re-sampling.  The effective threshold is `max(image threshold, min(one eden, reservation/16))`: a
+400 KB threshold cannot express "stop before exhaustion" when the granularity
+above it is 22 MB, and the invariant worth holding is that the image is
+interrupted while one more worst-case scavenge can still be absorbed.  At the
+default 4 GB reservation that trips at 99.45% full.  The `reservation/16` cap
+exists because `newSpaceSize` is settable (`PHARO_NEWSPACE_MB`, a bisect knob)
+and a big eden against a small old space would otherwise turn "nearly
+exhausted" into "a quarter used"; a bisect knob must not quietly change
+low-space semantics.
+
+One more defect in the same block: the old code zeroed `lowSpaceThreshold_`
+*before* looking `TheLowSpaceSemaphore` up, so a crossing that arrived before
+the image had registered one disarmed the breaker permanently and signalled
+nothing.  It now disarms only once it can deliver.
+
+Closes LEAD 19 in `docs/vm-compat-bugs.md`, which asked for the artifact or
+the retraction.
+
+**VERIFIED 2026-09-03.**  `storm_repro_freeze_recursion.st` under
+`PHARO_MAX_OLD_SPACE_MB=512`:
+
+    [LOW-SPACE] lines : 462
+    FATAL abort       : 0
+
+The breaker fires, and the heap never exhausts.  The image acts on it exactly
+as the 2026-07 design intended — `[XFER] old=... pri=40 -> new=... pri=60`, the
+P60 `lowSpaceWatcher` preempting the P40 hog, and `OutOfMemory>>signalerContext`
+in the traces.  Before the fix the same repro is documented by its own header
+as ending in a Context-dominated `FATAL old space exhausted`, and the
+2026-09-02 arm64 sweep burned 12 GB with zero `[LOW-SPACE]` lines.  Raw in
+`docs/results/sweep-arm-2026-09-02/lowspace-verification.txt`.
+
+That also corrects `docs/history/arm-context-storm-2026-07.md`, which says the
+mitigation is "DISARMED in bare `eval`" because the image never runs
+`installLowSpaceWatcher` there.  It is not: this was a bare `eval` and the
+breaker armed and fired.
+
+**And it fires under the runner too — once.**  Both 1024 MB storm runs contain
+
+    [LOW-SPACE] threshold crossed #1 (free=22 MB) — signaling LowSpaceSemaphore
+
+exactly once, at exactly the effective threshold the fix computes.  The
+`threshold=0` the FATAL then reports is the breaker having disarmed itself on
+delivery (Cog's one-shot contract, where the image re-arms from
+`lowSpaceWatcher`'s tail), NOT a threshold that was never set — a distinction I
+got wrong twice from a bare zero, and the FATAL now prints the delivery count
+so it cannot happen again.
+
+What does not happen is the image stopping the hog.  `[DIAG-TIMER] …
+timerSem=nil` sits beside the firing, so the Delay scheduler is already dead
+and the P60 `lowSpaceWatcher` cannot run to re-arm; the storm spends the last
+22 MB and aborts.  One firing is not enough headroom against a process minting
+~150k Contexts a second, and there is no second chance.  That is defect #23's
+problem, not this fix's.
+
+**Do not expect this to cure the storm.**  Read from the image's own source:
+`lowSpaceWatcher` ends in `installLowSpaceWatcher`, so the image re-arms prim
+125 after every event, and its action is
+
+    UIManager>>lowSpaceWatcherDefaultAction: preemptedProcess
+        preemptedProcess signalException: OutOfMemory new
+
+`OutOfMemory` is an `Error`, so a hog whose loop sits under an `on: Error do:`
+handler — which is precisely the shape of the 2026-09-02 storm, 6.66M caught
+Errors — swallows it and re-crosses immediately.  Delivering the signal is the
+VM's job and this is Cog's policy too; acting on it is the image's.  The trace
+is bounded (first five, then every 64th) for that reason.
+
+## 2026-09-02 — lifter use-after-free in multi-entry loader construction
+
+`test_sista_ir` segfaulted on x86_64 (rc=139, no output because stdout was
+block-buffered) and passed on arm64.  The crash is in shared C++, not in
+either backend: `LinearLifter::run` Pass 5 (`SistaBuilder.cpp`, "append
+loader pseudo-blocks for multi-entry dispatch") took
+`const Block& targetBlock = out_.blockAt(targetBlockId)` and then called
+`out_.newBlock()` and `out_.newValue()`, which push_back into
+`out_.blocks` / `out_.values`.  The push reallocated the blocks vector, and
+the second walk over `targetBlock.values` read the freed buffer -- on x86_64
+its begin pointer had become 2, hence `KERN_INVALID_ADDRESS at 0x2`.
+
+    x86_64 release   rc=139 before   45/45 PASS after
+    arm64  release   45/45 before    45/45 after     (passed by luck: the
+                                                     freed bytes were intact)
+    ASan, both arches: heap-use-after-free in LinearLifter::run before,
+                       clean after
+
+In the live VM this path runs for every per-bytecode region with an interior
+backward-jump target (`PHARO_NO_SISTA_PER_BC=1` is the isolating knob), so
+a reallocation there wired the loader's phi operands from stale memory on
+whichever arch and allocator happened to reuse the block.  The target's
+leading phi ids are now copied out before anything is created.  Found by
+running the C++ tier on a fresh clone; confirmed and verified with
+`-fsanitize=address` builds of `test_sista_ir` for both arches
+(`build-x86-asan`, `build-arm-asan`).
+
 ## 2026-08-19 — arm64 JIT crash: a W^X violation in tryExecute
 
 Every Apple Silicon run of a hot, runtime-compiled counted loop crashed:

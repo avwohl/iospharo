@@ -1,0 +1,885 @@
+=== SUnit Test Run #86 (batch 1001-1005 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBAddVariableAccessorsWithLazyInitializationParametrizedTest last=RBConditionTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:42:20.59711-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBAddVariableAccessorsWithLazyInitializationParametrizedTest
+=== RBAddVariableAccessorsWithLazyInitializationParametrizedTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testExistingClassVariableAccessors
+  RUN: testExistingInstanceVariableAccessors
+  RUN: testFailureBadDefaultValueForNewArgument
+  RUN: testFailureBadInitializationCode1
+  RUN: testFailureNonExistantName
+  RUN: testNewClassVariableAccessors
+  RUN: testNewInstanceVariableAccessors
+Total: 7 P:7 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBBrowserEnvironmentTest
+=== RBBrowserEnvironmentTest ===
+  SORT-OK: 70 comparisons for 27 items
+  RUN: testAndAnOrEnvironmentAndAnotherOrEnvironment
+  RUN: testAndEnvironment
+  RUN: testAndEnvironmentWithStoreOn
+  RUN: testAndPackageEnvironmentAndClassEnvironment
+  RUN: testBrowserEnvironment
+  RUN: testClassEnvironment
+  RUN: testConstructedClassEnvironment
+  RUN: testConstructedSelectorEnvironment
+  RUN: testEnvironmentWrapper
+  RUN: testHierarchyEnvironment
+  RUN: testImplementorsMatching
+  RUN: testMatches
+  RUN: testNotEnvironment
+  RUN: testNotEnvironmentWithClassEnvironments
+  RUN: testOrEnvironment
+  RUN: testPackageEnvironment
+  RUN: testPragmaEnvironment
+  RUN: testProtocolEnvironment
+  RUN: testRemoveSelectorByAndAndNot
+  RUN: testSelectMethods
+  RUN: testSelectorEnvironment
+  RUN: testSelectorEnvironmentRemovesEmptyClasses
+  RUN: testSystemIntegrity
+  RUN: testVariableEnvironmentAddRemove
+  RUN: testVariableEnvironmentClassVars
+  RUN: testVariableEnvironmentInstVars
+    RUN: testWithoutClassesRemovesClassesFromSender
+Total: 27 P:26 F:0 E:0 S:0 T:1
+
+CYCLE-LOOP-RESTART before RBChildrenToSiblingsParametrizedTest
+=== RBChildrenToSiblingsParametrizedTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testFailureBadName
+  RUN: testFailureExistingName
+  RUN: testFailureInvalidSubclass
+  RUN: testFailureMetaClassFailure
+  RUN: testModelChildrenToSibling
+Total: 5 P:5 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBClassTest
+=== RBClassTest ===
+  SORT-OK: 64 comparisons for 25 items
+  RUN: testBindingOf
+  RUN: testClassSide
+  RUN: testDefinesClassVariable
+  RUN: testDefinesInstanceVariable
+  RUN: testDefinesMethod
+  RUN: testDefinesPoolDictionary
+  RUN: testDefinesSharedVariable2
+  RUN: testDefinesTraitMethod
+  RUN: testDirectlyDefinesSharedVariable
+  RUN: testDirectlyDefinesSharedVariable2
+  RUN: testHierarchy
+  RUN: testIsEmptyClass
+  RUN: testIsInstanceSide
+  RUN: testIsManifest
+  RUN: testIsManifestTransformationClass
+  RUN: testIsManifestWhenSuperclassIsUndefined
+  RUN: testIsMeta
+  RUN: testObjectIsNotAbstract
+  RUN: testWhichClassIncludesSelectorDefinedInTheClass
+  RUN: testWhichClassIncludesSelectorDoNotFind
+  RUN: testWhichClassIncludesSelectorDoesNotExist
+  RUN: testWhichClassIncludesSelectorGoingUp
+  RUN: testWhichClassIncludesSelectorGoingUpAndDoNotFind
+  RUN: testWhichMethodsReferToClassVariable
+  RUN: testWhichSelectorsReferToClassVariable
+Total: 25 P:25 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBConditionTest
+=== RBConditionTest ===
+  SORT-OK: 41 comparisons for 18 items
+  RUN: testCheckFailEarlyAndDoesNotCoverEveryConditions
+  RUN: testCheckInvalidMethodName
+  RUN: testCheckThatAndIsWorking
+  RUN: testCheckThatOnlyFailingConditionErrorIsReported
+  RUN: testCheckThatOnlyFailingConditionErrorIsReportedTrueCaseFirst
+  RUN: testCheckValidMethodName
+  RUN: testHierarchyOfReferencesInstanceVariable
+  RUN: testHierarchyOfReferencesInstanceVariable2
+  RUN: testHierarchyOfReferencesSharedVariableAccessing
+  RUN: testHierarchyOfReferencesSharedVariableFromClassSide
+  RUN: testHierarchyOfReferencesSharedVariableFromSubclass
+  RUN: testHierarchyOfReferencesSharedVariableInDefiningClass
+  RUN: testHierarchyOfReferencesSharedVariableNotAccessing
+  RUN: testInvalidArgumentsForSelector
+  RUN: testIsClassDefinedInModel
+  RUN: testIsClassNamedDefinedIn
+  RUN: testIsClassNamedDefinedInNot
+  RUN: testTrue
+Total: 18 P:18 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1001-1005)
+
+=== BATCH TOTAL ===
+Run: #86
+Batch: 1001-1005
+Classes: 5
+Pass: 81
+Fail: 0
+Error: 0
+Skip: 0
+Timeout: 1
+Total: 82
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #87 (batch 1006-1010 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBCopyPackageParametrizedTest last=RBExtractMethodRefactoringTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:48:31.996858-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBCopyPackageParametrizedTest
+=== RBCopyPackageParametrizedTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testCopyPackageAndChangesCopyReferences
+  RUN: testCopyPackageWithParameters
+  RUN: testFailureBadName
+  RUN: testFailureExistingPackage
+Total: 4 P:4 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBDeprecateMethodParametrizedTest
+=== RBDeprecateMethodParametrizedTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testDeprecateMethodUsingMethodWithSameNumberOfArgs
+  RUN: testDeprecateMethodUsingMethodWithoutArgs
+  RUN: testValidateBogusNewSelector
+  RUN: testValidateEmptyNewSelector
+  RUN: testValidateNewSelector
+  RUN: testValidateSameNewSelector
+Total: 6 P:6 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBDriverTest
+=== RBDriverTest ===
+  DIAG-EMPTY: allTestSelectors=0 for RBDriverTest
+  DIAG-EMPTY: allSelectors size=604
+  DIAG-EMPTY: test* in allSelectors=0
+  DIAG-EMPTY: methodDict size=0
+  DIAG-EMPTY: test* in methodDict=0
+  DIAG: characterSet=#Unicode class='Unicode class'
+  DIAG: cs isLetter: $t=true
+  DIAG: $t between:$a and:$z=true
+  DIAG: isLetter: source=isLetter: char
+	| index |
+	index := char charCode + 1.
+	index > GeneralCategory size
+		ifTrue: [ ^ false ].
+	^ (GeneralCategory at: index) between: Ll and: Lu
+  DIAG: Character>>isLetter source=isLetter
+	"Return whether the receiver is a letter."
+	"$a isLetter >>> true"
+	"$é isLetter >>> true"
+	"$A isLetter >>> true"
+
+	^ self characterSet isLetter: self
+  DIAG: $t class=#Character
+  DIAG: $t class characterSet=#Unicode
+  DIAG: CharSet=Unicode
+  DIAG: AsciiCharset='MISSING'
+  SORT-OK: 0 comparisons for 0 items
+Total: 0 P:0 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBExtractMethodAndOccurrencesTest
+=== RBExtractMethodAndOccurrencesTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testExtractMethodWithTwoArgsAndOcurrences
+  RUN: testExtractSimpleMethodAndOcurrences
+  RUN: testFailureBadInterval
+Total: 3 P:3 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBExtractMethodRefactoringTest
+=== RBExtractMethodRefactoringTest ===
+  SORT-OK: 27 comparisons for 13 items
+  RUN: testExtractMethodAtEndOfMethodThatNeedsReturn
+  RUN: testExtractMethodThatMovesTemporaryVariable
+  RUN: testExtractMethodThatNeedsArgument
+  RUN: testExtractMethodThatNeedsTemporaryVariable
+  RUN: testExtractMethodToSuperclass
+  RUN: testExtractWithRenamingOfParameters
+  RUN: testFailureBadInterval
+  RUN: testFailureExtract
+  RUN: testFailureExtractMethodWhenGivenSourceIsNotInTheMethod
+  RUN: testFailureNonExistantSelector
+  RUN: testModelExtractMethodWithTemporariesSelected
+  RUN: testModelExtractMethodWithTemporaryAssigned
+  RUN: testValidateRenameParameters
+Total: 13 P:13 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1006-1010)
+
+=== BATCH TOTAL ===
+Run: #87
+Batch: 1006-1010
+Classes: 5
+Pass: 26
+Fail: 0
+Error: 0
+Skip: 0
+Total: 26
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #88 (batch 1011-1015 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBExtractMethodToComponentRefactoringTest last=RBExtractToTemporaryParametrizedTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:48:46.793736-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBExtractMethodToComponentRefactoringTest
+=== RBExtractMethodToComponentRefactoringTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testExtractMethodAtEndOfMethodThatNeedsReturn
+  RUN: testFailureBadInterval
+  RUN: testFailureExtract
+  RUN: testFailureNonExistantSelector
+  RUN: testMoveWithoutSelfReference
+Total: 5 P:5 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBExtractMethodTransformationTest
+=== RBExtractMethodTransformationTest ===
+  SORT-OK: 29 comparisons for 14 items
+  RUN: testExtractUsingExistingMethodRefactoring
+  RUN: testFailureBadInterval
+  RUN: testFailureCannotExtractProperSubtreeFromInterval
+  RUN: testFailureCannotExtractTwoAssignmentsToTemporaries
+  RUN: testFailureWhenMethodDoesNotExist
+  RUN: testFailureWhenTemporaryReadBeforeWritten
+  RUN: testNeedsReturn
+  RUN: testSelectorStartingFromArgumentsSize
+  RUN: testTransform
+  RUN: testWhenTemporaryVariableBecomesArgumentOfExtractedMethod
+  RUN: testWithArgument
+  RUN: testWithTemporariesSelected
+  RUN: testWithTemporaryAssigned
+  RUN: testWithTemporaryVariable
+Total: 14 P:14 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBExtractSetUpMethodAndOccurrencesParametrizedTest
+=== RBExtractSetUpMethodAndOccurrencesParametrizedTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testExtractSetUpWorksWellInOtherMethod
+  RUN: testExtractSimpleMethodAndOcurrences
+  RUN: testFailureBadInterval
+  RUN: testFailureBadMethodName
+Total: 4 P:4 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBExtractSetUpMethodParametrizedTest
+=== RBExtractSetUpMethodParametrizedTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testExtractSetUp
+  RUN: testExtractSetUpAndConvertTempsToInstVars
+  RUN: testExtractSetUpAndConvertTwoTempsToInstVars
+  RUN: testFailureBadClass
+  RUN: testFailureBadInterval
+  RUN: testFailureExtractSetUpWhenIsNotFirstsSentences
+  RUN: testFailureModelExistingSetUpMethod
+Total: 7 P:7 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBExtractToTemporaryParametrizedTest
+=== RBExtractToTemporaryParametrizedTest ===
+  SORT-OK: 16 comparisons for 9 items
+  RUN: testExtractToTemporaryForLastStatementInBlock
+  RUN: testExtractToTemporaryInsideBlock
+  RUN: testExtractToTemporaryWithDuplicates
+  RUN: testExtractToTemporaryWithDuplicatesInEarlierNestedScopes
+  RUN: testExtractToTemporaryWithDuplicatesInOtherScopes
+  RUN: testFailureBadInterval
+  RUN: testFailureBadName
+  RUN: testFailureNoValidNameOfTemp
+  RUN: testFailureNonExistantSelector
+Total: 9 P:9 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1011-1015)
+
+=== BATCH TOTAL ===
+Run: #88
+Batch: 1011-1015
+Classes: 5
+Pass: 39
+Fail: 0
+Error: 0
+Skip: 0
+Total: 39
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #89 (batch 1016-1020 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBFindAndReplaceParametrizedTest last=RBInlineMethodParametrizedTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:49:03.561487-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBFindAndReplaceParametrizedTest
+=== RBFindAndReplaceParametrizedTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testFailureBadSelector
+  RUN: testFailureFindOcurrencesInHierarchy
+  RUN: testFindOcurrencesInClass
+  RUN: testFindOcurrencesInHierarchy
+  RUN: testFindOcurrencesWithArgInHierarchy
+Total: 5 P:5 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBFindAndReplaceSetUpParametrizedTest
+=== RBFindAndReplaceSetUpParametrizedTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testClassDoesNotDefineSetUpMethod
+  RUN: testReplaceSetUp
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBInlineAllMethodParametrizedTest
+=== RBInlineAllMethodParametrizedTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testFailureInlineMethodCanNotUnderstandSelectorInClass
+  RUN: testInlineMethodCalledAsSuper
+  RUN: testInlineMethodWithMultipleArgs
+  RUN: testInlineMethodWithMultipleSendersInMethod
+  RUN: testRecursiveMethod
+Total: 5 P:5 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBInlineMethodFromComponentParametrizedTest
+=== RBInlineMethodFromComponentParametrizedTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testFailureInlineMethodFromComponentFailure
+  RUN: testInlineComponentIntoCascadedMessage
+  RUN: testInlineComponentMethodMax
+  RUN: testInlineEmptyComponentMethod
+  RUN: testModelInlineMethodWithSameVariableNames
+  RUN: testModelInlineMethodWithSameVariableNames1
+  RUN: testModelInlineMethodWithSameVariableNames2
+Total: 7 P:7 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBInlineMethodParametrizedTest
+=== RBInlineMethodParametrizedTest ===
+  SORT-OK: 31 comparisons for 15 items
+  RUN: testFailureBadInterval
+  RUN: testFailureInlineMethodForSuperSendThatAlsoSendsSuper
+  RUN: testFailureNonExistantSelector
+  RUN: testFailureOverriden
+  RUN: testFailurePrimitive
+  RUN: testFailureReturn
+  RUN: testInlineMethod
+  RUN: testInlineMethod1
+  RUN: testInlineMethod2
+  RUN: testInlineMethod3
+  RUN: testInlineMethod4
+  RUN: testInlineMethod5
+  RUN: testInlineMethodForSuperSend
+  RUN: testInlineRecursiveCascadedMethod
+  RUN: testModelInlineRecursiveMethod
+Total: 15 P:15 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1016-1020)
+
+=== BATCH TOTAL ===
+Run: #89
+Batch: 1016-1020
+Classes: 5
+Pass: 34
+Fail: 0
+Error: 0
+Skip: 0
+Total: 34
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #90 (batch 1021-1025 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBInlineParameterParametrizedTest last=RBMaxOneAssignmentWithReferencesConditionTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:49:49.597947-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBInlineParameterParametrizedTest
+=== RBInlineParameterParametrizedTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testFailureInlineArgsWhitoutSameLiteral
+  RUN: testFailureInlineBlockFailure
+  RUN: testInlineLiteralArray
+Total: 3 P:3 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBInlineTemporaryParametrizedTest
+=== RBInlineTemporaryParametrizedTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testFailureInlineTemporaryBadInterval
+  RUN: testFailureInlineTemporaryMutlipleAssignment
+  RUN: testFailureInlineTemporaryReadBeforeWritten
+  RUN: testInlineTemporary
+Total: 4 P:4 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBInsertClassParametrizedTest
+=== RBInsertClassParametrizedTest ===
+  SORT-OK: 19 comparisons for 10 items
+  RUN: testFailureEmptyPackage
+  RUN: testFailureExistingClassName
+  RUN: testFailureModelExistingClassName
+  RUN: testFailureModelInvalidSubclass
+  RUN: testFailureNonImmediateSubclassOfSuperclass
+  RUN: testFailureSubclassIsMetaslass
+  RUN: testFailureSuperclassIsMetaclass
+  RUN: testInsertClassWithinExistingHiearchy
+  RUN: testModelInsertClass
+  RUN: testModelInsertClassFromBehaviorSuperclass
+Total: 10 P:10 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMakeClassAbstractParametrizedTest
+=== RBMakeClassAbstractParametrizedTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testMakeClassAbstractAddsIsAbstractMethodToClassSide
+  RUN: testMakeClassAbstractPerformChanges
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMaxOneAssignmentWithReferencesConditionTest
+=== RBMaxOneAssignmentWithReferencesConditionTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testFailureMaxOneAssignmentWhenTwoAssignmentsExpectFalse
+  RUN: testFailureWhenAssignmentsIsNilExpectFalse
+  RUN: testMaxOneAssignmentWhenNoAssignmentsExpectTrue
+  RUN: testMaxOneAssignmentWhenOneAssignmentsExpectTrue
+Total: 4 P:4 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1021-1025)
+
+=== BATCH TOTAL ===
+Run: #90
+Batch: 1021-1025
+Classes: 5
+Pass: 23
+Fail: 0
+Error: 0
+Skip: 0
+Total: 23
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #91 (batch 1026-1030 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBMergeInstanceVariableIntoAnotherParametrizedTest last=RBMoveInstanceVariableToClassParametrizedTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:50:06.401622-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBMergeInstanceVariableIntoAnotherParametrizedTest
+=== RBMergeInstanceVariableIntoAnotherParametrizedTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testFailureEqualsVariables
+  RUN: testFailureNonExistingVariable
+  RUN: testReplaceVariableIntoAnother
+  RUN: testReplaceVariableIntoSupeclassVariable
+Total: 4 P:4 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMethodNameTest
+=== RBMethodNameTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testCreation
+  RUN: testIsValid
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMethodProtocolTransformationTest
+=== RBMethodProtocolTransformationTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testClassDoesNotExist
+  RUN: testMethodDoesNotExist
+  RUN: testRefactoring
+  RUN: testTransform
+Total: 4 P:4 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMoveClassTransformationTest
+=== RBMoveClassTransformationTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testBadPackageName
+  RUN: testRefactoring
+  RUN: testTransform
+Total: 3 P:3 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMoveInstanceVariableToClassParametrizedTest
+=== RBMoveInstanceVariableToClassParametrizedTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testFailureVariableAlreadyExists
+  RUN: testFailureVariableDoesNotExistInOldClass
+  RUN: testRefactoring
+Total: 3 P:3 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1026-1030)
+
+=== BATCH TOTAL ===
+Run: #91
+Batch: 1026-1030
+Classes: 5
+Pass: 16
+Fail: 0
+Error: 0
+Skip: 0
+Total: 16
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #92 (batch 1031-1035 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBMoveMethodParametrizedTest last=RBMoveTemporaryVariableDefinitionTransformationTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:50:10.102144-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBMoveMethodParametrizedTest
+=== RBMoveMethodParametrizedTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testFailureMovePrimitiveMethod
+  RUN: testMoveMethodIntoArgument
+  RUN: testMoveMethodIntoClass
+  RUN: testMoveMethodIntoClassVariable
+  RUN: testMoveMethodIntoInstanceVariable
+  RUN: testMoveMethodThatReferencesPoolDictionary
+Total: 6 P:6 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMoveMethodToClassParametrizedTest
+=== RBMoveMethodToClassParametrizedTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testFailureMethodAlreadyDefined
+Total: 1 P:1 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMoveMethodToClassSideParametrizedTest
+=== RBMoveMethodToClassSideParametrizedTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testFailureClassIsNotMeta
+  RUN: testMoveMethodToClassSide
+  RUN: testMoveMethodToClassSideWithInsAndMetReferences
+Total: 3 P:3 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMoveMethodToClassSideRefactoringTest
+=== RBMoveMethodToClassSideRefactoringTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testFailureExistsMethodInClassSide
+  RUN: testMoveMethodToClassSideIsOk
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBMoveTemporaryVariableDefinitionTransformationTest
+=== RBMoveTemporaryVariableDefinitionTransformationTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testMethodDoesNotExist
+  RUN: testMoveDefinition
+  RUN: testMoveDefinitionIntoBlockThatIsAReceiverOfACascadedMessage
+  RUN: testNowhereToMove
+  RUN: testVariableDoesNotExist
+Total: 5 P:5 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1031-1035)
+
+=== BATCH TOTAL ===
+Run: #92
+Batch: 1031-1035
+Classes: 5
+Pass: 17
+Fail: 0
+Error: 0
+Skip: 0
+Total: 17
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #93 (batch 1036-1040 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBMoveVariableDefinitionParametrizedTest last=RBProtectVariableTransformationTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:50:17.843295-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBMoveVariableDefinitionParametrizedTest
+=== RBMoveVariableDefinitionParametrizedTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testFailureInvalidSelector
+  RUN: testFailureNoMoveDefinition
+  RUN: testFailureNonExistantName
+  RUN: testMoveDefinition
+  RUN: testMoveDefinitionIntoBlockThatIsAReceiverOfACascadedMessage
+Total: 5 P:5 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBNamespaceTest
+=== RBNamespaceTest ===
+  SORT-OK: 55 comparisons for 22 items
+  RUN: testAllClassesDo
+  RUN: testAllImplementorsOnClassSubset
+  RUN: testAllReferencesToClassDo
+  RUN: testAllReferencesToClassDoMore
+  RUN: testAllReferencesToClassDoWithoutReferencesInTheSpecifiedModel
+  RUN: testAllReferencesToOnClassSubset
+  RUN: testAllReferencesToTakesIntoAccountSuperCall
+  RUN: testClassesReferencingClass
+  RUN: testCommentChange
+  RUN: testDefineClassAfterDeletedChange
+  RUN: testDefineClassChange
+  RUN: testImplementors
+  RUN: testIncludesClass
+  RUN: testModelImplementorsSenders
+  RUN: testPopulateModel
+  RUN: testRedefineClassChange
+  RUN: testReferencesPrintOn
+  RUN: testReferencesPrintOnAfterAddition
+  RUN: testReferencesPrintOnAfterRemove
+  RUN: testRemoveClassChange
+  RUN: testReparentSuperclassChange
+  RUN: testRoots
+Total: 22 P:22 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBNotInCascadedMessageConditionTest
+=== RBNotInCascadedMessageConditionTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testInCascadedMessageExpectFalse
+  RUN: testNotInCascadedMessageExpectTrue
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBProtectInstanceVariableParametrizedTest
+=== RBProtectInstanceVariableParametrizedTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testFailureVariableNotDefined
+  RUN: testProtectInstanceVariable
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBProtectVariableTransformationTest
+=== RBProtectVariableTransformationTest ===
+  SORT-OK: 22 comparisons for 11 items
+  RUN: testAccessorsAlreadyExist
+  RUN: testClassVariable
+  RUN: testClassVariableInModel
+  RUN: testMetaclass
+  RUN: testMetaclassFailure
+  RUN: testRefactoring
+  RUN: testTransform
+  RUN: testVariableDoesNotExist
+  RUN: testVariableIsNotAccessed
+  RUN: testVariableNotDirectlyDefined
+  RUN: testWithAssignment
+Total: 11 P:11 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1036-1040)
+
+=== BATCH TOTAL ===
+Run: #93
+Batch: 1036-1040
+Classes: 5
+Pass: 42
+Fail: 0
+Error: 0
+Skip: 0
+Total: 42
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #94 (batch 1041-1045 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBPullUpClassVariableParametrizedTest last=RBPushDownClassVariableParametrizedTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:50:36.659532-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBPullUpClassVariableParametrizedTest
+=== RBPullUpClassVariableParametrizedTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testFailureMetaClassFailure
+  RUN: testFailureNonExistantName
+  RUN: testPullUpClassVariable
+Total: 3 P:3 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBPullUpInstanceVariableParametrizedTest
+=== RBPullUpInstanceVariableParametrizedTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testFailurePullUpVariableNotDefined
+  RUN: testPullUpInstVar
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBPullUpMethodParametrizedTest
+=== RBPullUpMethodParametrizedTest ===
+  SORT-OK: 16 comparisons for 9 items
+  RUN: testFailurePullUpWhenSuperClassDoesNotDirectlyImplement
+  RUN: testFailurePullUpWithInvalidSuperSend
+  RUN: testFailurePullUpWithSuperSendThatCannotBeCopiedDown
+  RUN: testFailureWhenPulledMethodRefersToLocalSharedVar
+  RUN: testPullUpAndCopyDown
+  RUN: testPullUpInAHighHierarchyClass
+  RUN: testPullUpMethodWithCopyOverriddenMethodsDown
+  RUN: testPullUpMethodWithSharedPool
+  RUN: testPullUpReferencesInstVar
+Total: 9 P:9 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBPullUpMethodRefactoringTest
+=== RBPullUpMethodRefactoringTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testWarnDoesntPullUpReferencesInstVar
+  RUN: testWarnWhenPullUpWillOverrideMethodFromSuperclass
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBPushDownClassVariableParametrizedTest
+=== RBPushDownClassVariableParametrizedTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testFailureModelNonExistantName
+  RUN: testFailureNonExistantName
+  RUN: testModelPushDownVariable
+  RUN: testModelPushDownVariableToClassDownTwoLevels
+  RUN: testModelPushDownVariableToMultipleClassesInSameHierarchy
+  RUN: testModelRemoveUnusedVariable
+  RUN: testPushDownUnusedClassVariable
+Total: 7 P:7 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1041-1045)
+
+=== BATCH TOTAL ===
+Run: #94
+Batch: 1041-1045
+Classes: 5
+Pass: 23
+Fail: 0
+Error: 0
+Skip: 0
+Total: 23
+
+=== BATCH COMPLETE ===
+=== SUnit Test Run #95 (batch 1046-1050 of 2047) ===
+
+BATCH-DEBUG: batchClasses size=5 first=RBPushDownInstanceVariableParametrizedTest last=RBRefactoringChangeManagerPerformChangesTest
+BATCH-DEBUG: batch-file exists=true names-file exists=false
+BATCH-DEADLINE: 2026-09-03T06:50:42.339587-04:00 (maxBatchSeconds=21600)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception OK: true
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+DELAY-RECOVERY-REGISTERED
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+NANO-TRIPWIRE: installed
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+CYCLE-LOOP-RESTART before RBPushDownInstanceVariableParametrizedTest
+=== RBPushDownInstanceVariableParametrizedTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testFailureNonExistantName
+  RUN: testModelPushDownOnMetaclassSide
+  RUN: testModelPushDownToMultipleSubclasses
+  RUN: testModelRemoveUnusedVariable
+  RUN: testPushDownInstanceVariable
+Total: 5 P:5 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBPushDownMethodParametrizedTest
+=== RBPushDownMethodParametrizedTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testFailurePushDownNonExistantMenu
+  RUN: testPushDownMethod
+  RUN: testPushDownMethodThatReferencesPoolDictionary
+Total: 3 P:3 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBPushDownMethodRefactoringTest
+=== RBPushDownMethodRefactoringTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testFailurePushDownMethodOnNonAbstractClass
+  RUN: testFailurePushDownMethodSubclassesReferToSelector
+Total: 2 P:2 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBRealizeClassParametrizedTest
+=== RBRealizeClassParametrizedTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testClassWithoutChanges
+  RUN: testRealizeAbstractClass
+  RUN: testRealizeClass
+  RUN: testRealizeWithAbstractSubclass
+Total: 4 P:4 F:0 E:0 S:0
+
+CYCLE-LOOP-RESTART before RBRefactoringChangeManagerPerformChangesTest
+=== RBRefactoringChangeManagerPerformChangesTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testPerformChanges
+  RUN: testPerformChangesWhenChangesBiggerThanUndoSizeExpectCorrectChangesUndone
+  RUN: testPerformChangesWhenChangesSmallerThanUndoSizeExpectCorrectChangesUndone
+Total: 3 P:3 F:0 E:0 S:0
+
+*** BATCH COMPLETED for 5 classes (1046-1050)
+
+=== BATCH TOTAL ===
+Run: #95
+Batch: 1046-1050
+Classes: 5
+Pass: 17
+Fail: 0
+Error: 0
+Skip: 0
+Total: 17
+
+=== BATCH COMPLETE ===

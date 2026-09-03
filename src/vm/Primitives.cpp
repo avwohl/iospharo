@@ -4207,13 +4207,43 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     }
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
+    // Defect #27 detector.  A receiver that is not a closure at all cannot
+    // reach BlockClosure>>value:'s primitive by any lookup -- ByteSymbol's
+    // chain is Symbol -> ByteString -> String -> ArrayedCollection and never
+    // touches BlockClosure -- so getting here with one means the WRONG METHOD
+    // was dispatched.  The observed symptom is exactly that, followed by
+    // "Message not understood: ByteSymbol >> #numArgsError:", about once per
+    // 2000-class sweep (RSRoassalTest 2026-09-03, SpTableCommonPropertiestTest
+    // 2026-09-02).
+    //
+    // It has to sit on the FAILURE exits, not after them: a non-closure
+    // receiver fails the slot-2 numArgs read and returns before any later
+    // check.  And it must not fire on CleanBlockClosure, which is a perfectly
+    // good closure class -- the first version of this check assumed
+    // FullBlockClosure was the only one and reported four false positives in
+    // its first sweep.  Bounded to 5.
+    auto reportNonClosure = [&](const char* why) {
+        static int mis = 0;
+        if (mis >= 5) return;
+        std::string cls = memory_.classNameOf(closure);
+        if (cls.find("BlockClosure") != std::string::npos) return;  // a real closure
+        mis++;
+        fprintf(stderr,
+            "[MISDISPATCH #%d] BlockClosure>>value: primitive reached with a %s "
+            "receiver (%s) from #%s -- defect #27\n",
+            mis, cls.c_str(), why, memory_.selectorOf(method_).c_str());
+        fflush(stderr);
+    };
+
     if (__builtin_expect(!closure.isObject(), 0)) {
+        reportNonClosure("receiver is not an object");
         return PrimitiveResult::Failure;
     }
 
     // Get numArgs from the closure (slot 2) — closure already validated
     Oop numArgsOop = memory_.fetchPointerUnchecked(2, closure);
     if (__builtin_expect(!numArgsOop.isSmallInteger(), 0)) {
+        reportNonClosure("slot 2 is not a SmallInteger numArgs");
         return PrimitiveResult::Failure;
     }
 
@@ -5227,7 +5257,24 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Checked before the eval-deferral below, which terminates the current
     // process and reschedules: doing that from inside a nested interpreter
     // would strand the callback just as surely.
+    //
+    // BOUNDED, though.  A callback that never unwinds pins the VM forever with
+    // the quit pending, and that is not hypothetical: TFCallbacksTest's
+    // old-session test abandons a same-thread invocation BY DESIGN, so
+    // callbackDepth_ stays 1 for the rest of the run.  Sweep batch 1801-1850
+    // then writes all its results, asks to quit, and is killed by the harness
+    // at 1800 s — on both arches, every sweep, with
+    // "[primitiveQuit] Deferred: 1 callback(s) outstanding" in the log the
+    // whole time (defect #26).  Record when the deferral started; the
+    // checkpoint honours the quit once the grace period is gone whether or not
+    // the callback unwound.  Stranding C frames matters while the VM keeps
+    // running; it does not matter when the process is exiting anyway, and Cog
+    // simply exits.
     if (callbackDepth_ > 0) {
+        if (!pendingQuit_) {
+            extern uint64_t g_stepNum;
+            pendingQuitStep_ = g_stepNum;
+        }
         fprintf(stderr, "[primitiveQuit] Deferred: %d callback(s) outstanding, "
                         "C frames must unwind first\n", (int)callbackDepth_);
         fflush(stderr);
@@ -10275,81 +10322,6 @@ void Interpreter::scanStackSwap(Oop a, Oop b) {
 }
 
 // Primitive 72: Swap identities of two objects (two-way become)
-PrimitiveResult Interpreter::primitiveBecome(int argCount) {
-    Oop arg = stackValue(0);
-    Oop rcvr = stackValue(1);
-
-    if (!rcvr.isObject() || !arg.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    if (rcvr.rawBits() == arg.rawBits()) {
-        popN(2);
-        push(rcvr);
-        return PrimitiveResult::Success;
-    }
-
-    // Perform two-way become by swapping all references in heap
-    memory_.allObjectsDo([&](Oop obj) {
-        if (!obj.isObject()) return;
-
-        ObjectHeader* header = obj.asObjectPtr();
-        ObjectFormat format = header->format();
-
-        // Skip non-pointer objects (byte/word arrays).  Scanning any of these
-        // compares raw payload words against an oop, which can rewrite a data
-        // word that merely happens to match.  Keep this set identical to the
-        // sibling scans (~471 here, ObjectMemory.cpp ~1507 and ~1566) and to
-        // prim 132: formats 6..23 all answer "no pointers".
-        if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
-        if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return; // 9, 10, 11
-        // Also skip 16-bit arrays (format 12-15)
-        if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
-        // ...and the Reserved formats (6-8).  These are not merely
-        // theoretical: proxy_instantiateClass (InterpreterProxy.cpp ~600)
-        // raw-casts an image-supplied instSpec of 0-9 straight to
-        // ObjectFormat, so a plugin can hand us a format-6/7/8 object.
-        if (format >= ObjectFormat::Reserved6 && format <= ObjectFormat::Reserved8) return;
-
-        // For CompiledMethods, only scan the literal frame (pointer slots), not bytecodes
-        size_t numPointers = header->slotCount();
-        if (header->isCompiledMethod() && numPointers > 0) {
-            Oop methodHeader = header->slotAt(0);
-            if (methodHeader.isSmallInteger()) {
-                size_t numLits = methodHeader.asSmallInteger() & 0x7FFF;
-                numPointers = std::min(numPointers, numLits + 1);
-            }
-        }
-
-        for (size_t i = 0; i < numPointers; i++) {
-            Oop slot = memory_.fetchPointer(i, obj);
-            if (slot.rawBits() == rcvr.rawBits()) {
-                memory_.storePointer(i, obj, arg);
-            } else if (slot.rawBits() == arg.rawBits()) {
-                memory_.storePointer(i, obj, rcvr);
-            }
-        }
-    });
-
-    // Also scan the C++ execution stack — two-way, one pass, via the
-    // forEachRoot-delegating helper.  The previous hand-rolled block here
-    // walked only registers/operand stack/savedFrames_ and had DRIFTED
-    // from forEachRoot coverage (missing J2J save pools,
-    // bvClosureSaveStack_, Sista inline-self pool — the same drift class
-    // scanStackReplace's history documents).
-    scanStackSwap(rcvr, arg);
-
-    // Flush method cache — become swaps references, so cached entries
-    // for either object are now stale (the cache key classOop may now
-    // refer to a different class).
-    flushMethodCache();
-    flushJITCaches();
-
-    popN(2);
-    push(rcvr);
-    return PrimitiveResult::Success;
-}
-
 // ===== BIT OPERATION PRIMITIVES =====
 
 // Primitive 575: Return the index of the high bit (1-based, 0 if no bits set)
@@ -11341,8 +11313,12 @@ PrimitiveResult Interpreter::primitiveSignalAtBytesLeft(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Store the threshold for GC to check
+    // Store the threshold for GC to check.  Both copies matter: the
+    // interpreter's is what the checkpoint disarms one-shot; ObjectMemory's is
+    // what the two oldSpaceFree_ advance sites test, which is the only place
+    // the crossing is actually observable (see ObjectMemory::armLowSpaceThreshold).
     lowSpaceThreshold_ = static_cast<size_t>(bytes);
+    memory_.armLowSpaceThreshold(static_cast<size_t>(bytes));
 
     // Return receiver (pop arg, leave receiver)
     Oop receiver = stackValue(1);

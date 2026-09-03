@@ -5,6 +5,34 @@
 HEAD. Retained for the method; note the prevention was proven on a constructed
 analogue rather than on the storm itself, and the merged catalog image that
 would reproduce it was never archived.
+>
+> **CORRECTION 2026-09-02 — the low-space half of the defence never worked.**
+> This file says "the DEFENSE is the prim-125 low-space signal
+> (Interpreter.cpp:3495-3517, commit `22fcb0e7`) ... Verified: catalog #10
+> (with the mitigation) completed CLEAN."  That check sampled
+> `freeOldSpaceBytes()` on the interpreter's per-1024-bytecode checkpoint,
+> while old space is spent through scavenge tenure in steps of up to one eden
+> (22 MB) against Pharo's 400000-byte threshold — so it could only observe the
+> crossing ~1.8% of the time, and on the first real storm we have a log for it
+> printed nothing at all while 12 GB went by
+> (`docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`).  Whatever made
+> catalog #10 complete clean, it was not this.  Fixed the same day by latching
+> the crossing at the allocation sites; see `docs/changes.md`.  With that fix
+> `storm_repro_freeze_recursion.st` produces **462 `[LOW-SPACE]` lines and no
+> FATAL abort**, and the P60 watcher does preempt the P40 hog exactly as this
+> file describes.
+>
+> **The "DISARMED in bare `eval`" claim further down is also wrong.**  That
+> verification was a bare `eval`, and the breaker armed and fired.
+>
+> **And the trigger family is worth re-reading, not just the method.**  The
+> 2026-09-02 storm killed the batch containing all 27 `Trait*Test` classes,
+> which is exactly the trigger this file identifies: a trait-class rebuild with
+> live instances leaving a stale husk that a `freeze` handler re-hits.  The two
+> fixes credited with eliminating it (`62417f43` becomeForward-leaves-forwarder,
+> `296bba26` classOf-follows-forwarders) are still default-on, so either they
+> have regressed or there is a second trigger.  `storm_repro_husk_freeze.st`
+> answering anything but `NO-HUSK` decides it in one run.
 
 ---
 

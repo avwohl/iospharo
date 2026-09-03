@@ -1,0 +1,69 @@
+sweep start 2026-09-03 08:17:55
+  vm      /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/843c94fb-e30b-4972-adab-c1ede07553bb/scratchpad/sweep-vm-gui  (arm64)
+  image   /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/843c94fb-e30b-4972-adab-c1ede07553bb/scratchpad/work/sunit-gui.image
+  sources /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/843c94fb-e30b-4972-adab-c1ede07553bb/scratchpad/work/Pharo13.1-64bit-4f7563d.sources
+  total=2047 step=50 timeout=1800s
+batch     1-50    rc=0     17s  classes=51   completed=yes
+batch    51-100   rc=0     46s  classes=51   completed=yes
+batch   101-150   rc=0     78s  classes=51   completed=yes
+batch   151-200   rc=0     81s  classes=51   completed=yes
+batch   201-250   rc=0     34s  classes=51   completed=yes
+batch   251-300   rc=0     53s  classes=51   completed=yes
+batch   301-350   rc=0     22s  classes=51   completed=yes
+batch   351-400   rc=0     51s  classes=51   completed=yes
+batch   401-450   rc=0     95s  classes=51   completed=yes
+batch   451-500   rc=0     76s  classes=51   completed=yes
+batch   501-550   rc=0     98s  classes=51   completed=yes
+batch   551-600   rc=0     48s  classes=51   completed=yes
+batch   601-650   rc=0     26s  classes=51   completed=yes
+batch   651-700   rc=124 1801s  classes=20   completed=no
+batch   701-750   rc=0     37s  classes=51   completed=yes
+batch   751-800   rc=0     44s  classes=51   completed=yes
+batch   801-850   rc=0    151s  classes=51   completed=yes
+batch   851-900   rc=0     26s  classes=51   completed=yes
+batch   901-950   rc=0     67s  classes=51   completed=yes
+batch   951-1000  rc=0     38s  classes=51   completed=yes
+batch  1001-1050  rc=0    316s  classes=51   completed=yes
+batch  1051-1100  rc=0     94s  classes=51   completed=yes
+batch  1101-1150  rc=0     24s  classes=51   completed=yes
+batch  1151-1200  rc=0     55s  classes=51   completed=yes
+batch  1201-1250  rc=0     41s  classes=51   completed=yes
+batch  1251-1300  rc=0     38s  classes=51   completed=yes
+batch  1301-1350  rc=0     48s  classes=51   completed=yes
+batch  1351-1400  rc=0    346s  classes=51   completed=yes
+batch  1401-1450  rc=0     74s  classes=51   completed=yes
+batch  1451-1500  rc=0     57s  classes=51   completed=yes
+batch  1501-1550  rc=0    557s  classes=51   completed=yes
+batch  1551-1600  rc=0    112s  classes=51   completed=yes
+batch  1601-1650  rc=0    125s  classes=51   completed=yes
+batch  1651-1700  rc=0    172s  classes=51   completed=yes
+batch  1701-1750  rc=0    287s  classes=51   completed=yes
+batch  1751-1800  rc=0    438s  classes=51   completed=yes
+batch  1801-1850  rc=0     57s  classes=51   completed=yes
+batch  1851-1900  rc=0    201s  classes=51   completed=yes
+batch  1901-1950  rc=0    157s  classes=51   completed=yes
+batch  1951-2000  rc=0     93s  classes=51   completed=yes
+batch  2001-2047  rc=0    287s  classes=48   completed=yes
+recovery pass 2026-09-03 10:05:43 (step=5)
+retry   671-675   rc=0      7s  classes=6   
+retry   676-680   rc=0      5s  classes=6   
+retry   681-685   rc=0      7s  classes=6   
+retry   686-690   rc=0      4s  classes=6   
+retry   691-695   rc=0      4s  classes=6   
+retry   696-700   rc=0      4s  classes=6   
+sweep done 2026-09-03 10:06:14
+=== TOTALS ===
+  classes 2017
+  tests   27842
+  PASS    27625
+  FAIL    11
+  ERROR   4
+  SKIP    182
+  rate    99.22%
+=== RECOVERED (classes the main pass never ran) ===
+  classes 30
+  tests   232
+  PASS    232
+  FAIL    0
+  ERROR   0
+  SKIP    0

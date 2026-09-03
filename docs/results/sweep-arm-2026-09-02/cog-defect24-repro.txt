@@ -1,0 +1,67 @@
+
+# Defect 24 reproduced on stock Cog, 2026-09-02: MorphicUIManager installed
+# with its UI process SUSPENDED gives our exact failure set.
+
+UIManager default = MorphicUIManager
+uiProcess suspended? = true
+pass=18 fail=5
+   testChangeListInPresenterUpdatesWidget  SubscriptOutOfBounds: 1 in #()
+   testDoubleClickActivatesRowInDoubleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+   testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
+   testSetColumnTitleInPresenterPutsColumnHeaderMorph  SubscriptOutOfBounds: 1 in #()
+   testSingleClickActivatesRowInSingleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+
+# For contrast, the same image with Morphic installed and the UI process RUNNING:
+
+before: UIManager default = NonInteractiveUIManager
+after : UIManager default = MorphicUIManager
+uiProcess = a Process in MorphicRenderLoop>>doOneCycleWhile:
+pass=23 fail=0
+
+# And with World nilled instead (a different, wrong hypothesis):
+
+WorldMorph allInstances before = 1
+WorldMorph allInstances after  = 1
+pass=2 fail=21
+   testChangeListInPresenterUpdatesWidget  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
+   testChangingHelpAffectTheWidget  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
+   testDoubleClickActivatesRowInDoubleClickActivationMode  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
+
+# Control: restoring NonInteractiveUIManager after suspending does NOT fix it.
+
+step 1: Morphic installed, uiProcess suspended
+step 2: UIManager default = NonInteractiveUIManager
+pass=18 fail=5
+   testChangeListInPresenterUpdatesWidget  SubscriptOutOfBounds: 1 in #()
+   testDoubleClickActivatesRowInDoubleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+   testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
+   testSetColumnTitleInPresenterPutsColumnHeaderMorph  SubscriptOutOfBounds: 1 in #()
+   testSingleClickActivatesRowInSingleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+
+# The rest of the 'no display' bucket under the same suspended-UI-process
+# condition on stock Cog.
+
+Morphic installed, uiProcess suspended
+
+FTTableMorphTest  pass=0 fail=1
+     testCanAlternateRowColors  SubscriptOutOfBounds: 1 in #()
+StDebuggerActionModelTest  pass=55 fail=0
+StSpotterModelTest  pass=2 fail=0
+StTranscriptPresenterTest  pass=2 fail=3
+     testAnnouncementIsWritten  TestFailure: Got '' instead of 'test'.
+     testClear  TestFailure: Got '' instead of 'test'.
+     testReset  TestFailure: Got '' instead of 'test'.
+StDebuggerInspectorTest  pass=10 fail=1
+     testUpdateLayoutForContextsWithAssertionFailure  TestFailure: Got 4 instead of 2.
+StSpotterTest  pass=2 fail=1
+     testOpenSpotterRefreshesPreviewOnce  TestFailure: Got 0 instead of 1.
+SpAthensAdapterTest  pass=8 fail=1
+     testResizeMakesCanvasResize  MessageNotUnderstood: receiver of "x" is nil
+SpComponentListAdapterTest  pass=7 fail=1
+     testAddPresenterAddsWidget  SubscriptOutOfBounds: 1 in #()
+
+StDebuggerTest (Morphic suspended)  pass=63 fail=4
+   testDynamicVariableEvaluation  TestFailure: Got nil instead of 42.
+   testGenerateAndProceed  MessageNotUnderstood: receiver of "clear" is nil
+   testIsInSelectedContextPackage  TestFailure: Got #DoIt instead of #runTestCaseUnderWatchdog:.
+   testUpdateLayoutForContextsIfAssertionFailure  TestFailure: Got 4 instead of 2.

@@ -1,0 +1,34 @@
+# The batch that costs every sweep 1800 s, measured on stock Cog.
+# All of batch 1801-1850's threaded-FFI, stepping and socket classes.
+
+TFBasicTypeMarshallingInCallbacksTest  P:36 F:0 E:0  192ms
+TFBasicTypeMarshallingTest  P:44 F:0 E:0  12ms
+TFBasicTypeSizeTest  P:48 F:0 E:0  103ms
+TFBasicTypeTest  P:26 F:0 E:0  22ms
+TFCallbacksTest  P:8 F:0 E:0  185ms
+TFFunctionCallTest  P:16 F:0 E:0  29ms
+TFPoolTest  P:4 F:0 E:0  5ms
+TFStructTest  P:6 F:0 E:0  7ms
+TFUFFIBasicTypeMarshallingInCallbacksTest  P:36 F:0 E:0  182ms
+TFUFFIBasicTypeMarshallingTest  P:36 F:0 E:0  22ms
+TFUFFIBasicTypeSizeTest  P:48 F:0 E:0  12ms
+TFUFFICallbackTest  P:13 F:0 E:0  4079ms
+TFUFFIConcurrencyTest  P:2 F:0 E:0  559ms
+TFUFFIDerivedTypeMarshallingInCallbackTest  P:12 F:0 E:0  222ms
+TFUFFIDerivedTypeMarshallingTest  P:34 F:0 E:0  40ms
+TFUFFIDerivedTypeSizeTest  P:2 F:0 E:0  5ms
+TFUFFIDifferentCallingConventionFunctionCallTest  P:2 F:0 E:0  7ms
+TFUFFIFunctionCallTest  P:5 F:0 E:0  1029ms
+TFUFFIMethodRegistryTest  P:2 F:0 E:0  80ms
+TFUFFIStructuresTest  P:22 F:0 E:0  124ms
+StepIntoTest  P:7 F:0 E:0  341ms
+StepOverTest  P:10 F:0 E:0  35ms
+StepThroughTest  P:11 F:0 E:0  53ms
+TCPSocketEchoTest  P:1 F:0 E:0  34ms
+TCPSocketTest  P:9 F:0 E:0  246ms
+DONE
+
+# Sum: ~7.4 s, 429 tests, 0 F / 0 E.
+# Ours: the batch reports all 51 classes and writes its completion marker,
+# then never exits -- killed by the harness at PER_BATCH_TIMEOUT=1800 s, on
+# BOTH arches.

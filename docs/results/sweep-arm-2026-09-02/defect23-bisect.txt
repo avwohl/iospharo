@@ -1,0 +1,14 @@
+# Defect #23 bisect, 2026-09-03 — the storm is NON-DETERMINISTIC
+
+=== defect #23 bisect: which classes accumulate the Contexts? ===
+reference: 1901-1950 whole = rc=134 in 18 s, 2.65M Contexts, dies at 1909
+Timespan only           1901-1902  rc=0      3s classes=3   Contexts=none
+Tonel only              1903-1909  rc=0      4s classes=8   Contexts=none
+/private/tmp/claude-501/-Users-wohl-src-iospharo-jit/843c94fb-e30b-4972-adab-c1ede07553bb/scratchpad/post-sweep-6-running.sh: line 19: 91489 Abort trap: 6           PHARO_MAX_OLD_SPACE_MB=1024 timeout 600 ./build-rel/test_load_image "$S/b23-run.image" > "$S/b23_${a}_${b}.log" 2>&1 < /dev/null
+prefix to 1905          1901-1905  rc=134   18s classes=3   Contexts=2655142
+prefix to 1907          1901-1907  rc=0      5s classes=8   Contexts=none
+prefix to 1909          1901-1909  rc=0      4s classes=10  Contexts=none
+TonelReaderTraitComp    1905-1905  rc=0      2s classes=2   Contexts=none
+TonelWriterV1 alone     1909-1909  rc=0      2s classes=2   Contexts=none
+
+=== post-sweep-6 done 2026-09-03 01:30:29 ===

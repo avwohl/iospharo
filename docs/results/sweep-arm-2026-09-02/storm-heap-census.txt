@@ -1,0 +1,40 @@
+# Heap census at the storm's abort — arm64 sweep batch 1901-1950, 2026-09-02
+#
+# The last classes this batch reported, in order, were TimespanDoTest ..
+# TonelWriterV3Test (11 of 51); it died on index 1912, the first trait test.
+# Note what is NOT here: no [LOW-SPACE] line.  The circuit breaker added in
+# 22fcb0e7 could not fire -- see docs/changes.md 2026-09-02.
+#
+# Full stdout was 4.2 MB, almost all periodic [JIT] Stats: lines; this is the
+# tail from the last stats sample through the census.
+
+[VM] FATAL: old space exhausted during scavenge tenure (need 320 bytes, 16 free of 12884901888). Live heap has outgrown the old-space reservation (MemoryConfig::oldSpaceMaxSize).
+[HEAP-CENSUS] 47437613 objects, 12313 MB total; top 25 classes by bytes:
+[HEAP-CENSUS]  33363299 objs 11725994 KB  Context (idx 36)
+[HEAP-CENSUS]   6656491 objs   364026 KB  Error (idx 3191)
+[HEAP-CENSUS]   6664295 objs   312344 KB  FullBlockClosure (idx 38)
+[HEAP-CENSUS]    129859 objs   131155 KB  Array (idx 51)
+[HEAP-CENSUS]      2418 objs    19386 KB  Array (idx 16)
+[HEAP-CENSUS]      2323 objs    12905 KB  ByteArray (idx 50)
+[HEAP-CENSUS]    138982 objs    12272 KB  CompiledMethod (idx 3101)
+[HEAP-CENSUS]        59 objs     6147 KB  Bitmap (idx 7594)
+[HEAP-CENSUS]      1712 objs     3236 KB  WeakArray (idx 3163)
+[HEAP-CENSUS]     24378 objs     2962 KB  MethodDictionary (idx 3215)
+[HEAP-CENSUS]     89163 objs     2690 KB  ByteSymbol (idx 3085)
+[HEAP-CENSUS]         7 objs     2160 KB  ? (idx 19)
+[HEAP-CENSUS]     37145 objs     2108 KB  CompiledBlock (idx 3117)
+[HEAP-CENSUS]     37155 objs     1538 KB  ByteString (idx 52)
+[HEAP-CENSUS]     43427 objs     1357 KB  Protocol (idx 4525)
+[HEAP-CENSUS]     45276 objs     1061 KB  Association (idx 3091)
+[HEAP-CENSUS]     22594 objs      750 KB  AdditionalMethodState (idx 3299)
+[HEAP-CENSUS]     13056 objs      510 KB  InstanceVariableSlot (idx 3173)
+[HEAP-CENSUS]      9101 objs      497 KB  Metaclass (idx 3073)
+[HEAP-CENSUS]     21215 objs      497 KB  FixedLayout (idx 3167)
+[HEAP-CENSUS]     21252 objs      435 KB  LayoutClassScope (idx 3171)
+[HEAP-CENSUS]      7327 objs      286 KB  Pragma (idx 4497)
+[HEAP-CENSUS]     10963 objs      256 KB  GlobalVariable (idx 3139)
+[HEAP-CENSUS]         2 objs      231 KB  SparseLargeTable (idx 4745)
+[HEAP-CENSUS]      3049 objs      190 KB  UnhandledError (idx 4857)
+
+# last [JIT] Stats: sample before the abort:
+[JIT] Stats: 1058013184 sends, 7103 compiled, 0 failed, 55193/196608 KB code | IC: 70740935/91705914 (77% hit, 144092 patched, 0 stale) | J2J-r: 533688/1223108 J2J-a: 61459376/75708946 J2J-d: 171291 J2J-s: 7145544/23301986 | map: 1320 tracked, 236 hot

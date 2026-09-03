@@ -607,12 +607,6 @@ public:
     /// Run a non-compacting mark-sweep GC (safe to call from allocations)
     void sweepGC();
 
-    /// Check if GC is needed
-    bool needsGC() const;
-
-    /// Force a GC on next allocation
-    void forceGC() { forceGCFlag_ = true; }
-
     /// Check if compacting GC is needed at next safe point
     bool needsCompactGC() const { return needsCompactGC_; }
     void clearCompactGCFlag() { needsCompactGC_ = false; }
@@ -790,6 +784,41 @@ public:
         return static_cast<size_t>(oldSpaceEnd_ - oldSpaceFree_);
     }
 
+    // ---- Low-space circuit breaker (prim 125) -------------------------
+    //
+    // The threshold has to be tested WHERE OLD SPACE IS CONSUMED, not on a
+    // bytecode counter.  Sampling it from the interpreter's per-1024-bytecode
+    // checkpoint cannot work, and the 2026-09-02 arm64 sweep is the proof: a
+    // storm ran the heap from 12 GB of free old space down to 16 bytes and
+    // the breaker never fired once.  Old space does not drain smoothly --
+    // essentially all of it goes out through scavenge tenure, in steps of up
+    // to one full eden (22 MB on that image).  Pharo arms the threshold at
+    // `SmalltalkImage>>lowSpaceThreshold` = 400000 bytes, so the sampled
+    // check only sees the window if a 22 MB step happens to land inside the
+    // last 400 KB: 400000/22003584 ~= 1.8% of the time.  The other 98.2% the
+    // next tenure overruns oldSpaceEnd_ and aborts before any checkpoint runs.
+    //
+    // So: arm it here, test it at the two sites that advance oldSpaceFree_,
+    // and let the interpreter consume a latched flag.  The effective
+    // threshold is max(image threshold, min(one eden, reservation/16)) -- the
+    // invariant being that the image gets its interrupt while at least one
+    // more worst-case scavenge can still be absorbed.  A 400 KB threshold
+    // cannot express that when the allocation granularity above it is 22 MB.
+    void armLowSpaceThreshold(size_t bytes) {
+        lowSpaceThresholdBytes_ = bytes;
+        if (bytes == 0) lowSpaceCrossed_ = false;
+    }
+    /// The interpreter calls this each time it actually signals the image.
+    /// Kept HERE so the exhaustion FATAL can tell "never armed" from "armed,
+    /// fired, and disarmed itself on delivery" -- a distinction that cost two
+    /// wrong readings of the same log on 2026-09-03, because the threshold is
+    /// zero in both cases.
+    void noteLowSpaceDelivered() { lowSpaceDeliveries_++; }
+    /// Peek at the latch.  Cleared by disarming (armLowSpaceThreshold(0)),
+    /// which is what the interpreter does once it has actually signalled --
+    /// so a crossing with no semaphore registered yet is not thrown away.
+    bool lowSpaceCrossed() const { return lowSpaceCrossed_; }
+
     /// Set the free pointer (for image loading)
     void setOldSpaceFreePointer(uint8_t* ptr) {
         oldSpaceFree_ = ptr;
@@ -804,11 +833,12 @@ public:
     }
     void ensurePinArena();
 
-    /// Addresses of the eden bump cells, for the JIT inline-alloc emit
-    /// (PHARO_T1_INLINE_NEW_ASM). The emitted code loads/stores edenFree_ and
-    /// compares against survivorStart_ (the eden limit) directly — one stable
-    /// ObjectMemory instance, so these addresses can be baked at emit time.
-    uint8_t** edenFreeCellAddr() { return &edenFree_; }
+    /// Address of the survivor-start cell.  NOTE the JIT does NOT come through
+    /// here: the inline-alloc emit (PHARO_T1_INLINE_NEW_ASM) bakes
+    /// `g_jitEdenFreeCell` / `g_jitSurvivorStartCell`, published in the
+    /// constructor.  The matching `edenFreeCellAddr()` existed alongside this
+    /// one with a comment saying the emit used it, and had no callers at all;
+    /// removed 2026-09-02.
     uint8_t** survivorStartCellAddr() { return &survivorStart_; }
 
     /// Public young-gen bump for the JIT new fast-path (jit_rt_new_prim).
@@ -844,11 +874,6 @@ public:
         return false;
     }
 
-    /// Debug: Get address of class table entry for detecting corruption
-    void* classTableEntryAddress(uint32_t index) const {
-        if (index >= classTable_.size()) return nullptr;
-        return const_cast<void*>(static_cast<const void*>(&classTable_[index]));
-    }
 
 private:
     // Memory regions
@@ -872,6 +897,32 @@ private:
     uint8_t* edenAllocBase_ = nullptr;
     uint8_t* edenAllocLimit_ = nullptr;
     uint8_t* survivorStart_ = nullptr;
+
+    // Low-space breaker state; see armLowSpaceThreshold().
+    size_t lowSpaceThresholdBytes_ = 0;   // 0 = disarmed
+    bool   lowSpaceCrossed_ = false;      // latched at the crossing
+    uint64_t lowSpaceDeliveries_ = 0;     // times the image was actually signalled
+
+    /// Called wherever oldSpaceFree_ advances.  Latches the crossing so the
+    /// interpreter can signal TheLowSpaceSemaphore at its next safe point --
+    /// signalling from inside a scavenge is not an option.
+    void noteOldSpaceAdvance() {
+        if (__builtin_expect(lowSpaceThresholdBytes_ == 0, 1)) return;
+        // One worst-case scavenge's worth of headroom, but never more than a
+        // sixteenth of the whole reservation: `newSpaceSize` is settable
+        // (PHARO_NEWSPACE_MB, a bisect knob), and a big eden against a small
+        // old space would otherwise turn "nearly exhausted" into "a quarter
+        // used" and fire on every run.  A bisect knob must not quietly change
+        // low-space semantics.  The image's own threshold always wins if it
+        // asks for more than either.
+        size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
+        size_t reservation  = static_cast<size_t>(oldSpaceEnd_ - oldSpaceStart_);
+        size_t headroom     = edenCapacity < reservation / 16 ? edenCapacity
+                                                              : reservation / 16;
+        size_t effective    = lowSpaceThresholdBytes_ > headroom
+                                  ? lowSpaceThresholdBytes_ : headroom;
+        if (freeOldSpaceBytes() < effective) lowSpaceCrossed_ = true;
+    }
 
     // Class table.
     //
@@ -934,7 +985,6 @@ public:
 private:
 
     // GC state
-    bool forceGCFlag_ = false;
     bool needsCompactGC_ = false;  // Set by allocator when compaction needed at safe point
     bool needsScavenge_ = false;   // Set by allocator when eden is full
 
@@ -1235,7 +1285,11 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor, bool includeClassTable) 
         }
     }
 
-    // Registered roots (interpreter stack pointers, etc.)
+    // Registered roots (interpreter stack pointers, etc.).  EMPTY in practice:
+    // nothing in this VM calls addRoot(), so this loop is a no-op today.  The
+    // hook is kept because it is the right place to register a C++-side Oop
+    // that must survive GC; if you find yourself pinning one some other way,
+    // use this.
     for (Oop* root : roots_) {
         if (root) {
             visitor(*root);

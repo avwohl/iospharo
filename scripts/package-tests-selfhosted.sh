@@ -8,10 +8,21 @@
 # Metacello load, and then `eval --save` to persist it. Neither works
 # everywhere:
 #
-#   * On macOS the stock VM aborts before it starts, "Could not allocate
+#   * On macOS the ARM64 stock VM aborts before it starts, "Could not allocate
 #     codeZone in the expected place (0x320000000)". That is the ASLR problem
-#     this project exists to solve, so the reference VM is unavailable on
-#     exactly the platform we most want to test.
+#     this project exists to solve.
+#     CORRECTION 2026-09-02: that is arch-specific, not host-specific. The
+#     x86_64 stock VM runs fine under Rosetta and gives this machine a Cog
+#     baseline again:
+#         mkdir -p /tmp/harness-x86 && cd /tmp/harness-x86
+#         arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/130+vm | bash'
+#         arch -x86_64 ./pharo Pharo.image eval '42 factorial printString'
+#     Verified on Cog v10.3.9, `eval` and `eval --save` both. Every stock-VM
+#     command needs the `arch -x86_64` prefix or you get the abort above. So a
+#     Cog-loaded package baseline IS obtainable now; this script staying
+#     self-hosted is still the right default (driving Metacello with our own VM
+#     is itself a workload worth exercising), but "no reference VM" is no
+#     longer the reason.
 #   * `eval --save` is the stock VM's flag. Ours forwards it to the image's
 #     command-line handler and nothing is written -- verified by setting a
 #     global and finding it gone on the next launch.
@@ -39,7 +50,16 @@ TEST_TIMEOUT=${TEST_TIMEOUT:-900}
 # 57 passes, which is 57 of the 59-test gap between the two architectures'
 # PolyMath scores.  Re-run alone with a 900 s bound it answers exactly what
 # arm64 answers: 58 ran, 57 passed, 1 error.  Use 360+ for x86_64.
-PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
+# 200, not 120 (2026-09-03).  The old default was described as "sized for
+# arm64" and is not: PMArbitraryPrecisionFloatTest, timed alone on arm64 twice,
+# takes 139 s and 158 s -- 16% to 32% OVER the old bound -- and returns
+# 58 ran / 58 passed once and 58 ran / 57 passed / 1 err the other time, so the
+# lone error is flaky too.  At 120 s it TIMED OUT and cost 57 passes, which is
+# indistinguishable in the summary from the tests failing and is exactly the
+# trap the x86_64 note below describes.  The 2026-08-22 runs this repo compares
+# against used 180.  200 covers the measured cost with margin and still bounds
+# the damage from a genuinely hung class.
+PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-200}   # seconds, per TestCase subclass
 # Seconds for SUnit's OWN per-test limit (TestCase class>>defaultTimeLimit,
 # enforced by runCaseManaged).  0 = leave the image default alone, which is
 # 10 s.  This is NOT the same bound as PER_CLASS_TIMEOUT above: that one is

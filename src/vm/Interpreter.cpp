@@ -476,7 +476,14 @@ extern "C" __attribute__((noinline)) void pharo_cascade_bp(
     asm volatile("" ::: "memory");
 }
 
-namespace pharo { namespace jit {
+namespace pharo {
+
+// See the definition next to dumpSendChain: per-site cannotReturn: tallies.
+extern uint64_t g_cannotReturnSite[6];
+extern uint64_t g_blockCreatePendingJ2J[2];
+extern uint64_t g_contextsKilledByUnwind[2];
+extern uint64_t g_duplicateActivation[2];
+ namespace jit {
 class JITRuntime;
 void dumpBailGateHisto(ObjectMemory& mem);
 void dumpBailGateNamedICs(ObjectMemory& mem, JITRuntime& rt,
@@ -2251,6 +2258,203 @@ void Interpreter::dumpJITStats() {
 #endif
 }
 
+// Which cannotReturn: site fired, counted per site.  The storm loop runs
+// through ONE of six of them and the six differ in what they mean -- an NLR
+// whose home context was found but whose homeSender was nil, an NLR whose home
+// was never found, a plain method return off the top of the chain, a block
+// return with no outer, a context-activation return.  The fatal dump prints
+// the tallies so a single storm says which.  Only two of the six arm the
+// per-process count/deadline guard, which is why a loop through the others
+// never self-limits.
+uint64_t g_cannotReturnSite[6] = {0, 0, 0, 0, 0, 0};
+// Block creations reached with J2J saves still pending, per loop.  [0] is the
+// chain loop's ExitBlockCreate, which now materializes them first; [1] is the
+// resume loop's twin, which does NOT -- its handlers are documented to assume
+// depth==0, and this counter is how we find out whether that holds.  A closure
+// built with saves pending captures a sender chain missing every J2J-hidden
+// caller, which is defect #23's mechanism.
+uint64_t g_blockCreatePendingJ2J[2] = {0, 0};
+// Contexts marked dead (sender=nil, pc=-1) by an unwind, per site.  [0] is the
+// NLR home search in returnValue; [1] is handleContextNLRUnwind's kill of
+// startCtx..ensureCtx.  A frame that is still live when its context is killed
+// here will later return INTO a dead sender -- the site that fires half a
+// million times in a defect-#23 storm -- so these two tallies say which unwind
+// left the frame behind.
+uint64_t g_contextsKilledByUnwind[2] = {0, 0};
+// [0] popFrame killed a materialized context that was ALREADY dead -- the same
+// activation returned twice.  [1] a J2J save was materialized onto a frame
+// pointer one of the top frames already uses, which is the same duplicate seen
+// from the other end.  Either one being non-zero says the residual dead-sender
+// loop is a duplicated activation rather than a lost context handover.
+uint64_t g_duplicateActivation[2] = {0, 0};
+static const char* const kCannotReturnSiteName[6] = {
+    "nlr-home-sender-nil",         // NLR: home context found, its sender is nil/invalid
+    "return-into-dead-sender",     // normal return: sender's pc is nil or -1 (returned-from)
+    "return-top-of-chain",         // return with no sender at all -- the guarded site
+    "block-return-home-returned",  // block return, home method already returned
+    "block-return-home-not-found", // block return, home not in the context chain
+    "activate-dead-context",       // activateContext on a context whose pc is nil/-1
+};
+
+// Rate-limit repeated cannotReturn: sends from one process.
+//
+// Four of the six cannotReturn: sites have no bound at all, and defect #23 is
+// what that costs: a storm captured on 2026-09-03 sent 515,981 of them from a
+// single site ("return-into-dead-sender") in one run.  The loop is
+// self-sustaining -- cannotReturn: -> error: -> signal -> no handler ->
+// UnhandledError defaultAction -> handleError:log: -> Context>>freeze, which
+// COPIES the whole context chain, and the chain is one round longer every
+// time.  That is where 2.6M Contexts, 517K Errors and 517K FullBlockClosures
+// come from, and it ends in a 12 GB old-space abort that takes the rest of the
+// test batch with it (39 classes lost per sweep).
+//
+// The VM already has this protection at the top-of-chain site: "Too many
+// cannotReturn: events -- error handler is not terminating.  Fall through to
+// terminate the process."  This applies the same rule to the sites that lacked
+// it.  It is a bound, not a diagnosis: the underlying question of why a JIT'd
+// frame returns into a context an earlier unwind already marked dead is open,
+// and PHARO_NO_JIT makes the storm vanish entirely, so the answer is in the
+// JIT.  What the bound buys is that the storm costs one terminated process
+// instead of the whole batch.
+//
+// Deliberately loose: 64 sends inside a 2,000,000-step window.  A legitimate
+// BlockCannotReturn that an image handler resumes (ProcessTest>>testResumeAfter
+// BCR) sends a handful; a storm sends half a million.
+static constexpr uint64_t kCannotReturnWindowSteps = 2000000;
+
+bool Interpreter::cannotReturnStormGuard(const char* site) {
+    Oop proc = getActiveProcess();
+    if (proc.rawBits() != cannotReturnStormProcess_.rawBits()
+            || g_stepNum - cannotReturnStormStep_ > kCannotReturnWindowSteps) {
+        cannotReturnStormCount_ = 0;
+        cannotReturnStormProcess_ = proc;
+    }
+    cannotReturnStormStep_ = g_stepNum;
+    const uint64_t burst =
+        static_cast<uint64_t>(GET_DEBUG_INT(PHARO_CANNOT_RETURN_BURST));
+    if (++cannotReturnStormCount_ <= burst) return false;
+
+    fprintf(stderr,
+        "[CANNOT-RETURN-STORM] %llu cannotReturn: sends (burst limit %llu) from "
+        "site \"%s\" by process 0x%llx within %llu steps -- the image's error "
+        "handling is not terminating it, so the VM is. See defect #23.\n",
+        (unsigned long long)cannotReturnStormCount_,
+        (unsigned long long)burst, site,
+        (unsigned long long)proc.rawBits(),
+        (unsigned long long)kCannotReturnWindowSteps);
+    fflush(stderr);
+    cannotReturnStormCount_ = 0;
+    cannotReturnStormProcess_ = Oop::nil();
+    terminateCurrentProcess();
+    if (tryReschedule()) return true;
+    if (bootstrapStartup()) return true;
+    stopVM("No runnable processes after cannotReturn: storm termination");
+    return true;
+}
+
+// Innermost frames of the ACTIVE process at a fatal heap abort.  The census
+// tells you 2.6M Contexts and 517K Errors were live; it cannot tell you which
+// loop signalled them, and two separate sessions have stalled on exactly that
+// gap.  Best-effort by construction: the abort fires INSIDE a scavenge, so
+// young objects may be half-forwarded.  So this prints only what survives
+// that -- each frame's selector, read from its CompiledMethod, which lives in
+// old space -- and shows receivers as raw oops rather than dereferencing them
+// to name a class.
+void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
+    fprintf(stderr,
+            "[SEND-CHAIN] %s\n"
+            "[SEND-CHAIN] active-process frames, innermost first (depth=%zu, "
+            "showing up to %zu; receivers are raw oops -- a scavenge is in "
+            "flight and classOf would follow forwarded pointers)\n",
+            why, frameDepth_, maxFrames);
+    fprintf(stderr, "[SEND-CHAIN]   running  #%s rcvr=0x%llx\n",
+            memory_.selectorOf(method_).c_str(),
+            (unsigned long long)receiver_.rawBits());
+    {
+        uint64_t tot = 0;
+        for (int i = 0; i < 6; i++) tot += g_cannotReturnSite[i];
+        if (tot) {
+            fprintf(stderr, "[SEND-CHAIN] cannotReturn: sends by site (%llu total):",
+                    (unsigned long long)tot);
+            for (int i = 0; i < 6; i++)
+                if (g_cannotReturnSite[i])
+                    fprintf(stderr, "  %s=%llu", kCannotReturnSiteName[i],
+                            (unsigned long long)g_cannotReturnSite[i]);
+            fprintf(stderr, "\n");
+        }
+        if (g_duplicateActivation[0] || g_duplicateActivation[1])
+            fprintf(stderr, "[SEND-CHAIN] duplicate activations: "
+                    "double-returns=%llu dup-frame-pointers=%llu\n",
+                    (unsigned long long)g_duplicateActivation[0],
+                    (unsigned long long)g_duplicateActivation[1]);
+        if (g_contextsKilledByUnwind[0] || g_contextsKilledByUnwind[1])
+            fprintf(stderr, "[SEND-CHAIN] contexts killed by unwind: "
+                    "nlr-home-search=%llu aboutToReturn-unwind=%llu\n",
+                    (unsigned long long)g_contextsKilledByUnwind[0],
+                    (unsigned long long)g_contextsKilledByUnwind[1]);
+        if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
+            fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
+                    "chain-loop=%llu (materialized first) resume-loop=%llu "
+                    "(NOT materialized)\n",
+                    (unsigned long long)g_blockCreatePendingJ2J[0],
+                    (unsigned long long)g_blockCreatePendingJ2J[1]);
+    }
+    size_t lo = (frameDepth_ > maxFrames) ? (frameDepth_ - maxFrames) : 0;
+    for (size_t i = frameDepth_; i > lo; i--) {
+        const SavedFrame& sf = savedFrames_[i - 1];
+        bool isBlock = sf.savedClosure.isObject()
+                    && sf.savedClosure.rawBits() > 0x10000
+                    && !sf.savedClosure.isNil();
+        fprintf(stderr, "[SEND-CHAIN]   [%5zu] %s#%s rcvr=0x%llx\n",
+                i - 1, isBlock ? "[] in " : "",
+                memory_.selectorOf(sf.savedMethod).c_str(),
+                (unsigned long long)sf.savedReceiver.rawBits());
+    }
+    if (lo > 0)
+        fprintf(stderr, "[SEND-CHAIN]   ... %zu outer frame(s) not shown\n", lo);
+
+    // The native frame chain is only the tip.  A signal storm lives in the
+    // MATERIALIZED context chain -- 2.6M Contexts is the whole symptom -- and
+    // the question it has to answer is whether an on:do: handler context is
+    // present in that chain at all.  Primitive 199 marks BlockClosure>>on:do:
+    // and 198 marks ensure:/ifCurtailed:, which is exactly what the image's
+    // Context>>findNextHandlerContext scans for; if the JIT elides the frame,
+    // signal finds no handler, raises again, and recurses forever.
+    Oop ctx = activeContext_;
+    if (ctx.isObject() && ctx.rawBits() > 0x10000) {
+        fprintf(stderr, "[SEND-CHAIN] materialized context chain from "
+                        "activeContext_=0x%llx (sender links, up to %zu):\n",
+                (unsigned long long)ctx.rawBits(), maxFrames);
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        size_t handlers = 0, unwinds = 0, n = 0;
+        for (; n < maxFrames; n++) {
+            if (!ctx.isObject() || ctx.rawBits() <= 0x10000
+                    || ctx.rawBits() == nilObj.rawBits()) break;
+            ObjectHeader* ch = ctx.asObjectPtr();
+            if (ch->slotCount() < 6) break;
+            Oop meth = memory_.fetchPointer(3, ctx);
+            Oop clos = memory_.fetchPointer(4, ctx);
+            int prim = primitiveIndexOf(meth);
+            if (prim == 199) handlers++;
+            if (prim == 198) unwinds++;
+            fprintf(stderr, "[SEND-CHAIN]   ctx[%3zu] 0x%llx %s#%s prim=%d%s\n",
+                    n, (unsigned long long)ctx.rawBits(),
+                    (clos.isObject() && clos.rawBits() > 0x10000
+                        && clos.rawBits() != nilObj.rawBits()) ? "[] in " : "",
+                    memory_.selectorOf(meth).c_str(), prim,
+                    prim == 199 ? "   <== HANDLER (on:do:)"
+                                : (prim == 198 ? "   <== unwind (ensure:)" : ""));
+            ctx = memory_.fetchPointer(0, ctx);   // sender
+        }
+        fprintf(stderr, "[SEND-CHAIN] walked %zu contexts: %zu handler(s), "
+                        "%zu unwind(s)%s\n",
+                n, handlers, unwinds,
+                handlers == 0 ? "  -- NO on:do: IN REACH, which is why signal "
+                                "never terminates" : "");
+    }
+    fflush(stderr);
+}
+
 void Interpreter::dumpProcessQueues() {
     fprintf(stderr, "\n=== Process Scheduler Dump ===\n");
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -2751,6 +2955,88 @@ void Interpreter::traceExtentBytecode(uint8_t bc) {
     else tcls = "imm";
     fprintf(stderr, "[ORGBC d=%zu %s 0x%02x tos=%s]\n",
             frameDepth_ - g_traceExtentDepth, memory_.selectorOf(method_).c_str(), bc, tcls);
+}
+
+bool Interpreter::methodHoldsLiteral(Oop method, Oop lit) {
+    if (!method.isObject() || method.rawBits() <= 0x10000) return false;
+    if (!lit.isObject() || lit.rawBits() <= 0x10000) return false;
+    Oop hdr = memory_.fetchPointer(0, method);
+    if (!hdr.isSmallInteger()) return false;
+    int numLits = hdr.asSmallInteger() & 0x7FFF;
+    if (numLits < 1) return false;
+    // A real CompiledMethod only.  A CompiledBlock's LAST literal is its
+    // enclosing code, so a nested block holds the outer block in its literals
+    // — and a caller looking for "which frame owns this block" would match the
+    // inner block's own frame and return from the wrong one.  "Last literal is
+    // compiled code" is exactly the CompiledBlock test the outerCode walk in
+    // the non-local return uses.
+    Oop last = memory_.fetchPointer(numLits, method);
+    if (last.isObject() && last.rawBits() > 0x10000
+            && last.asObjectPtr()->isCompiledMethod()) {
+        return false;
+    }
+    for (int i = 1; i <= numLits; i++) {
+        if (memory_.fetchPointer(i, method).rawBits() == lit.rawBits()) return true;
+    }
+    return false;
+}
+
+// Deliver the image's low-space interrupt (prim 125) if the threshold has
+// been crossed.  The crossing is LATCHED by ObjectMemory at the two sites that
+// spend old space, not sampled here -- sampling `freeOldSpaceBytes() <
+// lowSpaceThreshold_` on the per-1024-bytecode checkpoint is what this used to
+// do, and it essentially never fired.  Old space drains through scavenge
+// tenure in steps of up to one eden (22 MB), against Pharo's 400000-byte
+// threshold, so the sampled window was hit ~1.8% of the time; the rest of the
+// time the next tenure overran oldSpaceEnd_ and aborted first.  Measured on
+// the 2026-09-02 arm64 sweep: 12 GB of old space consumed, zero [LOW-SPACE]
+// lines.  See ObjectMemory::armLowSpaceThreshold.
+//
+// Called from BOTH interpreter loops.  The nested callback loop
+// (enterInterpreterFromCallback) is not a detail: the main checkpoint does not
+// run while a callback hosts execution, so without this call a storm inside an
+// FFI callback could still exhaust the heap with the breaker armed.
+void Interpreter::checkLowSpaceSignal() {
+    if (__builtin_expect(lowSpaceThreshold_ == 0, 1)) return;
+    if (!memory_.lowSpaceCrossed()) return;
+    // Not between an extension byte and the bytecode that consumes it:
+    // synchronousSignal can resume a higher-priority waiter, and a process
+    // switch runs executeFromContext, which resets extA_/extB_ and corrupts
+    // the next bytecode's argument -- the "factorial returns receiver" bug.
+    // The guard has to live HERE rather than at the call sites: in
+    // interpret() the `if (inExtension_)` early-out that protects the timer,
+    // signal and preemption checks sits BELOW this call, and in the callback
+    // loop each check carries its own `!inExtension_`.  It mattered little
+    // while this check essentially never fired and matters now that it can.
+    // The latch is only cleared on delivery, so deferring loses nothing.
+    if (inExtension_) return;
+    Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
+    if (!lowSem.isObject() || lowSem.isNil()) return;
+    // Disarm only once we can actually deliver.  The old code zeroed the
+    // threshold before looking the semaphore up, so a crossing that arrived
+    // before the image had registered one disarmed the breaker for good and
+    // signalled nothing.
+    lowSpaceThreshold_ = 0;
+    memory_.armLowSpaceThreshold(0);   // also clears the latch
+    memory_.noteLowSpaceDelivered();   // so the exhaustion FATAL can say so
+    memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
+                             getActiveProcess());
+    // Bounded trace.  This is not necessarily a one-shot event: the image's
+    // `lowSpaceWatcher` ends in `installLowSpaceWatcher`, which re-arms prim
+    // 125, and its action is `preemptedProcess signalException: OutOfMemory
+    // new`.  OutOfMemory is an Error, so a hog whose loop sits under an
+    // `on: Error do:` swallows it and immediately re-crosses -- which is
+    // exactly the shape of the 2026-09-02 storm.  Delivering the signal is
+    // our job; whether the image acts on it is the image's policy, and it is
+    // Cog's policy too.  Print the first few and then thin out.
+    lowSpaceSignalCount_++;
+    if (lowSpaceSignalCount_ <= 5 || (lowSpaceSignalCount_ & 0x3F) == 0) {
+        fprintf(stderr, "[LOW-SPACE] threshold crossed #%llu (free=%zu MB) — "
+                "signaling LowSpaceSemaphore, culprit recorded\n",
+                (unsigned long long)lowSpaceSignalCount_,
+                memory_.freeOldSpaceBytes() / (1024 * 1024));
+    }
+    synchronousSignal(lowSem);
 }
 
 void Interpreter::interpret() {
@@ -3702,20 +3988,7 @@ void Interpreter::interpret() {
         // so runaway allocation storms (catalog #9's 200k-iteration
         // debugger-recursion pinning 4M contexts) had no image-side circuit
         // breaker and ran to old-space exhaustion.
-        if (__builtin_expect(lowSpaceThreshold_ > 0, 0)) {
-            if (memory_.freeOldSpaceBytes() < lowSpaceThreshold_) {
-                lowSpaceThreshold_ = 0;
-                Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
-                if (lowSem.isObject() && !lowSem.isNil()) {
-                    memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
-                                             getActiveProcess());
-                    fprintf(stderr, "[LOW-SPACE] threshold crossed (free=%zu MB) — "
-                            "signaling LowSpaceSemaphore, culprit recorded\n",
-                            memory_.freeOldSpaceBytes() / (1024 * 1024));
-                    synchronousSignal(lowSem);
-                }
-            }
-        }
+        checkLowSpaceSignal();
 
         // Sampling profiler tick (armed by primitiveProfileStart).  Cog
         // semantics: the deadline is highResClock + delta, ONE-SHOT — the
@@ -4009,15 +4282,25 @@ void Interpreter::interpret() {
         //    outstanding and could not be honoured there, because the C caller
         //    of the callback still had frames expecting a return. Honour it now
         //    that the callback stack has unwound.
-        if (__builtin_expect(pendingQuit_ && callbackDepth_ == 0, 0)) {
-            pendingQuit_ = false;
-            fprintf(stderr, "[primitiveQuit] Honouring deferred quit "
-                            "(callbacks unwound)\n");
-            fflush(stderr);
-            running_ = false;
-            // This IS the real quit primitiveQuit could not take inline.
-            evalReachedQuit_ = true;
-            goto cg_exit;
+        //    The deferral is BOUNDED: an abandoned callback never unwinds, and
+        //    waiting for it forever is how batch 1801-1850 burned 1800 s of
+        //    every sweep on both arches (defect #26).  After the grace period
+        //    the quit is honoured regardless — the process is exiting, so the
+        //    C frames the deferral protects have nothing left to protect.
+        if (__builtin_expect(pendingQuit_, 0)) {
+            bool unwound = (callbackDepth_ == 0);
+            bool graceGone = (g_stepNum - pendingQuitStep_) > kQuitGraceSteps;
+            if (unwound || graceGone) {
+                pendingQuit_ = false;
+                fprintf(stderr, "[primitiveQuit] Honouring deferred quit (%s)\n",
+                        unwound ? "callbacks unwound"
+                                : "grace period expired; callback did not unwind");
+                fflush(stderr);
+                running_ = false;
+                // This IS the real quit primitiveQuit could not take inline.
+                evalReachedQuit_ = true;
+                goto cg_exit;
+            }
         }
 
         // -- Terminate stuck process (set by watchdog, rare) --
@@ -5810,6 +6093,25 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         if (!inExtension_) {
             checkTimerSemaphore();
         }
+        // Low-space interrupt HERE too, same reason as the adoption drain
+        // below: the main interpret() checkpoint never runs while this loop
+        // hosts execution, so a storm inside a callback would otherwise
+        // exhaust the heap with the breaker armed and latched.
+        checkLowSpaceSignal();
+        // And the deferred quit, for the same reason and then some: the quit
+        // was deferred BECAUSE a callback is outstanding, and the only loop
+        // running while one is outstanding is this one.  Without this the
+        // grace period never expires and the VM never exits (defect #26).
+        if (__builtin_expect(pendingQuit_, 0)
+                && (g_stepNum - pendingQuitStep_) > kQuitGraceSteps) {
+            pendingQuit_ = false;
+            fprintf(stderr, "[primitiveQuit] Honouring deferred quit from the "
+                            "callback loop (grace period expired; callback did "
+                            "not unwind)\n");
+            fflush(stderr);
+            running_ = false;
+            evalReachedQuit_ = true;
+        }
         // Adopt worker-forwarded callbacks HERE too — the main interpret()
         // checkpoint never runs while this nested loop hosts execution.  An
         // abandoned same-thread invocation (TFCallbacksTest's old-session
@@ -7588,6 +7890,7 @@ void Interpreter::returnValue(Oop value) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
                         memory_.storePointer(1, c, hasBeenReturnedPC);
+                        g_contextsKilledByUnwind[0]++;
                         c = next;
                     }
                     Oop homeSender = memory_.fetchPointer(0, homeCtx);
@@ -7613,6 +7916,8 @@ void Interpreter::returnValue(Oop value) {
                         stackPointer_ = stackBase_;
                         push(activeContext_);
                         push(savedValue);
+                        g_cannotReturnSite[0]++;
+                        if (cannotReturnStormGuard(kCannotReturnSiteName[0])) return;
                         sendSelector(selectors_.cannotReturn, 1);
                     }
                 }
@@ -7698,6 +8003,24 @@ void Interpreter::returnValue(Oop value) {
                             }
                             push(activeContext_);  // receiver: the returning context
                             push(value);           // arg: the value being returned
+                            g_cannotReturnSite[1]++;
+                            // Name the first few: which method is returning,
+                            // and into whose corpse.  Bounded -- a storm sends
+                            // half a million of these.
+                            if (g_cannotReturnSite[1] <= 3) {
+                                fprintf(stderr,
+                                    "[DEAD-SENDER #%llu] #%s returning into a dead "
+                                    "sender (#%s, pc=%s); unwind kills so far: "
+                                    "nlr=%llu aboutToReturn=%llu\n",
+                                    (unsigned long long)g_cannotReturnSite[1],
+                                    memory_.selectorOf(method_).c_str(),
+                                    memory_.selectorOf(
+                                        memory_.fetchPointer(3, sender)).c_str(),
+                                    senderPC.isNil() ? "nil" : "-1",
+                                    (unsigned long long)g_contextsKilledByUnwind[0],
+                                    (unsigned long long)g_contextsKilledByUnwind[1]);
+                            }
+                            if (cannotReturnStormGuard(kCannotReturnSiteName[1])) return;
                             sendSelector(selectors_.cannotReturn, 1);
                             return;
                         }
@@ -7847,6 +8170,7 @@ terminate_process:
                 stackPointer_ = stackBase_;
                 push(activeContext_);  // receiver: the context that cannot return
                 push(value);           // arg: the value that was being returned
+                g_cannotReturnSite[2]++;
                 sendSelector(selectors_.cannotReturn, 1);
                 return;
             }
@@ -7892,6 +8216,20 @@ terminate_process:
             && !currentFrameMaterializedCtx_.isNil()
             && currentFrameMaterializedCtx_.rawBits() > 0x10000
             && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
+        // Already dead means this activation is returning a SECOND time --
+        // the duplicate the residual dead-sender loop would need.  Counted,
+        // not corrected: the store below is idempotent.
+        Oop wasPC = memory_.fetchPointer(1, currentFrameMaterializedCtx_);
+        if (wasPC.isNil()
+                || (wasPC.isSmallInteger() && wasPC.asSmallInteger() == -1)) {
+            g_duplicateActivation[0]++;
+            if (g_duplicateActivation[0] <= 3)
+                fprintf(stderr, "[DOUBLE-RETURN #%llu] #%s returning again from a "
+                        "context already marked dead (0x%llx)\n",
+                        (unsigned long long)g_duplicateActivation[0],
+                        memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)currentFrameMaterializedCtx_.rawBits());
+        }
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
     }
@@ -8333,6 +8671,15 @@ void Interpreter::returnFromMethod() {
             // home method. Follow the chain until we reach the actual CompiledMethod
             // (whose last literal is NOT a CompiledMethod — it's the class binding).
             Oop homeMethodOop = Oop::nil();
+            // The outermost CompiledBlock of the chain we walk below — i.e. the
+            // block whose outerCode IS homeMethodOop.  Needed because a TRAIT
+            // method and every class copy of it SHARE that block object while
+            // its outerCode names only the trait's method; see the shared-block
+            // pass at the savedFrames_ scan.  Measured on Pharo 13.1:
+            //   (RSAbstractLine>>#markersIncludesPoint:) block
+            //     == (RSTMarkeable>>#markersIncludesPoint:) block   -> true
+            //   that block's outerCode == RSTMarkeable's method     -> true
+            Oop topBlockOop = method_;
             if (method_.isObject() && method_.rawBits() > 0x10000) {
                 Oop hdr = memory_.fetchPointer(0, method_);
                 if (hdr.isSmallInteger()) {
@@ -8366,6 +8713,7 @@ void Interpreter::returnFromMethod() {
                                 break;
                             }
                             // It's a CompiledBlock — follow the chain
+                            topBlockOop = enclosing;
                             enclosing = ecLastLit;
                             chainDepth++;
                         }
@@ -8419,8 +8767,56 @@ void Interpreter::returnFromMethod() {
 
                 // ALSO check savedFrames_ (activateBlock sets SIZE_MAX but the home
                 // might still be in inline frames if block was re-pushed after materialization)
+                //
+                // TWO passes.  The first is oop identity against homeMethodOop,
+                // which is what this has always done.  The second exists for
+                // TRAIT METHOD COPIES: a class that uses a trait gets its own
+                // CompiledMethod, but that copy SHARES the trait's
+                // CompiledBlock object, and the block's outerCode names only
+                // the trait's method.  So the frame on the stack holds the
+                // class's copy while homeMethodOop is the trait's, identity
+                // can never match, the context-chain search below finds
+                // nothing either, and the VM sends cannotReturn: on a home
+                // that is alive — `BlockCannotReturn` (defect #22,
+                // RSLinesTest>>testMarkerOffset; 677 installed methods in a
+                // stock Pharo 13.1 image carry a block with a foreign
+                // outerCode AND a non-local return in it).
+                //
+                // Matching on "this frame's method holds the very block we are
+                // returning from" is the identity that survives the copy.
+                // Only reached when identity already failed, so it costs
+                // nothing on the normal path.  A home method present on the
+                // stack more than once is ambiguous here — the closure's
+                // outerContext is the real answer and the dynamic fallback
+                // below uses it; this pass keeps the same first-match-from-
+                // outermost order as the identity pass rather than inventing a
+                // different one.
+                size_t nlrHomeFrameIdx = SIZE_MAX;
                 for (size_t si = 0; si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                        nlrHomeFrameIdx = si;
+                        break;
+                    }
+                }
+                if (nlrHomeFrameIdx == SIZE_MAX
+                        && topBlockOop.isObject() && topBlockOop.rawBits() > 0x10000) {
+                    for (size_t si = 0; si < frameDepth_; si++) {
+                        Oop fm = savedFrames_[si].savedMethod;
+                        // methodHoldsLiteral answers false for a CompiledBlock,
+                        // so a frame running a NESTED block cannot match here.
+                        if (methodHoldsLiteral(fm, topBlockOop)) {
+                            if (__builtin_expect(nlrTrace, 0))
+                                fprintf(stderr, "[NLR-HOME] shared-block match frame=%zu "
+                                        "(home #%s is a trait copy)\n", si,
+                                        memory_.selectorOf(fm).c_str());
+                            nlrHomeFrameIdx = si;
+                            break;
+                        }
+                    }
+                }
+                if (nlrHomeFrameIdx != SIZE_MAX) {
+                    {
+                        size_t si = nlrHomeFrameIdx;
                         // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
                         if (__builtin_expect(nlrTrace, 0))
@@ -8477,6 +8873,13 @@ void Interpreter::returnFromMethod() {
                         break;
                     }
                     if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                        fallbackCtx = ctx;
+                    }
+                    // Trait-copy home: the context holds the class's own copy of
+                    // the method while homeMethodOop is the trait's, so the oop
+                    // compare above cannot match.  The shared CompiledBlock can.
+                    // Only consulted if identity found nothing (defect #22).
+                    if (fallbackCtx.isNil() && methodHoldsLiteral(ctxMethod, topBlockOop)) {
                         fallbackCtx = ctx;
                     }
                     ctx = memory_.fetchPointer(0, ctx);
@@ -8768,6 +9171,8 @@ void Interpreter::returnFromMethod() {
         }
         push(activeContext_);  // receiver: the context that cannot return
         push(value);           // arg: the value that was being returned
+        g_cannotReturnSite[3]++;
+        if (cannotReturnStormGuard(kCannotReturnSiteName[3])) return;
         sendSelector(selectors_.cannotReturn, 1);
         return;
     }
@@ -8958,6 +9363,8 @@ void Interpreter::returnFromBlock() {
     }
     push(activeContext_);  // receiver: the context that cannot return
     push(value);           // arg: the value that was being returned
+    g_cannotReturnSite[4]++;
+    if (cannotReturnStormGuard(kCannotReturnSiteName[4])) return;
     sendSelector(selectors_.cannotReturn, 1);
 }
 
@@ -9169,6 +9576,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
             Oop nextSender = memory_.fetchPointer(0, c);
             memory_.storePointer(0, c, nilObj);  // sender = nil
             memory_.storePointer(1, c, hasBeenReturnedPC);  // pc = sentinel
+            g_contextsKilledByUnwind[1]++;
             c = nextSender;
         }
     }
@@ -21275,6 +21683,8 @@ bool Interpreter::executeFromContext(Oop context) {
         stackPointer_ = framePointer_ + 1;
         push(context);
         push(memory_.specialObject(SpecialObjectIndex::NilObject));
+        g_cannotReturnSite[5]++;
+        if (cannotReturnStormGuard(kCannotReturnSiteName[5])) return true;
         sendSelector(selectors_.cannotReturn, 1);
         return true;  // context was activated (cannotReturn: handler will run)
     }
@@ -25312,6 +25722,14 @@ void Interpreter::tryJITResumeInCaller() {
             bool receiverOnStack = (flags >> 7) & 1;
             bool ignoreOuterContext = (flags >> 6) & 1;
 
+            // NOT materialized here, unlike the chain loop's twin: this loop's
+            // handlers are documented to assume depth==0 (the "resume-internal"
+            // materialize above forces that for internal J2J).  The counter
+            // says whether that assumption actually holds -- if it fires, this
+            // path builds closures with J2J-hidden callers missing from the
+            // captured sender chain, exactly as the chain loop did before the
+            // defect-#23 fix.
+            if (state.j2jDepth > 0) g_blockCreatePendingJ2J[1]++;
             createFullBlockWithLiteral(litIndex, numCopied, receiverOnStack, ignoreOuterContext);
             instructionPointer_ += 3;
             continue;  // Try to resume JIT at next bytecode
@@ -25918,7 +26336,18 @@ void Interpreter::syncGlobalsFromJITState(jit::JITState& s) {
 Oop Interpreter::validateICTarget(const char* tag, Oop cached, Oop* sp,
                                   int sendArgCount) {
     static size_t reach = 0, mism = 0;
+    // Say once that the validator is live.  Without this a run with
+    // PHARO_T1_VALIDATE_IC=1 and no mismatch is indistinguishable from a run
+    // where the knob never reached this path -- and it does not reach sends
+    // dispatched entirely inside emitted code, only the chain loop's IC hits.
+    if (reach == 0)
+        fprintf(stderr, "[IC-VALIDATE] active: re-looking-up every chain-loop "
+                        "IC hit (emitted-code IC hits do not pass through "
+                        "here)\n");
     reach++;
+    if ((reach & 0xFFFFF) == 0)
+        fprintf(stderr, "[IC-VALIDATE] %zu hits checked, %zu mismatches\n",
+                reach, mism);
     Oop rcvr = sp[-(sendArgCount + 1)];
     size_t nl = memory_.numLiteralsOf(cached);
     Oop sel = (nl >= 2) ? memory_.fetchPointer(nl - 1, cached) : Oop::nil();
@@ -27542,9 +27971,58 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
 #endif
     }
     frame.savedActiveContext = activeContext_;
-    frame.materializedContext = nil;
+    // DEFECT #23, second path.  pushFrame's rule -- "the frame being saved
+    // takes the interpreter's current materialized context, and the current
+    // slot is cleared for the new frame" (see ~18142) -- was skipped here, and
+    // that leaves currentFrameMaterializedCtx_ pointing at a frame that is no
+    // longer current.  The first save materialized IS that frame: a J2JSave
+    // records the CALLER's state at the call, so the first one restores the
+    // activation whose context this is, and the ones after it belong to
+    // callers entered inside the JIT that never had a context.
+    //
+    // Left uncorrected, the next popFrame runs the "mark the returning frame's
+    // materialized context dead" store (~8203) against a context whose
+    // activation is still LIVE, nil'ing its sender and pc.  When that
+    // activation's real callee returns, it returns into a corpse marked
+    // pc=nil -- which is exactly what the storm trace shows, with both unwind
+    // counters at zero: "#runSingleTest:... returning into a dead sender
+    // (#ifTrue:ifFalse:, pc=nil); unwind kills so far: nlr=0 aboutToReturn=0".
+    //
+    // Costs nothing on the hot path: currentFrameMaterializedCtx_ is nil
+    // unless something reified this frame's context.
+    frame.materializedContext = currentFrameMaterializedCtx_;
+    currentFrameMaterializedCtx_ = nil;
     frame.ctxSynced = false;
     frame.savedFP = save.tempBase - 1;
+    // Same activation materialized twice?  Two frames on one frame pointer
+    // means two returns, and the second lands in a context the first killed.
+    //
+    // Scan DOWNWARD from the frame being written, not from frameDepth_.  The
+    // "j2jBase materialize" site rebuilds a whole region at an explicit base
+    // index and only afterwards sets frameDepth_ to base+total, discarding
+    // whatever sat above -- so a frameDepth_-relative scan compares against
+    // frames that are about to be thrown away and flags every rebuild as a
+    // duplicate.  That false positive is what the first version of this
+    // detector reported (126 hits in a clean sweep, all from that one site).
+    // A genuine duplicate is a frame BELOW the one being written that survives
+    // into the same frame set.
+    size_t frameIdx = static_cast<size_t>(&frame - savedFrames_.data());
+    for (size_t bi = 1, n = frameIdx > 8 ? 8 : frameIdx; bi <= n; bi++) {
+        SavedFrame& other = savedFrames_[frameIdx - bi];
+        if (other.savedFP == frame.savedFP
+                && other.savedMethod.rawBits() == frame.savedMethod.rawBits()) {
+            g_duplicateActivation[1]++;
+            if (g_duplicateActivation[1] <= 3)
+                fprintf(stderr, "[DUP-FRAME #%llu] J2J save for #%s materialized "
+                        "into frame %zu on fp=%p at site \"%s\", which frame "
+                        "%zu below it already holds\n",
+                        (unsigned long long)g_duplicateActivation[1],
+                        memory_.selectorOf(frame.savedMethod).c_str(),
+                        frameIdx, (void*)frame.savedFP,
+                        siteTag ? siteTag : "?", frameIdx - bi);
+            break;
+        }
+    }
     frame.materializedRetSlot = save.sp - (saveNArgs + 1);
     frame.savedArgCount = saveJM->argCount;
     frame.homeFrameDepth = SIZE_MAX;
@@ -29789,6 +30267,29 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 homeMethod_ = state.method;
             }
 
+            // REVERTED 2026-09-03.  This handler used to materialize the
+            // pending J2J saves here so the closure about to be built would
+            // capture a COMPLETE sender chain -- saves are caller activations
+            // the JIT entered without pushing interpreter frames, and
+            // materializeFrameStack can only see savedFrames_, so the closure
+            // captured a chain that stopped at the innermost materialized
+            // frame.  That reasoning still holds and is still defect #23's
+            // mechanism.  Materializing HERE is not the way to fix it: batch
+            // 1-100 went from 0 non-clean classes to 11, with the
+            // shifted-operand-stack signature (NonBooleanReceiver "proceed for
+            // truth", MessageNotUnderstood on SmallInteger>>#byteSize).  It was
+            // not the JIT resume that did it -- bailing to the interpreter
+            // instead of resuming scored the same 11 -- so converting live
+            // saves into interpreter frames is simply not valid at this exit,
+            // whatever happens afterwards.
+            //
+            // The counter stays: it says how often a closure is built with
+            // J2J-hidden callers missing from its captured chain (481 in a
+            // 20-second run), which is the size of the hole a real fix has to
+            // close.
+            const bool hadPendingJ2J = state.j2jDepth > 0;
+            if (hadPendingJ2J) g_blockCreatePendingJ2J[0]++;
+
             // Extract block parameters from cachedTarget
             uint64_t packed = state.cachedTarget.rawBits();
             int litIndex = static_cast<int>(packed & 0xFFFF);
@@ -29803,6 +30304,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Advance IP past PushFullBlock (3 bytes)
             instructionPointer_ += 3;
 
+
             // Try to resume JIT at next bytecode
             method = method_;  // Refresh: GC may have moved the method
             uint32_t bcOffset = computeCurrentBCOffset();
@@ -29816,7 +30318,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // refresh from C++ globals as before.
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
-            if (state.j2jDepth > 0) {
+            // hadPendingJ2J is state.j2jDepth > 0 read at entry; nothing
+            // between here and there changes it now that the materialize is
+            // gone, and reading it once keeps the two uses in step if a fix
+            // for the captured-chain hole ever does consume the saves again.
+            if (hadPendingJ2J) {
                 // J2J chain active — receiver/tempBase/method/argCount
                 // already correctly callee's from the JIT cross-method
                 // emit.  Don't overwrite those with caller's globals.
@@ -30236,6 +30742,32 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 frameDepth_ = baseDepth + site5Done;
                 chainCallDepth += site5Done;
+                // The saves are now SavedFrames, so clear the live-chain
+                // marker -- exactly what the materializeJ2J lambda does, and
+                // this handler `continue`s back into the loop without it, so
+                // the next materialize walks the SAME saves a second time.
+                // That is a duplicate activation: two frames for one
+                // #methodNode call, two returns, and the second landing in the
+                // context the first killed.  The lambda's own comment says
+                // leaving the marker set is what produced the 2026-06-09
+                // xmethod-at-scale corruption; this site simply never got the
+                // same treatment.
+                //
+                // The lambda's comment says "enableJ2J re-bases the cursor
+                // before every re-entry", which would make a stale depth
+                // harmless.  It does not: enableJ2J() has exactly three call
+                // sites (ExitBlockCreate, ExitArrayCreate, and one in the
+                // send-chain code), and this handler's `continue` is not one
+                // of them.  So the loop re-enters the JIT with the old depth
+                // AND an un-rebased cursor: new saves land after the consumed
+                // ones, the depth counts up from a stale base, and the next
+                // materialize walks the already-materialized saves again.
+                //
+                // Opt-in until A/B'd.
+                if (GET_DEBUG_BOOL(PHARO_J2J_SITE5_CLEAR_DEPTH)) {
+                    state.j2jDepth = 0;
+                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(_stateSaves2);
+                }
                 // Sync interpreter from innermost frame
                 if (state.jitMethod) {
                     state.method = Oop::fromRawBits(

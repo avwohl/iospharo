@@ -1,5 +1,99 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-09-02/03 — both architectures swept, and they agree.**
+>
+>     arch     classes  tests   PASS    FAIL  ERROR  TIMEOUT  SKIP   rate
+>     x86_64    2046    28071   27833    22     26      10     180   99.15%
+>     arm64     2005    27682   27453    21     21       5     182   99.17%
+>
+> **No x86-vs-arm codegen divergence in 28071 tests.**  Every class non-clean
+> on one arch and clean on the other is a Rosetta timeout (the x86 build runs
+> at roughly half arm64's speed against a fixed 80 s per-test bound), a
+> wall-clock assertion, the Windows-only `w64Convention` symbol missing from
+> our test dylib, a working-directory artifact, or a class the other arch never
+> reached.  Write-ups: `docs/results/sweep-x86-2026-09-03.md` and
+> `docs/results/sweep-arm-2026-09-02.md`.
+>
+> The x86_64 run is the more complete of the two — batch 1901-1950 storms on
+> arm64 (defect #23, 39 classes lost) and runs clean on x86_64 in 270 s — so it
+> is the first measurement this project has of the trait block:
+> `TraitTest` 53 P / 1 F on `testTraitsUsersSanity`, `TraitFileOutTest` 2 E (a
+> CWD artifact), `TraitInTraitClassTest` 1 T, the other 24 classes clean.  Cog
+> runs all 27 at 270 P / 0 F / 0 E.
+>
+> **2026-09-02 — arm64 full sweep on the rebuilt host: 99.17%.** 2007 classes,
+> 27692 tests, 27461 P / 21 F / 21 E / 7 T / 182 S.  F+E is 42 against the
+> 2026-08-22 run's 52 on ~375 fewer tests.  Full attribution per class in
+> `docs/results/sweep-arm-2026-09-02.md`; artifacts alongside it.  **This is
+> not the whole suite**: one batch died of an allocation storm and took 39
+> classes with it — all of the trait tests — so read the figure as "2007 of
+> ~2047 classes".  Two more classes were absent from the raw aggregation
+> because the runner spliced their `Total:` line into a timeout verdict; that
+> is fixed in the submodule, and both are folded into the numbers above.
+> x86_64 is running as of this writing.
+>
+> **2026-09-03 — arm64 full sweep with the storm guard: 2043 classes, 99.18%.**
+> 28043 tests, 27812 P / 18 F / 28 E / 182 S / 3 T, 41 batches all rc=0, no
+> old-space abort anywhere.  Against 2026-09-02's 2005 classes and 27682 tests:
+> the rate is unchanged and that is not the point -- **the previous run was
+> missing 40 classes** because batch 1901-1950 aborted on the Context storm.
+> The guard fired once, in that same batch, so the storm now costs one
+> terminated process instead of forty classes.  The trait block runs clean on
+> arm64 for the first time, `TraitTest` at 54/54.  Write-up and artifacts:
+> `docs/results/sweep-arm-2026-09-03.md`.
+>
+> Ten classes changed against the baseline; six improved.  `RSLinesTest` went
+> 16 P / 2 E to 18 P / 0 E, confirming defect #22's fix at full-sweep scale.
+> Of the four that are worse, two are the harness: `LibTTYTest` lost
+> `libtty.dylib` to a copied VM, and two classes are still eaten by the
+> `Total:`-splice because this image was prepped before that submodule fix.
+>
+> **2026-09-03 — the package tier now has both arches.**  9376 P / 16 F / 24 E
+> on x86_64 against 9326 P / 16 F / 16 E on arm64 over the same 354 classes.
+> FAIL is identical on both -- 14 DataFrame + 2 PolyMath, same selectors -- so
+> there is no x86-only package failure.  The ERROR delta is XMLParser (5 vs 0)
+> and PolyMath (19 vs 16), and PolyMath also ran 55 more passing cases on x86
+> with one fewer timeout, so the two runs did not execute the same set of
+> cases.  Write-up: `docs/results/packages-x86-2026-09-03.md`.
+>
+> **Defect #23, the arm64 Context storm that costs 39 classes a sweep, is
+> bounded.**  The loop is `Context>>cannotReturn:` -> `error:` -> `signal`
+> against a sender chain with no handler in it, and `Context>>freeze` copying
+> the whole chain each round is what allocates 2.6M Contexts.  Four of the six
+> `cannotReturn:` sites had no rate limit; the VM already terminates the
+> process at the fifth, and `cannotReturnStormGuard` now applies that rule to
+> the other four.  Measured interleaved under held load: **7 aborts of 10
+> become 0**, with the guard firing in 7 of those runs, and the same build
+> scores 0 non-clean classes on batch 1-100.
+>
+> Two attempted root fixes did NOT survive.  One (materializing pending J2J
+> saves before building a closure) broke 11 classes on batch 1-100 and is
+> reverted.  The other (the materialized-context handover) is kept but is not
+> load-bearing.  The hole itself -- a closure created inside a J2J chain
+> captures an `outerContext` missing every J2J-hidden caller, 481 times in a
+> 20-second run -- is still open, with two inert candidate fixes behind knobs.
+> Sweeps on both arches are re-running with the guard; the numbers above
+> predate them.
+>
+> **A Δcog IS obtainable on this host after all** — the stock VM's fixed-address
+> `codeZone` abort is arch-specific, and the x86_64 Cog runs under Rosetta.
+> The whole residual was measured against Cog v10.3.9 the same evening
+> (`docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`): six classes
+> are at exact parity on the same failing test, everything else is ours, and
+> the sixteen classes long bucketed as "the missing display" score 0 F / 0 E on
+> **headless** Cog with no prelude.  Fourteen of the sixteen are root-caused
+> (defect #24): installing `MorphicUIManager` on Cog and suspending its UI
+> process reproduces our exact failure sets, and our runner suspends that
+> process because our headless resume restarts `MorphicRenderLoop` into a
+> busy-spin of Morphic DNUs (defect #25).  That accounts for 9 of the 21 FAILs
+> and 17 of the 21 ERRORs above; three more FAILs are parity with Cog, and
+> three are genuinely ours.  Separately, the runner runs one case per selector where parameterised
+> suites define several, so the test count understates the suite by ~38% —
+> 10567 cases image-wide.  `RSLinesTest`'s
+> `BlockCannotReturn` is root-caused as defect #22 (a trait method copy whose
+> block still names the trait's method), and the storm that ate the trait
+> tests is defect #23 (Cog runs those 27 classes clean).
+>
 > **2026-08-22 — the package tier was 7x slower than its own baseline, and is
 > now faster than it.** Code-zone eviction became reachable on 2026-08-22 and
 > cost more than it saved until three defects in it were found and fixed:

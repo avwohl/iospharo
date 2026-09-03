@@ -249,6 +249,16 @@ struct JITMethod {
                                     // Computed at JIT-compile time, checked by
                                     // jit_rt_inline_block_value_prep to refuse BV
                                     // inline for blocks with non-local return.
+    bool        hasBlockCreate;     // Contains SistaV1::PushFullBlock / PushClosure.
+                                    // A block created while inline-J2J saves are
+                                    // pending captures an outerContext whose sender
+                                    // chain is missing every J2J-hidden caller
+                                    // (defect #23).  Gate for the xmethod J2J
+                                    // admission chain, opt-in via
+                                    // PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE.  Same
+                                    // reasoning the BV inline prep already applies
+                                    // to nested closures one layer down -- see
+                                    // hasNLR's PushFullBlock arm.
     bool        hasRemoteTemp;      // 2026-06-20: contains 0xFB/0xFC/0xFD
                                     // (push/store/popStore Temp inVectorAt) — i.e.
                                     // accesses a captured REMOTE temp vector.  The

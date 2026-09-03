@@ -1,0 +1,58 @@
+# Stock Cog v10.3.9 (x86_64 under Rosetta) on the 27 Trait*Test classes, 2026-09-02
+#
+# These are the classes our arm64 sweep batch 1901-1950 never ran: it died of a
+# 12.3 GB Context storm at index 1912, the first of them.  Cog runs the whole
+# block clean in seconds.
+#
+# Command:
+#   arch -x86_64 /tmp/harness-x86/pharo Pharo.image eval "'/tmp/cogtrait.st' asFileReference fileIn"
+
+COG-TRAIT-RUN classes=27
+TraitChangesTest  P:3 F:0 E:0 total:3
+TraitCommonClassDefinitionPrinterTest  P:0 F:0 E:0 total:0
+TraitCompositionChangedDetectorTest  P:2 F:0 E:0 total:2
+TraitCompositionTest  P:13 F:0 E:0 total:13
+TraitFileOutTest  P:4 F:0 E:0 total:4
+TraitFluidClassDefinitionPrinterTest  P:22 F:0 E:0 total:22
+TraitInTraitClassTest  P:2 F:0 E:0 total:2
+TraitLegacyPharoClassDefinitionPrinterTest  P:11 F:0 E:0 total:11
+TraitMCDefinitionsTest  P:16 F:0 E:0 total:16
+TraitMethodDescriptionTest  P:4 F:0 E:0 total:4
+TraitObsoleteClassTest  P:3 F:0 E:0 total:3
+TraitOldPharoClassDefinitionPrinterTest  P:10 F:0 E:0 total:10
+TraitOverloadingOfMethodsInTraitedClassTest  P:2 F:0 E:0 total:2
+TraitPrecedenceCompositionTest  P:9 F:0 E:0 total:9
+TraitPropagatingSlotChangesTest  P:2 F:0 E:0 total:2
+TraitPureBehaviorTest  P:19 F:0 E:0 total:19
+TraitSlotScopeTest  P:12 F:0 E:0 total:12
+TraitSubclassingTraitedClassTest  P:12 F:0 E:0 total:12
+TraitTest  P:54 F:0 E:0 total:54
+TraitTestCase  P:19 F:0 E:0 total:19
+TraitUsingTraitsWithSlotsTest  P:1 F:0 E:0 total:1
+TraitWithAliasTest  P:8 F:0 E:0 total:8
+TraitWithComplexSlotsTest  P:10 F:0 E:0 total:10
+TraitWithConflictsTest  P:7 F:0 E:0 total:7
+TraitWithMethodsInProtocolsTest  P:6 F:0 E:0 total:6
+TraitWithPackagesTest  P:10 F:0 E:0 total:10
+TraitWithSlotsTest  P:9 F:0 E:0 total:9
+
+# TOTAL: 27 classes, 270 tests, 0 F, 0 E
+# Cog baseline for the 39 classes the storm ate — the non-Trait remainder
+# plus the two the runner treats as abstract.  Cog v10.3.9, x86_64/Rosetta.
+
+TrueTest  P:17 F:0 E:0 total:17  103ms
+TutorialPlayerTutorialAccessorTest  P:2 F:0 E:0 total:2  10ms
+TutorialPlayerWithMockTutorialTest  P:4 F:0 E:0 total:4  10ms
+TutorialTest  P:12 F:0 E:0 total:12  10ms
+UDPSocketEchoTest  P:1 F:0 E:0 total:1  14ms
+UDPSocketTest  P:2 F:0 E:0 total:2  79ms
+UUIDGeneratorTest  P:5 F:0 E:0 total:5  288ms
+UUIDPrimitivesTest  P:13 F:0 E:0 total:13  19ms
+UUIDTest  P:9 F:0 E:0 total:9  10ms
+UndeclaredVariableTest  P:4 F:0 E:0 total:4  133ms
+UndefinedClassTest  P:13 F:0 E:0 total:13  187ms
+UndefinedObjectTest  P:19 F:0 E:0 total:19  79ms
+UndefinedPackageTagTest  P:4 F:0 E:0 total:4  12ms
+TraitAbstractTest  P:273 F:0 E:0 total:273  76540ms
+TraitTestCase  P:19 F:0 E:0 total:19  19997ms
+DONE

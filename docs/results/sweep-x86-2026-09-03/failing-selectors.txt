@@ -1,0 +1,56 @@
+FTTableMorphTest  ERROR: testCanAlternateRowColors (SubscriptOutOfBounds: 1 in #())
+LinkInstallerTest  FAIL: testPropagateNewClassScopedLinksOnMethodNode [Assertion failed]
+LinkInstallerTest  FAIL: testPropagateNewClassScopedLinksOnMethodNode [Leaked metalinks]
+NoUnusedVariablesLeftTest  TIMEOUT: testNoUnusedTemporaryVariablesLeft (exceeded 80s)
+OCClassBuilderTest  ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+ReleaseTest  FAIL: testNoDeadSubscriptions [Got an Array(a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to MethodModified)) instead of #().]
+ReleaseTest  FAIL: testUnknownProcesses [Found unknown processes: 'CommandLine handler process'':'a Process in SessionManager>>snapshot:andQuit:
+ReleaseTest  TIMEOUT: testNoNullCharacter (exceeded 80s)
+ReleaseTest  TIMEOUT: testNoShadowedVariablesInMethods (exceeded 80s)
+RSLinesTest  ERROR: testMarkersIncludesPoint (BlockCannotReturn: )
+RSSequentialAnimationTest  ERROR: testStepEvent (Error: Time up)
+SpAthensAdapterTest  ERROR: testResizeMakesCanvasResize (MessageNotUnderstood: receiver of "x" is nil)
+SpComponentListAdapterTest  ERROR: testAddPresenterAddsWidget (SubscriptOutOfBounds: 1 in #())
+SpJobListPresenterTest  FAIL: testJobIsFinishedWhenWaitingMoreThanWorkBlockDuration [Got 68 instead of 100.]
+SpListCommonPropertiestTest  ERROR: testChangeListInPresenterUpdatesWidget (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest  ERROR: testDoubleClickActivatesRowInDoubleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest  ERROR: testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph (AssertionFailure: Assertion failed)
+SpListCommonPropertiestTest  ERROR: testSetColumnTitleInPresenterPutsColumnHeaderMorph (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest  ERROR: testSingleClickActivatesRowInSingleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpTableCommonPropertiestTest  ERROR: testChangeListInPresenterUpdatesWidget (SubscriptOutOfBounds: 1 in #())
+SpTableCommonPropertiestTest  ERROR: testDoubleClickActivatesRowInDoubleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpTableCommonPropertiestTest  ERROR: testSingleClickActivatesRowInSingleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpTreeAdapterMultipleSelectionTest  ERROR: testClickDoesNotAccumulatesSelection (SubscriptOutOfBounds: 1 in #())
+SpTreeAdapterMultipleSelectionTest  ERROR: testShiftClicktAccumulatesSelection (SubscriptOutOfBounds: 1 in #())
+SpTreePresenterExpandTest  TIMEOUT: testChangingHelpAffectTheWidget (exceeded 80s)
+SpTreeTableAdapterMultiColumnMultiSelectionTest  ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterMultiColumnMultiSelectionTest  FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterMultiColumnTest  ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterMultiColumnTest  FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterSingleColumnMultiSelectionTest  ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterSingleColumnMultiSelectionTest  FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterSingleColumnTest  ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterSingleColumnTest  FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+StDebuggerInspectorTest  FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+StDebuggerTest  FAIL: testIsInSelectedContextPackage [Got #on:do: instead of #runTestCaseUnderWatchdog:.]
+StDebuggerTest  FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+StSpotterModelTest  FAIL: testAnnounceQueryEndedIsSentOnce [Got 0 instead of 1.]
+StSpotterModelTest  FAIL: testSpotterModelShouldWaitToPerformActualSearch [Assertion failed]
+StSpotterTest  FAIL: testOpenSpotterRefreshesPreviewOnce [Got 0 instead of 1.]
+StTranscriptPresenterTest  FAIL: testAnnouncementIsWritten [Got '' instead of 'test'.]
+StTranscriptPresenterTest  FAIL: testClear [Got '' instead of 'test'.]
+StTranscriptPresenterTest  FAIL: testReset [Got '' instead of 'test'.]
+SystemDependenciesTest  FAIL: testExternalUIDependencies [Given Collections do not match!
+TFFunctionCallTest  ERROR: testCallingFunctionWithW64CallingConvention (SymbolNotFoundError: Could not find symbol named: 'w64Convention' searching in module: 'libTestLibrary.dylib')
+TFUFFIDifferentCallingConventionFunctionCallTest  ERROR: testCallingFunctionWithW64CallingConvention (SymbolNotFoundError: Could not find symbol named: #w64Convention searching in module: 'libTestLibrary.dylib')
+TKTCommonQueueWorkerPoolTest  TIMEOUT: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection (exceeded 8Total: 7 P:6 F:0 E:0 S:0 T:1
+TKTWorkerTest  ERROR: testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected (TKTTimeoutException: )
+TKTWorkerTest  ERROR: testWorkerProcessDiesAfterWorkerIsCollected (TKTTimeoutException: )
+TKTWorkerTest  TIMEOUT: testWorkerProcessIsWorkingUntilAllTasksAreDone (exceeded 80s)
+TraitFileOutTest  ERROR: testFileOutCategory (FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/Generated-Trait-Test-Package.st')
+TraitFileOutTest  ERROR: testFileOutCategory (KeyNotFound: key #'Generated-Trait-Test-Package' not found in PackageOrganizer)
+TraitFileOutTest  ERROR: testFileOutTrait (FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/T6.st')
+TraitTest  FAIL: testTraitsUsersSanity [Assertion failed]
+WeakAnnouncerTest  FAIL: testNoDeadWeakSubscriptions [an Array(a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodModified) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved)) should have been empty]
+ZnClientTest  FAIL: testQueryGoogle [Assertion failed]
+ZnStaticFileServerDelegateTest  FAIL: testBasicGetWide [Got 2026-09-03T04:41:56+00:00 instead of 2026-09-03T04:41:55+00:00.]

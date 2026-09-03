@@ -9,8 +9,10 @@ Key paths:
     src/vm/jit/          JIT compiler + stencils; SistaV1.hpp is the bytecode-opcode source of truth
     scripts/             build and transformation scripts
     docs/                documentation
+    docs/WIP.md          current state — read this first
     docs/deferred.md     consolidated list of deferred work
     docs/image_issues.md Pharo 13 image bugs we patch + upstream wishlist
+    docs/vm-compat-bugs.md  open VM defects and leads
 
 ## Hard rules
 
@@ -341,7 +343,8 @@ Fairness comes from the shared external class list — neither runner's
 source has test-class symbols as literals, so
 `ClassQueryTest>>testAllCallsOn` counts the same senders on both VMs.
 
-**The stock Cog VM cannot start on this machine (2026-08-23).** The VM from
+**The stock Cog VM cannot start on this machine — the ARM64 one (2026-08-23).
+Use the x86_64 build under Rosetta instead (2026-09-02).** The arm64 VM from
 `get.pharo.org/64/130+vm` aborts at startup on ANY image, pristine included:
 
     [ERROR] allocateHeap: Could not allocate codeZone in the expected place
@@ -349,11 +352,26 @@ source has test-class symbols as literals, so
     [ERROR] error: Error allocating / Aborting the execution of the VM
     Segmentation fault: 11                                        -> rc=255
 
-It wants its JIT code zone at a fixed address Darwin 27 will not grant. So the
-stock-Cog baseline above is not obtainable here, and any prep routed through
-`/tmp/harness/pharo` silently does nothing — the image saves WITHOUT
-SUnitRunner and every later suite launch writes no results file at all, which
-looks exactly like a scheduler wedge. Check for the codeZone error first.
+It wants its JIT code zone at a fixed address Darwin 27 will not grant in the
+arm64 address space. Rosetta's x86_64 address space DOES grant it, so a Δcog
+baseline IS obtainable here — verified 2026-09-02, Cog v10.3.9:
+
+    mkdir -p /tmp/harness-x86 && cd /tmp/harness-x86
+    arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/130+vm | bash'
+    arch -x86_64 ./pharo Pharo.image eval '42 factorial printString'
+       -> '1405006117752879898543142606244511569936384000000000'
+    arch -x86_64 ./pharo T.image eval --save 'Smalltalk at: #X put: 4242. 1'
+       -> persists; `eval --save` works, unlike under our VM
+
+Run every stock-VM command with the `arch -x86_64` prefix; without it the
+wrapper picks the arm64 VM and you get the codeZone abort above. Timing
+comparisons against `build-x86` are fair (both are x86_64 under Rosetta);
+against `build-rel` (native arm64) they are not.
+
+Any prep routed through an ARM `/tmp/harness/pharo` still silently does
+nothing — the image saves WITHOUT SUnitRunner and every later suite launch
+writes no results file at all, which looks exactly like a scheduler wedge.
+Check for the codeZone error first.
 
 **`eval --save` is a stock-VM flag our VM does not implement.** Under our VM
 the fileIn runs but is never persisted (`package-tests-selfhosted.sh` has said
@@ -388,8 +406,25 @@ Also remember our VM's eval mode touches /tmp/sunit_run_completed.txt
     # onto a COPY so the pristine image stays clean.
     cp /tmp/harness/Pharo.image   /tmp/harness/Pharo-jit.image
     cp /tmp/harness/Pharo.changes /tmp/harness/Pharo-jit.changes
+    # File in setup_fake_gui.st FIRST.  Measured 2026-09-03 on the 15
+    # display-family classes, same VM, prep the only difference:
+    #   runner only                 209 P / 13 F / 16 E
+    #   setup_fake_gui.st + runner  232 P /  6 F /  0 E
+    # Every ERROR in that family is the missing Display/World, not the VM.
+    #
+    # It may have a COST: the 2026-09-03 fake-GUI sweep lost batch 651-700
+    # entirely (rc=124 after the full 1800 s, 20 of 51 classes), wedged
+    # somewhere in KeyboardKeyTest past the in-image watchdog -- i.e. no
+    # Smalltalk process was running, the VM itself was blocked.  KeyboardKeyTest
+    # ALONE passes 3/3 on that image in under 100 s, and on a runner-only image
+    # too, so the class is not the cause by itself and the wedge is unproven
+    # against the prep.  One wedge in one fake-GUI sweep and none in the
+    # runner-only sweep is one data point each.  The recovery pass got all 31
+    # lost classes back, so the price was wall-clock, not coverage -- but keep
+    # PER_BATCH_TIMEOUT generous and RETRY_DAMAGED on.
     ./build/test_load_image /tmp/harness/Pharo-jit.image eval \
-      "'$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
+      "'$PWD/scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
+       '$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
        Smalltalk snapshot: true andQuit: true"
     # verify it took: a prepped Pharo 13 image jumps ~54 MB -> ~73 MB
     ls -la /tmp/harness/Pharo-jit.image

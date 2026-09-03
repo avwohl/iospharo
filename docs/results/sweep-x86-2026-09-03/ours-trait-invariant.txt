@@ -1,0 +1,45 @@
+# traitUsers invariant on OUR VM, 2026-09-03 — 0 violations, and the trait
+# tests PASS in isolation.
+#
+# All 27 Trait*Test classes via (cls suite run) on the PRISTINE base image,
+# invariant re-checked after each:
+#
+#   28 checkpoints, 0 class->trait and 0 trait->user violations
+#   TraitTest             54 P / 0 F / 0 E   (the sweep: 53 P / 1 F on x86_64)
+#   TraitInTraitClassTest  2 P / 0 F / 0 E   (the sweep: 1 P / 1 T)
+#   TraitFileOutTest       2 P / 3 E         (the CWD artifact, both ways)
+#   no storm, 0 FATAL
+#
+# Same as Cog on every count except TraitFileOutTest's working directory.
+# So none of the three trait symptoms belongs to the trait classes: they
+# need the sweep's context -- the prepped image, ~1900 preceding classes in
+# one VM, and the runner's execution path.
+
+    TraitChangesTest  P:3 F:0 E:0
+    TraitCommonClassDefinitionPrinterTest  P:0 F:0 E:0
+    TraitCompositionChangedDetectorTest  P:2 F:0 E:0
+    TraitCompositionTest  P:13 F:0 E:0
+    TraitFileOutTest  P:2 F:0 E:3
+    TraitFluidClassDefinitionPrinterTest  P:22 F:0 E:0
+    TraitInTraitClassTest  P:2 F:0 E:0
+    TraitLegacyPharoClassDefinitionPrinterTest  P:11 F:0 E:0
+    TraitMCDefinitionsTest  P:16 F:0 E:0
+    TraitMethodDescriptionTest  P:4 F:0 E:0
+    TraitObsoleteClassTest  P:3 F:0 E:0
+    TraitOldPharoClassDefinitionPrinterTest  P:10 F:0 E:0
+    TraitOverloadingOfMethodsInTraitedClassTest  P:2 F:0 E:0
+    TraitPrecedenceCompositionTest  P:9 F:0 E:0
+    TraitPropagatingSlotChangesTest  P:2 F:0 E:0
+    TraitPureBehaviorTest  P:19 F:0 E:0
+    TraitSlotScopeTest  P:12 F:0 E:0
+    TraitSubclassingTraitedClassTest  P:12 F:0 E:0
+    TraitTest  P:54 F:0 E:0
+    TraitTestCase  P:19 F:0 E:0
+    TraitUsingTraitsWithSlotsTest  P:1 F:0 E:0
+    TraitWithAliasTest  P:8 F:0 E:0
+    TraitWithComplexSlotsTest  P:10 F:0 E:0
+    TraitWithConflictsTest  P:7 F:0 E:0
+    TraitWithMethodsInProtocolsTest  P:6 F:0 E:0
+    TraitWithPackagesTest  P:10 F:0 E:0
+    TraitWithSlotsTest  P:9 F:0 E:0
+DONE

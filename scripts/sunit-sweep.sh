@@ -123,9 +123,37 @@ SOURCES=$(ls "$IMAGE_DIR"/*.sources 2>/dev/null | head -1)
 [ -n "$SOURCES" ] || SOURCES=$(find "$IMAGE_DIR" -maxdepth 3 -name '*.sources' 2>/dev/null | head -1)
 [ -n "$SOURCES" ] || { echo "no .sources file for $IMAGE -- class comments would all read nil; see the header" >&2; exit 1; }
 
+# The VM loads its FFI dylibs from beside its own binary.  Running a COPY of
+# the binary out of its build directory therefore silently loses them:
+# LibTTYTest went 5 P to 5 E on 2026-09-03 with "SymbolNotFoundError: Could not
+# find symbol named: #tty_spawn searching in module: 'libtty.dylib'", which
+# reads like an FFI regression and is not.  Copying the VM is a legitimate
+# thing to want -- it stops a rebuild changing the binary mid-sweep -- so warn
+# rather than refuse, and name the fix.
+VM_DIR=$(cd "$(dirname "$VM")" && pwd)
+# .dylib on macOS, .so on Linux -- checking only for .dylib warned falsely on
+# every Linux run.
+case "$(uname -s)" in Darwin) LIBEXT=dylib ;; *) LIBEXT=so ;; esac
+for base in libtty libTestLibrary; do
+    lib="$base.$LIBEXT"
+    if [ ! -f "$VM_DIR/$lib" ]; then
+        echo "WARNING: $lib is not beside the VM ($VM_DIR)." >&2
+        echo "         Tests that FFI into it will fail with SymbolNotFoundError." >&2
+        echo "         Copy the build directory's *.$LIBEXT next to the VM, or run" >&2
+        echo "         the VM in place from its build directory." >&2
+    fi
+done
+
 mkdir -p "$OUT"
-: > "$OUT/all_results.txt"
-: > "$OUT/sweep.log"
+# Truncate only on a fresh sweep.  A START_AT resume appends to what the
+# interrupted run already wrote.
+if [ -z "${START_AT:-}" ]; then
+    : > "$OUT/all_results.txt"
+fi
+if [ -z "${START_AT:-}" ]; then
+    : > "$OUT/sweep.log"
+    : > "$OUT/damaged.txt"
+fi
 
 # A leftover class/method filter silently OVERRIDES the batch range -- the
 # runner documents that the names file takes priority. Symptom is every batch
@@ -138,6 +166,16 @@ mkdir -p "$OUT"
 # and appends into the same results file. Done accidentally on 2026-08-22
 # while chasing a crash mid-sweep. While a sweep runs, investigate with things
 # that do not touch these paths (log reads, `sample`, eval-mode runs) or wait.
+#
+# "Do not start a runner" is too narrow, and following it literally still cost a
+# batch on 2026-09-02. The PREPPED image carries SUnitRunner's SessionManager
+# startUp: handler, so ANY VM binary that resumes it starts a test run of its
+# own: test_relaunch, run on the prepped image for three 8 s cycles, wrote
+# /tmp/sunit_test_results.txt underneath a live x86_64 sweep and batch 1001-1050
+# reported classes=1 instead of 51 -- 50 classes lost, and a foreign partial
+# result merged into all_results.txt. The tell is a classes= count far below the
+# batch size on an rc=0 completed=yes line. Point C++ tier tests at the pristine
+# base.image instead, or wait for the sweep.
 rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
 
 {
@@ -148,7 +186,57 @@ rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
   echo "  total=$TOTAL step=$STEP timeout=${PER_BATCH_TIMEOUT}s"
 } >> "$OUT/sweep.log"
 
-start=1
+# Run one batch and leave its exit status in $?.  Once the runner writes
+# /tmp/sunit_run_completed.txt every class in the batch has been recorded, so a
+# VM still alive SHUTDOWN_GRACE seconds later is wedged in shutdown and has
+# nothing left to contribute.  The 2026-09-02 x86_64 sweep burned its whole
+# 1800 s budget exactly that way -- batch 1801-1850 came back rc=124 with
+# classes=51 completed=yes, i.e. 1800 s spent for a batch that had finished its
+# work in a fraction of it.  Kill it at the marker rather than waiting the
+# timeout out.  timeout(1) is still the outer bound for a batch that hangs
+# BEFORE finishing, which is the case the marker cannot see.
+SHUTDOWN_GRACE=${SHUTDOWN_GRACE:-30}
+# RUN_FROM_IMAGE_DIR=1 runs the VM with its working directory set to the
+# outdir, where run.image lives.  Some tests write a file and read it back:
+# TraitFileOutTest files a package out and then fails with
+# "FileDoesNotExistException: <repo>/Generated-Trait-Test-Package.st" because
+# the write lands beside the image and the read looks in the sweep's working
+# directory.  Off by default because it changes the working directory for every
+# test at once, which is exactly the kind of thing that moves failures around;
+# turn it on deliberately and diff the result.
+run_batch() {                       # $1 = log path
+    local log=$1 grace=0 pid
+    if [ "${RUN_FROM_IMAGE_DIR:-0}" = "1" ]; then
+        ( cd "$OUT" && exec timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" ) \
+            > "$log" 2>&1 < /dev/null &
+    else
+        timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$log" 2>&1 < /dev/null &
+    fi
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ -f /tmp/sunit_run_completed.txt ]; then
+            grace=$(( grace + 1 ))
+            if [ "$grace" -ge "$SHUTDOWN_GRACE" ]; then
+                # kill BOTH: killing timeout(1) orphans the VM it wraps.  The
+                # image path is unique to this sweep's outdir, so the pkill
+                # pattern cannot reach another sweep or a package run.
+                kill -9 "$pid" 2>/dev/null
+                pkill -9 -f "$OUT/run.image" 2>/dev/null
+                wait "$pid" 2>/dev/null
+                return 137
+            fi
+        fi
+        sleep 1
+    done
+    wait "$pid"
+}
+
+# START_AT resumes a sweep that was cut short -- a spot reclaim, a kill, a
+# reboot.  Everything before it is left alone, so point it at the first index
+# the previous run did not finish and append to the same outdir.  With
+# START_AT set the results files are NOT truncated (see above), because the
+# whole point is to keep what the earlier attempt already produced.
+start=${START_AT:-1}
 while [ "$start" -le "$TOTAL" ]; do
     end=$(( start + STEP - 1 ))
     [ "$end" -gt "$TOTAL" ] && end=$TOTAL
@@ -162,7 +250,7 @@ while [ "$start" -le "$TOTAL" ]; do
     rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
 
     t0=$(date +%s)
-    timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$OUT/batch_${start}.log" 2>&1
+    run_batch "$OUT/batch_${start}.log"
     rc=$?
     t1=$(date +%s)
 
@@ -176,8 +264,69 @@ while [ "$start" -le "$TOTAL" ]; do
     printf 'batch %5d-%-5d rc=%-3s %4ds  classes=%-4s completed=%s\n' \
         "$start" "$end" "$rc" "$((t1-t0))" "$got" "$marker" >> "$OUT/sweep.log"
 
+    # Record damaged batches for the recovery pass below.  The runner walks the
+    # batch in index order, so `got` reported classes means indices
+    # [start, start+got-1] are done and [start+got, end] never ran.  Verified
+    # against the 2026-09-02 arm64 sweep: batch 1901-1950 reported got=11 and
+    # its last class was TonelWriterV3Test, which is index 1911 = start+got-1.
+    # (The runner reports end-start+2 classes for a healthy batch -- it runs one
+    # past `end` -- so this compares against end-start+1 and under-detects a
+    # batch that lost exactly one class rather than false-positiving on every
+    # healthy one.)
+    if [ "$got" -lt "$(( end - start + 1 ))" ]; then
+        printf '%s %s\n' "$(( start + got ))" "$end" >> "$OUT/damaged.txt"
+    fi
+
     start=$(( end + 1 ))
 done
+
+# ---------------------------------------------------------------------------
+# RECOVERY PASS.  One class can take a whole batch with it -- a runaway
+# allocation storm aborts the VM (rc=134) and every class after it in that
+# batch is simply never run.  Twice now that has cost ~40 classes and hidden
+# whether a residual class "went clean" or never ran at all (2026-08-22 batch
+# 601-650, 2026-09-02 batch 1901-1950, the latter taking all 27 trait tests).
+#
+# Re-run only the indices that never reported, in small chunks, so the same
+# storm costs ONE chunk instead of a whole batch.  Results go to a separate
+# file: the batch-size caveat in the header is real, and merging a
+# RETRY_STEP-sized run into the main totals would silently change the
+# denominator's meaning.  Set RETRY_DAMAGED=0 to skip.
+RETRY_DAMAGED=${RETRY_DAMAGED:-1}
+RETRY_STEP=${RETRY_STEP:-5}
+if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
+    : > "$OUT/retry_results.txt"
+    echo "recovery pass $(date '+%F %H:%M:%S') (step=$RETRY_STEP)" >> "$OUT/sweep.log"
+    while read -r rstart rend; do
+        s2=$rstart
+        while [ "$s2" -le "$rend" ]; do
+            e2=$(( s2 + RETRY_STEP - 1 ))
+            [ "$e2" -gt "$rend" ] && e2=$rend
+
+            cp "$IMAGE"   "$OUT/run.image"
+            cp "$CHANGES" "$OUT/run.changes"
+            printf '%s %s' "$s2" "$e2" > /tmp/sunit_batch.txt
+            rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
+
+            t0=$(date +%s)
+            # run_batch redirects the VM's stdin from /dev/null, which this site
+            # needs regardless: the VM must not eat the `read` loop's stdin.
+            run_batch "$OUT/retry_${s2}.log"
+            rc=$?
+            t1=$(date +%s)
+
+            got=0
+            if [ -f /tmp/sunit_test_results.txt ]; then
+                tr '\r' '\n' < /tmp/sunit_test_results.txt >> "$OUT/retry_results.txt"
+                got=$(tr '\r' '\n' < /tmp/sunit_test_results.txt | grep -c '^Total:' || true)
+            fi
+            printf 'retry %5d-%-5d rc=%-3s %4ds  classes=%-4s\n' \
+                "$s2" "$e2" "$rc" "$((t1-t0))" "$got" >> "$OUT/sweep.log"
+
+            s2=$(( e2 + 1 ))
+        done
+    done < "$OUT/damaged.txt"
+fi
 
 echo "sweep done $(date '+%F %H:%M:%S')" >> "$OUT/sweep.log"
 
@@ -197,4 +346,17 @@ awk '/^Total:/ && NF > 2 {
     if (t > 0) printf "  rate    %.2f%%\n", 100.0 * p / t
 }' "$OUT/all_results.txt" >> "$OUT/sweep.log"
 
-tail -n 9 "$OUT/sweep.log"
+if [ -s "$OUT/retry_results.txt" ]; then
+    awk '/^Total:/ && NF > 2 {
+        t += $2
+        for (i = 3; i <= NF; i++) { split($i, kv, ":")
+            if (kv[1] == "P") p += kv[2]; else if (kv[1] == "F") f += kv[2]
+            else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2] }
+        c++
+    } END {
+        printf "=== RECOVERED (classes the main pass never ran) ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n",
+               c, t, p, f, e, s
+    }' "$OUT/retry_results.txt" >> "$OUT/sweep.log"
+fi
+
+tail -n 18 "$OUT/sweep.log"
