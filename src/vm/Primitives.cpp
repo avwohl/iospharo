@@ -4207,46 +4207,49 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     }
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
+    // Defect #27 detector.  A receiver that is not a closure at all cannot
+    // reach BlockClosure>>value:'s primitive by any lookup -- ByteSymbol's
+    // chain is Symbol -> ByteString -> String -> ArrayedCollection and never
+    // touches BlockClosure -- so getting here with one means the WRONG METHOD
+    // was dispatched.  The observed symptom is exactly that, followed by
+    // "Message not understood: ByteSymbol >> #numArgsError:", about once per
+    // 2000-class sweep (RSRoassalTest 2026-09-03, SpTableCommonPropertiestTest
+    // 2026-09-02).
+    //
+    // It has to sit on the FAILURE exits, not after them: a non-closure
+    // receiver fails the slot-2 numArgs read and returns before any later
+    // check.  And it must not fire on CleanBlockClosure, which is a perfectly
+    // good closure class -- the first version of this check assumed
+    // FullBlockClosure was the only one and reported four false positives in
+    // its first sweep.  Bounded to 5.
+    auto reportNonClosure = [&](const char* why) {
+        static int mis = 0;
+        if (mis >= 5) return;
+        std::string cls = memory_.classNameOf(closure);
+        if (cls.find("BlockClosure") != std::string::npos) return;  // a real closure
+        mis++;
+        fprintf(stderr,
+            "[MISDISPATCH #%d] BlockClosure>>value: primitive reached with a %s "
+            "receiver (%s) from #%s -- defect #27\n",
+            mis, cls.c_str(), why, memory_.selectorOf(method_).c_str());
+        fflush(stderr);
+    };
+
     if (__builtin_expect(!closure.isObject(), 0)) {
+        reportNonClosure("receiver is not an object");
         return PrimitiveResult::Failure;
     }
 
     // Get numArgs from the closure (slot 2) — closure already validated
     Oop numArgsOop = memory_.fetchPointerUnchecked(2, closure);
     if (__builtin_expect(!numArgsOop.isSmallInteger(), 0)) {
+        reportNonClosure("slot 2 is not a SmallInteger numArgs");
         return PrimitiveResult::Failure;
     }
 
     int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
     if (__builtin_expect(closureNumArgs != argCount, 0)) {
         return PrimitiveResult::Failure;
-    }
-
-    // Defect #27 detector, and free: this is a primitive-failure-adjacent cold
-    // path, and it fires on a VM invariant violation that cannot happen
-    // legitimately.  Reaching BlockClosure>>value:'s primitive with a receiver
-    // that is not a closure means the WRONG METHOD was dispatched -- no lookup
-    // can put a ByteSymbol on BlockClosure>>value:, since ByteSymbol's chain is
-    // Symbol -> ByteString -> String -> ArrayedCollection.  The observed
-    // symptom is exactly this followed by "Message not understood:
-    // ByteSymbol >> #numArgsError:", once per 2000-class sweep, on arm64 and
-    // x86_64 alike (RSRoassalTest 2026-09-03, SpTableCommonPropertiestTest
-    // 2026-09-02).  Bounded to 5 so a real storm cannot drown the log.
-    if (__builtin_expect(fullBlockClosureClassIndex_ != 0, 1)) {
-        ObjectHeader* clHdr = closure.asObjectPtr();
-        if (__builtin_expect(clHdr && clHdr->classIndex() != fullBlockClosureClassIndex_, 0)) {
-            static int mis = 0;
-            if (mis < 5) {
-                mis++;
-                fprintf(stderr,
-                    "[MISDISPATCH #%d] BlockClosure>>value: primitive reached with a "
-                    "%s receiver (classIndex=%u, expected %u) from #%s -- defect #27\n",
-                    mis, memory_.classNameOf(closure).c_str(),
-                    clHdr->classIndex(), fullBlockClosureClassIndex_,
-                    memory_.selectorOf(method_).c_str());
-                fflush(stderr);
-            }
-        }
     }
 
     // Fast path: 0-arg block `[remoteTemp := remoteTemp op K]`.
