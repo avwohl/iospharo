@@ -2064,6 +2064,25 @@ to the wall-clock interleaving, still deterministic — and walking it up is the
 next thing to try: a quantum that storms every time turns this into a fixed
 repro.
 
+#### `PHARO_DET_SCHED_QUANTUM=16` reproduces it — 2 of 2 where wall clock is 1 of 3
+
+    quantum   runs   storms   time
+    (wall)      3      1      18 s storming, 4 s not
+    1           3      0      45 s
+    4           2      0      4-6 s
+    16          2      2      18-19 s      <-- reliable repro
+
+So the storm needs a yield interval near 16 x 1024 bytecodes: finer (quantum 1
+or 4) and it never fires, and the wall-clock heartbeat only lands in the window
+about a third of the time.  **`PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=16
+PHARO_MAX_OLD_SPACE_MB=1024` on batch 1901-1905 is the repro to use** — about
+19 seconds, and it survives instrumentation, which is the whole point of
+DET_SCHED and what plain quantum 1 failed to deliver here.
+
+Not byte-identical between runs (2 vs 3 classes reported, Context counts
+2655263 vs 2663681), so some wall-clock input remains — Delays, most likely —
+but it storms every time.
+
 **Practical note on the knob**: at quantum 1 it costs ~15x.  The 5-class range
 goes 4 s -> 45 s, and a whole 51-class batch does not finish — one attempt
 reached 14 of 51 classes in 900 s.  At quantum 4 the cost is back to 4-6 s.  So
