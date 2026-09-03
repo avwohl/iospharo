@@ -3146,7 +3146,14 @@ public:
             stack_.clear();
             currentBlock_ = blockId;
 
-            const Block& thisBlock = out_.blockAt(blockId);
+            // Copy, do not reference: liftFromOffset below can splice
+            // (spliceMultiBlock -> out_.newBlock), which reallocates
+            // out_.blocks and would leave a Block& dangling for the rest
+            // of this iteration.  Same hazard that was a live UAF in
+            // Pass 5 (fixed 2026-09-02); here the reference was unused
+            // past that call, so this is scoping, not a bug fix.
+            const std::vector<uint32_t> thisBlockPreds =
+                out_.blockAt(blockId).predecessors;
 
             // Skip orphan blocks: any non-entry block with no
             // predecessors is unreachable (no forward edge points
@@ -3155,7 +3162,7 @@ public:
             // starts for post-terminator bytes that aren't real
             // code — lifting them would walk off the end and
             // malform the whole method.  Leave them empty.
-            if (blockId != 0 && thisBlock.predecessors.empty()) {
+            if (blockId != 0 && thisBlockPreds.empty()) {
                 continue;
             }
 
@@ -3167,7 +3174,7 @@ public:
             // depth matches this block's entry depth.
             size_t entryDepth = 0;
             bool haveDepth = false;
-            for (uint32_t pred : thisBlock.predecessors) {
+            for (uint32_t pred : thisBlockPreds) {
                 if (pred >= blockLifted.size() || !blockLifted[pred])
                     continue;
                 const Block& pb = out_.blockAt(pred);
