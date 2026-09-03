@@ -1,0 +1,48 @@
+# Are the 'no display' classes parameterised?  Asked of the image via Cog,
+# 2026-09-02.  A ParametrizedTestCase's suite is its selectors crossed with
+# its testParameters matrix; our runner iterates allTestSelectors instead.
+
+SpListCommonPropertiestTest
+   chain          : SpListCommonPropertiestTest < SpAbstractListCommonPropertiestTest < SpAbstractWidgetAdapterTest < SpAbstractAdapterTest < ParametrizedTestCase < 
+   testParameters : true
+   allTestSelectors: 23
+   suite tests     : 46
+   parameters      : a ParametrizedTestMatrix
+SpTreeAdapterMultipleSelectionTest
+   chain          : SpTreeAdapterMultipleSelectionTest < SpAbstractListAdapterMultipleSelectionTest < SpAbstractWidgetAdapterTest < SpAbstractAdapterTest < ParametrizedTestCase < 
+   testParameters : true
+   allTestSelectors: 21
+   suite tests     : 42
+   parameters      : a ParametrizedTestMatrix
+SpAthensAdapterTest
+   chain          : SpAthensAdapterTest < SpAbstractWidgetAdapterTest < SpAbstractAdapterTest < ParametrizedTestCase < 
+   testParameters : true
+   allTestSelectors: 9
+   suite tests     : 18
+   parameters      : a ParametrizedTestMatrix
+FTTableMorphTest
+   chain          : FTTableMorphTest < 
+   testParameters : false
+   allTestSelectors: 1
+   suite tests     : 1
+StTranscriptPresenterTest
+   chain          : StTranscriptPresenterTest < 
+   testParameters : false
+   allTestSelectors: 5
+   suite tests     : 5
+StSpotterModelTest
+   chain          : StSpotterModelTest < StSpotterBaseTest < 
+   testParameters : false
+   allTestSelectors: 2
+   suite tests     : 2
+StDebuggerActionModelTest
+   chain          : StDebuggerActionModelTest < 
+   testParameters : false
+   allTestSelectors: 55
+   suite tests     : 55
+TKTWorkerTest
+   chain          : TKTWorkerTest < TKTTestCase < ParametrizedTestCase < 
+   testParameters : true
+   allTestSelectors: 7
+   suite tests     : 7
+   parameters      : a ParametrizedTestMatrix

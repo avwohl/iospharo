@@ -1947,42 +1947,61 @@ trivial suite our VM trips over.
 Next: run the block one class at a time (chunks of five is enough to bracket
 it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.
 
-### 24. Sixteen GUI-adapter classes fail for us and pass on headless Cog — NEW 2026-09-02, MEDIUM
+### 24. ~~Sixteen GUI-adapter classes fail for us and pass on headless Cog~~ — RECLASSIFIED 2026-09-02: nine of them are a HARNESS gap, four are ours
 
-Carried through several sweeps as "the missing display" and therefore as a
-residual that could not be helped.  The 2026-09-02 Δcog says otherwise: stock
-Cog v10.3.9, **headless**, on the same pristine Pharo 13.1 image, with no
-fake-GUI prelude, scores 0 F / 0 E on every one of them.
+Filed earlier the same evening off the Δcog: sixteen classes long bucketed as
+"the missing display" score 0 F / 0 E on stock Cog, headless, same image, no
+prelude.  Asking the image why splits the population cleanly.
 
-    class                                    Cog        ours (arm64 sweep)
-    SpAthensAdapterTest                      18P/0F/0E   8P/0F/1E
-    SpComponentListAdapterTest               16P/0/0     7P/0/1
-    SpListCommonPropertiestTest              46P/0/0    18P/0/5
-    SpTableCommonPropertiestTest             34P/0/0    14P/0/3
-    SpTreeAdapterMultipleSelectionTest       40P/0/0    18P/0/2
-    SpTreeTableAdapterMultiColumnMultiSel..  40P/0/0    18P/1/1
-    SpTreeTableAdapterMultiColumnTest        40P/0/0    18P/1/1
-    SpTreeTableAdapterSingleColumnMultiSel.. 40P/0/0    18P/1/1
-    SpTreeTableAdapterSingleColumnTest       40P/0/0    17P/1/1
-    FTTableMorphTest                          1P/0/0     0P/0/1
-    StDebuggerActionModelTest                54P/0/0    53P/1/0
-    StSpotterModelTest                        2P/0/0     0P/2/0
-    StTranscriptPresenterTest                 5P/0/0     2P/3/0
+**Nine are parameterised tests our runner runs unparameterised.**  Every `Sp*`
+adapter test descends from `ParametrizedTestCase`:
 
-(Counts are not comparable — `suite run` expands parameterised cases the
-runner's selector list does not — but 0 F / 0 E against our F and E is.)
+    SpListCommonPropertiestTest < SpAbstractListCommonPropertiestTest
+        < SpAbstractWidgetAdapterTest < SpAbstractAdapterTest
+        < ParametrizedTestCase
 
-The dominant error on our side is `SubscriptOutOfBounds: 1 in #()` reaching for
-an adapter's widget list, plus `MessageNotUnderstood: receiver of "x" is nil`.
-The cause is NOT established: CLAUDE.md records that `Display` is non-nil under
-`test_load_image` (unlike in the app), so "we have no Display and Cog does" is
-a guess, not a finding.  What IS established is that the bucket label was
-wrong and these are not unhelpable.
+and `SpAbstractLayoutTest class>>testParameters` is
+`forSelector: #backendForTest addOptions: SpAbstractBackendForTest allSubclasses`
+— i.e. the suite is the selectors crossed with the BACKENDS.  Our runner
+iterates `allTestSelectors` and runs `testClass selector: sel`, which never
+assigns `backendForTest`, so the presenter has no backend and the adapter
+reaches into an empty collection.  That is where `SubscriptOutOfBounds: 1 in
+#()` comes from.  The arithmetic confirms it — every one of the nine has a
+suite exactly twice its selector count, and our sweep ran exactly half of
+Cog's:
 
-`scripts/pharo-headless-test/setup_fake_gui.st` clears the whole bucket for us
-(2026-08-22: 167 tests, 0 F / 0 E with the prelude filed in), which makes it a
-workaround for something stock Pharo does natively — so the prelude is also the
-best lead: whatever it installs that we lack is the answer.
+    class                                    selectors  suite  Cog ran  we ran
+    SpAthensAdapterTest                          9        18      18       9
+    SpComponentListAdapterTest                   8        16      16       8
+    SpListCommonPropertiestTest                 23        46      46      23
+    SpTableCommonPropertiestTest                17        34      34      17
+    SpTreeAdapterMultipleSelectionTest          21        42      40      21
+    SpTreeTableAdapterMultiColumnMultiSel..     20        40      40      20
+    SpTreeTableAdapterMultiColumnTest           20        40      40      20
+    SpTreeTableAdapterSingleColumnMultiSel..    20        40      40      20
+    SpTreeTableAdapterSingleColumnTest          19        38      38      19
+
+So these are not VM defects and not display defects: they are tests the harness
+runs wrong.  Fix belongs in `run_sunit_tests.st` — build the suite via
+`testClass suite` (or expand `ParametrizedTestCase` selectors into configured
+instances) instead of `testClass selector: sel`.  Until then their F/E should
+not be counted against the VM.  `setup_fake_gui.st` "fixing" them is a second
+clue in the same direction: it supplies state the parameterisation was
+supposed to.
+
+**Four are not parameterised, and stay ours.**  Checked the same way —
+`testParameters` absent, suite size == selector count:
+
+    FTTableMorphTest            1 == 1     Cog  1P/0/0    ours 0P/0/1E
+    StDebuggerActionModelTest  55 == 55    Cog 54P/0/0    ours 53P/1F
+    StSpotterModelTest          2 == 2     Cog  2P/0/0    ours  0P/2F
+    StTranscriptPresenterTest   5 == 5     Cog  5P/0/0    ours  2P/3F
+
+`TKTWorkerTest` is parameterised but with a one-case matrix (7 selectors, 7
+tests), so its failure is ours too.
+
+Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
+`cog-parameterized-check.txt`.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
