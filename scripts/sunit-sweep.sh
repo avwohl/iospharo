@@ -126,6 +126,7 @@ SOURCES=$(ls "$IMAGE_DIR"/*.sources 2>/dev/null | head -1)
 mkdir -p "$OUT"
 : > "$OUT/all_results.txt"
 : > "$OUT/sweep.log"
+: > "$OUT/damaged.txt"
 
 # A leftover class/method filter silently OVERRIDES the batch range -- the
 # runner documents that the names file takes priority. Symptom is every batch
@@ -176,8 +177,68 @@ while [ "$start" -le "$TOTAL" ]; do
     printf 'batch %5d-%-5d rc=%-3s %4ds  classes=%-4s completed=%s\n' \
         "$start" "$end" "$rc" "$((t1-t0))" "$got" "$marker" >> "$OUT/sweep.log"
 
+    # Record damaged batches for the recovery pass below.  The runner walks the
+    # batch in index order, so `got` reported classes means indices
+    # [start, start+got-1] are done and [start+got, end] never ran.  Verified
+    # against the 2026-09-02 arm64 sweep: batch 1901-1950 reported got=11 and
+    # its last class was TonelWriterV3Test, which is index 1911 = start+got-1.
+    # (The runner reports end-start+2 classes for a healthy batch -- it runs one
+    # past `end` -- so this compares against end-start+1 and under-detects a
+    # batch that lost exactly one class rather than false-positiving on every
+    # healthy one.)
+    if [ "$got" -lt "$(( end - start + 1 ))" ]; then
+        printf '%s %s\n' "$(( start + got ))" "$end" >> "$OUT/damaged.txt"
+    fi
+
     start=$(( end + 1 ))
 done
+
+# ---------------------------------------------------------------------------
+# RECOVERY PASS.  One class can take a whole batch with it -- a runaway
+# allocation storm aborts the VM (rc=134) and every class after it in that
+# batch is simply never run.  Twice now that has cost ~40 classes and hidden
+# whether a residual class "went clean" or never ran at all (2026-08-22 batch
+# 601-650, 2026-09-02 batch 1901-1950, the latter taking all 27 trait tests).
+#
+# Re-run only the indices that never reported, in small chunks, so the same
+# storm costs ONE chunk instead of a whole batch.  Results go to a separate
+# file: the batch-size caveat in the header is real, and merging a
+# RETRY_STEP-sized run into the main totals would silently change the
+# denominator's meaning.  Set RETRY_DAMAGED=0 to skip.
+RETRY_DAMAGED=${RETRY_DAMAGED:-1}
+RETRY_STEP=${RETRY_STEP:-5}
+if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
+    : > "$OUT/retry_results.txt"
+    echo "recovery pass $(date '+%F %H:%M:%S') (step=$RETRY_STEP)" >> "$OUT/sweep.log"
+    while read -r rstart rend; do
+        s2=$rstart
+        while [ "$s2" -le "$rend" ]; do
+            e2=$(( s2 + RETRY_STEP - 1 ))
+            [ "$e2" -gt "$rend" ] && e2=$rend
+
+            cp "$IMAGE"   "$OUT/run.image"
+            cp "$CHANGES" "$OUT/run.changes"
+            printf '%s %s' "$s2" "$e2" > /tmp/sunit_batch.txt
+            rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
+
+            t0=$(date +%s)
+            # </dev/null: the VM must not eat the `read` loop's stdin.
+            timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$OUT/retry_${s2}.log" 2>&1 < /dev/null
+            rc=$?
+            t1=$(date +%s)
+
+            got=0
+            if [ -f /tmp/sunit_test_results.txt ]; then
+                tr '\r' '\n' < /tmp/sunit_test_results.txt >> "$OUT/retry_results.txt"
+                got=$(tr '\r' '\n' < /tmp/sunit_test_results.txt | grep -c '^Total:' || true)
+            fi
+            printf 'retry %5d-%-5d rc=%-3s %4ds  classes=%-4s\n' \
+                "$s2" "$e2" "$rc" "$((t1-t0))" "$got" >> "$OUT/sweep.log"
+
+            s2=$(( e2 + 1 ))
+        done
+    done < "$OUT/damaged.txt"
+fi
 
 echo "sweep done $(date '+%F %H:%M:%S')" >> "$OUT/sweep.log"
 
@@ -197,4 +258,17 @@ awk '/^Total:/ && NF > 2 {
     if (t > 0) printf "  rate    %.2f%%\n", 100.0 * p / t
 }' "$OUT/all_results.txt" >> "$OUT/sweep.log"
 
-tail -n 9 "$OUT/sweep.log"
+if [ -s "$OUT/retry_results.txt" ]; then
+    awk '/^Total:/ && NF > 2 {
+        t += $2
+        for (i = 3; i <= NF; i++) { split($i, kv, ":")
+            if (kv[1] == "P") p += kv[2]; else if (kv[1] == "F") f += kv[2]
+            else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2] }
+        c++
+    } END {
+        printf "=== RECOVERED (classes the main pass never ran) ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n",
+               c, t, p, f, e, s
+    }' "$OUT/retry_results.txt" >> "$OUT/sweep.log"
+fi
+
+tail -n 18 "$OUT/sweep.log"
