@@ -1757,9 +1757,24 @@ LEAD 18. ~~`updatePointersAfterCompact` walks survivor space to `newSpaceEnd_`~~
     condition for restoring it (a copying survivor's live watermark, never
     `newSpaceEnd_`) is written at the site.  The eden scan already ends at
     `edenFree_`, a real watermark.
-LEAD 19. ARM "context storm" prevention was proven on a constructed analogue, never
-    on the storm. Catalog #10 is cited twice as proof and has no artifact in
-    the repo — find the log or stop citing it.
+LEAD 19. CLOSED 2026-09-02 — the prevention did not work, and there is now an
+    artifact.  The 2026-08-22 low-space circuit breaker (`22fcb0e7`) never
+    fired on the first real storm we have a log for: arm64 sweep batch
+    1901-1950 ran old space from 12 GB free down to 16 bytes with 33.4M
+    Contexts / 6.66M Errors and printed no `[LOW-SPACE]` line at all
+    (`docs/results/sweep-arm-2026-09-02/`).  Root cause is structural, not a
+    tuning miss: the threshold was sampled on the interpreter's per-1024-
+    bytecode checkpoint, but old space is consumed almost entirely by scavenge
+    tenure, in steps of up to one eden (22 MB on that image).  Pharo arms the
+    threshold at `lowSpaceThreshold` = 400000 bytes, so a step lands inside the
+    observable window 400000/22003584 ≈ 1.8% of the time; the other 98.2% the
+    next tenure overruns `oldSpaceEnd_` and aborts before any checkpoint runs.
+    Fixed by latching the crossing at the two sites that advance
+    `oldSpaceFree_` and consuming the latch at the checkpoint, with the
+    effective threshold raised to max(image threshold, one eden) so the image
+    is interrupted while one more worst-case scavenge can still be absorbed.
+    Still to verify against a live storm — the reproduction is queued behind
+    the x86_64 sweep.
 LEAD 20. Six Win64 debug-gated helper call sites fixed by reasoning, never executed.
 LEAD 21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
 LEAD 22. SoundPlugin waveOut backend implemented, never runtime-verified.

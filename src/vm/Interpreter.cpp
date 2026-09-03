@@ -3702,11 +3702,25 @@ void Interpreter::interpret() {
         // so runaway allocation storms (catalog #9's 200k-iteration
         // debugger-recursion pinning 4M contexts) had no image-side circuit
         // breaker and ran to old-space exhaustion.
+        // The condition is LATCHED at the allocation sites, not sampled here.
+        // Sampling `freeOldSpaceBytes() < lowSpaceThreshold_` on this
+        // bytecode-paced checkpoint is what this code used to do, and it
+        // essentially never fired: old space drains through scavenge tenure in
+        // steps of up to one eden (22 MB), so a 400 KB image threshold is
+        // stepped over ~98% of the time and the run aborts inside the next
+        // tenure instead.  Measured on the 2026-09-02 arm64 sweep -- 12 GB of
+        // old space consumed, zero [LOW-SPACE] lines.  See
+        // ObjectMemory::armLowSpaceThreshold.
         if (__builtin_expect(lowSpaceThreshold_ > 0, 0)) {
-            if (memory_.freeOldSpaceBytes() < lowSpaceThreshold_) {
-                lowSpaceThreshold_ = 0;
+            if (memory_.lowSpaceCrossed()) {
                 Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
                 if (lowSem.isObject() && !lowSem.isNil()) {
+                    // Disarm only once we can actually deliver.  The old code
+                    // zeroed the threshold before looking the semaphore up, so
+                    // a crossing that arrived before the image had registered
+                    // one disarmed the breaker for good and signalled nothing.
+                    lowSpaceThreshold_ = 0;
+                    memory_.armLowSpaceThreshold(0);   // also clears the latch
                     memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
                                              getActiveProcess());
                     fprintf(stderr, "[LOW-SPACE] threshold crossed (free=%zu MB) — "

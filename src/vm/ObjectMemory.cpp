@@ -2131,6 +2131,7 @@ GCResult ObjectMemory::scavenge() {
         if (!destStart) {
             destStart = oldSpaceFree_;
             oldSpaceFree_ += copySize;
+            noteOldSpaceAdvance();   // low-space breaker; see ObjectMemory.hpp
         }
         std::memcpy(destStart, srcStart, copySize);
         ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
@@ -3617,6 +3618,7 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
                 // Fast path: bump pointer allocation
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(oldSpaceFree_);
                 oldSpaceFree_ += size;
+                noteOldSpaceAdvance();   // low-space breaker; see ObjectMemory.hpp
 
                 // Threshold-based GC trigger: request compacting GC at next safe point
                 // when heap usage exceeds last compacted size + headroom.

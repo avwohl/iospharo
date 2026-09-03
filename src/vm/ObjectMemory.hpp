@@ -790,6 +790,35 @@ public:
         return static_cast<size_t>(oldSpaceEnd_ - oldSpaceFree_);
     }
 
+    // ---- Low-space circuit breaker (prim 125) -------------------------
+    //
+    // The threshold has to be tested WHERE OLD SPACE IS CONSUMED, not on a
+    // bytecode counter.  Sampling it from the interpreter's per-1024-bytecode
+    // checkpoint cannot work, and the 2026-09-02 arm64 sweep is the proof: a
+    // storm ran the heap from 12 GB of free old space down to 16 bytes and
+    // the breaker never fired once.  Old space does not drain smoothly --
+    // essentially all of it goes out through scavenge tenure, in steps of up
+    // to one full eden (22 MB on that image).  Pharo arms the threshold at
+    // `SmalltalkImage>>lowSpaceThreshold` = 400000 bytes, so the sampled
+    // check only sees the window if a 22 MB step happens to land inside the
+    // last 400 KB: 400000/22003584 ~= 1.8% of the time.  The other 98.2% the
+    // next tenure overruns oldSpaceEnd_ and aborts before any checkpoint runs.
+    //
+    // So: arm it here, test it at the two sites that advance oldSpaceFree_,
+    // and let the interpreter consume a latched flag.  The effective
+    // threshold is max(image threshold, one eden) -- the invariant being that
+    // the image gets its interrupt while at least one more worst-case
+    // scavenge can still be absorbed.  A 400 KB threshold cannot express that
+    // when the allocation granularity above it is 22 MB.
+    void armLowSpaceThreshold(size_t bytes) {
+        lowSpaceThresholdBytes_ = bytes;
+        if (bytes == 0) lowSpaceCrossed_ = false;
+    }
+    /// Peek at the latch.  Cleared by disarming (armLowSpaceThreshold(0)),
+    /// which is what the interpreter does once it has actually signalled --
+    /// so a crossing with no semaphore registered yet is not thrown away.
+    bool lowSpaceCrossed() const { return lowSpaceCrossed_; }
+
     /// Set the free pointer (for image loading)
     void setOldSpaceFreePointer(uint8_t* ptr) {
         oldSpaceFree_ = ptr;
@@ -872,6 +901,21 @@ private:
     uint8_t* edenAllocBase_ = nullptr;
     uint8_t* edenAllocLimit_ = nullptr;
     uint8_t* survivorStart_ = nullptr;
+
+    // Low-space breaker state; see armLowSpaceThreshold().
+    size_t lowSpaceThresholdBytes_ = 0;   // 0 = disarmed
+    bool   lowSpaceCrossed_ = false;      // latched at the crossing
+
+    /// Called wherever oldSpaceFree_ advances.  Latches the crossing so the
+    /// interpreter can signal TheLowSpaceSemaphore at its next safe point --
+    /// signalling from inside a scavenge is not an option.
+    void noteOldSpaceAdvance() {
+        if (__builtin_expect(lowSpaceThresholdBytes_ == 0, 1)) return;
+        size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
+        size_t effective = lowSpaceThresholdBytes_ > edenCapacity
+                               ? lowSpaceThresholdBytes_ : edenCapacity;
+        if (freeOldSpaceBytes() < effective) lowSpaceCrossed_ = true;
+    }
 
     // Class table.
     //

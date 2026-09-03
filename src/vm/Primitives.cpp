@@ -11341,8 +11341,12 @@ PrimitiveResult Interpreter::primitiveSignalAtBytesLeft(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Store the threshold for GC to check
+    // Store the threshold for GC to check.  Both copies matter: the
+    // interpreter's is what the checkpoint disarms one-shot; ObjectMemory's is
+    // what the two oldSpaceFree_ advance sites test, which is the only place
+    // the crossing is actually observable (see ObjectMemory::armLowSpaceThreshold).
     lowSpaceThreshold_ = static_cast<size_t>(bytes);
+    memory_.armLowSpaceThreshold(static_cast<size_t>(bytes));
 
     // Return receiver (pop arg, leave receiver)
     Oop receiver = stackValue(1);
