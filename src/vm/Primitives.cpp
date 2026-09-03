@@ -4222,6 +4222,33 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Defect #27 detector, and free: this is a primitive-failure-adjacent cold
+    // path, and it fires on a VM invariant violation that cannot happen
+    // legitimately.  Reaching BlockClosure>>value:'s primitive with a receiver
+    // that is not a closure means the WRONG METHOD was dispatched -- no lookup
+    // can put a ByteSymbol on BlockClosure>>value:, since ByteSymbol's chain is
+    // Symbol -> ByteString -> String -> ArrayedCollection.  The observed
+    // symptom is exactly this followed by "Message not understood:
+    // ByteSymbol >> #numArgsError:", once per 2000-class sweep, on arm64 and
+    // x86_64 alike (RSRoassalTest 2026-09-03, SpTableCommonPropertiestTest
+    // 2026-09-02).  Bounded to 5 so a real storm cannot drown the log.
+    if (__builtin_expect(fullBlockClosureClassIndex_ != 0, 1)) {
+        ObjectHeader* clHdr = closure.asObjectPtr();
+        if (__builtin_expect(clHdr && clHdr->classIndex() != fullBlockClosureClassIndex_, 0)) {
+            static int mis = 0;
+            if (mis < 5) {
+                mis++;
+                fprintf(stderr,
+                    "[MISDISPATCH #%d] BlockClosure>>value: primitive reached with a "
+                    "%s receiver (classIndex=%u, expected %u) from #%s -- defect #27\n",
+                    mis, memory_.classNameOf(closure).c_str(),
+                    clHdr->classIndex(), fullBlockClosureClassIndex_,
+                    memory_.selectorOf(method_).c_str());
+                fflush(stderr);
+            }
+        }
+    }
+
     // Fast path: 0-arg block `[remoteTemp := remoteTemp op K]`.
     // Body (9 bytes):
     //   0xFB N M    PushTempAtInVec slot N of temp M  (read remote temp)
