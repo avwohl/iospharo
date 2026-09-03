@@ -2032,6 +2032,19 @@ selectors, same messages.  Leave the UI process RUNNING and Cog is back to
 deferred to the UI process, and with it suspended the assertions read an empty
 list.  Raw in `docs/results/sweep-arm-2026-09-02/cog-defect24-repro.txt`.
 
+**Restoring `NonInteractiveUIManager` afterwards does not help** — tested:
+install Morphic, suspend the UI process, then set `NonInteractiveUIManager` back
+as default, and it is still 18 P / 5 E with the same five.  So the operative
+state is not which manager is installed but a Morphic world that was **started
+and then stopped**; nothing restarts the deferred work.  A pristine image that
+never installed Morphic passes 23 / 23.
+
+That points at the prep as the cheapest harness-side lever: our prepped image
+is snapshotted with a live Morphic world (which is why the resume restarts a
+render loop at all), where a stock headless boot has none.  Prepping with
+`NonInteractiveUIManager` and no live world before `snapshot:andQuit:` would
+leave nothing for the runner to suspend.  Untested — it needs our VM.
+
 **And our runner suspends it deliberately.**  `run_sunit_tests.st`'s
 `startUp:` does it as its very first action, and says why:
 

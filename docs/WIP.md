@@ -228,7 +228,12 @@ which waits on the sweep's pid; the rest are by hand.
     that suspension is what makes nine classes fail (#24).  The runner
     suspends the loop before the DNUs can be observed, so resume WITHOUT the
     suspension and read what `drawWorld:` sends that the image does not
-    understand.
+    understand.  A cheaper harness-side lever is worth trying first: our
+    prepped image is snapshotted with a live Morphic world, where a stock
+    headless boot has none — prep with `NonInteractiveUIManager` and no world
+    before `snapshot:andQuit:` and there is nothing for the runner to suspend.
+    (Merely switching the manager back AFTER suspending does not work; tested
+    on Cog, still 18 P / 5 E.)
  8. **Run the full Δcog sweep.**  `scripts/cog-sweep.sh` (new) drives stock Cog
     in batches with `SUNIT_PREFIX` namespacing, so its `/tmp` state cannot
     collide with ours:

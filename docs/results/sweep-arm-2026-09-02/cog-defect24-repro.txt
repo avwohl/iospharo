@@ -26,3 +26,14 @@ pass=2 fail=21
    testChangeListInPresenterUpdatesWidget  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
    testChangingHelpAffectTheWidget  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
    testDoubleClickActivatesRowInDoubleClickActivationMode  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
+
+# Control: restoring NonInteractiveUIManager after suspending does NOT fix it.
+
+step 1: Morphic installed, uiProcess suspended
+step 2: UIManager default = NonInteractiveUIManager
+pass=18 fail=5
+   testChangeListInPresenterUpdatesWidget  SubscriptOutOfBounds: 1 in #()
+   testDoubleClickActivatesRowInDoubleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+   testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
+   testSetColumnTitleInPresenterPutsColumnHeaderMorph  SubscriptOutOfBounds: 1 in #()
+   testSingleClickActivatesRowInSingleClickActivationMode  SubscriptOutOfBounds: 1 in #()
