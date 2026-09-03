@@ -19,15 +19,17 @@ sentinel an unwind writes -- so the sender died by RETURNING, while its callee
 was still live.  That is a duplicate or stale activation, and from there the
 code reads itself.
 
-**Fix 1 -- the closure captured a chain with holes.**  The chain loop's
-`ExitBlockCreate` handler called `createFullBlockWithLiteral` with J2J saves
-still pending.  Those saves are caller activations the JIT entered without
-pushing interpreter frames, and `materializeFrameStack` -- which gives the new
-closure its `outerContext` -- can only see `savedFrames_`.  Worse, the
-`enableJ2J()` below it rebased the slice and zeroed `j2jDepth`, so the saves
-were not merely invisible, they were DROPPED.  Materialize first; the JIT has
-already exited at that point, which is when every other handler consumes its
-saves.
+**Fix 1 -- attempted, and REVERTED.**  The chain loop's `ExitBlockCreate`
+handler calls `createFullBlockWithLiteral` with J2J saves still pending.  Those
+saves are caller activations the JIT entered without pushing interpreter
+frames, and `materializeFrameStack` -- which gives the new closure its
+`outerContext` -- can only see `savedFrames_`, so the closure captures a chain
+with holes.  Materializing them first looked right and is not: batch 1-100 went
+from 0 non-clean classes to 11, with the shifted-operand-stack signature, and
+bailing to the interpreter instead of resuming the JIT scored the same 11.
+Converting live saves into interpreter frames is not valid at that exit,
+whatever happens afterwards.  The hole is real and still open; the counter that
+measures it (481 such closures in a 20-second run) is kept.
 
 **Fix 2 -- the wrong context got the corpse marker.**
 `materializeJ2JSaveIntoFrame` skipped `pushFrame`'s rule that the frame being
@@ -50,11 +52,19 @@ completes.
 
 **Measured, interleaved under held load** (the rate tracks machine load --
 6 of 8 with another tier running, 1 of 6 idle -- so blocked arms measure the
-load instead of the change):
+load instead of the change).  The only line that counts is the last: the three
+above it had fix 1 in the binary, and a change that breaks 11 classes can
+suppress a storm by breaking the path that reaches it.
 
-    A/B                          base       fixed
-    fix 1 only                 9 of 12     3 of 12
-    fix 1 + guard              7 of 10     0 of 10
+    A/B                                  base      other arm
+    fix 1 only                         9 of 12    3 of 12   (void)
+    fix 1 + guard                      7 of 10    0 of 10   (void)
+    fix 1 + guard + fix 2              8 of 10    0 of 10   (void)
+    guard + fix 2, fix 1 REVERTED      7 of 10    0 of 10   <- the result
+
+The surviving build also scores 0 non-clean classes on batch 1-100, twice, and
+the guard fires in 7 of the 10 storm runs: every storm becomes one terminated
+process and the batch completes.
 
 Why the storm allocates so violently is worth recording: the unhandled error
 reaches `Context>>freeze`, which COPIES the whole context chain to log it, and
