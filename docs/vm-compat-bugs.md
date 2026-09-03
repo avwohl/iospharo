@@ -2012,6 +2012,23 @@ supplies state the parameterisation was supposed to.
 `TKTWorkerTest` is parameterised but with a one-case matrix (7 selectors, 7
 tests), so its failure is ours too.
 
+**And the coverage cost is much larger than these nine classes.**  Counted over
+the whole image:
+
+    2047    concrete TestCase subclasses
+     241    of those are ParametrizedTestCase subclasses
+    2074    their allTestSelectors total        <- what our runner runs
+   12641    their suite tests total             <- what the suites define
+   10567    cases the runner has never run
+
+So the 27692 tests the 2026-09-02 sweep reports understate the suite by about
+38%.  A few classes carry most of it — `OCCodeSnippetTest` has 19 selectors and
+a suite of 6707, `OCCodeSnippetScriptingTest` 4 and 1176,
+`CoCompletionEngineCodeSnippetTest` 1 and 353 — which is why running the full
+matrix is a deliberate second step and not part of the fix above: it changes
+the denominator of every recorded sweep and needs the report format to
+disambiguate repeated selectors.
+
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.
 
