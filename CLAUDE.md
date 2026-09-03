@@ -406,11 +406,19 @@ Also remember our VM's eval mode touches /tmp/sunit_run_completed.txt
     # onto a COPY so the pristine image stays clean.
     cp /tmp/harness/Pharo.image   /tmp/harness/Pharo-jit.image
     cp /tmp/harness/Pharo.changes /tmp/harness/Pharo-jit.changes
-    # ALWAYS file in setup_fake_gui.st FIRST.  Measured 2026-09-03 on the 15
+    # File in setup_fake_gui.st FIRST.  Measured 2026-09-03 on the 15
     # display-family classes, same VM, prep the only difference:
     #   runner only                 209 P / 13 F / 16 E
     #   setup_fake_gui.st + runner  232 P /  6 F /  0 E
     # Every ERROR in that family is the missing Display/World, not the VM.
+    #
+    # It has a COST, measured the same day: with a fake GUI installed,
+    # KeyboardKeyTest>>testEqual wedged the VM past the in-image watchdog and
+    # burned a whole 1800 s batch (batch 651-700, rc=124, 20 of 51 classes).
+    # An event-dependent test blocks on a queue that now exists and never
+    # delivers.  The recovery pass gets those classes back, so the price is
+    # wall-clock rather than coverage -- but do not run a fake-GUI sweep with a
+    # short PER_BATCH_TIMEOUT and assume it behaves like a plain one.
     ./build/test_load_image /tmp/harness/Pharo-jit.image eval \
       "'$PWD/scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
        '$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
