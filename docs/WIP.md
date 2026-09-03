@@ -295,6 +295,23 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     by hand, in chunks of 5, the way the post-sweep script does for arm.  A ready
     comparison script is in the session scratchpad (`compare-sweeps.sh`);
     the arm side is staged at `sweep-arm/all_results.txt`.
+ 6b. **Consume `needsScavenge_` in `step()`** — considered and deliberately NOT
+    done tonight.  `step()` already handles `needsCompactGC()` at its declared
+    "GC safe point: between bytecodes, no C++ locals hold Oops", so the shape
+    is established:
+
+        if (memory_.needsScavenge()) {
+            memory_.clearScavengeFlag();
+            prepareForGC(); memory_.scavenge(); afterGC();
+        }
+
+    (the `interpret()` checkpoint's version, minus its bisect knobs).  That
+    would end the whole-batch no-scavenge mode described in `docs/deferred.md`.
+    Left undone because the benefit is small — the batch it affects is clean
+    apart from one unrelated failure, and defect #26's fix makes it exit
+    quickly anyway — while a wrong GC call corrupts the heap in every later
+    run, and tonight there is no way to verify it properly.  Do it when a GC
+    A/B can be run.
  7. Package tier on both arches.
  7b. **Chase defect #25's DNUs** — the highest-value single item to come out of
     tonight.  Our headless resume restarts `MorphicRenderLoop` at pri-80, it
