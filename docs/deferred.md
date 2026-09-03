@@ -5,10 +5,14 @@ policy decisions. Everything here is a **choice**, not a defect.
 
 If you are looking for something that is broken, it is not in this file:
 
+    what is happening right now                 docs/WIP.md
     open VM defects (our VM fails, Cog passes)  docs/vm-compat-bugs.md
     bugs in the Pharo image we patch            docs/image_issues.md
     what was fixed and when                     docs/changes.md, docs/history/
     suite + package measurements                docs/test-results.md, docs/results/
+
+(The `WIP.md` at the repo root is a pointer only — the file that carried state
+there was three weeks stale on 2026-09-02 and is now in `docs/history/`.)
 
 This file was 2739 lines on 2026-08-12, of which 86% was changelog and
 debugging narrative, and 14 real defects were buried in it — five of them

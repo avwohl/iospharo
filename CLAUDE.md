@@ -9,8 +9,10 @@ Key paths:
     src/vm/jit/          JIT compiler + stencils; SistaV1.hpp is the bytecode-opcode source of truth
     scripts/             build and transformation scripts
     docs/                documentation
+    docs/WIP.md          current state — read this first
     docs/deferred.md     consolidated list of deferred work
     docs/image_issues.md Pharo 13 image bugs we patch + upstream wishlist
+    docs/vm-compat-bugs.md  open VM defects and leads
 
 ## Hard rules
 
