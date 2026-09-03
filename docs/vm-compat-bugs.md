@@ -2049,18 +2049,28 @@ breaker fires 462 times; the 2026-07 dossier has this exactly backwards.)  The
 latch fix is still right and still needed, but it cannot help a run where the
 image never arms the threshold.
 
-**And the same image arms it in `eval` and not under the runner**, which points
-at the runner rather than the VM: `Smalltalk installLowSpaceWatcher` is called
-from `ProcessorScheduler>>installIdleProcess`, part of image startup, and
-`SUnitRunner class>>startUp:` runs during that same startup and does not
-return — it goes straight into the batch.  If the runner's handler is ordered
-before the scheduler's, the watcher is simply never installed.  Two checks
-settle it: evaluate `Smalltalk specialObjectsArray at: 24` (the low-space
-semaphore) inside a runner batch, and compare the `SessionManager` startup list
-position of `SUnitRunner` against `ProcessorScheduler`.  The other candidate is
-`lowSpaceWatcher`'s own guard, which bails with "Not enough memory to launch
-the lowSpaceWatcher" unless `garbageCollectMost` or `garbageCollect` answers
-more than 400000.
+**Startup ORDER is not the reason** — measured, so nobody re-derives it: in an
+image with the runner filed in, `SessionManager default startupList` puts
+`ProcessorScheduler` at #5 and `SUnitRunner` at #50 of 56.  The scheduler's
+handler, which calls `installLowSpaceWatcher`, runs long before the runner's.
+
+What that leaves is *when the arming actually happens*.
+`installLowSpaceWatcher` only FORKS: it creates
+`[ self lowSpaceWatcher ] newProcess` at `Processor lowIOPriority` (60) and
+resumes it.  The `primSignalAtBytesLeft:` call is inside `lowSpaceWatcher`, so
+the threshold is armed only once that **P60 process first gets the CPU** — and
+the runner forks its tests at P79/P80.  In a bare `eval` there is little to
+compete with and it arms (462 firings); in a batch it can lose the race, and a
+storm that starts ~18 s in gets there first.  Consistent with both
+observations: the batch-1801 log shows the watcher reaching
+`#lowSpaceThreshold` at step 161M, i.e. it does eventually run, while the
+1024 MB storm aborts with `threshold=0` well before that.
+
+So the remaining question is a scheduling one, and `PHARO_DET_SCHED=1` makes it
+observable.  The other candidate, `lowSpaceWatcher`'s own guard bailing with
+"Not enough memory to launch the lowSpaceWatcher", needs
+`garbageCollectMost`/`garbageCollect` to answer under 400000; ours return
+`freeOldSpaceBytes()`, which is billions here, so it is unlikely.
 
 #### (superseded) Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
 is generated from the image and archived at
