@@ -156,10 +156,17 @@ which waits on the sweep's pid; the rest are by hand.
     Rebuild BOTH arches and re-run the C++ tier before trusting any number
     from either.  `build-x86` is further behind: it has none of the day's
     changes, starting at `2c2c4616`.
-    Also add the "no VM binary on the prepped image" note to
-    `scripts/sunit-sweep.sh`'s header — deliberately not done while an
-    instance of that script was running, since editing a running bash script
-    shifts the byte offsets it resumes reading from.
+    Two edits to `scripts/sunit-sweep.sh`, both deliberately deferred because
+    editing a running bash script shifts the byte offsets it resumes reading
+    from:
+      * the "no VM binary on the prepped image" note in its header;
+      * **kill a batch once it has finished.**  The VM writes
+        `/tmp/sunit_run_completed.txt` when the batch is done; the driver
+        currently waits for the process to exit and pays
+        `PER_BATCH_TIMEOUT` in full when it does not.  Polling for that marker
+        and killing caps the damage from ANY shutdown hang, not just defect
+        #26's — and would have saved 30 minutes on each of tonight's two
+        sweeps even before that fix existed.
  1. **Name the class that storms.**  Re-run arm batch 1901-1950:
     `printf '1901 1950' > /tmp/sunit_batch.txt` and launch the prepped image.
     The x86 sweep will also pass through that range and may name it for free.
