@@ -56,6 +56,15 @@ That leaves ONE open correctness question in the whole residual -- defect #27,
 the ByteSymbol mis-dispatch, at one test per sweep -- plus a performance
 question about how slow those image scans are against Cog.
 
+**The fake-GUI prep costs a wedged batch, and that is now its own lead.**  The
+confirming sweep lost batch 651-700 entirely (rc=124, 20 of 51 classes) to
+`KeyboardKeyTest>>testEqual`.  The in-image watchdog could not interrupt it,
+which means no Smalltalk process was running at all -- the VM itself was
+blocked, presumably on an event queue the fake GUI creates and nothing pumps.
+A probe reproduces it alone on both images and takes a `sample` of the C++
+stack, which is what names the blocking call.  The recovery pass gets the
+classes back, so the price is wall-clock; `CLAUDE.md`'s recipe now says so.
+
 **The untried lever works, and it is worth most of the remaining residual.**
 Prepping with `setup_fake_gui.st` before the runner, measured on the 15
 affected classes with everything else identical:
