@@ -2064,24 +2064,28 @@ to the wall-clock interleaving, still deterministic — and walking it up is the
 next thing to try: a quantum that storms every time turns this into a fixed
 repro.
 
-#### `PHARO_DET_SCHED_QUANTUM=16` reproduces it — 2 of 2 where wall clock is 1 of 3
+#### A DETERMINISTIC repro: `PHARO_DET_SCHED_QUANTUM=64`, identical to the object
 
-    quantum   runs   storms   time
-    (wall)      3      1      18 s storming, 4 s not
-    1           3      0      45 s
-    4           2      0      4-6 s
-    16          2      2      18-19 s      <-- reliable repro
+    quantum   runs  storms  time   Contexts at the abort
+    (wall)      3     1     18 s   2655137            (4 s when it does not fire)
+    1           3     0     45 s   —
+    4           2     0     4-6 s  —
+    16          2     2     18 s   2655263 / 2663681  reliable, not identical
+    64          2     2     17 s   2655317 / 2655317  <-- IDENTICAL
+    256         1     1     18 s   2655312
 
-So the storm needs a yield interval near 16 x 1024 bytecodes: finer (quantum 1
-or 4) and it never fires, and the wall-clock heartbeat only lands in the window
-about a third of the time.  **`PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=16
-PHARO_MAX_OLD_SPACE_MB=1024` on batch 1901-1905 is the repro to use** — about
-19 seconds, and it survives instrumentation, which is the whole point of
-DET_SCHED and what plain quantum 1 failed to deliver here.
+**Use `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=64
+PHARO_MAX_OLD_SPACE_MB=1024` on batch 1901-1905.**  17 seconds, storms every
+time, and reproduces to the same Context count twice running — so the whole
+execution is repeatable, not merely the outcome.  That is what makes lldb, a
+trace, or an ablation usable here: the run under observation is the same run.
 
-Not byte-identical between runs (2 vs 3 classes reported, Context counts
-2655263 vs 2663681), so some wall-clock input remains — Delays, most likely —
-but it storms every time.
+The shape of the table is the finding in itself.  The storm needs a yield
+interval of roughly 16 x 1024 bytecodes or coarser; at 4 x 1024 and finer it
+never fires, and the ~2 ms wall-clock heartbeat only lands in the window about
+a third of the time.  Quantum 16 storms every time but not identically
+(2655263 vs 2663681), so a little wall-clock input survives there — Delays, most
+likely — and 64 removes even that.
 
 **Practical note on the knob**: at quantum 1 it costs ~15x.  The 5-class range
 goes 4 s -> 45 s, and a whole 51-class batch does not finish — one attempt
