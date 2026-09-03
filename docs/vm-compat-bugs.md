@@ -1775,7 +1775,22 @@ to be one: for anything that ends without output, elapsed time and exit status
 have to be recorded, because "produced no result" and "did not terminate" are
 different findings that look identical in a log.
 
-### 22. `RSLinesTest` — `BlockCannotReturn` on a four-frame non-local return — NEW 2026-09-02, NOT YET REPRODUCED
+### 22. ~~`RSLinesTest` — `BlockCannotReturn` on a four-frame non-local return~~ — FIXED and VERIFIED 2026-09-03
+
+    RSLinesTest, JIT on          18 P / 0 F / 0 E    (was 16 P / 2 E on arm64,
+    RSLinesTest, PHARO_NO_JIT=1  18 P / 0 F / 0 E     17 P / 1 E on x86_64)
+
+Both modes, so the defect was in the shared home resolution and not in a JIT
+specialisation — the `PHARO_NO_JIT` bisect this entry called for is answered by
+the fix itself.  Our VM reports the same shape the fix targets:
+
+    RSAbstractLine >> markersIncludesPoint:
+       methodClass      = RSAbstractLine
+       block outerCode  = RSTMarkeable>>#markersIncludesPoint:
+       outerCode == m   = false
+
+Raw in `docs/results/sweep-arm-2026-09-02/defect22-verification.txt`.  The
+analysis that got there is kept below, refutations included.
 
 Two errors in the 2026-09-02 arm64 sweep and one in the x86_64 sweep
 (`testMarkersIncludesPoint` on both, `testMarkerOffset` on arm only), so the
@@ -1895,7 +1910,13 @@ Note this puts both of the 2026-09-02 newcomers on trait method copies — the
 other being the storm that killed the batch containing all 27 `Trait*Test`
 classes.
 
-### 23. The trait-test Context storm — Cog runs the block clean, we exhaust 12 GB — NEW 2026-09-02, HIGH
+### 23. The Context storm — Cog runs the block clean, we exhaust the heap — HIGH, arm64-only, non-deterministic
+
+Reproduces in **18 s** at `PHARO_MAX_OLD_SPACE_MB=1024`.  It is NOT the trait
+tests — the accumulation is already running in the Tonel block, and the 27
+trait classes are clean in isolation on our VM.  The bisect below is
+self-contradictory because the storm is timing-dependent, so `PHARO_DET_SCHED=1`
+is the next instrument.  Details in order below.
 
 The arm64 sweep's batch 1901-1950 died at index 1912 with
 
@@ -2129,7 +2150,7 @@ Then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
 FATAL at 12288 and should take about a twelfth of that at 1024, and the census
 ratios that identify it do not depend on the absolute counts.
 
-### 24. Nine classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
+### 24. Fourteen classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
 
 Carried through several sweeps as "the missing display" and therefore as a
 residual that could not be helped.  The 2026-09-02 Δcog says otherwise: stock
