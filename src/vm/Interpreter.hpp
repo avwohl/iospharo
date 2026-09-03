@@ -1435,6 +1435,11 @@ private:
     // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
     size_t lowSpaceThreshold_ = 0;
 
+    /// Deliver the image's low-space interrupt if ObjectMemory latched a
+    /// threshold crossing.  Called from both interpreter loops; see the
+    /// definition in Interpreter.cpp for why it is latched, not sampled.
+    void checkLowSpaceSignal();
+
     // VM start time for ioMSecs() - millisecond clock base
     std::chrono::steady_clock::time_point vmStartTime_ = std::chrono::steady_clock::now();
 

@@ -2753,6 +2753,40 @@ void Interpreter::traceExtentBytecode(uint8_t bc) {
             frameDepth_ - g_traceExtentDepth, memory_.selectorOf(method_).c_str(), bc, tcls);
 }
 
+// Deliver the image's low-space interrupt (prim 125) if the threshold has
+// been crossed.  The crossing is LATCHED by ObjectMemory at the two sites that
+// spend old space, not sampled here -- sampling `freeOldSpaceBytes() <
+// lowSpaceThreshold_` on the per-1024-bytecode checkpoint is what this used to
+// do, and it essentially never fired.  Old space drains through scavenge
+// tenure in steps of up to one eden (22 MB), against Pharo's 400000-byte
+// threshold, so the sampled window was hit ~1.8% of the time; the rest of the
+// time the next tenure overran oldSpaceEnd_ and aborted first.  Measured on
+// the 2026-09-02 arm64 sweep: 12 GB of old space consumed, zero [LOW-SPACE]
+// lines.  See ObjectMemory::armLowSpaceThreshold.
+//
+// Called from BOTH interpreter loops.  The nested callback loop
+// (enterInterpreterFromCallback) is not a detail: the main checkpoint does not
+// run while a callback hosts execution, so without this call a storm inside an
+// FFI callback could still exhaust the heap with the breaker armed.
+void Interpreter::checkLowSpaceSignal() {
+    if (__builtin_expect(lowSpaceThreshold_ == 0, 1)) return;
+    if (!memory_.lowSpaceCrossed()) return;
+    Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
+    if (!lowSem.isObject() || lowSem.isNil()) return;
+    // Disarm only once we can actually deliver.  The old code zeroed the
+    // threshold before looking the semaphore up, so a crossing that arrived
+    // before the image had registered one disarmed the breaker for good and
+    // signalled nothing.
+    lowSpaceThreshold_ = 0;
+    memory_.armLowSpaceThreshold(0);   // also clears the latch
+    memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
+                             getActiveProcess());
+    fprintf(stderr, "[LOW-SPACE] threshold crossed (free=%zu MB) — "
+            "signaling LowSpaceSemaphore, culprit recorded\n",
+            memory_.freeOldSpaceBytes() / (1024 * 1024));
+    synchronousSignal(lowSem);
+}
+
 void Interpreter::interpret() {
     // The thread running interpret() IS the VM thread — the external-
     // signal ring's single consumer (see signalExternalSemaphore's
@@ -3702,34 +3736,7 @@ void Interpreter::interpret() {
         // so runaway allocation storms (catalog #9's 200k-iteration
         // debugger-recursion pinning 4M contexts) had no image-side circuit
         // breaker and ran to old-space exhaustion.
-        // The condition is LATCHED at the allocation sites, not sampled here.
-        // Sampling `freeOldSpaceBytes() < lowSpaceThreshold_` on this
-        // bytecode-paced checkpoint is what this code used to do, and it
-        // essentially never fired: old space drains through scavenge tenure in
-        // steps of up to one eden (22 MB), so a 400 KB image threshold is
-        // stepped over ~98% of the time and the run aborts inside the next
-        // tenure instead.  Measured on the 2026-09-02 arm64 sweep -- 12 GB of
-        // old space consumed, zero [LOW-SPACE] lines.  See
-        // ObjectMemory::armLowSpaceThreshold.
-        if (__builtin_expect(lowSpaceThreshold_ > 0, 0)) {
-            if (memory_.lowSpaceCrossed()) {
-                Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
-                if (lowSem.isObject() && !lowSem.isNil()) {
-                    // Disarm only once we can actually deliver.  The old code
-                    // zeroed the threshold before looking the semaphore up, so
-                    // a crossing that arrived before the image had registered
-                    // one disarmed the breaker for good and signalled nothing.
-                    lowSpaceThreshold_ = 0;
-                    memory_.armLowSpaceThreshold(0);   // also clears the latch
-                    memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
-                                             getActiveProcess());
-                    fprintf(stderr, "[LOW-SPACE] threshold crossed (free=%zu MB) — "
-                            "signaling LowSpaceSemaphore, culprit recorded\n",
-                            memory_.freeOldSpaceBytes() / (1024 * 1024));
-                    synchronousSignal(lowSem);
-                }
-            }
-        }
+        checkLowSpaceSignal();
 
         // Sampling profiler tick (armed by primitiveProfileStart).  Cog
         // semantics: the deadline is highResClock + delta, ONE-SHOT — the
@@ -5824,6 +5831,11 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         if (!inExtension_) {
             checkTimerSemaphore();
         }
+        // Low-space interrupt HERE too, same reason as the adoption drain
+        // below: the main interpret() checkpoint never runs while this loop
+        // hosts execution, so a storm inside a callback would otherwise
+        // exhaust the heap with the breaker armed and latched.
+        checkLowSpaceSignal();
         // Adopt worker-forwarded callbacks HERE too — the main interpret()
         // checkpoint never runs while this nested loop hosts execution.  An
         // abandoned same-thread invocation (TFCallbacksTest's old-session
