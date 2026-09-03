@@ -1923,6 +1923,27 @@ trait block finally has one of our own measurements to compare against Cog:
 `TraitTest>>testTraitsUsersSanity` is the selector behind the entry this file
 has carried since 2026-06-01.  See `docs/results/sweep-x86-2026-09-03.md`.
 
+**And it is not an arbitrary assertion — it is a whole-image invariant on
+exactly the state a trait rebuild touches:**
+
+    testTraitsUsersSanity
+        Smalltalk allClassesAndTraits do: [ :each |
+            self assert: (each traits allSatisfy: [ :t | t traitUsers includes: each ]) ].
+        Smalltalk globals allTraits do: [ :each |
+            self assert: (each traitUsers allSatisfy: [ :b | b traits includes: each ]) ]
+
+Every class must be listed by the traits it uses, and every trait's users must
+still use it.  The test runs late in the trait block, after two dozen classes
+have created and rebuilt traits through `ShiftClassBuilder`.  So the failure
+says our trait rebuilds leave `traitUsers` inconsistent — stale state left
+behind by a rebuild, which is the SAME family as this defect's trigger
+(a trait-class rebuild with live instances leaving a husk).
+
+That is the cheapest handle on this defect so far, and it does not need the
+storm: run the trait block and then evaluate the two assertions directly.  On
+x86_64 the invariant breaks without any storm; on arm64 the storm arrives
+first.  One mechanism, two escalations, is the hypothesis to test.
+
 **Stock Cog runs the same 27 classes clean, in seconds:**
 
     27 classes   270 tests   0 F   0 E        (Cog v10.3.9, x86_64 under Rosetta)
