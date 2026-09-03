@@ -2061,11 +2061,47 @@ that the render loop DNUs.  Confirm with
          WorldMorph allInstances size } printString"
 
 (Cog answers `#(NonInteractiveUIManager true 1)`), and then chase the
-`WorldState>>drawWorld:` DNUs — that is the thing to fix, and fixing it retires
-nine classes of residual without touching Spec.
+`WorldState>>drawWorld:` DNUs — **now filed separately as defect #25**, because
+a pri-80 busy-spin that kills the Delay scheduler is a defect in its own right.
+Fixing it retires nine classes of residual without touching Spec.
 
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.
+
+### 25. The resumed `MorphicRenderLoop` busy-spins on Morphic DNUs and kills the Delay scheduler — NEW 2026-09-02, MEDIUM
+
+The root behind #24, promoted out of a runner comment because it is a VM
+divergence and has been costing us a residual bucket for months.
+
+`run_sunit_tests.st`'s `startUp:` suspends the saved `WorldMorph` render loop
+as its very FIRST action, ahead of everything else, and says why:
+
+> On our custom VM the headless resume restarts `MorphicRenderLoop` at pri-80;
+> it busy-spins `WorldState>>drawWorld:` (Morphic DNUs), starves the pri-80
+> Delay scheduler, and the scheduler dies (timerSem=nil) → only-idle wedge
+> before any test runs.  The same suspension lived inside `runAllTests` but ran
+> ~111 lines too late (after the deferred timer bootstrap at step 25M).
+
+Stock Cog on the same image resumes headless with `UIManager default` =
+`NonInteractiveUIManager`, `Display` nil, and no such spin.  So either our
+resume path installs Morphic where Cog does not, or the render loop it starts
+DNUs where Cog's would not — and the DNUs are the part to chase, because a
+busy-spin at pri-80 that starves the Delay scheduler is a scheduling defect on
+its own, quite apart from Spec.
+
+**Cost, now measured:** with the UI process suspended, every widget refresh
+that Spec defers to it never runs.  Reproduced on stock Cog — Morphic installed
+and its UI process suspended gives `SpListCommonPropertiestTest` 18 P / 5 E,
+our exact failure set (#24, `cog-defect24-repro.txt`).  Nine classes of the
+2026-09-02 residual are downstream of this suspension.
+
+**Where to start:** get the DNU selectors.  The runner suspends the loop before
+they can be observed, so run a headless resume WITHOUT the suspension — file
+the runner in and immediately resume the UI process, or run a bare image with
+`PHARO_MAX_STEPS` low — and read what `WorldState>>drawWorld:` sends that the
+image does not understand.  A Morphic DNU under a display-less resume is
+usually a missing plugin primitive answering nil where a Form or an event
+buffer is expected.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
