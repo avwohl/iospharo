@@ -123,6 +123,23 @@ SOURCES=$(ls "$IMAGE_DIR"/*.sources 2>/dev/null | head -1)
 [ -n "$SOURCES" ] || SOURCES=$(find "$IMAGE_DIR" -maxdepth 3 -name '*.sources' 2>/dev/null | head -1)
 [ -n "$SOURCES" ] || { echo "no .sources file for $IMAGE -- class comments would all read nil; see the header" >&2; exit 1; }
 
+# The VM loads its FFI dylibs from beside its own binary.  Running a COPY of
+# the binary out of its build directory therefore silently loses them:
+# LibTTYTest went 5 P to 5 E on 2026-09-03 with "SymbolNotFoundError: Could not
+# find symbol named: #tty_spawn searching in module: 'libtty.dylib'", which
+# reads like an FFI regression and is not.  Copying the VM is a legitimate
+# thing to want -- it stops a rebuild changing the binary mid-sweep -- so warn
+# rather than refuse, and name the fix.
+VM_DIR=$(cd "$(dirname "$VM")" && pwd)
+for lib in libtty.dylib libTestLibrary.dylib; do
+    if [ ! -f "$VM_DIR/$lib" ]; then
+        echo "WARNING: $lib is not beside the VM ($VM_DIR)." >&2
+        echo "         Tests that FFI into it will fail with SymbolNotFoundError." >&2
+        echo "         Copy the build directory's *.dylib next to the VM, or run" >&2
+        echo "         the VM in place from its build directory." >&2
+    fi
+done
+
 mkdir -p "$OUT"
 : > "$OUT/all_results.txt"
 : > "$OUT/sweep.log"
