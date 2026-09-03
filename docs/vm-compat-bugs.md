@@ -2003,7 +2003,7 @@ cases have never been run by this harness — but it is a coverage gap, not a
 cause of these failures.  (`scripts/package-tests-selfhosted.sh` already runs
 `c suite run`, so the package tier is unaffected either way.)
 
-#### The live hypothesis: `WorldMorph allInstances` is empty on ours
+#### Narrowing it: not the world either, and it is five specific tests
 
 Not the display: asked of stock Cog in the state where these tests PASS,
 
@@ -2035,15 +2035,33 @@ killed class-shape migration (fixed 2026-08-23; see the `PHARO_OLDSPACE_FREELIST
 comment in `src/vm/debug_vars.h`).  The class-table-only-holds-classes-with-
 instances behaviour is the same family.
 
-**Probe, the moment our VM is free** (needs no sweep, no runner):
+**But the strong form of that is already refuted.**  Nilling `World` on Cog and
+re-running the class gives 2 P / 21 F — and every one of the 21 is
+`MessageNotUnderstood: receiver of "displayScaleFactor" is nil`, not our
+signature.  We fail 5 of 23, not 21, and with `SubscriptOutOfBounds: 1 in #()`.
+So "no world at all" is the wrong shape: most of the widget path plainly works
+for us.
+
+The five that do fail are specific, and they cluster:
+
+    testChangeListInPresenterUpdatesWidget                    SubscriptOutOfBounds: 1 in #()
+    testSingleClickActivatesRowInSingleClickActivationMode    SubscriptOutOfBounds: 1 in #()
+    testDoubleClickActivatesRowInDoubleClickActivationMode    SubscriptOutOfBounds: 1 in #()
+    testSetColumnTitleInPresenterPutsColumnHeaderMorph        SubscriptOutOfBounds: 1 in #()
+    testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure
+
+i.e. click activation and column headers — event simulation and morph
+structure, not world creation.  Start there, on those five, rather than on the
+environment.
+
+**Still worth running once our VM is free**, because it is one line and pins
+the environment difference either way:
 
     ./build-rel/test_load_image <image> eval \
       "{ WorldMorph allInstances size. (Smalltalk globals at: #World ifAbsent: [nil]) class.
          UIManager default class. Smalltalk isHeadless } printString"
 
-Cog answers `#(1 WorldMorph NonInteractiveUIManager true)`.  If ours answers 0
-for the first slot while `World` is a `WorldMorph`, the defect is in
-`allInstances`, not in Spec.
+Cog answers `#(1 WorldMorph NonInteractiveUIManager true)`.
 
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.

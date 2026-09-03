@@ -57,11 +57,11 @@ the running sweep:
     the same evening, wrote a runner change for it, and then **refuted and
     reverted both**: `ParametrizedTestCase>>setUp` applies the first parameter
     set when none was supplied, and a bare instance driven by `runCase` passes
-    23 of 23 on Cog.  The live hypothesis is now `WorldMorph allInstances`
-    answering empty on ours: Cog passes these with `Display` nil and a
-    `NonInteractiveUIManager`, but with one findable `WorldMorph`, and
-    `setup_fake_gui.st`'s first action is to create one `ifEmpty:`.  There is a
-    one-line eval in defect #24 that settles it.
+    23 of 23 on Cog.  A "no WorldMorph on ours" theory is also refuted:
+    nilling `World` on Cog gives 2 P / 21 F, all
+    `MessageNotUnderstood: receiver of "displayScaleFactor" is nil`, where we
+    fail 5 of 23 with `SubscriptOutOfBounds: 1 in #()`.  The five that fail are
+    click activation and column headers; defect #24 names them.
   * **A separate, real coverage gap: 10,567 test cases** — 241 of the 2047
     concrete test classes are parameterised, their selectors total 2074 and
     their suites 12641, so the reported test count understates the suite by
