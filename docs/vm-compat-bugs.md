@@ -3652,3 +3652,40 @@ announcer to drop the subscription. Combined with upstream skipping this test
 on their own CI (pharo#2471), the evidence does not support calling this a VM
 defect, and it should not be counted against the VM without a stock-Cog
 comparison this host cannot run.
+
+## Defect #27 — a ByteSymbol runs `BlockClosure>>value:`
+
+`RSRoassalTest>>testOpen`, arm64, 2026-09-03 sweep:
+
+    ERROR: testOpen (MessageNotUnderstood: Message not understood:
+                     ByteSymbol >> #numArgsError:)
+      >> ByteSymbol(Object)>>doesNotUnderstand: #numArgsError:
+      >> ByteSymbol(BlockClosure)>>value:
+      >> Array(SequenceableCollection)>>do:
+      >> SystemWindow(Morph)>>announceOpened
+
+Read the second line carefully.  The parenthesised class is where the METHOD
+lives, so this is a **ByteSymbol receiver running `BlockClosure>>value:`**.
+ByteSymbol's superclass chain is Symbol -> ByteString -> String ->
+ArrayedCollection; it never reaches BlockClosure, so no lookup can produce
+that pair.  It is a mis-dispatch -- an inline cache or method cache hit that
+did not verify the receiver's class -- and `numArgsError:` is simply the first
+thing `BlockClosure>>value:` sends to a receiver that is not a block.
+
+**Not caused by tonight's changes.**  The same signature is in the 2026-09-02
+baseline's failing-selectors list, on a different class:
+`SpTableCommonPropertiestTest>>testChangeListInPresenterUpdatesWidget`.  Two
+different call sites, same shape, so it is a live defect that moves around with
+timing rather than a property of one test.
+
+Both sightings go through `SequenceableCollection>>do:` with a Symbol where a
+block is expected -- `#foo value: each` is idiomatic Pharo and perfectly legal
+(Symbol implements `value:`).  So the send site is polymorphic between
+`BlockClosure` and `Symbol`, which is exactly where a monomorphic IC that skips
+its class guard would go wrong.
+
+Repro plan: `RSRoassalTest>>testOpen` under `PHARO_DET_SCHED=1`, then bisect
+the IC knobs (`PHARO_T1_NO_IC_POLY_WALK`, `PHARO_NO_METHOD_CACHE`,
+`PHARO_T1_NO_INLINE_J2J`) to separate an inline-cache miss from a method-cache
+one.  Interpreted (`PHARO_NO_JIT=1`) first, as always -- that fork is one run
+and it decides whether this is the JIT's at all.
