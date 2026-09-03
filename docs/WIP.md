@@ -133,10 +133,12 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
          16 P / 2 E (arm) and 17 P / 1 E (x86).  The class's copy of a trait
          method shares the trait's CompiledBlock, whose outerCode names only
          the trait's method, so the home match by method oop could not succeed.
-    #23  The trait-test Context storm — ours; Cog runs all 27 classes clean.
-         arm64-only: x86_64 ran the block in 270 s.  Chunks cannot reproduce
-         it (needs one image).  TraitTest>>testTraitsUsersSanity is the cheap
-         handle — a whole-image traitUsers invariant that a rebuild breaks.
+    #23  The Context storm — ours, and NOT the trait tests.  Reproduces in
+         **18 s** at PHARO_MAX_OLD_SPACE_MB=1024, dying at index 1909
+         TonelWriterV1Test; 1912 was only where a 12 GB heap ran out.  The 27
+         trait classes are clean in isolation on our VM (0 traitUsers
+         violations, TraitTest 54/54, no storm).  Bisect forward from 1901
+         through the Tonel block, 18 s a run.
     #24  Fourteen classes fail because the runner must suspend the UI process.
          REPRODUCED on Cog; two earlier explanations refuted and recorded.
          Our PRISTINE headless environment is identical to Cog's, so the
@@ -147,7 +149,11 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
          1800 s -> 54 s, rc=0, 51 of 51 classes.  ~29 minutes per sweep per
          arch.
     LEAD 19  The low-space breaker could not fire.  FIXED + VERIFIED —
-         462 firings, zero FATAL aborts.
+         462 firings, zero FATAL aborts in a bare eval.  But the new FATAL
+         diagnostic shows the SWEEP never arms it at all
+         ("threshold=0 bytes ... the image never installed a
+         LowSpaceWatcher"), so that run had two causes and the second is in
+         the image's startup.  Open.
 
 The C++ tier is green on both arches with all of tonight's commits:
 `test_sista_ir`, `test_class_table`, `test_sista_survey` and `test_relaunch`

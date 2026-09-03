@@ -128,6 +128,22 @@ mitigation is "DISARMED in bare `eval`" because the image never runs
 `installLowSpaceWatcher` there.  It is not: this was a bare `eval` and the
 breaker armed and fired.
 
+**It is the other way round.**  The FATAL diagnostic added the same day prints
+the breaker's state at an exhaustion abort, and on the first storm it saw —
+sweep batch 1901-1950, run through the SUnit runner — it said
+
+    [VM] low-space breaker at abort: threshold=0 bytes (DISARMED — the image
+         never installed a LowSpaceWatcher), crossing latched=no
+
+So under the runner prim 125 is never armed, and no amount of fixing where the
+threshold is TESTED can help a run that never sets one.  The latch fix is still
+correct and still needed — it is what makes the breaker work when the image
+does arm it, as the eval run shows — but the sweep's zero `[LOW-SPACE]` lines
+have two causes, not one, and the second is in the image's startup.  Why the
+prepped image skips `installLowSpaceWatcher` is open; `lowSpaceWatcher`'s own
+guard bails with "Not enough memory to launch the lowSpaceWatcher" unless
+`garbageCollectMost` or `garbageCollect` answers more than 400000.
+
 **Do not expect this to cure the storm.**  Read from the image's own source:
 `lowSpaceWatcher` ends in `installLowSpaceWatcher`, so the image re-arms prim
 125 after every event, and its action is
