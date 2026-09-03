@@ -3714,6 +3714,17 @@ same five selectors, each VM in its own directory:
 The full package run reports five (Nmtokens joins them there), so the fifth is
 timing-sensitive and the other four are not.
 
+**Narrowed the same morning, and it is not the test body.**  Running the same
+five selectors through `TestCase>>runCase` -- which is setUp, the test method,
+tearDown, and nothing else -- passes 5 of 5 on x86_64.  Only
+`(XMLParserTest selector: sel) run` fails, and `run` adds the TestResult
+machinery and the class's test RESOURCES around the case.  So the failure lives
+in the resource/setup path.
+
+That also explains why the package tier sees it and the SUnit runner does not:
+`package-tests-selfhosted.sh` runs `c suite run`, and `run_sunit_tests.st` runs
+`runCase`.
+
 This is the last unexplained arch-specific failure in the package tier and the
 only reproducible one anywhere: every other arm-vs-x86 difference in the
 2026-09-03 sweeps is a Rosetta timeout, a wall-clock assertion, a symbol the
