@@ -15,11 +15,16 @@ tr '\r' '\n' < "$D/all_results.txt" 2>/dev/null | awk '
   /^=== / { cls=$2 }
   /^Total:/ { if (cls != "BATCH") printf "%s %s\n", cls, $0 }' | sort -u >> "$tmp/new"
 awk '{ cls=$1; $1=""; sub(/^ +/,""); printf "%s %s\n", cls, $0 }' "$B" | sort -u > "$tmp/old"
-echo "--- classes only in the NEW run"
-join -v1 -o 1.1 <(cut -d' ' -f1 "$tmp/new" | sort -u) <(cut -d' ' -f1 "$tmp/old" | sort -u) | tr '\n' ' '; echo
-echo "--- classes only in the BASELINE (lost or renamed)"
-join -v2 -o 2.1 <(cut -d' ' -f1 "$tmp/new" | sort -u) <(cut -d' ' -f1 "$tmp/old" | sort -u) | tr '\n' ' '; echo
-echo "--- classes whose totals changed"
-join <(sort "$tmp/new") <(sort "$tmp/old") -j1 -o 0,1.2,1.3,1.4,1.5,1.6,1.7,2.2,2.3,2.4,2.5,2.6,2.7 2>/dev/null \
-  | awk '{ newv=$3" "$4" "$5" "$6" "$7; oldv=$9" "$10" "$11" "$12" "$13;
-           if (newv != oldv) printf "  %-45s new: %s | was: %s\n", $1, newv, oldv }'
+awk '
+  NR==FNR { key=$1; $1=""; sub(/^ +/,""); old[key]=$0; next }
+  { key=$1; $1=""; sub(/^ +/,""); new[key]=$0 }
+  END {
+    printf "--- classes only in the NEW run\n  "
+    for (k in new) if (!(k in old)) printf "%s ", k
+    printf "\n--- classes only in the BASELINE (lost, or not reached yet)\n  "
+    n=0; for (k in old) if (!(k in new)) n++
+    printf "%d classes\n", n
+    print "--- classes whose totals changed"
+    for (k in new) if ((k in old) && new[k] != old[k])
+        printf "  %-45s new: %s | was: %s\n", k, new[k], old[k]
+  }' "$tmp/old" "$tmp/new" | sort
