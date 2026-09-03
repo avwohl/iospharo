@@ -140,11 +140,14 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
          violations, TraitTest 54/54, no storm).  Bisect forward from 1901
          through the Tonel block, 18 s a run.  The bisect came back
          NON-DETERMINISTIC — 1901-1905 stormed while both its supersets ran
-         clean.  **Now has a DETERMINISTIC repro**: `PHARO_DET_SCHED=1
+         clean.  **Best repro so far**: `PHARO_DET_SCHED=1
          PHARO_DET_SCHED_QUANTUM=64 PHARO_MAX_OLD_SPACE_MB=1024` on batch
-         1901-1905 — 17 s, storms every time, and lands on the same Context
-         count (2655317) twice running.  Wall clock is 1 of 3; quantum 1 and 4
-         never fire.  The run under observation is now the same run.
+         1901-1905 — 17 s, stormed 2 of 2 with the SAME Context count both
+         times.  Wall clock is 1 of 3, quantum 1 and 4 never fire, quantum 16
+         is 3 of 5.  Confirm 64 with six reps on an idle machine before relying
+         on it: DET_SCHED removes the heartbeat but not `Delay`, so load still
+         leaks in, and the quantum-16 rate dropped once the package tier
+         started.
     #24  Fourteen classes fail because the runner must suspend the UI process.
          REPRODUCED on Cog; two earlier explanations refuted and recorded.
          Our PRISTINE headless environment is identical to Cog's, so the

@@ -2070,15 +2070,25 @@ repro.
     (wall)      3     1     18 s   2655137            (4 s when it does not fire)
     1           3     0     45 s   —
     4           2     0     4-6 s  —
-    16          2     2     18 s   2655263 / 2663681  reliable, not identical
-    64          2     2     17 s   2655317 / 2655317  <-- IDENTICAL
+    16          5     3     18 s   2655263 / 2663681  NOT reliable -- see below
+    64          2     2     17 s   2655317 / 2655317  identical, needs more reps
     256         1     1     18 s   2655312
 
-**Use `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=64
-PHARO_MAX_OLD_SPACE_MB=1024` on batch 1901-1905.**  17 seconds, storms every
-time, and reproduces to the same Context count twice running — so the whole
-execution is repeatable, not merely the outcome.  That is what makes lldb, a
-trace, or an ablation usable here: the run under observation is the same run.
+**Caveat added minutes later, and it matters.**  Three further quantum-16 reps,
+run while the x86_64 package tier was using the machine, went storm / clean /
+clean — so quantum 16 is 3 of 5 overall, not 2 of 2, and its apparent
+reliability was luck.  DET_SCHED removes the heartbeat but NOT `Delay`, which is
+still wall-clock, so machine load still leaks in.  The quantum-64 pair was run
+before that contention started and has not been repeated under it.  **Treat
+"64 is deterministic" as promising and unconfirmed until it has six reps on an
+idle machine.**
+
+**Start from `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=64
+PHARO_MAX_OLD_SPACE_MB=1024` on batch 1901-1905.**  17 seconds, stormed both
+times it was run, and landed on the same Context count both times — which would
+make the whole execution repeatable rather than merely the outcome, and that is
+what makes lldb, a trace or an ablation usable.  Confirm the rate on an idle
+machine before relying on it; see the caveat below.
 
 The shape of the table is the finding in itself.  The storm needs a yield
 interval of roughly 16 x 1024 bytecodes or coarser; at 4 x 1024 and finer it
