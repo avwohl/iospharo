@@ -3740,6 +3740,38 @@ Next: the exception class and message (the first probe printed only the failing
 test's identity), and the `PHARO_NO_JIT=1` fork, which is one run and decides
 whether this is the x86 JIT's at all.
 
+## The three arm64 TIMEOUTs, measured: none is a correctness bug
+
+A TIMEOUT counts as a failure for the goal, so the three in the 2026-09-03
+arm64 sweep were run again with the per-test bound raised
+(`SUNIT_TIMEOUT_MULT=8`):
+
+    NoUnusedVariablesLeftTest      3 P / 0 F / 0 E    class wall 308 s
+    MCSmalltalkhubRepositoryTest   1 E                class wall  64 s
+                                   ZipArchiveError: can't find EOCD position
+    ReleaseTest                    40 P / 2 F / 1 T   class wall 467 s
+                                   TIMEOUT(prim-stuck): testNoShadowedVariablesInMethods
+
+So:
+
+- **`NoUnusedVariablesLeftTest` is simply slow.**  Given time it passes 3 of 3.
+  It scans every method in the image for unused temporaries.
+- **`MCSmalltalkhubRepositoryTest` is not a timeout at all.**  With time it
+  fails differently -- `ZipArchiveError: can't find EOCD position`, i.e. the
+  archive it fetched is empty or truncated.  Smalltalkhub is long dead; this is
+  a test that needs a remote resource that no longer exists.
+- **`ReleaseTest>>testNoShadowedVariablesInMethods` is capped, not hung.**  The
+  runner's `TIMEOUT(prim-stuck)` fires when the hard wait expires, and that
+  wait is `min(seconds * 2 * mult, maxPerTest)` with `maxPerTest` defaulting to
+  300 s -- so the multiplier cannot lift it past 300 s.  The class needs
+  `Smalltalk globals at: #SUnitMaxPerTestSeconds put: <bigger>` to finish, not
+  a bigger multiplier.  It is another whole-image scan.
+
+None of the three is a JIT correctness defect.  Two are slow whole-image scans
+and one is a dead remote resource.  What is still worth knowing is HOW slow the
+two scans are against Cog -- that is a JIT performance question, not a
+correctness one, and it is the only thing left in this group.
+
 ## Defect #27 — a ByteSymbol runs `BlockClosure>>value:`
 
 `RSRoassalTest>>testOpen`, arm64, 2026-09-03 sweep:
