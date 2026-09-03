@@ -1,0 +1,56 @@
+# Defect #22 evidence — stock Cog v10.3.9 (x86_64 under Rosetta), 2026-09-02
+# Nothing here ran our VM: these are properties of the image plus a Cog run.
+
+## RSLinesTest on Cog
+RSLinesTest  P:18 F:0 E:0 total:18
+RSAbstractLine >> markersIncludesPoint:
+   methodClass = RSAbstractLine
+   blocks = 1
+     outerCode        = RSTMarkeable>>#markersIncludesPoint:
+     outerCode == m   = false
+RSAbstractLine >> markerShapesInPositionDo:
+   methodClass = RSAbstractLine
+   blocks = 0
+RSTMarkeable >> markersIncludesPoint:
+   methodClass = RSTMarkeable
+   blocks = 1
+     outerCode        = RSTMarkeable>>#markersIncludesPoint:
+     outerCode == m   = true
+RSTMarkeable >> markerShapesInPositionDo:
+   methodClass = RSTMarkeable
+   blocks = 0
+
+## Blast radius across the whole image
+methods with a FOREIGN-outerCode block      : 3278
+of those, the block does a non-local return : 677
+
+  AlignmentMorph class>>findOriginMethodOf:
+  AlignmentMorph class>>findOriginClassOf:
+  AthensCairoCanvas class>>findOriginMethodOf:
+  AthensCairoCanvas class>>findOriginClassOf:
+  AthensCairoMatrix class>>findOriginMethodOf:
+  AthensCairoMatrix class>>findOriginClassOf:
+  AthensCairoPaintMode class>>findOriginMethodOf:
+  AthensCairoPaintMode class>>findOriginClassOf:
+  AthensCairoPath class>>findOriginMethodOf:
+  AthensCairoPath class>>findOriginClassOf:
+  AthensCairoPathBuilder class>>findOriginMethodOf:
+  AthensCairoPathBuilder class>>findOriginClassOf:
+  AthensCairoPatternPaint class>>findOriginMethodOf:
+  AthensCairoPatternPaint class>>findOriginClassOf:
+  AthensCairoSolidPaint class>>findOriginMethodOf:
+  AthensCairoSolidPaint class>>findOriginClassOf:
+  AthensCairoStrokePaint class>>findOriginMethodOf:
+  AthensCairoStrokePaint class>>findOriginClassOf:
+  AthensCairoSurface class>>findOriginMethodOf:
+  AthensCairoSurface class>>findOriginClassOf:
+  AthensCairoText class>>findOriginMethodOf:
+  AthensCairoText class>>findOriginClassOf:
+  AthensCairoTransform class>>findOriginMethodOf:
+  AthensCairoTransform class>>findOriginClassOf:
+  ByteArrayTest class>>findOriginMethodOf:
+  ByteArrayTest class>>findOriginClassOf:
+  CairoFontFace class>>findOriginMethodOf:
+  CairoFontFace class>>findOriginClassOf:
+  CairoFontMetricsProvider class>>findOriginMethodOf:
+  CairoFontMetricsProvider class>>findOriginClassOf:

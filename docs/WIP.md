@@ -142,9 +142,15 @@ which waits on the sweep's pid; the rest are by hand.
  3. **Verify the runner watchdog fix.**  Re-prep an image with the current
     submodule (`7830936`) and run a class with a known timeout
     (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line start.
- 4. **Reproduce `RSLinesTest>>testMarkerOffset`** on its own, and run
-    `scripts/pkg-jit-test/probe_trait_block_home.st` beside it — one eval that
-    answers the question defect #22 turns on.  It was clean in
+ 4. **Defect #22 is root-caused; what is left is the fix.**  Cog runs
+    `RSLinesTest` 18/18, and the image says
+    `RSAbstractLine>>markersIncludesPoint:`'s inner block has
+    `outerCode = RSTMarkeable>>#markersIncludesPoint:` — the trait's method,
+    not the class's copy — so our method-oop home match cannot succeed.  677
+    installed methods carry that shape with a non-local return in the block.
+    Run `PHARO_NO_JIT=1` on the test first: it separates "the dynamic
+    `outerContext` fallback is never reached" from "it is reached with a stale
+    `closure_`".  (Superseded detail below.)  It was clean in
     the 2026-08-22 sweep and dirty in this one, so treat it as timing-sensitive
     and reach for `PHARO_DET_SCHED=1` first (CLAUDE.md).  Both errors are
     `BlockCannotReturn` on a 4-frame non-local return

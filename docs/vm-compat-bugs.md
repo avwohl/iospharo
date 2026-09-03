@@ -1792,7 +1792,47 @@ context rather than returning to a live one.
 residual and in this one.  Reach for `PHARO_DET_SCHED=1` before adding
 instrumentation.
 
-#### Hypothesis, derived from the image without running anything (2026-09-02)
+#### CONFIRMED 2026-09-02 — Cog passes, and the mechanism is measured
+
+Stock Cog v10.3.9 (x86_64 under Rosetta) runs `RSLinesTest` **18 P / 0 F /
+0 E**.  So this is ours.  And the mechanism is no longer a guess — asking the
+image directly:
+
+    RSAbstractLine >> markersIncludesPoint:
+       methodClass       = RSAbstractLine
+       inner blocks      = 1
+       block outerCode   = RSTMarkeable>>#markersIncludesPoint:     <-- the TRAIT
+       outerCode == m    = false
+
+The class's own copy of the trait method carries a `CompiledBlock` whose
+`outerCode` still names the **trait's** method.  Our inline NLR resolves the
+`^ true`'s home by matching that method oop against
+`savedFrames_[si].savedMethod` (`Interpreter.cpp:8470`), and the frame on the
+stack holds `RSAbstractLine`'s copy — so the match cannot succeed, the
+context-chain search finds nothing either, and the VM sends `cannotReturn:` on
+a home that is alive.  Raw in
+`docs/results/sweep-arm-2026-09-02/cog-defect22-evidence.txt`.
+
+**Blast radius, measured over the whole image:**
+
+    23963   methods with inner CompiledBlocks
+     3278   of those, some block's outerCode is a DIFFERENT method (13.7%)
+      677   of those, that block performs a non-local return   <-- can hit this
+
+677 installed methods can take this path, and the list is not exotic: it starts
+with `findOriginMethodOf:` / `findOriginClassOf:` on the metaclass of every
+traited class, i.e. the traits infrastructure itself.  That the suite still
+passes 27461 tests says the defect needs the `^` to actually fire, not merely
+to exist.
+
+The fix belongs in the home resolution.  Spur's model is identity-based — a
+`FullBlockClosure` knows its `outerContext` — and our code has a dynamic
+fallback that uses exactly that, tried only after the static `outerCode`
+method-oop match fails, with a comment warning that `closure_` can be stale on
+JIT-resident block returns.  So `PHARO_NO_JIT=1` separates "the fallback is
+never reached" from "the fallback is reached with a stale closure".
+
+#### The original hypothesis, kept for the record (2026-09-02)
 
 `markersIncludesPoint:` and `markerShapesInPositionDo:` are each defined
 **twice** in this image, and the second owner is a trait:
