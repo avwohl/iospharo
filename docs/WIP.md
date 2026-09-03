@@ -74,23 +74,28 @@ The rule this broke is wider than the one written down: it is not "do not run
 
 ### Queued behind the x86_64 sweep — do these in order when it finishes
 
- 0. **`build-rel` is one commit behind the tree**: `77f12ac6` (the
-    `!inExtension_` guard on low-space delivery) is syntax-checked only.
-    Rebuild arm64 and re-run the C++ tier before trusting any arm64 number.
-    Also re-apply the `sunit-sweep.sh` header note about not starting a VM on
-    the prepped image -- that file was edited while an instance of it was
-    running, which is its own hazard and should not be repeated mid-sweep.
-
 Everything here is blocked for one of two reasons: every SUnit runner
-invocation reads and writes the same fixed `/tmp/sunit_*` paths (a targeted
-run hijacks the sweep's next batch, and `test_load_image ... eval` touches
-`/tmp/sunit_run_completed.txt`, which makes `SUnitRunner>>startUp:` skip a
-batch entirely), or the sweep is running the binary that would be replaced.
+invocation reads and writes the same fixed `/tmp/sunit_*` paths (a targeted run
+hijacks the sweep's next batch; `test_load_image ... eval` touches
+`/tmp/sunit_run_completed.txt`, which makes `SUnitRunner>>startUp:` skip a batch
+entirely; and ANY binary started on the PREPPED image does the same, which is
+how batch 1001-1050 was lost tonight), or the sweep is running the binary that
+would be replaced.
 
- 1. **Rebuild `build-x86`.**  It is mid-sweep on the binary, so this MUST NOT
-    happen before the sweep exits.  It is behind `2c2c4616` (lifter scoping),
-    `34b251b3` and `3c75aca5` (low-space breaker).
- 2. **Name the class that storms.**  Re-run arm batch 1901-1950:
+Steps 0-4 are automated in the session scratchpad's `post-sweep-running.sh`,
+which waits on the sweep's pid; the rest are by hand.
+
+ 0. **Neither build matches the tree.**  Everything from `77f12ac6` on is
+    syntax-checked only — the `!inExtension_` guard, the bounded trace, the
+    headroom cap, the FATAL diagnostic, and the three dead-code removals.
+    Rebuild BOTH arches and re-run the C++ tier before trusting any number
+    from either.  `build-x86` is further behind: it has none of the day's
+    changes, starting at `2c2c4616`.
+    Also add the "no VM binary on the prepped image" note to
+    `scripts/sunit-sweep.sh`'s header — deliberately not done while an
+    instance of that script was running, since editing a running bash script
+    shifts the byte offsets it resumes reading from.
+ 1. **Name the class that storms.**  Re-run arm batch 1901-1950:
     `printf '1901 1950' > /tmp/sunit_batch.txt` and launch the prepped image.
     The x86 sweep will also pass through that range and may name it for free.
     Index 1911 is `TonelWriterV3Test`; 1951 is `UndefinedPackageTest`; the
@@ -107,7 +112,7 @@ batch entirely), or the sweep is running the binary that would be replaced.
     answer `NO-HUSK`; anything else says the trigger fix has regressed and
     explains the trait batch dying.  If it does answer `NO-HUSK`, there is a
     second trigger and the per-class hunt is the way in.
- 3. **Verify the low-space breaker actually fires — NOT with a bare `eval`.**
+ 2. **Verify the low-space breaker actually fires — NOT with a bare `eval`.**
     The "before" evidence is on record (12 GB consumed, zero `[LOW-SPACE]`
     lines).  The obvious "after" test is
     `PHARO_MAX_OLD_SPACE_MB=512 ./build-rel/test_load_image <image> eval
@@ -126,10 +131,12 @@ batch entirely), or the sweep is running the binary that would be replaced.
     appear — plural, because the image re-arms after each one and its action
     (`signalException: OutOfMemory`) is an `Error` the hog's handler can
     swallow.
- 4. **Verify the runner watchdog fix.**  Re-prep an image with the current
+ 3. **Verify the runner watchdog fix.**  Re-prep an image with the current
     submodule (`7830936`) and run a class with a known timeout
     (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line start.
- 5. **Reproduce `RSLinesTest>>testMarkerOffset`** on its own.  It was clean in
+ 4. **Reproduce `RSLinesTest>>testMarkerOffset`** on its own, and run
+    `scripts/pkg-jit-test/probe_trait_block_home.st` beside it — one eval that
+    answers the question defect #22 turns on.  It was clean in
     the 2026-08-22 sweep and dirty in this one, so treat it as timing-sensitive
     and reach for `PHARO_DET_SCHED=1` first (CLAUDE.md).  Both errors are
     `BlockCannotReturn` on a 4-frame non-local return
@@ -142,7 +149,7 @@ batch entirely), or the sweep is running the binary that would be replaced.
     `outerCode`.  Bisect `PHARO_NO_JIT=1` first: passing there implicates the
     stale `closure_` on JIT-resident block returns that `Interpreter.cpp:8432`
     already warns about.
- 6. **Re-run `test_relaunch` on `base.image`.**  It failed 2 of 3 cycles
+ 5. **Re-run `test_relaunch` on `base.image`.**  It failed 2 of 3 cycles
     tonight (`[VM-STOP-TIMEOUT] interpret() has not returned 2s after stop()`,
     the worker still executing -- `[JIT] Stats:` sends kept climbing, so not a
     wedge) and that was **my doing, not a regression**: I pointed it at the
@@ -150,13 +157,16 @@ batch entirely), or the sweep is running the binary that would be replaced.
     P80 processes hold the worker well past a 2 s deadline.  The 3/3 run
     earlier the same day used `base.image`.  Re-run there for the record; the
     C++ tier is not being claimed green for `test_relaunch` until it is.
- 7. x86_64 sweep write-up plus the arm-vs-x86 residual diff.
- 8. Package tier on both arches.
+ 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.  A ready
+    comparison script is in the session scratchpad (`compare-sweeps.sh`);
+    the arm side is staged at `sweep-arm/all_results.txt`.
+ 7. Package tier on both arches.
 
 ## Where the three tiers stand
 
     tier       arm64                            x86_64
-    VM C++     4/4 green (2026-09-02)           4/4 green (2026-09-02)
+    VM C++     4/4 as of 10f5f330; the day's    4/4 as of 10f5f330; same
+               later commits are unbuilt        caveat, and further behind
     packages   9382 P / 16 F / 18 E             9382 P / 16 F / 18 E   (2026-08-23, identical)
     SUnit      27461 P / 21 F / 21 E / 7 T      in flight (2026-09-02)
                (2026-09-02 full sweep, 2007
