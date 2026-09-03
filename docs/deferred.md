@@ -67,6 +67,21 @@ The history lives in `docs/history/`; nothing was deleted.
   load; in THAT case the process turned out to be asleep in
   `primitiveRelinquishProcessor` waiting on `http_stream_read`, i.e. network
   I/O and not this, so the cost remains unquantified.
+- **Eden is never scavenged while an FFI callback is running.**  Same loop,
+  second cost, found 2026-09-02 while auditing what the nested loop omits.
+  `needsScavenge_` is set by `allocateRawYoung` when eden fills
+  (`ObjectMemory.hpp:856`) and is consumed at exactly one place — the
+  `interpret()` checkpoint (`Interpreter.cpp:3877`) — which does not run while
+  `enterInterpreterFromCallback` hosts execution.  `step()` does handle
+  `needsCompactGC()`, so the heap does not grow without bound; what happens
+  instead is that once eden fills, every allocation for the rest of the
+  callback falls back to old space (`allocateRawYoung` returns nullptr and the
+  caller tenures on the spot) and is reclaimed only by a full compacting GC.
+  So a long callback runs the expensive collector in place of the cheap one and
+  tenures everything it touches.  Not a leak and not a correctness bug;
+  unquantified, like the `step()` cost above.  The low-space breaker's latch
+  IS delivered from this loop as of `3c75aca5`, which matters more here than
+  on the main path precisely because everything allocated here is tenured.
 
 ## Platform validation status
 
