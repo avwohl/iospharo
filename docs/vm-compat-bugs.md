@@ -1924,11 +1924,18 @@ default-on with opt-out knobs only (`:1803`, `:1895`, `:558`).  See
 `docs/history/arm-context-storm-2026-07.md`, which identifies the storm's
 trigger as exactly a trait-class rebuild with live instances.
 
-**Where to start: `TraitChangesTest`.**  There are 41 `*Test`/`*TestCase`
-classes between `TonelWriterV3Test` and `UndefinedPackageTest`, and exactly 39
-never ran — the two the runner drops as abstract are `TraitAbstractTest` and
-`TraitTestCase`, so the first index the storm could have reached, 1912, is the
-first concrete one after them in the runner's sort.
+**Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
+is generated from the image and archived at
+`docs/results/sweep-arm-2026-09-02/class-index-map.txt`.  It reproduces
+`TOTAL=2047` exactly, and
+
+    1911  TonelWriterV3Test      <- last class the dead batch reported
+    1912  TraitChangesTest       <- the storm starts here or after
+    1951  UndefinedPackageTest   <- first class of the next batch
+
+The two `*Test` classes in that range the runner drops as abstract are
+`TraitAbstractTest` and `TraitTestCase`, which is why 41 candidates leave 39
+missing.
 
 The rest of that range on Cog is also on record (same file): `TrueTest`,
 `Tutorial*`, `UDPSocket*`, `UUID*`, `Undeclared*` and `Undefined*` are all
