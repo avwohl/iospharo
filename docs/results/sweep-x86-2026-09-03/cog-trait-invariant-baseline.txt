@@ -1,0 +1,28 @@
+# Trait invariant across the whole trait block — stock Cog baseline, 2026-09-03
+#
+# scripts/pkg-jit-test/probe_trait_users_sanity.st re-checks
+#   every class is listed by the traits it uses, and
+#   every trait's users still use it
+# after EVERY one of the 27 Trait*Test classes.
+#
+# Cog: 0 violations at all 28 checkpoints, both directions.  So any non-zero
+# count on our VM names the exact class that broke it.
+
+--- before running anything
+    class->trait violations : 0
+    trait->user  violations : 0
+running 27 Trait*Test classes
+    TraitChangesTest  P:3 F:0 E:0
+--- after TraitChangesTest
+    class->trait violations : 0
+    trait->user  violations : 0
+    TraitCommonClassDefinitionPrinterTest  P:0 F:0 E:0
+--- after TraitCommonClassDefinitionPrinterTest
+    class->trait violations : 0
+    trait->user  violations : 0
+...
+    trait->user  violations : 0
+    TraitWithSlotsTest  P:9 F:0 E:0
+--- after TraitWithSlotsTest
+    class->trait violations : 0
+    trait->user  violations : 0
