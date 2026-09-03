@@ -15,7 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 09:40)
+## Right now (2026-09-03, 13:15)
+
+**x86_64 sweep on the fake-GUI image is running locally** (Rosetta,
+`build-x86/test_load_image` in place so it keeps its ~200 staged dylibs).  That
+is the both-arches comparison on the same footing as the arm64 fake-GUI run.
+
+**The AWS x86 run is blocked, and not by spot.**  A spot box did launch
+(m5.4xlarge, after m6i and m6a had no capacity in any AZ) and was terminated 18
+minutes in with `StateTransitionReason: User initiated` -- the `aws_watch`
+reaper, not a reclaim, because `provision.sh` could not register the keep-alive
+lease: awohl.com's `authorized_keys` has lost its `aws-lease` entry.  An
+unregistered box is reaped whatever its lifecycle, so no multi-hour run can
+survive until that key is back.  Details and the spot-capacity findings are in
+`scripts/aws/config.env`.
+
+Built for that run and worth keeping regardless: `START_AT` resume in
+`sunit-sweep.sh`, and `scripts/aws/x86-gui-sweep.sh` (batched, per-batch S3
+checkpointing, resumes on the same RUN_ID) -- so when the lease is fixed, a
+reclaim costs one batch.
+
 
 **Best sweep to date, and the residual is now mostly not ours.**
 
