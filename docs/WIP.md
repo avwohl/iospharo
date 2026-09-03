@@ -52,10 +52,16 @@ pass-rate numbers:
     verified by a run, because a targeted run would collide with the x86_64
     sweep's `/tmp` state.
   * **Batch 1901-1950 died of a Context storm** (`rc=134`, 33M Contexts / 6.6M
-    Errors / 12.3 GB) and took 39 classes with it, `TraitTest` among them.
-    Same signature as the 2026-08-22 batch 601-650 crash and the open
-    "Monticello runaway".  First time it is bracketed to one class: whatever
-    the runner sorts immediately after `TonelWriterV3Test` (index 1912).
+    Errors / 12.3 GB) and took 39 classes with it.  Same signature as the
+    2026-08-22 batch 601-650 crash and the open "Monticello runaway", but this
+    time the missing range is identified without re-running anything: it is
+    the **trait tests**.  The batch died at index 1912, batch 1951 starts at
+    `UndefinedPackageTest`, and the classes between those two names in this
+    image are 27 `Trait*Test` plus `TrueTest`, `Tutorial*`, `UDPSocket*`,
+    `UUID*` and `Undefined*` — 41 candidates against the 39-40 that never ran.
+    `TraitTest` ("Cog 54 P / 0 E, ours errors, not yet drilled", carried since
+    2026-06-01) is one of them, and today's `OCClassBuilderTest` newcomer also
+    fails on a trait composition.
 
 The **x86_64 sweep is in flight** with the same settings, output under the
 session scratchpad `sweep-x86/`.
@@ -74,7 +80,9 @@ batch entirely), or the sweep is running the binary that would be replaced.
  2. **Name the class that storms.**  Re-run arm batch 1901-1950:
     `printf '1901 1950' > /tmp/sunit_batch.txt` and launch the prepped image.
     The x86 sweep will also pass through that range and may name it for free.
-    Index 1911 is `TonelWriterV3Test`; 1951 is `UndefinedPackageTest`.
+    Index 1911 is `TonelWriterV3Test`; 1951 is `UndefinedPackageTest`; the
+    classes in between are the trait tests (see the sweep report).  Start with
+    the `Trait*` block, not with a blind batch re-run.
  3. **Verify the low-space breaker actually fires.**  The "before" evidence is
     already on record (12 GB consumed, zero `[LOW-SPACE]` lines).  For "after":
     `PHARO_MAX_OLD_SPACE_MB=512 ./build-rel/test_load_image <image> eval
