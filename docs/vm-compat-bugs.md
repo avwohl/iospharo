@@ -2235,6 +2235,17 @@ passed, whether or not the callback unwound.  Stranding a C frame matters while
 the VM keeps running; it does not matter when the process is exiting anyway,
 and Cog simply exits.  Unbuilt as of this writing.
 
+**What to watch for when verifying.**  Clearing `running_` makes the nested
+loop exit and `enterInterpreterFromCallback` RETURN to the callback trampoline
+— which is the same path any other `stopVM()` already takes out of that loop,
+but the C caller of an ABANDONED callback may no longer be there to return to.
+So the batch may end rc=0 (clean) or it may end rc=139.  Either beats rc=124
+after 1800 s, and the difference tells us whether the abandoned invocation
+still has live C frames: if it crashes, the next step is to decrement
+`callbackDepth_` on abandonment (the nested loop's own abandonment path
+already hands C a zeroed result) rather than to unwind through frames that are
+gone.
+
 The mechanism is already described in our own source.  `Interpreter.cpp`'s
 `enterInterpreterFromCallback` comment says an *"abandoned same-thread
 invocation (TFCallbacksTest's old-session test, by design) parks everything
