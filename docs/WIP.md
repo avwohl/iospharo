@@ -293,7 +293,8 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     (`signalException: OutOfMemory`) is an `Error` the hog's handler can
     swallow.
  3. **Verify the runner watchdog fix.**  Re-prep an image with the current submodule
-    (`ad78260`) — both changes compile (filed into a pristine image under stock
+    (`49e35b8`, which also carries SUNIT_TIMEOUT_MULT, the shutdown landmarks and
+    the nil-suspend cleanup) — both changes compile (filed into a pristine image under stock
     Cog) but neither has been run.
 
       a. The watchdog splice: run a class with a known timeout
