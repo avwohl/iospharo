@@ -1099,6 +1099,19 @@ network tests belongs to this defect:
 The first two are named in the list above; `testNoNullCharacter` is a new
 member of the family (a whole-image source scan, same shape).
 
+**Now with the other half of the ratio (2026-09-02).**  The same classes on
+stock Cog v10.3.9, same image, headless:
+
+    NoUnusedVariablesLeftTest     3 tests   Cog  12.0 s   ours killed at 80 s
+    ReleaseTest (whole class)    43 tests   Cog  24.5 s   ours 2 killed at 80 s
+    MCSmalltalkhubRepositoryTest  1 test    Cog   1.6 s   ours killed at 80 s
+
+So the wall is at least 6.7x on the cheapest of them and at least 50x on
+`MCSmalltalkhubRepositoryTest`, and those are lower bounds twice over: the 80 s
+is a kill, not a completion, and this Cog is x86_64 under Rosetta against a
+native arm64 build of ours.  Raw in
+`docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
+
 ### 7. `rko281-restoreforpharo` ~50x slower than Cog on live SQLite — MEDIUM
 
     cog   2354 tests  145 s
@@ -1913,6 +1926,43 @@ trigger as exactly a trait-class rebuild with live instances.
 
 Next: run the block one class at a time (chunks of five is enough to bracket
 it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.
+
+### 24. Sixteen GUI-adapter classes fail for us and pass on headless Cog — NEW 2026-09-02, MEDIUM
+
+Carried through several sweeps as "the missing display" and therefore as a
+residual that could not be helped.  The 2026-09-02 Δcog says otherwise: stock
+Cog v10.3.9, **headless**, on the same pristine Pharo 13.1 image, with no
+fake-GUI prelude, scores 0 F / 0 E on every one of them.
+
+    class                                    Cog        ours (arm64 sweep)
+    SpAthensAdapterTest                      18P/0F/0E   8P/0F/1E
+    SpComponentListAdapterTest               16P/0/0     7P/0/1
+    SpListCommonPropertiestTest              46P/0/0    18P/0/5
+    SpTableCommonPropertiestTest             34P/0/0    14P/0/3
+    SpTreeAdapterMultipleSelectionTest       40P/0/0    18P/0/2
+    SpTreeTableAdapterMultiColumnMultiSel..  40P/0/0    18P/1/1
+    SpTreeTableAdapterMultiColumnTest        40P/0/0    18P/1/1
+    SpTreeTableAdapterSingleColumnMultiSel.. 40P/0/0    18P/1/1
+    SpTreeTableAdapterSingleColumnTest       40P/0/0    17P/1/1
+    FTTableMorphTest                          1P/0/0     0P/0/1
+    StDebuggerActionModelTest                54P/0/0    53P/1/0
+    StSpotterModelTest                        2P/0/0     0P/2/0
+    StTranscriptPresenterTest                 5P/0/0     2P/3/0
+
+(Counts are not comparable — `suite run` expands parameterised cases the
+runner's selector list does not — but 0 F / 0 E against our F and E is.)
+
+The dominant error on our side is `SubscriptOutOfBounds: 1 in #()` reaching for
+an adapter's widget list, plus `MessageNotUnderstood: receiver of "x" is nil`.
+The cause is NOT established: CLAUDE.md records that `Display` is non-nil under
+`test_load_image` (unlike in the app), so "we have no Display and Cog does" is
+a guess, not a finding.  What IS established is that the bucket label was
+wrong and these are not unhelpable.
+
+`scripts/pharo-headless-test/setup_fake_gui.st` clears the whole bucket for us
+(2026-08-22: 167 tests, 0 F / 0 E with the prelude filed in), which makes it a
+workaround for something stock Pharo does natively — so the prelude is also the
+best lead: whatever it installs that we lack is the answer.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
