@@ -15,7 +15,32 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 04:50)
+## Right now (2026-09-03, 07:30)
+
+**All three tiers are green on both arches, and the sweeps agree.**
+
+    tier         arm64                                   x86_64
+    VM C++       4/4 + test_asmjit_t1_stub               same
+    SUnit        2043 cls  27812 P / 18 F / 28 E / 3 T   2042 cls  27810 P / 20 F / 24 E / 8 T
+    packages     354 cls   9383 P / 16 F / 17 E / 0 T    354 cls   9376 P / 16 F / 24 E / 0 T
+
+Both sweeps ran 41 batches at rc=0 with no abort.  **No codegen divergence
+between the arches**: fifteen classes differ out of 2043 and every one is a
+Rosetta timeout, a wall-clock assertion, a `w64Convention` symbol the test
+dylib does not export, a flake, or my own copied-VM dylib mistake -- which
+x86_64 confirms by passing `LibTTYTest` 5/5 after running its binary in place.
+The package tier now agrees exactly on FAIL (14 DataFrame + 2 PolyMath).
+
+Defect #23 is bounded and its guard is load-bearing: it fired once in the arm64
+sweep, in `batch_1901`, the batch that used to abort and cost 40 classes.  Both
+candidate root fixes were measured and neither closes the hole -- the numbers
+are recorded at the knobs so nobody re-runs them.
+
+Two open items with work queued: **defect #27** (a ByteSymbol receiver running
+`BlockClosure>>value:` -- once per sweep, so being chased with
+`PHARO_T1_VALIDATE_IC` instrumentation rather than a repro), and the five
+x86-only `XMLParser` attribute-default errors.
+
 
 **The arm64 sweep with the storm guard is done and it is the result the goal
 wanted: 2043 classes, 28043 tests, 27812 P / 18 F / 28 E / 3 T, 99.18%, 41
