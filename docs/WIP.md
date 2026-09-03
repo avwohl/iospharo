@@ -17,6 +17,15 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 
 ## Right now (2026-09-03, 13:15)
 
+**The shutdown wedge is an x86 phenomenon, and the early kill is earning its
+keep.**  In the running x86 sweep, 4 of the first 13 batches wrote their
+completion marker and then sat wedged with the VM refusing to exit; `run_batch`
+killed each after the 30 s grace instead of burning the 1800 s timeout, saving
+roughly 1700 s apiece.  The arm64 fake-GUI sweep had ZERO such batches in 41.
+That asymmetry matches defect #26's own numbers -- the deferred-quit trace
+appeared 61 times on x86 against 5 on arm64 -- so the guard fixed the unbounded
+case and this is the bounded remainder.
+
 **x86_64 sweep on the fake-GUI image is running locally** (Rosetta,
 `build-x86/test_load_image` in place so it keeps its ~200 staged dylibs).  That
 is the both-arches comparison on the same footing as the arm64 fake-GUI run.
