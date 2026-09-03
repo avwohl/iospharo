@@ -326,21 +326,31 @@ Fix upstream is to make the collection removable before removing from it:
 and drop the dead line above it. **Not patched here** — it affects one reflection
 method and its test, not runtime behaviour.
 
-## `DefaultExecutionEnvironment` does not implement `#watchDogProcess` (2026-08-23)
+## ~~`DefaultExecutionEnvironment` does not implement `#watchDogProcess`~~ — WITHDRAWN 2026-09-02
 
-`ReleaseTest>>testUnknownProcesses` fails with
+Filed 2026-08-23 because `ReleaseTest>>testUnknownProcesses` failed with
 
     MessageNotUnderstood: DefaultExecutionEnvironment >> #watchDogProcess
 
-on both architectures. The test asks the current execution environment for its
-watchdog process; `DefaultExecutionEnvironment` in this Pharo 13 image has no
-such method. Nothing to do with the VM, and — despite the name — nothing to do
-with the test runner's own processes either, which is how it was previously
-lumped in with the harness self-pollution failures.
+on both architectures.  **It is not an image bug; it is how the test was
+being run.**  `#watchDogProcess` is defined on `TestExecutionEnvironment` and
+nowhere else in this image (checked against the `.sources` of Pharo 13.1 build
+745), and SUnit installs a `TestExecutionEnvironment` for the duration of a
+test run.  So the send only reaches `DefaultExecutionEnvironment` when the
+test is driven outside that installation — which is exactly what the
+2026-08-23 investigation did, running the four `ReleaseTest` failures
+individually with a 1200 s limit.
 
-Upstream wishlist: either implement `#watchDogProcess` on
-`DefaultExecutionEnvironment` or have the test tolerate an environment that
-does not provide one.
+Under the sweep runner the test gets past that line: in the 2026-09-02 arm64
+sweep it fails later and for a different reason, on a leftover
+`'CommandLine handler process'` parked in `SessionManager>>snapshot:andQuit:`
+— the prep step (`12ad7265`) showing up in the image it saved.  That one is
+ours, and it is a harness artifact rather than a VM defect.  See
+`docs/results/sweep-arm-2026-09-02.md`.
+
+Kept rather than deleted because the wrong verdict is the lesson: a harness
+artifact was filed as an upstream image bug, one level up from the usual
+direction.
 
 ## XMLParser calls `whichCategoryIncludesSelector:`, removed in Pharo 13 (2026-08-23)
 
