@@ -2006,8 +2006,34 @@ block:
     1905 TonelReaderTraitCompositionTest
     1906 TonelRepositoryTest  1909 TonelWriterV1Test
 
-which also explains why the trait block alone never storms.  Bisect from 1901
-forward with `PHARO_MAX_OLD_SPACE_MB=1024` — each run is 18 s.
+which also explains why the trait block alone never storms.
+
+#### And the bisect says it is NON-DETERMINISTIC
+
+Seven runs at `PHARO_MAX_OLD_SPACE_MB=1024`, each a couple of seconds unless it
+storms:
+
+    1901-1902  Timespan only          rc=0     3s   clean
+    1903-1909  Tonel only             rc=0     4s   clean
+    1901-1905  prefix to 1905         rc=134  18s   2655142 Contexts  <-- STORM
+    1901-1907  prefix to 1907         rc=0     5s   clean
+    1901-1909  prefix to 1909         rc=0     4s   clean
+    1905-1905  TonelReaderTraitComp   rc=0     2s   clean
+    1909-1909  TonelWriterV1 alone    rc=0     2s   clean
+
+`1901-1905` storms while both of its supersets, `1901-1907` and `1901-1909`,
+run clean — so this is not a function of the class set.  It is timing, and it
+matches the Heisenbug character the 2026-07 dossier records ("2/10 real-catalog
+runs").  The storming run reported 3 classes before dying, i.e. it went down
+during index 1904 `TonelReaderTest`, and its census is the same 2.65M Contexts.
+
+**So the next instrument is `PHARO_DET_SCHED=1`**, which CLAUDE.md prescribes
+for exactly this shape: it drives the force-yield from the bytecode checkpoint
+instead of the wall clock, so the interleaving is identical every run and the
+bug stops vanishing when observed.  With an 18-second repro and deterministic
+scheduling this should become tractable; without DET_SCHED, a bisect over
+run-to-run noise will keep contradicting itself the way this one does.  Raw in
+`docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
 
 #### The FATAL now says why the breaker did not fire, and it is not sampling
 
