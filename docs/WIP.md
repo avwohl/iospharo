@@ -360,10 +360,11 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     quickly anyway — while a wrong GC call corrupts the heap in every later
     run, and tonight there is no way to verify it properly.  Do it when a GC
     A/B can be run.
- 7. ~~Package tier on both arches.~~  arm64 DONE 2026-09-03: 9326 P / 16 F /
-    16 E / 1 T, three fewer errors than 2026-08-22 and loads 1.5-3.5x faster;
-    the 55-pass gap was my `PER_CLASS_TIMEOUT` (now raised to 200 s), not a
-    regression.  x86_64 is chained as `pkg-x86-running.sh` with
+ 7. ~~Package tier on both arches.~~  arm64 DONE 2026-09-03: **9384 P / 16 F /
+    16 E / 0 T** at the baseline's 180 s bound — +3 passes and 3 fewer errors
+    than 2026-08-22, with loads 1.5-3.5x faster.  (The first pass scored 55
+    lower because it used the script's old 120 s `PER_CLASS_TIMEOUT`, now
+    raised to 200 s.)  x86_64 is chained as `pkg-x86-running.sh` with
     `REUSE_FROM` the arm64 loads and `PER_CLASS_TIMEOUT=400`, since the loads
     cannot run under Rosetta and the bound has to be ~2x arm's.
  7b. **Chase defect #25's DNUs** — the highest-value single item to come out of
@@ -417,13 +418,10 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     VM C++     test_relaunch 3/3 on base.image;  4/4 as of 10f5f330;
                rest as of 10f5f330, the day's    the day's commits unbuilt
                later commits unbuilt
-    packages   9326 P / 16 F / 16 E / 1 T      9382 P / 16 F / 18 E   (2026-08-23)
-               (2026-09-03; 3 fewer errors than
-                08-22, loads 1.5-3.5x faster.
-                The 55-pass gap is PER_CLASS_TIMEOUT:
-                I used the 120 s default, the
-                baseline used 180 s, and the class
-                takes 158 s -- not a regression)
+    packages   9384 P / 16 F / 16 E / 0 T      9382 P / 16 F / 18 E   (2026-08-23)
+               (2026-09-03, at the baseline's
+                180 s bound: +3 pass, -3 err,
+                loads 1.5-3.5x faster)
     SUnit      27453 P / 21 F / 21 E / 5 T      27833 P / 22 F / 26 E / 10 T
                2005 classes, 99.17%             2046 classes, 99.15%
                (39 classes lost to the storm)   (ran the block arm lost)

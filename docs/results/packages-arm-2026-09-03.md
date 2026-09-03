@@ -6,21 +6,29 @@ Raw: `packages-arm-2026-09-03.txt`.
 
 ## Against the 2026-08-22 baseline
 
+PolyMath is shown at the bound the baseline used (180 s); the first run of the
+night used the script's old 120 s default and lost a class to it, which is
+explained below.
+
     package     classes   pass          fail      err        note
     NeoJSON          11    116 =  116    0 = 0     0 = 0
     Mustache          1     47 =   47    0 = 0     0 = 0
     XMLParser       159   6359 v 6358    0 = 0     0 v 1     one error gone
     Grease           37    554 =  554    0 = 0     0 = 0
-    PolyMath        117   1392 v 1448    2 = 2    16 v 18    one class timed out
+    PolyMath        117   1450 v 1448    2 = 2    16 v 18    +2 pass, -2 err
     DataFrame        27    839 =  839   14 = 14    0 = 0
     Fuel              2     19 =   19    0 = 0     0 = 0
                     ---   ----          ---       ---
-                    354   9326 v 9381   16 = 16   16 v 19
+                    354   9384 v 9381   16 = 16   16 v 19
 
-**Three fewer errors, identical failures, and no new failing class.**  The
-55-pass gap is one class and one knob, not a regression — measured rather than
-assumed, because the low-space latch added tonight touches every old-space
-allocation and this class is allocation-heavy:
+**+3 passes, three fewer errors, identical failures, no timeouts.**
+
+### The 120 s run, and why it was not a regression
+
+The night's first pass used the script's old 120 s `PER_CLASS_TIMEOUT` and
+scored 9326 P / 16 F / 16 E / 1 T — 55 passes short.  That was one class and
+one knob, measured rather than assumed, because the low-space latch added
+tonight touches every old-space allocation and this class is allocation-heavy:
 
     PMArbitraryPrecisionFloatTest alone, arm64, run 1   158 s  58 ran / 57 P / 1 err
                                               run 2   139 s  58 ran / 58 P / 0 err
