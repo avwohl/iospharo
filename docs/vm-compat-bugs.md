@@ -3702,7 +3702,32 @@ on their own CI (pharo#2471), the evidence does not support calling this a VM
 defect, and it should not be counted against the VM without a stock-Cog
 comparison this host cannot run.
 
-## Defect #28 — four XMLParser attribute-default tests fail on x86_64 only
+## NOT A DEFECT (#28 withdrawn) — the four XMLParser failures are SUnit's own time limit
+
+`TestCase>>debug`, which does not trap, finally names the exception:
+
+    DBG testAttributeDefaultValueEntity     TestTookTooMuchTime:
+    DBG testAttributeDefaultValueIDRef      TestTookTooMuchTime:
+    DBG testAttributeDefaultValueEntities   TestTookTooMuchTime:
+    DBG testAttributeDefaultValueIDRefs     TestTookTooMuchTime:
+    DBG testAttributeDefaultValueNmtokens   OK
+
+`TestTookTooMuchTime` is SUnit's per-test `timeLimit`, and a TestResult records
+it as an ERROR.  So these are not functional failures: they are the same
+Rosetta-slowness story as the sweep's TIMEOUTs, arriving through SUnit's clock
+instead of the harness's.  The stack is string-heavy DTD work --
+`XMLAttributeValidator>>furtherNormalizeAttributeValue:`, `String>>format:`,
+`WideString>>copyFrom:to:` -- which is exactly where a 2x-slower machine shows
+up first.
+
+That also resolves the earlier puzzle cleanly: `runCase` passes because it does
+not apply the time limit; `run` and `debug` do.  And it means the package
+tier's x86-vs-arm ERROR gap (24 against 17) is mostly this, not codegen.
+
+**Withdrawn as a defect.**  What is left is a performance question shared with
+the two whole-image scans below, and it belongs with them.
+
+## (former) Defect #28 — four XMLParser attribute-default tests fail on x86_64 only
 
 `XMLParserTest>>testAttributeDefaultValue{Entity,IDRef,Entities,IDRefs}` error
 on x86_64 and pass on arm64.  Reproduced in isolation 2026-09-03, same image,
