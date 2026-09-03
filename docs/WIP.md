@@ -51,8 +51,11 @@ the running sweep:
     method carries a block whose `outerCode` is still
     `RSTMarkeable>>#markersIncludesPoint:`.  677 installed methods carry that
     shape with a non-local return in the block.
-  * **Nine "no display" classes are root-caused, and the defect is the render
-    loop** (#24).  On stock Cog, installing `MorphicUIManager` and suspending
+  * **Fourteen of the sixteen "no display" classes are root-caused, and the
+    defect is the render loop** (#24, root #25).  That is 9 of the sweep's 21
+    FAILs and 17 of its 21 ERRORs; three more FAILs are parity with Cog, and
+    only three are genuinely ours
+    (`StDebuggerActionModelTest>>testEventAfterProceed`, `StSpotterModelTest`).  On stock Cog, installing `MorphicUIManager` and suspending
     its UI process reproduces our result for `SpListCommonPropertiestTest`
     exactly — 18 P / 5 E, same five selectors, same messages; leave the process
     running and Cog is 23 / 23.  Our runner suspends it as its first startup
