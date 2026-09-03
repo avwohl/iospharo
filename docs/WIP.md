@@ -31,13 +31,31 @@ times in a 20-second run.  A candidate fix is written and inert
 callee whose body contains `PushFullBlock`/`PushClosure`, which is what the BV
 inline prep already does one layer down.  Its validation is queued.
 
+**The duplicate activation has a mechanism.**  The detector fired on its first
+sweep -- 27 hits, every one a J2J save for `#methodNode` landing on a frame
+pointer another frame already holds -- and the code says why: the `ExitJ2JCall`
+handler materializes the whole pending slice, syncs the interpreter, and
+`continue`s back into the chain loop **without clearing `state.j2jDepth` or
+re-basing the save cursor**.  The `materializeJ2J` lambda does both, and its
+comment names leaving the marker set as the cause of the 2026-06-09
+xmethod-at-scale corruption.  That site never got the same treatment, so the
+next materialize walks the same saves again.
+
+Second candidate fix, also inert: `PHARO_J2J_SITE5_CLEAR_DEPTH`.  Off by
+default because the depth is read in two senses in that loop -- "how many live
+saves" and "were we in a J2J chain" -- and another site uses the second sense
+AFTER materializing.
+
 Queued, in order, running unattended:
 
 1. full arm64 sweep, fix 2 + guard (started 03:21)
-2. gate ON: batch 1-100 smoke, then a storm A/B whose tell is the GUARD --
-   without the gate it fires in 7 of 10 runs, so if the gate closes the hole it
-   should stop firing, not merely stop aborting
-3. full x86_64 sweep, gate OFF (the shipping default)
+2. one binary, four configurations -- defaults, block-create gate, site5
+   depth-clear, both -- each judged on batch 1-100 (must stay at 0 non-clean,
+   which is exactly where fix 1 died) AND on the storm batch, where the tell is
+   **the guard firing**, not the abort: aborts are already 0, and the guard
+   fires in 7 of 10 runs, so a candidate that closes the hole should stop it
+   firing.  DUP-FRAME hits are counted per configuration too.
+3. full x86_64 sweep, shipping defaults
 
 **Standing rule from tonight:** run `scripts/sunit-sweep.sh` on batch `1 100`
 before believing any VM change -- about four minutes, and the unfixed binary
