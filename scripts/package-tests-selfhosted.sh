@@ -50,7 +50,16 @@ TEST_TIMEOUT=${TEST_TIMEOUT:-900}
 # 57 passes, which is 57 of the 59-test gap between the two architectures'
 # PolyMath scores.  Re-run alone with a 900 s bound it answers exactly what
 # arm64 answers: 58 ran, 57 passed, 1 error.  Use 360+ for x86_64.
-PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
+# 200, not 120 (2026-09-03).  The old default was described as "sized for
+# arm64" and is not: PMArbitraryPrecisionFloatTest, timed alone on arm64 twice,
+# takes 139 s and 158 s -- 16% to 32% OVER the old bound -- and returns
+# 58 ran / 58 passed once and 58 ran / 57 passed / 1 err the other time, so the
+# lone error is flaky too.  At 120 s it TIMED OUT and cost 57 passes, which is
+# indistinguishable in the summary from the tests failing and is exactly the
+# trap the x86_64 note below describes.  The 2026-08-22 runs this repo compares
+# against used 180.  200 covers the measured cost with margin and still bounds
+# the damage from a genuinely hung class.
+PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-200}   # seconds, per TestCase subclass
 # Seconds for SUnit's OWN per-test limit (TestCase class>>defaultTimeLimit,
 # enforced by runCaseManaged).  0 = leave the image default alone, which is
 # 10 s.  This is NOT the same bound as PER_CLASS_TIMEOUT above: that one is
