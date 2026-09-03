@@ -249,7 +249,13 @@ which waits on the sweep's pid; the rest are by hand.
     P80 processes hold the worker well past a 2 s deadline.  The 3/3 run
     earlier the same day used `base.image`.  Re-run there for the record; the
     C++ tier is not being claimed green for `test_relaunch` until it is.
- 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.  A ready
+ 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.  **Recover its
+    damaged batches first**: 1001-1050 (my own interference; automated in the
+    post-sweep script) and, if it storms there too, 1901-1950.  The recovery
+    pass added to `sunit-sweep.sh` will NOT have run for this sweep — the
+    script was edited while that instance of it was executing, so bash may
+    resume after the batch loop at a stale byte offset.  Re-run those ranges
+    by hand, in chunks of 5, the way the post-sweep script does for arm.  A ready
     comparison script is in the session scratchpad (`compare-sweeps.sh`);
     the arm side is staged at `sweep-arm/all_results.txt`.
  7. Package tier on both arches.
