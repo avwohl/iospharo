@@ -57,8 +57,12 @@ the running sweep:
     leaves three genuinely ours, and the x86 sweep narrows even those:
     `StDebuggerActionModelTest` is the ONLY class in 1800 covered classes that
     is non-clean on arm and clean on x86, so its one failure is timing —
-    leaving `StSpotterModelTest`'s two as the entire consistent, unexplained
-    GUI residual.  On stock Cog, installing `MorphicUIManager` and suspending
+    leaving `StSpotterModelTest`'s two — and reading those closes them out too:
+    one carries `skipOnPharoCITestingEnvironment` (Pharo's CI does not run it,
+    ours does), and the other asserts a forked search has not started for
+    5 x 50 ms and has started 300 ms later, i.e. a 250-550 ms scheduling
+    window.  **Every non-pass in the arm64 residual is now attributed, and none
+    of the GUI ones is a VM computation error.**  On stock Cog, installing `MorphicUIManager` and suspending
     its UI process reproduces our result for `SpListCommonPropertiestTest`
     exactly — 18 P / 5 E, same five selectors, same messages; leave the process
     running and Cog is 23 / 23.  Our runner suspends it as its first startup

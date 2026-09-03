@@ -2082,8 +2082,19 @@ Of those last two, the x86_64 sweep narrows it further:
 `StDebuggerActionModelTest` is **clean on x86_64** — the only class in 1800
 covered classes that is non-clean on arm and clean on x86 — so its single
 `testEventAfterProceed [Denial failed]` is timing, not logic.
-`StSpotterModelTest` fails on both arches and passes on Cog suspended or not,
-which makes its two failures the entire consistent, unexplained GUI residual.
+`StSpotterModelTest` fails on both arches and passes on Cog suspended or not —
+but reading its two tests closes it out rather than leaving it open:
+
+  * `testAnnounceQueryEndedIsSentOnce` opens with
+    `self skipOnPharoCITestingEnvironment`, so Pharo's own CI does not run it;
+    our sweeps do, because they do not set `PHARO_CI_TESTING_ENVIRONMENT`.
+  * `testSpotterModelShouldWaitToPerformActualSearch` forks the search and then
+    asserts it has NOT started for 5 x 50 ms and HAS started 300 ms later — a
+    250-to-550 ms scheduling window and nothing else.
+
+So both are wall-clock, one of them upstream-skipped.  With that, every
+non-pass in the 2026-09-02 arm64 residual is attributed, and none of the GUI
+ones is a VM computation error.
 
 Counting the whole 2026-09-02 arm64 residual against that: **9 of the 21 FAILs
 and 17 of the 21 ERRORs are downstream of this one suspension.**  Three more
