@@ -2223,11 +2223,12 @@ this exit), which is exactly when every other handler consumes its saves.
 Measured interleaved -- base and fixed alternating rep by rep, four CPU hogs
 holding the load steady, matched binaries built from the same tree:
 
-    A/B                     base      fixed
-    fix only              9 of 12    3 of 12
-    fix + storm guard     7 of 10    0 of 10
-    ------------------------------------------
-    combined             16 of 22    3 of 22
+    A/B                          base      fixed
+    fix 1 only                 9 of 12    3 of 12
+    fix 1 + storm guard        7 of 10    0 of 10
+    fix 1 + guard + fix 2      8 of 10    0 of 10
+    ----------------------------------------------
+    combined                  24 of 32    3 of 32
 
 Interleaving is not a nicety here.  The rate tracks machine load (6 of 8 with
 the package tier running, 4 of 6 later, 1 of 6 idle), so blocked A-then-B arms
@@ -2235,7 +2236,7 @@ measure the load as much as the change.  An earlier read of this same A/B at
 five reps (base 3, fixed 2) said the fix did nothing; that was a coin-flip's
 worth of data.
 
-Three of twenty-two is not zero, so a second path remains.
+Three of thirty-two is not zero, and all three were on the fix-1-only build.
 
 The second A/B's zero belongs to the FIX, not to the storm guard: the guard's
 `[CANNOT-RETURN-STORM]` line appears in none of those ten runs, so it never
