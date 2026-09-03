@@ -2352,6 +2352,38 @@ The lesson is about measurement, not about J2J: **a five-class repro batch
 cannot tell you a fix is safe.**  It can only tell you whether the bug it
 reproduces still fires.
 
+#### What a real fix looks like, and why neither candidate was taken tonight
+
+The hole is precise: a closure created while J2J saves are pending captures an
+`outerContext` whose sender chain is missing every J2J-hidden caller.  The
+counter says it happens 481 times in a 20-second run.  Two ways to close it,
+both real work, neither validated:
+
+1. **Refuse to inline-J2J a callee that creates a block.**  There is direct
+   precedent in this file's own emitter: the BV inline prep already refuses
+   blocks containing `SistaV1::PushFullBlock` / `PushClosure` because "creates
+   nested closures whose outerContext would point at the BV-inlined block's
+   not-quite-real frame, breaking nested-block semantics" -- the same defect,
+   one inlining layer down.  Wants a `hasBlockCreate` flag on `JITMethod` set
+   by the compile-time bytecode scan, a byte load in the xmethod gate chain
+   beside `isStubOnEntry` and `canBailMidMethod`, and a knob to A/B it
+   (`PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE`) since it costs inlining on
+   block-heavy code.
+
+2. **Build the missing contexts without consuming the saves.**  A variant of
+   `materializeFrameStack` that walks `savedFrames_` AND the pending J2JSaves
+   to produce a complete sender chain, leaving `j2jDepth` and the save slice
+   alone.  The trap is duplication: nothing links the context built this way to
+   the frame the save is materialized into later, so the same activation gets
+   two contexts -- and two contexts for one activation is precisely the
+   "returning into a dead sender" symptom being fixed.  It would need the save
+   record to carry its context, which means growing `J2JSave` and moving
+   stencil offsets.
+
+Option 1 is the one with precedent.  Neither was attempted tonight because
+each needs the batch-1-100 smoke test plus the storm A/B to validate, and the
+machine was committed to a full sweep.
+
 #### The fatal now says WHO, not just WHAT
 
 The census has twice been unable to name the loop behind a Context storm:
