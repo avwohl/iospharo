@@ -2774,9 +2774,12 @@ void Interpreter::checkLowSpaceSignal() {
     // Not between an extension byte and the bytecode that consumes it:
     // synchronousSignal can resume a higher-priority waiter, and a process
     // switch runs executeFromContext, which resets extA_/extB_ and corrupts
-    // the next bytecode's argument.  Every other process-switch-triggering
-    // check at both call sites is guarded the same way; this one was not,
-    // which mattered little while it never fired and matters now that it can.
+    // the next bytecode's argument -- the "factorial returns receiver" bug.
+    // The guard has to live HERE rather than at the call sites: in
+    // interpret() the `if (inExtension_)` early-out that protects the timer,
+    // signal and preemption checks sits BELOW this call, and in the callback
+    // loop each check carries its own `!inExtension_`.  It mattered little
+    // while this check essentially never fired and matters now that it can.
     // The latch is only cleared on delivery, so deferring loses nothing.
     if (inExtension_) return;
     Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
