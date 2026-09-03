@@ -2352,7 +2352,36 @@ The lesson is about measurement, not about J2J: **a five-class repro batch
 cannot tell you a fix is safe.**  It can only tell you whether the bug it
 reproduces still fires.
 
-#### The duplicate is real, and it has a name: `#methodNode`
+#### RETRACTED: the "duplicate activation" was the detector's own false positive
+
+The section below claimed 27 (later 126) duplicate activations, all
+`#methodNode`.  With the site tag added, every one of them comes from a single
+materialize site -- `"j2jBase materialize"` -- and that site does not duplicate
+anything.  It REBUILDS a region: it writes frames at an explicit
+`j2jBaseFrameDepth + i` and only afterwards sets `frameDepth_` to
+`base + totalFrames`, discarding whatever sat above.  The detector scanned
+downward from `frameDepth_`, so it was comparing each freshly written frame
+against the copies that rebuild was about to throw away, and flagged every
+rebuild.
+
+Fixed: the scan now starts from the index of the frame being written, so it can
+only see frames BELOW it -- ones that survive into the same frame set, which is
+what a genuine duplicate would be.
+
+Two things that followed from the false positive are also void.  The
+`PHARO_J2J_SITE5_CLEAR_DEPTH` candidate was aimed at a duplicate that the
+detector was inventing; measured, it changes nothing (guard fires 6 of 10
+against the default's 7, DUP-FRAME unchanged at 10 of 10).  And the reasoning
+that "one activation represented twice" explains the dead-sender loop has no
+evidence behind it any more.
+
+What survives: the `ExitJ2JCall` handler really does `continue` without
+clearing `state.j2jDepth` or re-basing the cursor, and `enableJ2J()` really
+does have only three call sites, none of them that path.  That is still an
+inconsistency worth understanding.  It is just not the thing the detector was
+seeing.
+
+#### The duplicate is real, and it has a name: `#methodNode` (RETRACTED, see above)
 
 The duplicate-activation detector fired on its first sweep.  27 hits across the
 first eight batches -- every batch has some -- and every one of them is the

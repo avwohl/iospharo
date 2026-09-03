@@ -27985,19 +27985,30 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedFP = save.tempBase - 1;
     // Same activation materialized twice?  Two frames on one frame pointer
     // means two returns, and the second lands in a context the first killed.
-    for (size_t bi = 0, n = frameDepth_ > 8 ? 8 : frameDepth_; bi < n; bi++) {
-        SavedFrame& other = savedFrames_[frameDepth_ - 1 - bi];
-        if (&other != &frame && other.savedFP == frame.savedFP
+    //
+    // Scan DOWNWARD from the frame being written, not from frameDepth_.  The
+    // "j2jBase materialize" site rebuilds a whole region at an explicit base
+    // index and only afterwards sets frameDepth_ to base+total, discarding
+    // whatever sat above -- so a frameDepth_-relative scan compares against
+    // frames that are about to be thrown away and flags every rebuild as a
+    // duplicate.  That false positive is what the first version of this
+    // detector reported (126 hits in a clean sweep, all from that one site).
+    // A genuine duplicate is a frame BELOW the one being written that survives
+    // into the same frame set.
+    size_t frameIdx = static_cast<size_t>(&frame - savedFrames_.data());
+    for (size_t bi = 1, n = frameIdx > 8 ? 8 : frameIdx; bi <= n; bi++) {
+        SavedFrame& other = savedFrames_[frameIdx - bi];
+        if (other.savedFP == frame.savedFP
                 && other.savedMethod.rawBits() == frame.savedMethod.rawBits()) {
             g_duplicateActivation[1]++;
             if (g_duplicateActivation[1] <= 3)
                 fprintf(stderr, "[DUP-FRAME #%llu] J2J save for #%s materialized "
-                        "onto fp=%p at site \"%s\", which frame %zu already "
-                        "holds\n",
+                        "into frame %zu on fp=%p at site \"%s\", which frame "
+                        "%zu below it already holds\n",
                         (unsigned long long)g_duplicateActivation[1],
                         memory_.selectorOf(frame.savedMethod).c_str(),
-                        (void*)frame.savedFP, siteTag ? siteTag : "?",
-                        frameDepth_ - 1 - bi);
+                        frameIdx, (void*)frame.savedFP,
+                        siteTag ? siteTag : "?", frameIdx - bi);
             break;
         }
     }
