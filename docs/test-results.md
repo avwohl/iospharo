@@ -1,5 +1,26 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-09-02/03 — both architectures swept, and they agree.**
+>
+>     arch     classes  tests   PASS    FAIL  ERROR  TIMEOUT  SKIP   rate
+>     x86_64    2046    28071   27833    22     26      10     180   99.15%
+>     arm64     2005    27682   27453    21     21       5     182   99.17%
+>
+> **No x86-vs-arm codegen divergence in 28071 tests.**  Every class non-clean
+> on one arch and clean on the other is a Rosetta timeout (the x86 build runs
+> at roughly half arm64's speed against a fixed 80 s per-test bound), a
+> wall-clock assertion, the Windows-only `w64Convention` symbol missing from
+> our test dylib, a working-directory artifact, or a class the other arch never
+> reached.  Write-ups: `docs/results/sweep-x86-2026-09-03.md` and
+> `docs/results/sweep-arm-2026-09-02.md`.
+>
+> The x86_64 run is the more complete of the two — batch 1901-1950 storms on
+> arm64 (defect #23, 39 classes lost) and runs clean on x86_64 in 270 s — so it
+> is the first measurement this project has of the trait block:
+> `TraitTest` 53 P / 1 F on `testTraitsUsersSanity`, `TraitFileOutTest` 2 E (a
+> CWD artifact), `TraitInTraitClassTest` 1 T, the other 24 classes clean.  Cog
+> runs all 27 at 270 P / 0 F / 0 E.
+>
 > **2026-09-02 — arm64 full sweep on the rebuilt host: 99.17%.** 2007 classes,
 > 27692 tests, 27461 P / 21 F / 21 E / 7 T / 182 S.  F+E is 42 against the
 > 2026-08-22 run's 52 on ~375 fewer tests.  Full attribution per class in
