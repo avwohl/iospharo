@@ -3702,6 +3702,33 @@ on their own CI (pharo#2471), the evidence does not support calling this a VM
 defect, and it should not be counted against the VM without a stock-Cog
 comparison this host cannot run.
 
+## Defect #28 — four XMLParser attribute-default tests fail on x86_64 only
+
+`XMLParserTest>>testAttributeDefaultValue{Entity,IDRef,Entities,IDRefs}` error
+on x86_64 and pass on arm64.  Reproduced in isolation 2026-09-03, same image,
+same five selectors, each VM in its own directory:
+
+    arm64    5 of 5 pass
+    x86_64   4 error, testAttributeDefaultValueNmtokens passes
+
+The full package run reports five (Nmtokens joins them there), so the fifth is
+timing-sensitive and the other four are not.
+
+This is the last unexplained arch-specific failure in the package tier and the
+only reproducible one anywhere: every other arm-vs-x86 difference in the
+2026-09-03 sweeps is a Rosetta timeout, a wall-clock assertion, a symbol the
+test dylib does not export, or a flake.
+
+Two earlier attempts to isolate it died on the harness rather than the tests --
+a stale `startup.st` in the shared working directory, then eval mode's
+`startup.st` staging colliding between two VMs in one directory.  Both are the
+same trap from `CLAUDE.md`, met twice.  Giving each VM its own directory fixed
+it.
+
+Next: the exception class and message (the first probe printed only the failing
+test's identity), and the `PHARO_NO_JIT=1` fork, which is one run and decides
+whether this is the x86 JIT's at all.
+
 ## Defect #27 — a ByteSymbol runs `BlockClosure>>value:`
 
 `RSRoassalTest>>testOpen`, arm64, 2026-09-03 sweep:
