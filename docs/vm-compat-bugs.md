@@ -2164,7 +2164,7 @@ image does not understand.  A Morphic DNU under a display-less resume is
 usually a missing plugin primitive answering nil where a Form or an event
 buffer is expected.
 
-### 26. The threaded-FFI batch never exits — 1800 s per sweep per arch — NEW 2026-09-02, MEDIUM
+### 26. ~~The threaded-FFI batch never exits~~ — ROOT-CAUSED + FIXED 2026-09-02 (unbuilt), 1800 s per sweep per arch
 
 Sweep batch 1801-1850 is the single largest wall-clock item in a full sweep and
 has never been filed.  It contains the threaded-FFI block —
@@ -2183,19 +2183,43 @@ Only then does it fail to exit, and the harness kills it at
 it costs 30 minutes of every sweep on every architecture — an hour a night at
 the current cadence.
 
-What runs after `BATCH COMPLETE` is exactly two statements:
+#### ROOT CAUSE — the deferred quit is never honoured, and the trace was in the log
 
-    [Smalltalk exitSuccess] on: Error do: [:e |].
-    Smalltalk quitPrimitive
+Two dead ends first: the runner's own comment says *"exitSuccess goes through
+SessionManager shutdown which may not reach primitiveQuit"*, and that is not
+true of Pharo 13 — `SmalltalkImage>>exitSuccess` is `self exit: 0` and
+`exit:` is `<primitive: 113>`, the very same primitive as `quitPrimitive`.  No
+SessionManager shutdown is involved.
 
-and the runner's own comment already distrusts the first (*"exitSuccess goes
-through SessionManager shutdown which may not reach primitiveQuit"*).  If
-`exitSuccess` **hangs** rather than errors, the `on: Error do:` does not help
-and `quitPrimitive` is never reached.  That is the leading candidate: a
-SessionManager shutdown that blocks on a threaded-FFI worker or the abandoned
-callback.  The results stream is closed by the `ensure:` before this runs,
-which is why no log has ever said which of the two it is; stderr landmarks
-were added around both (submodule, 2026-09-02) so the next sweep answers it.
+So primitive 113 runs, and our `primitiveQuit` does this:
+
+    if (callbackDepth_ > 0) {
+        fprintf(stderr, "[primitiveQuit] Deferred: %d callback(s) outstanding, "
+                        "C frames must unwind first\n", (int)callbackDepth_);
+        pendingQuit_ = true;
+        return PrimitiveResult::Success;
+    }
+
+and `pendingQuit_` is honoured in exactly one place — the `interpret()`
+checkpoint — under `pendingQuit_ && callbackDepth_ == 0`.  Both halves fail
+here:
+
+  * `TFCallbacksTest`'s old-session test **abandons a same-thread invocation by
+    design**, so `callbackDepth_` stays 1 for the rest of the run and the
+    condition can never become true;
+  * and a VM parked in `enterInterpreterFromCallback`'s nested loop is not
+    running the `interpret()` checkpoint at all, so nothing even looks.
+
+The evidence was in the logs the whole time, buried in 4 MB of periodic JIT
+stats — `[primitiveQuit] Deferred: 1 callback(s) outstanding, C frames must
+unwind first`, five times in the arm64 batch and sixty-one in the x86_64 one.
+
+**Fixed 2026-09-02** by bounding the deferral: `primitiveQuit` records
+`g_stepNum` when it first defers, and both the `interpret()` checkpoint and the
+nested callback loop honour the quit once `kQuitGraceSteps` (2M bytecodes) have
+passed, whether or not the callback unwound.  Stranding a C frame matters while
+the VM keeps running; it does not matter when the process is exiting anyway,
+and Cog simply exits.  Unbuilt as of this writing.
 
 The mechanism is already described in our own source.  `Interpreter.cpp`'s
 `enterInterpreterFromCallback` comment says an *"abandoned same-thread

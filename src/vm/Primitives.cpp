@@ -5227,7 +5227,24 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Checked before the eval-deferral below, which terminates the current
     // process and reschedules: doing that from inside a nested interpreter
     // would strand the callback just as surely.
+    //
+    // BOUNDED, though.  A callback that never unwinds pins the VM forever with
+    // the quit pending, and that is not hypothetical: TFCallbacksTest's
+    // old-session test abandons a same-thread invocation BY DESIGN, so
+    // callbackDepth_ stays 1 for the rest of the run.  Sweep batch 1801-1850
+    // then writes all its results, asks to quit, and is killed by the harness
+    // at 1800 s — on both arches, every sweep, with
+    // "[primitiveQuit] Deferred: 1 callback(s) outstanding" in the log the
+    // whole time (defect #26).  Record when the deferral started; the
+    // checkpoint honours the quit once the grace period is gone whether or not
+    // the callback unwound.  Stranding C frames matters while the VM keeps
+    // running; it does not matter when the process is exiting anyway, and Cog
+    // simply exits.
     if (callbackDepth_ > 0) {
+        if (!pendingQuit_) {
+            extern uint64_t g_stepNum;
+            pendingQuitStep_ = g_stepNum;
+        }
         fprintf(stderr, "[primitiveQuit] Deferred: %d callback(s) outstanding, "
                         "C frames must unwind first\n", (int)callbackDepth_);
         fflush(stderr);

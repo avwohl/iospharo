@@ -3868,6 +3868,17 @@ private:
     /// qsort) are still live on the stack and must be allowed to unwind first.
     /// interpret() honours it once callbackDepth_ reaches zero.
     bool pendingQuit_ = false;
+    /// g_stepNum when pendingQuit_ was first set.  The deferral has to be
+    /// BOUNDED: a callback that never unwinds (TFCallbacksTest abandons one by
+    /// design) otherwise pins the VM forever with the quit pending — see
+    /// defect #26 in docs/vm-compat-bugs.md, 1800 s per sweep per arch.
+    uint64_t pendingQuitStep_ = 0;
+    /// Bytecodes of grace a deferred quit gives an outstanding callback to
+    /// unwind before it is honoured anyway.  2M is roughly a few milliseconds
+    /// of real work — long enough for a callback that IS going to return
+    /// (qsort's comparator, a progress hook) and nothing at all next to the
+    /// 1800 s the unbounded version cost.
+    static constexpr uint64_t kQuitGraceSteps = 2000000;
 
     /// Deferred callback return: set by primitiveCallbackReturn, consumed by
     /// the nested interpret loop in enterInterpreterFromCallback.

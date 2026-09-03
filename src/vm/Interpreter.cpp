@@ -4065,15 +4065,25 @@ void Interpreter::interpret() {
         //    outstanding and could not be honoured there, because the C caller
         //    of the callback still had frames expecting a return. Honour it now
         //    that the callback stack has unwound.
-        if (__builtin_expect(pendingQuit_ && callbackDepth_ == 0, 0)) {
-            pendingQuit_ = false;
-            fprintf(stderr, "[primitiveQuit] Honouring deferred quit "
-                            "(callbacks unwound)\n");
-            fflush(stderr);
-            running_ = false;
-            // This IS the real quit primitiveQuit could not take inline.
-            evalReachedQuit_ = true;
-            goto cg_exit;
+        //    The deferral is BOUNDED: an abandoned callback never unwinds, and
+        //    waiting for it forever is how batch 1801-1850 burned 1800 s of
+        //    every sweep on both arches (defect #26).  After the grace period
+        //    the quit is honoured regardless — the process is exiting, so the
+        //    C frames the deferral protects have nothing left to protect.
+        if (__builtin_expect(pendingQuit_, 0)) {
+            bool unwound = (callbackDepth_ == 0);
+            bool graceGone = (g_stepNum - pendingQuitStep_) > kQuitGraceSteps;
+            if (unwound || graceGone) {
+                pendingQuit_ = false;
+                fprintf(stderr, "[primitiveQuit] Honouring deferred quit (%s)\n",
+                        unwound ? "callbacks unwound"
+                                : "grace period expired; callback did not unwind");
+                fflush(stderr);
+                running_ = false;
+                // This IS the real quit primitiveQuit could not take inline.
+                evalReachedQuit_ = true;
+                goto cg_exit;
+            }
         }
 
         // -- Terminate stuck process (set by watchdog, rare) --
@@ -5871,6 +5881,20 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // hosts execution, so a storm inside a callback would otherwise
         // exhaust the heap with the breaker armed and latched.
         checkLowSpaceSignal();
+        // And the deferred quit, for the same reason and then some: the quit
+        // was deferred BECAUSE a callback is outstanding, and the only loop
+        // running while one is outstanding is this one.  Without this the
+        // grace period never expires and the VM never exits (defect #26).
+        if (__builtin_expect(pendingQuit_, 0)
+                && (g_stepNum - pendingQuitStep_) > kQuitGraceSteps) {
+            pendingQuit_ = false;
+            fprintf(stderr, "[primitiveQuit] Honouring deferred quit from the "
+                            "callback loop (grace period expired; callback did "
+                            "not unwind)\n");
+            fflush(stderr);
+            running_ = false;
+            evalReachedQuit_ = true;
+        }
         // Adopt worker-forwarded callbacks HERE too — the main interpret()
         // checkpoint never runs while this nested loop hosts execution.  An
         // abandoned same-thread invocation (TFCallbacksTest's old-session
