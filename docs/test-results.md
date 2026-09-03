@@ -32,6 +32,24 @@
 > is fixed in the submodule, and both are folded into the numbers above.
 > x86_64 is running as of this writing.
 >
+> **2026-09-03 — the package tier now has both arches.**  9376 P / 16 F / 24 E
+> on x86_64 against 9326 P / 16 F / 16 E on arm64 over the same 354 classes.
+> FAIL is identical on both -- 14 DataFrame + 2 PolyMath, same selectors -- so
+> there is no x86-only package failure.  The ERROR delta is XMLParser (5 vs 0)
+> and PolyMath (19 vs 16), and PolyMath also ran 55 more passing cases on x86
+> with one fewer timeout, so the two runs did not execute the same set of
+> cases.  Write-up: `docs/results/packages-x86-2026-09-03.md`.
+>
+> **Defect #23, the arm64 Context storm that costs 39 classes a sweep, is
+> root-caused and two fixes are in.**  Both are inline-J2J frame bookkeeping:
+> a closure captured a sender chain missing every J2J-hidden caller, and the
+> J2J materialize left `currentFrameMaterializedCtx_` aimed at an activation
+> that was no longer current, so the next return marked a LIVE frame's context
+> dead.  Measured interleaved under held load: 9 storms of 12 unfixed against
+> 3 of 12, and 7 of 10 against 0 of 10 on the second build.  Sweeps on both
+> arches are re-running with the fixes as of this writing; the numbers above
+> predate them.
+>
 > **A Δcog IS obtainable on this host after all** — the stock VM's fixed-address
 > `codeZone` abort is arch-specific, and the x86_64 Cog runs under Rosetta.
 > The whole residual was measured against Cog v10.3.9 the same evening
