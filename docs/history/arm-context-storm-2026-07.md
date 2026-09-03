@@ -17,7 +17,13 @@ would reproduce it was never archived.
 > printed nothing at all while 12 GB went by
 > (`docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`).  Whatever made
 > catalog #10 complete clean, it was not this.  Fixed the same day by latching
-> the crossing at the allocation sites; see `docs/changes.md`.
+> the crossing at the allocation sites; see `docs/changes.md`.  With that fix
+> `storm_repro_freeze_recursion.st` produces **462 `[LOW-SPACE]` lines and no
+> FATAL abort**, and the P60 watcher does preempt the P40 hog exactly as this
+> file describes.
+>
+> **The "DISARMED in bare `eval`" claim further down is also wrong.**  That
+> verification was a bare `eval`, and the breaker armed and fired.
 >
 > **And the trigger family is worth re-reading, not just the method.**  The
 > 2026-09-02 storm killed the batch containing all 27 `Trait*Test` classes,
