@@ -26336,7 +26336,18 @@ void Interpreter::syncGlobalsFromJITState(jit::JITState& s) {
 Oop Interpreter::validateICTarget(const char* tag, Oop cached, Oop* sp,
                                   int sendArgCount) {
     static size_t reach = 0, mism = 0;
+    // Say once that the validator is live.  Without this a run with
+    // PHARO_T1_VALIDATE_IC=1 and no mismatch is indistinguishable from a run
+    // where the knob never reached this path -- and it does not reach sends
+    // dispatched entirely inside emitted code, only the chain loop's IC hits.
+    if (reach == 0)
+        fprintf(stderr, "[IC-VALIDATE] active: re-looking-up every chain-loop "
+                        "IC hit (emitted-code IC hits do not pass through "
+                        "here)\n");
     reach++;
+    if ((reach & 0xFFFFF) == 0)
+        fprintf(stderr, "[IC-VALIDATE] %zu hits checked, %zu mismatches\n",
+                reach, mism);
     Oop rcvr = sp[-(sendArgCount + 1)];
     size_t nl = memory_.numLiteralsOf(cached);
     Oop sel = (nl >= 2) ? memory_.fetchPointer(nl - 1, cached) : Oop::nil();
