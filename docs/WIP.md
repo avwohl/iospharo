@@ -56,6 +56,9 @@ Queued, in order, running unattended:
    fires in 7 of 10 runs, so a candidate that closes the hole should stop it
    firing.  DUP-FRAME hits are counted per configuration too.
 3. full x86_64 sweep, shipping defaults
+4. package tier on both arches with the guard build, reusing the loaded package
+   images.  Baselines to beat: arm64 9326 P / 16 F / 16 E / 1 T, x86_64
+   9376 / 16 / 24 / 0.
 
 **Standing rule from tonight:** run `scripts/sunit-sweep.sh` on batch `1 100`
 before believing any VM change -- about four minutes, and the unfixed binary
