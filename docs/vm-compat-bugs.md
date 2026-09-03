@@ -2223,9 +2223,11 @@ this exit), which is exactly when every other handler consumes its saves.
 Measured interleaved -- base and fixed alternating rep by rep, four CPU hogs
 holding the load steady, matched binaries built from the same tree:
 
-    arm       storms
-    base       9 of 12
-    fixed      3 of 12
+    A/B                     base      fixed
+    fix only              9 of 12    3 of 12
+    fix + storm guard     7 of 10    0 of 10
+    ------------------------------------------
+    combined             16 of 22    3 of 22
 
 Interleaving is not a nicety here.  The rate tracks machine load (6 of 8 with
 the package tier running, 4 of 6 later, 1 of 6 idle), so blocked A-then-B arms
@@ -2233,7 +2235,15 @@ measure the load as much as the change.  An earlier read of this same A/B at
 five reps (base 3, fixed 2) said the fix did nothing; that was a coin-flip's
 worth of data.
 
-Three of twelve is not zero, so a second path remains.  The resume loop has the
+Three of twenty-two is not zero, so a second path remains.
+
+The second A/B's zero belongs to the FIX, not to the storm guard: the guard's
+`[CANNOT-RETURN-STORM]` line appears in none of those ten runs, so it never
+fired.  That is worth stating plainly because it means the guard is, as of this
+writing, an untested code path -- it cannot fire in a healthy run by
+construction.  Its burst limit is therefore a knob
+(`PHARO_CANNOT_RETURN_BURST`, default 64) so the path can be exercised
+deliberately.  The resume loop has the
 same `ExitBlockCreate` twin and does NOT materialize -- its handlers are
 documented to assume `depth==0` -- and a counter now says whether that
 assumption holds in practice.

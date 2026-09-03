@@ -2313,7 +2313,6 @@ static const char* const kCannotReturnSiteName[6] = {
 // Deliberately loose: 64 sends inside a 2,000,000-step window.  A legitimate
 // BlockCannotReturn that an image handler resumes (ProcessTest>>testResumeAfter
 // BCR) sends a handful; a storm sends half a million.
-static constexpr uint64_t kCannotReturnBurst = 64;
 static constexpr uint64_t kCannotReturnWindowSteps = 2000000;
 
 bool Interpreter::cannotReturnStormGuard(const char* site) {
@@ -2324,13 +2323,16 @@ bool Interpreter::cannotReturnStormGuard(const char* site) {
         cannotReturnStormProcess_ = proc;
     }
     cannotReturnStormStep_ = g_stepNum;
-    if (++cannotReturnStormCount_ <= kCannotReturnBurst) return false;
+    const uint64_t burst =
+        static_cast<uint64_t>(GET_DEBUG_INT(PHARO_CANNOT_RETURN_BURST));
+    if (++cannotReturnStormCount_ <= burst) return false;
 
     fprintf(stderr,
-        "[CANNOT-RETURN-STORM] %llu cannotReturn: sends from site \"%s\" by "
-        "process 0x%llx within %llu steps -- the image's error handling is not "
-        "terminating it, so the VM is. See defect #23.\n",
-        (unsigned long long)cannotReturnStormCount_, site,
+        "[CANNOT-RETURN-STORM] %llu cannotReturn: sends (burst limit %llu) from "
+        "site \"%s\" by process 0x%llx within %llu steps -- the image's error "
+        "handling is not terminating it, so the VM is. See defect #23.\n",
+        (unsigned long long)cannotReturnStormCount_,
+        (unsigned long long)burst, site,
         (unsigned long long)proc.rawBits(),
         (unsigned long long)kCannotReturnWindowSteps);
     fflush(stderr);
