@@ -3760,8 +3760,25 @@ block is expected -- `#foo value: each` is idiomatic Pharo and perfectly legal
 `BlockClosure` and `Symbol`, which is exactly where a monomorphic IC that skips
 its class guard would go wrong.
 
-Repro plan: `RSRoassalTest>>testOpen` under `PHARO_DET_SCHED=1`, then bisect
-the IC knobs (`PHARO_T1_NO_IC_POLY_WALK`, `PHARO_NO_METHOD_CACHE`,
-`PHARO_T1_NO_INLINE_J2J`) to separate an inline-cache miss from a method-cache
-one.  Interpreted (`PHARO_NO_JIT=1`) first, as always -- that fork is one run
-and it decides whether this is the JIT's at all.
+**Two instruments tried, both dead ends, and the second nearly lied.**
+
+A targeted repro is hopeless: the defect appears about once per 2043-class
+sweep, so four reps of the two suspect classes see nothing, and four reps of
+nothing is not evidence.  Abandoned after one rep.
+
+`PHARO_T1_VALIDATE_IC` looked like the right instrument -- `validateICTarget`
+re-looks-up the selector in the receiver's class and reports a mismatch, which
+is exactly this shape.  Three reps reported zero mismatches.  **That zero was
+meaningless**: the validator now announces itself on its first call, and no run
+printed the line, so it was never reached at all.  The knob covers only the
+chain loop's `ExitSendCached` path with `sendArgCount >= 0`, which these runs
+never take, and a send dispatched entirely inside emitted code never passes
+through it.
+
+So the instrument that can see this has to sit where the emitted monomorphic IC
+dispatches, not in the chain loop.  That is the next thing to build, and it is
+worth building carefully: a per-send class check is not free.
+
+Worth ruling out first, cheaply: `classOf` returning the wrong class for a
+moment (a GC or become artifact) would produce exactly this pair without any IC
+being at fault.
