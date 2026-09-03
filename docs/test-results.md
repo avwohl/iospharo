@@ -41,13 +41,22 @@
 > cases.  Write-up: `docs/results/packages-x86-2026-09-03.md`.
 >
 > **Defect #23, the arm64 Context storm that costs 39 classes a sweep, is
-> root-caused and two fixes are in.**  Both are inline-J2J frame bookkeeping:
-> a closure captured a sender chain missing every J2J-hidden caller, and the
-> J2J materialize left `currentFrameMaterializedCtx_` aimed at an activation
-> that was no longer current, so the next return marked a LIVE frame's context
-> dead.  Measured interleaved under held load: 9 storms of 12 unfixed against
-> 3 of 12, and 7 of 10 against 0 of 10 on the second build.  Sweeps on both
-> arches are re-running with the fixes as of this writing; the numbers above
+> bounded.**  The loop is `Context>>cannotReturn:` -> `error:` -> `signal`
+> against a sender chain with no handler in it, and `Context>>freeze` copying
+> the whole chain each round is what allocates 2.6M Contexts.  Four of the six
+> `cannotReturn:` sites had no rate limit; the VM already terminates the
+> process at the fifth, and `cannotReturnStormGuard` now applies that rule to
+> the other four.  Measured interleaved under held load: **7 aborts of 10
+> become 0**, with the guard firing in 7 of those runs, and the same build
+> scores 0 non-clean classes on batch 1-100.
+>
+> Two attempted root fixes did NOT survive.  One (materializing pending J2J
+> saves before building a closure) broke 11 classes on batch 1-100 and is
+> reverted.  The other (the materialized-context handover) is kept but is not
+> load-bearing.  The hole itself -- a closure created inside a J2J chain
+> captures an `outerContext` missing every J2J-hidden caller, 481 times in a
+> 20-second run -- is still open, with two inert candidate fixes behind knobs.
+> Sweeps on both arches are re-running with the guard; the numbers above
 > predate them.
 >
 > **A Δcog IS obtainable on this host after all** — the stock VM's fixed-address
