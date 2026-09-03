@@ -26,6 +26,14 @@
 # The class list wants the runner's own ordering so batch indices line up with
 # our sweeps; docs/results/sweep-arm-2026-09-02/class-index-map.txt is that
 # list for Pharo 13.1 build 745, and the header there says how it was made.
+# Comment lines and a leading index column are stripped, so that file can be
+# handed in as-is.  Smoke-tested 2026-09-02 on its first six classes:
+# 6 classes / 31 tests / 100%.
+#
+# The `classes=` column in the log counts one more than the batch holds -- the
+# runner emits a batch-level `Total: N` alongside the per-class
+# `Total: N P:.. F:..` lines, and that column greps both.  The TOTALS block at
+# the end requires the P/F/E/S fields and so counts classes correctly.
 set -u
 
 LIST=${1:?usage: cog-sweep.sh <class-list> <outdir> [pharo-dir]}
