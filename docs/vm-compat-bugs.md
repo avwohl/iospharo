@@ -1839,6 +1839,41 @@ Note this puts both of the 2026-09-02 newcomers on trait method copies — the
 other being the storm that killed the batch containing all 27 `Trait*Test`
 classes.
 
+### 23. The trait-test Context storm — Cog runs the block clean, we exhaust 12 GB — NEW 2026-09-02, HIGH
+
+The arm64 sweep's batch 1901-1950 died at index 1912 with
+
+    [VM] FATAL: old space exhausted during scavenge tenure (16 free of 12884901888)
+    [HEAP-CENSUS] 33363299 objs  Context / 6656491 objs Error / 6664295 objs FullBlockClosure
+
+taking 39 classes with it — all 27 `Trait*Test` plus `TrueTest`, `Tutorial*`,
+`UDPSocket*`, `UUID*` and `Undefined*`.  Census and analysis in
+`docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`; the ratios say an
+unbounded recursion that signals and catches an `Error` at every level and
+never unwinds (1.00 closures per Error, 5.01 Contexts per Error).
+
+**Stock Cog runs the same 27 classes clean, in seconds:**
+
+    27 classes   270 tests   0 F   0 E        (Cog v10.3.9, x86_64 under Rosetta)
+    TraitTest alone: 54 P / 0 F / 0 E
+
+Raw in `docs/results/sweep-arm-2026-09-02/cog-trait-baseline.txt`.  So this is
+ours, not the image and not the harness.  It also finally settles the entry
+under "Confirmed our-VM bugs" that has read "`TraitTest` 54P/0/0 on Cog, errors
+on ours — not yet drilled" since 2026-06-01: same class, same Cog number, and
+now a mechanism-shaped symptom to chase.
+
+What is already ruled out by reading (2026-09-02), so do not re-derive it: the
+2026-07 husk-trigger fixes are all still in place —
+`collectInstancesOfClass` skips forwarded objects (`ObjectMemory.cpp:3386`),
+and `becomeForward`-leaves-forwarder and classOf-follows-forwarders are
+default-on with opt-out knobs only (`:1803`, `:1895`, `:558`).  See
+`docs/history/arm-context-storm-2026-07.md`, which identifies the storm's
+trigger as exactly a trait-class rebuild with live instances.
+
+Next: run the block one class at a time (chunks of five is enough to bracket
+it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
@@ -1945,7 +1980,8 @@ image issues. The Cog comparison shows many are real, fixable VM defects.
 
     class                   Cog          our VM      notes
     SystemEnvironmentTest   217P/0/0     79P/138E    boolean mis-eval (below)
-    TraitTest               54P/0/0      errors      not yet drilled
+    TraitTest               54P/0/0      errors      now defect #23; Cog number
+                                                     re-confirmed 2026-09-02
 
 ## Out of scope (Cog also fails)
 
