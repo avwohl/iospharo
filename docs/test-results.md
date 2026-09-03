@@ -1,5 +1,20 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-09-02 — arm64 full sweep on the rebuilt host: 99.17%.** 2007 classes,
+> 27692 tests, 27461 P / 21 F / 21 E / 7 T / 182 S.  F+E is 42 against the
+> 2026-08-22 run's 52 on ~375 fewer tests.  Full attribution per class in
+> `docs/results/sweep-arm-2026-09-02.md`; artifacts alongside it.  **This is
+> not the whole suite**: one batch died of an allocation storm and took 39
+> classes with it — all of the trait tests — so read the figure as "2007 of
+> ~2047 classes".  Two more classes were absent from the raw aggregation
+> because the runner spliced their `Total:` line into a timeout verdict; that
+> is fixed in the submodule, and both are folded into the numbers above.
+> x86_64 is running as of this writing.
+>
+> One newcomer in that residual is untriaged and VM-visible rather than
+> display-related: `RSLinesTest` errors twice with `BlockCannotReturn` on a
+> four-frame non-local return.
+>
 > **2026-08-22 — the package tier was 7x slower than its own baseline, and is
 > now faster than it.** Code-zone eviction became reachable on 2026-08-22 and
 > cost more than it saved until three defects in it were found and fixed:
