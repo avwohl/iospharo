@@ -32,6 +32,22 @@
 > is fixed in the submodule, and both are folded into the numbers above.
 > x86_64 is running as of this writing.
 >
+> **2026-09-03 — arm64 full sweep with the storm guard: 2043 classes, 99.18%.**
+> 28043 tests, 27812 P / 18 F / 28 E / 182 S / 3 T, 41 batches all rc=0, no
+> old-space abort anywhere.  Against 2026-09-02's 2005 classes and 27682 tests:
+> the rate is unchanged and that is not the point -- **the previous run was
+> missing 40 classes** because batch 1901-1950 aborted on the Context storm.
+> The guard fired once, in that same batch, so the storm now costs one
+> terminated process instead of forty classes.  The trait block runs clean on
+> arm64 for the first time, `TraitTest` at 54/54.  Write-up and artifacts:
+> `docs/results/sweep-arm-2026-09-03.md`.
+>
+> Ten classes changed against the baseline; six improved.  `RSLinesTest` went
+> 16 P / 2 E to 18 P / 0 E, confirming defect #22's fix at full-sweep scale.
+> Of the four that are worse, two are the harness: `LibTTYTest` lost
+> `libtty.dylib` to a copied VM, and two classes are still eaten by the
+> `Total:`-splice because this image was prepped before that submodule fix.
+>
 > **2026-09-03 — the package tier now has both arches.**  9376 P / 16 F / 24 E
 > on x86_64 against 9326 P / 16 F / 16 E on arm64 over the same 354 classes.
 > FAIL is identical on both -- 14 DataFrame + 2 PolyMath, same selectors -- so

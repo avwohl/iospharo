@@ -15,7 +15,22 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 03:30)
+## Right now (2026-09-03, 04:50)
+
+**The arm64 sweep with the storm guard is done and it is the result the goal
+wanted: 2043 classes, 28043 tests, 27812 P / 18 F / 28 E / 3 T, 99.18%, 41
+batches all rc=0, no abort anywhere.**  The 2026-09-02 run was missing 40
+classes to the Context storm; this one has them.  The guard fired exactly once,
+in `batch_1901` -- the batch that used to abort -- so the storm costs one
+terminated process now.  The trait block is clean on arm64 for the first time,
+`TraitTest` 54/54.  `RSLinesTest` 18/18 confirms defect #22's fix at scale.
+
+Two residual items in that run are the harness, not the VM: `LibTTYTest`'s 5
+errors are a copied VM missing `libtty.dylib` (fixed for later runs), and
+`RSViolinPlotTest` + `TKTCommonQueueWorkerPoolTest` are still lost to the
+`Total:` splice because **this image was prepped before that submodule fix**.
+Re-prepping recovers both -- that is now the highest-value cheap task.
+
 
 **Defect #23 is bounded, and the bound is the whole fix that survives.**  With
 fix 1 reverted, the build carrying fix 2 and the `cannotReturn:` storm guard
