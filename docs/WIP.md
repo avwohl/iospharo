@@ -135,8 +135,13 @@ batch entirely), or the sweep is running the binary that would be replaced.
     `BlockCannotReturn` on a 4-frame non-local return
     (`markersIncludesPoint:` -> `markerShapesInPositionDo:` ->
     `withEnd:controlPoints:do:` -> `setPositionTo:vector:do:` -> `aBlock value:`,
-    all synchronous), which is VM-visible, not display.  Bisect with
-    `PHARO_NO_JIT=1` first, then the T1 knobs.
+    all synchronous), which is VM-visible, not display.  **There is a
+    mechanism-level hypothesis in defect #22 already** — both selectors are
+    defined twice, in `RSAbstractLine` and in the trait `RSTMarkeable`, and the
+    inline NLR matches the home by method oop against the block's static
+    `outerCode`.  Bisect `PHARO_NO_JIT=1` first: passing there implicates the
+    stale `closure_` on JIT-resident block returns that `Interpreter.cpp:8432`
+    already warns about.
  6. **Re-run `test_relaunch` on `base.image`.**  It failed 2 of 3 cycles
     tonight (`[VM-STOP-TIMEOUT] interpret() has not returned 2s after stop()`,
     the worker still executing -- `[JIT] Stats:` sends kept climbing, so not a

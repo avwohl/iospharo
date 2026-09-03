@@ -1790,8 +1790,44 @@ context rather than returning to a live one.
 
 **Intermittent**: clean in the 2026-08-22 sweep, present in the pre-reboot
 residual and in this one.  Reach for `PHARO_DET_SCHED=1` before adding
-instrumentation.  Bisect `PHARO_NO_JIT=1` first — if it survives that, the
-defect is in the interpreter's NLR path, not in a T1 specialization.
+instrumentation.
+
+#### Hypothesis, derived from the image without running anything (2026-09-02)
+
+`markersIncludesPoint:` and `markerShapesInPositionDo:` are each defined
+**twice** in this image, and the second owner is a trait:
+
+    markersIncludesPoint: aPoint       RSAbstractLine   +  RSTMarkeable
+    markerShapesInPositionDo: aBlock   RSAbstractLine   +  RSTMarkeable
+
+`RSTMarkeable`'s own class comment says "I am a trait to create markers in some
+especific classes".  A class that uses a trait gets a COPY of the trait's
+compiled method in its method dictionary — and the inline NLR resolves the
+`^ true`'s home by matching the **method oop** of the block's static
+`outerCode` literal against `savedFrames_[si].savedMethod`
+(`Interpreter.cpp:8470`).  If the copy in `RSAbstractLine` carries a
+`CompiledBlock` whose `outerCode` still names the TRAIT's method, that identity
+match cannot succeed against the frame actually on the stack, the context-chain
+search finds nothing either, and the VM sends `cannotReturn:` — which is
+exactly `BlockCannotReturn` on a home that is demonstrably alive.
+
+The code already knows this failure shape.  The comment at
+`Interpreter.cpp:8432` describes it for a different cause ("the CompiledBlock
+is SHARED between methods ... so outerCode points at the stale original") and
+adds a dynamic fallback that retries from the running closure's captured
+`outerContext`.  The same comment says why that fallback can miss: "closure_
+need not correspond to the frame being returned from (JIT-resident block
+returns reach here with a stale closure_)".
+
+So the first bisect is `PHARO_NO_JIT=1`.  Passing there points at the stale
+`closure_` on the JIT-resident return, i.e. the dynamic fallback failing to
+rescue a trait-copied home; failing there too points at the static
+`outerCode`/method-oop identity match itself.  Either way the fix is in the
+home resolution, not in a T1 specialization.
+
+Note this puts both of the 2026-09-02 newcomers on trait method copies — the
+other being the storm that killed the batch containing all 27 `Trait*Test`
+classes.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
