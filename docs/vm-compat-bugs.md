@@ -1937,6 +1937,22 @@ The two `*Test` classes in that range the runner drops as abstract are
 `TraitAbstractTest` and `TraitTestCase`, which is why 41 candidates leave 39
 missing.
 
+And `TraitChangesTest` is not an arbitrary starting point — it is the trigger
+family.  Every one of its tests drives `ShiftClassBuilder` to create and then
+REBUILD a trait:
+
+    t1 := self newTrait: #T1 with: { }.
+    builder := ShiftClassBuilder new name: #T1; beTrait; traitComposition: TEmpty; ...
+    builder oldClass: t1.
+    builder tryToFillOldClass. builder detectBuilderEnhancer.
+    builder builderEnhancer validateRedefinition: builder oldClass.
+    builder validateSuperclass. builder compareWithOldClass.
+
+which is exactly what `docs/history/arm-context-storm-2026-07.md` identifies as
+the storm's trigger: a trait-class rebuild with live instances leaving a stale
+husk that a `freeze` handler re-hits.  Twenty-seven classes of that in a row,
+each re-creating `#T1`, is a lot of obsolete traits.
+
 The rest of that range on Cog is also on record (same file): `TrueTest`,
 `Tutorial*`, `UDPSocket*`, `UUID*`, `Undeclared*` and `Undefined*` are all
 clean and take milliseconds, so nothing else in the batch is a candidate.
