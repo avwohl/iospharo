@@ -36,6 +36,28 @@ lifter** (`SistaBuilder.cpp` Pass 5) -- `test_sista_ir` rc=139 on x86_64,
 passing by luck on arm64.  Fixed and ASan-verified on both arches; see
 `docs/changes.md` 2026-09-02.
 
+**The stock Cog baseline is back** (2026-09-02).  The `codeZone` abort that
+made this host "no Δcog possible" is arch-specific: the **x86_64** Cog runs
+fine under Rosetta.  Installed at `/tmp/harness-x86`, v10.3.9, `eval` and
+`eval --save` both verified; every command needs the `arch -x86_64` prefix.
+Three things fell out of it the same evening, none of which touched our VM or
+the running sweep:
+
+  * **The trait-test storm is ours** — Cog runs all 27 `Trait*Test` classes in
+    seconds, 270 tests, 0 F / 0 E, where our batch exhausted 12 GB.  Filed as
+    defect #23.
+  * **Defect #22 (`RSLinesTest` `BlockCannotReturn`) is root-caused** — Cog
+    passes 18/18, and the image says `RSAbstractLine`'s copy of the trait
+    method carries a block whose `outerCode` is still
+    `RSTMarkeable>>#markersIncludesPoint:`.  677 installed methods carry that
+    shape with a non-local return in the block.
+  * **"No display" was the wrong label for sixteen classes** — headless Cog,
+    same image, no prelude, scores 0 F / 0 E on all of them.  Filed as defect
+    #24, with the cause deliberately left open.
+
+Full Δcog for the residual in
+`docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
+
 **The arm64 SUnit sweep is done** (`STEP=50 PER_BATCH_TIMEOUT=1800`,
 `PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000
 PHARO_MAX_OLD_SPACE_MB=12288`): 2007 classes, 27692 tests, 27461 P / 21 F /
@@ -315,8 +337,10 @@ UI-dependency list. None is a VM computation error.
     slots correctly (they print `nil subscribes to MethodAdded`); what does not
     happen is the dead subscriptions being swept from the registry, i.e.
     finalization timing. `PHARO_WEAK_SURVIVOR_PATHS` prints why a referent
-    lived. **Read fact 6 in Carried forward first** — this test is one of the 17
-    that Pharo's own CI skips, so it is not evidence Cog passes anything.
+    lived. The old caveat here — "this test is one of the 17 Pharo's own CI
+    skips, so it is not evidence Cog passes anything" — **is now settled by
+    measurement (2026-09-02): stock Cog runs the class 33 P / 0 F / 0 E with
+    the same one skip, so Cog does pass it and this is ours.**
   * **Old-space fragmentation (12x).** `makeFreeChunk` was necessary, not
     sufficient. Four 32-byte pins strand 146 MB; they are pinned while already
     old, so the fix needs either a safe alternative to `becomeForward` at pin
@@ -329,7 +353,9 @@ UI-dependency list. None is a VM computation error.
     bound (300 s and 900 s both unchanged); 19 preceding classes do not
     reproduce it.
   * Whether ~8.8 s is reasonable for those XMLParser tests at all — needs a
-    stock-Cog number this host cannot produce.
+    stock-Cog number, and as of 2026-09-02 this host CAN produce one (x86_64
+    Cog under Rosetta, see CLAUDE.md); it needs XMLParser loaded into a Cog
+    image first.
 
 `PHARO_OLDSPACE_FREELIST` is **no longer** on this list. It works as of
 2026-08-23 after a sixth bug: `collectInstancesOfClass` matched `classIndex 0`,

@@ -11,9 +11,16 @@
 > is fixed in the submodule, and both are folded into the numbers above.
 > x86_64 is running as of this writing.
 >
-> One newcomer in that residual is untriaged and VM-visible rather than
-> display-related: `RSLinesTest` errors twice with `BlockCannotReturn` on a
-> four-frame non-local return.
+> **A Δcog IS obtainable on this host after all** — the stock VM's fixed-address
+> `codeZone` abort is arch-specific, and the x86_64 Cog runs under Rosetta.
+> The whole residual was measured against Cog v10.3.9 the same evening
+> (`docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`): six classes
+> are at exact parity on the same failing test, everything else is ours, and
+> the sixteen classes long bucketed as "the missing display" score 0 F / 0 E on
+> **headless** Cog with no prelude — now defect #24.  `RSLinesTest`'s
+> `BlockCannotReturn` is root-caused as defect #22 (a trait method copy whose
+> block still names the trait's method), and the storm that ate the trait
+> tests is defect #23 (Cog runs those 27 classes clean).
 >
 > **2026-08-22 — the package tier was 7x slower than its own baseline, and is
 > now faster than it.** Code-zone eviction became reachable on 2026-08-22 and
