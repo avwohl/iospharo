@@ -2078,6 +2078,13 @@ this entry is no longer about nine classes:
     StDebuggerActionModelTest 55P/0F                    53P/1F testEventAfterProceed
     StSpotterModelTest         2P/0F                    0P/2F
 
+Of those last two, the x86_64 sweep narrows it further:
+`StDebuggerActionModelTest` is **clean on x86_64** — the only class in 1800
+covered classes that is non-clean on arm and clean on x86 — so its single
+`testEventAfterProceed [Denial failed]` is timing, not logic.
+`StSpotterModelTest` fails on both arches and passes on Cog suspended or not,
+which makes its two failures the entire consistent, unexplained GUI residual.
+
 Counting the whole 2026-09-02 arm64 residual against that: **9 of the 21 FAILs
 and 17 of the 21 ERRORs are downstream of this one suspension.**  Three more
 FAILs are parity with Cog (image issues), and three are genuinely ours and
