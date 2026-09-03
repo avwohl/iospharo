@@ -3295,7 +3295,6 @@ private:
     PrimitiveResult primitiveObjectPointsTo(int argCount);   // 132
 
     // Become primitives
-    PrimitiveResult primitiveBecome(int argCount);           // 72
     void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for becomeForward (one-way)
     void scanStackSwap(Oop a, Oop b);                       // Helper for two-way become (one pass)
 
