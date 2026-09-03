@@ -3117,8 +3117,6 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
         interpreter_->afterGC();
     }
 
-    forceGCFlag_ = false;
-
 #ifdef _WIN32
     // EDEN_ROTATE detector: re-protect the retired half (its content is now
     // compact-scratch trash, so a stale pointer still faults on touch).
@@ -3227,10 +3225,6 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
         }
     }
     return result;
-}
-
-bool ObjectMemory::needsGC() const {
-    return forceGCFlag_;
 }
 
 void ObjectMemory::addRoot(Oop* root) {

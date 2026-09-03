@@ -607,12 +607,6 @@ public:
     /// Run a non-compacting mark-sweep GC (safe to call from allocations)
     void sweepGC();
 
-    /// Check if GC is needed
-    bool needsGC() const;
-
-    /// Force a GC on next allocation
-    void forceGC() { forceGCFlag_ = true; }
-
     /// Check if compacting GC is needed at next safe point
     bool needsCompactGC() const { return needsCompactGC_; }
     void clearCompactGCFlag() { needsCompactGC_ = false; }
@@ -988,7 +982,6 @@ public:
 private:
 
     // GC state
-    bool forceGCFlag_ = false;
     bool needsCompactGC_ = false;  // Set by allocator when compaction needed at safe point
     bool needsScavenge_ = false;   // Set by allocator when eden is full
 
