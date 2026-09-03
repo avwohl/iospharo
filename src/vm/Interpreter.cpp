@@ -2753,6 +2753,18 @@ void Interpreter::traceExtentBytecode(uint8_t bc) {
             frameDepth_ - g_traceExtentDepth, memory_.selectorOf(method_).c_str(), bc, tcls);
 }
 
+bool Interpreter::methodHoldsLiteral(Oop method, Oop lit) {
+    if (!method.isObject() || method.rawBits() <= 0x10000) return false;
+    if (!lit.isObject() || lit.rawBits() <= 0x10000) return false;
+    Oop hdr = memory_.fetchPointer(0, method);
+    if (!hdr.isSmallInteger()) return false;
+    int numLits = hdr.asSmallInteger() & 0x7FFF;
+    for (int i = 1; i <= numLits; i++) {
+        if (memory_.fetchPointer(i, method).rawBits() == lit.rawBits()) return true;
+    }
+    return false;
+}
+
 // Deliver the image's low-space interrupt (prim 125) if the threshold has
 // been crossed.  The crossing is LATCHED by ObjectMemory at the two sites that
 // spend old space, not sampled here -- sampling `freeOldSpaceBytes() <
@@ -8513,18 +8525,7 @@ void Interpreter::returnFromMethod() {
                         && topBlockOop.isObject() && topBlockOop.rawBits() > 0x10000) {
                     for (size_t si = 0; si < frameDepth_; si++) {
                         Oop fm = savedFrames_[si].savedMethod;
-                        if (!fm.isObject() || fm.rawBits() <= 0x10000) continue;
-                        Oop fhdr = memory_.fetchPointer(0, fm);
-                        if (!fhdr.isSmallInteger()) continue;
-                        int fLits = fhdr.asSmallInteger() & 0x7FFF;
-                        bool holdsBlock = false;
-                        for (int li = 1; li <= fLits; li++) {
-                            if (memory_.fetchPointer(li, fm).rawBits() == topBlockOop.rawBits()) {
-                                holdsBlock = true;
-                                break;
-                            }
-                        }
-                        if (holdsBlock) {
+                        if (methodHoldsLiteral(fm, topBlockOop)) {
                             if (__builtin_expect(nlrTrace, 0))
                                 fprintf(stderr, "[NLR-HOME] shared-block match frame=%zu "
                                         "(home #%s is a trait copy)\n", si,
@@ -8593,6 +8594,13 @@ void Interpreter::returnFromMethod() {
                         break;
                     }
                     if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                        fallbackCtx = ctx;
+                    }
+                    // Trait-copy home: the context holds the class's own copy of
+                    // the method while homeMethodOop is the trait's, so the oop
+                    // compare above cannot match.  The shared CompiledBlock can.
+                    // Only consulted if identity found nothing (defect #22).
+                    if (fallbackCtx.isNil() && methodHoldsLiteral(ctxMethod, topBlockOop)) {
                         fallbackCtx = ctx;
                     }
                     ctx = memory_.fetchPointer(0, ctx);

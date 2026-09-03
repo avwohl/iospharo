@@ -1435,6 +1435,14 @@ private:
     // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
     size_t lowSpaceThreshold_ = 0;
 
+    /// True when `method`'s literal slots hold `lit`.  Used by the non-local
+    /// return to recognise a home method that is a TRAIT COPY: the copy is a
+    /// different CompiledMethod from the trait's, but shares its CompiledBlock,
+    /// so "holds the block we are returning from" is the identity that
+    /// survives the copy where an oop compare against the block's outerCode
+    /// cannot.  See defect #22 in docs/vm-compat-bugs.md.
+    bool methodHoldsLiteral(Oop method, Oop lit);
+
     /// Deliver the image's low-space interrupt if ObjectMemory latched a
     /// threshold crossing.  Called from both interpreter loops; see the
     /// definition in Interpreter.cpp for why it is latched, not sampled.
