@@ -2241,10 +2241,16 @@ loop exit and `enterInterpreterFromCallback` RETURN to the callback trampoline
 but the C caller of an ABANDONED callback may no longer be there to return to.
 So the batch may end rc=0 (clean) or it may end rc=139.  Either beats rc=124
 after 1800 s, and the difference tells us whether the abandoned invocation
-still has live C frames: if it crashes, the next step is to decrement
-`callbackDepth_` on abandonment (the nested loop's own abandonment path
-already hands C a zeroed result) rather than to unwind through frames that are
-gone.
+still has live C frames: if it crashes, the next thing to try is the exit the
+loop's own abandonment path uses — it restores the suspended process and then
+`throw pharo::CallbackComplete{}`, with the comment *"C++ exception (not
+siglongjmp): unwinds through all C++"* — rather than a plain return.
+
+Worth knowing either way: `callbackDepth_` is decremented ONLY by
+`primitiveCallbackReturn` and by the two `[XTCB-DEAD-POP]` paths (worker
+timeouts).  A same-thread invocation the image abandons is never popped by
+construction, so the depth cannot come back to zero on its own.  That is why
+bounding the deferral, rather than waiting for the depth, is the fix.
 
 The mechanism is already described in our own source.  `Interpreter.cpp`'s
 `enterInterpreterFromCallback` comment says an *"abandoned same-thread
