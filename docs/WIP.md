@@ -415,9 +415,11 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
                later commits unbuilt
     packages   9326 P / 16 F / 16 E / 1 T      9382 P / 16 F / 18 E   (2026-08-23)
                (2026-09-03; 3 fewer errors than
-                08-22, loads 1.5-3.5x faster,
-                and one class hit the 120 s
-                bound -- see the report)
+                08-22, loads 1.5-3.5x faster.
+                The 55-pass gap is PER_CLASS_TIMEOUT:
+                I used the 120 s default, the
+                baseline used 180 s, and the class
+                takes 158 s -- not a regression)
     SUnit      27453 P / 21 F / 21 E / 5 T      27833 P / 22 F / 26 E / 10 T
                2005 classes, 99.17%             2046 classes, 99.15%
                (39 classes lost to the storm)   (ran the block arm lost)

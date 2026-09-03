@@ -18,14 +18,24 @@ Raw: `packages-arm-2026-09-03.txt`.
                     354   9326 v 9381   16 = 16   16 v 19
 
 **Three fewer errors, identical failures, and no new failing class.**  The
-55-pass gap is one class: `PMArbitraryPrecisionFloatTest` hit the 120 s
-`PER_CLASS_TIMEOUT` here, where on 2026-08-22 it fitted inside the same bound
-(58 ran / 57 passed / 1 err).  That is a 57-pass swing from one bound, exactly
-the effect `docs/results/packages-arm-2026-08-22.md` documents for x86_64.
-Whether it is variance on a borderline class or something tonight made slower
-is being measured separately — the low-space latch adds a little work to every
-old-space allocation, and this class is allocation-heavy, so it is not a
-question to wave away.
+55-pass gap is one class and one knob, not a regression — measured rather than
+assumed, because the low-space latch added tonight touches every old-space
+allocation and this class is allocation-heavy:
+
+    PMArbitraryPrecisionFloatTest alone, arm64, today   158 s
+                                                        58 ran / 57 passed / 1 err
+    PER_CLASS_TIMEOUT this run (the script default)     120 s   -> TIMEOUT
+    PER_CLASS_TIMEOUT the 2026-08-22 runs used          180 s   -> fits
+
+That the baseline used 180 s is legible in its own write-up, which records
+x86_64 "TIMEOUT after 180 s" for the same class.  158 s fits inside 180 and not
+inside 120, and the class's result at 158 s is byte-identical to the
+baseline's.  So the VM is doing the same work in the same time and the gap is
+mine for running the default bound.
+
+It does say the default is too small for this class on arm64 as well, not just
+under Rosetta — 158 s against a 120 s bound is 32% over, and the knob's comment
+currently describes it as "sized for arm64".
 
 ## Loads got substantially faster
 
