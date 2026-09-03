@@ -1,5 +1,67 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-09-03 (later) — defect #23 is two lost frames, not a mystery
+
+The arm64 Context storm cost 39 classes of every sweep and had been "a
+timing-sensitive Heisenbug" for weeks.  It is two concrete JIT bookkeeping
+misses, both in how inline-J2J activations reach the interpreter's frame stack.
+
+**How it was cornered.**  Three instruments, each answering the question the
+one before it raised.  `Interpreter::dumpSendChain` at the old-space FATAL,
+printing the active process's frames AND the materialized context chain with
+primitive 199/198 marked: it named the loop as
+`cannotReturn: -> error: -> signal: -> signal` scanning a chain with no
+`on:do:` in it.  Six per-site counters on the `cannotReturn:` sends: all
+515,981 of them came from one site, the ordinary return finding its sender
+already dead.  Two counters on the unwind paths that mark contexts dead, plus
+the corpse's marker: both zero, and the marker was `pc=nil`, not the `-1`
+sentinel an unwind writes -- so the sender died by RETURNING, while its callee
+was still live.  That is a duplicate or stale activation, and from there the
+code reads itself.
+
+**Fix 1 -- the closure captured a chain with holes.**  The chain loop's
+`ExitBlockCreate` handler called `createFullBlockWithLiteral` with J2J saves
+still pending.  Those saves are caller activations the JIT entered without
+pushing interpreter frames, and `materializeFrameStack` -- which gives the new
+closure its `outerContext` -- can only see `savedFrames_`.  Worse, the
+`enableJ2J()` below it rebased the slice and zeroed `j2jDepth`, so the saves
+were not merely invisible, they were DROPPED.  Materialize first; the JIT has
+already exited at that point, which is when every other handler consumes its
+saves.
+
+**Fix 2 -- the wrong context got the corpse marker.**
+`materializeJ2JSaveIntoFrame` skipped `pushFrame`'s rule that the frame being
+saved inherits `currentFrameMaterializedCtx_` and the current slot is cleared.
+The first save materialized IS that frame (a J2JSave records the CALLER's state
+at the call), so the pointer was left aimed at an activation that was no longer
+current -- and the next `popFrame` ran the "mark the returning frame's
+materialized context dead" store against a context whose activation was still
+live.  Hence a live frame's sender with `sender=nil, pc=nil`, and a
+`cannotReturn:` when its real callee returned.
+
+**Fix 3 -- a bound, and honestly labelled as one.**  Four of the six
+`cannotReturn:` sites had no rate limit at all; the VM already terminates the
+process at the fifth ("the error handler is not terminating").
+`cannotReturnStormGuard` applies that rule to the four, at 64 sends per process
+per 2,000,000 steps, tunable with `PHARO_CANNOT_RETURN_BURST` -- which is also
+the only way to exercise a guard that by construction cannot fire in a healthy
+run.  Validated at `burst=2`: it fires, terminates the process, the batch
+completes.
+
+**Measured, interleaved under held load** (the rate tracks machine load --
+6 of 8 with another tier running, 1 of 6 idle -- so blocked arms measure the
+load instead of the change):
+
+    A/B                          base       fixed
+    fix 1 only                 9 of 12     3 of 12
+    fix 1 + guard              7 of 10     0 of 10
+
+Why the storm allocates so violently is worth recording: the unhandled error
+reaches `Context>>freeze`, which COPIES the whole context chain to log it, and
+the chain is one full round deeper every time round the loop.  2.6M Contexts,
+517K Errors, 517K FullBlockClosures -- one round each.
+
+
 ## 2026-09-03 — a bounded quit, a trait-copy home, and 30 minutes a sweep
 
 Three VM fixes, all found by reading logs and the image rather than by
