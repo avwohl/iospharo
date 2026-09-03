@@ -8,10 +8,21 @@
 # Metacello load, and then `eval --save` to persist it. Neither works
 # everywhere:
 #
-#   * On macOS the stock VM aborts before it starts, "Could not allocate
+#   * On macOS the ARM64 stock VM aborts before it starts, "Could not allocate
 #     codeZone in the expected place (0x320000000)". That is the ASLR problem
-#     this project exists to solve, so the reference VM is unavailable on
-#     exactly the platform we most want to test.
+#     this project exists to solve.
+#     CORRECTION 2026-09-02: that is arch-specific, not host-specific. The
+#     x86_64 stock VM runs fine under Rosetta and gives this machine a Cog
+#     baseline again:
+#         mkdir -p /tmp/harness-x86 && cd /tmp/harness-x86
+#         arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/130+vm | bash'
+#         arch -x86_64 ./pharo Pharo.image eval '42 factorial printString'
+#     Verified on Cog v10.3.9, `eval` and `eval --save` both. Every stock-VM
+#     command needs the `arch -x86_64` prefix or you get the abort above. So a
+#     Cog-loaded package baseline IS obtainable now; this script staying
+#     self-hosted is still the right default (driving Metacello with our own VM
+#     is itself a workload worth exercising), but "no reference VM" is no
+#     longer the reason.
 #   * `eval --save` is the stock VM's flag. Ours forwards it to the image's
 #     command-line handler and nothing is written -- verified by setting a
 #     global and finding it gone on the next launch.
