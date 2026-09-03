@@ -2238,6 +2238,40 @@ same `ExitBlockCreate` twin and does NOT materialize -- its handlers are
 documented to assume `depth==0` -- and a counter now says whether that
 assumption holds in practice.
 
+#### One site, 515,981 sends, and `Context>>freeze` as the allocator
+
+Six per-site counters on the `cannotReturn:` sends settle where the loop runs.
+One storm, one site:
+
+    [SEND-CHAIN] cannotReturn: sends by site (515981 total):
+                 return-into-dead-sender=515981
+
+That is the ordinary return path finding its SENDER context already dead -- pc
+nil, or the -1 `HasBeenReturnedFrom` sentinel an unwind writes.  And the full
+context chain at the abort shows why it never ends:
+
+    #freeze <- #freezeUpTo: ... #handleError:log: <- #handleError: <- #handleError:
+    <- #unhandledErrorAction <- #defaultAction <- #handleSignal: <- #signal
+    <- #signalForException: <- #raiseUnhandledError <- #defaultAction
+    <- #handleSignal: <- #signal <- #signal: <- #error: <- #cannotReturn:
+    <- #runSingleTest:selector:timeout:priority:on: <- [] in #ifTrue:ifFalse:
+
+`Context>>freeze` COPIES the whole context chain so the error can be logged,
+and the chain is one full round deeper every time round.  That is the
+allocator: 2.6M Contexts, 517K Errors, 517K FullBlockClosures, one round each.
+
+Four of the six sites had no bound at all.  The VM already carries the rule at
+the fifth -- "Too many cannotReturn: events, the error handler is not
+terminating, fall through to terminate the process" -- so
+`cannotReturnStormGuard` now applies it to the four that lacked it: 64 sends
+from one process inside a 2,000,000-step window, then terminate that process.
+
+**That is a bound, not a diagnosis.**  The open question is why a JIT'd frame
+returns into a context an earlier unwind already killed.  Two sites write that
+corpse marker -- the NLR home search in `returnValue`, and
+`handleContextNLRUnwind`'s kill of `startCtx..ensureCtx` -- and both are now
+counted, so the next storm says which unwind left the frame behind.
+
 #### The fatal now says WHO, not just WHAT
 
 The census has twice been unable to name the loop behind a Context storm:

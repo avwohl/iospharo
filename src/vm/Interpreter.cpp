@@ -481,6 +481,7 @@ namespace pharo {
 // See the definition next to dumpSendChain: per-site cannotReturn: tallies.
 extern uint64_t g_cannotReturnSite[6];
 extern uint64_t g_blockCreatePendingJ2J[2];
+extern uint64_t g_contextsKilledByUnwind[2];
  namespace jit {
 class JITRuntime;
 void dumpBailGateHisto(ObjectMemory& mem);
@@ -2272,6 +2273,13 @@ uint64_t g_cannotReturnSite[6] = {0, 0, 0, 0, 0, 0};
 // built with saves pending captures a sender chain missing every J2J-hidden
 // caller, which is defect #23's mechanism.
 uint64_t g_blockCreatePendingJ2J[2] = {0, 0};
+// Contexts marked dead (sender=nil, pc=-1) by an unwind, per site.  [0] is the
+// NLR home search in returnValue; [1] is handleContextNLRUnwind's kill of
+// startCtx..ensureCtx.  A frame that is still live when its context is killed
+// here will later return INTO a dead sender -- the site that fires half a
+// million times in a defect-#23 storm -- so these two tallies say which unwind
+// left the frame behind.
+uint64_t g_contextsKilledByUnwind[2] = {0, 0};
 static const char* const kCannotReturnSiteName[6] = {
     "nlr-home-sender-nil",         // NLR: home context found, its sender is nil/invalid
     "return-into-dead-sender",     // normal return: sender's pc is nil or -1 (returned-from)
@@ -2365,6 +2373,11 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                             (unsigned long long)g_cannotReturnSite[i]);
             fprintf(stderr, "\n");
         }
+        if (g_contextsKilledByUnwind[0] || g_contextsKilledByUnwind[1])
+            fprintf(stderr, "[SEND-CHAIN] contexts killed by unwind: "
+                    "nlr-home-search=%llu aboutToReturn-unwind=%llu\n",
+                    (unsigned long long)g_contextsKilledByUnwind[0],
+                    (unsigned long long)g_contextsKilledByUnwind[1]);
         if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
             fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
                     "chain-loop=%llu (materialized first) resume-loop=%llu "
@@ -7863,6 +7876,7 @@ void Interpreter::returnValue(Oop value) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
                         memory_.storePointer(1, c, hasBeenReturnedPC);
+                        g_contextsKilledByUnwind[0]++;
                         c = next;
                     }
                     Oop homeSender = memory_.fetchPointer(0, homeCtx);
@@ -7976,6 +7990,22 @@ void Interpreter::returnValue(Oop value) {
                             push(activeContext_);  // receiver: the returning context
                             push(value);           // arg: the value being returned
                             g_cannotReturnSite[1]++;
+                            // Name the first few: which method is returning,
+                            // and into whose corpse.  Bounded -- a storm sends
+                            // half a million of these.
+                            if (g_cannotReturnSite[1] <= 3) {
+                                fprintf(stderr,
+                                    "[DEAD-SENDER #%llu] #%s returning into a dead "
+                                    "sender (#%s, pc=%s); unwind kills so far: "
+                                    "nlr=%llu aboutToReturn=%llu\n",
+                                    (unsigned long long)g_cannotReturnSite[1],
+                                    memory_.selectorOf(method_).c_str(),
+                                    memory_.selectorOf(
+                                        memory_.fetchPointer(3, sender)).c_str(),
+                                    senderPC.isNil() ? "nil" : "-1",
+                                    (unsigned long long)g_contextsKilledByUnwind[0],
+                                    (unsigned long long)g_contextsKilledByUnwind[1]);
+                            }
                             if (cannotReturnStormGuard(kCannotReturnSiteName[1])) return;
                             sendSelector(selectors_.cannotReturn, 1);
                             return;
@@ -9518,6 +9548,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
             Oop nextSender = memory_.fetchPointer(0, c);
             memory_.storePointer(0, c, nilObj);  // sender = nil
             memory_.storePointer(1, c, hasBeenReturnedPC);  // pc = sentinel
+            g_contextsKilledByUnwind[1]++;
             c = nextSender;
         }
     }
