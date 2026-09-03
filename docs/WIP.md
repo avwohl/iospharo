@@ -15,6 +15,36 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-09-03, 09:40)
+
+**Best sweep to date, and the residual is now mostly not ours.**
+
+    run                        classes   tests    PASS   FAIL  ERROR  T    rate
+    fake-GUI prep                2047    28060   27857    11     4    6   99.28%
+    guard only                   2043    28043   27812    18    28    3   99.18%
+    2026-09-02 (storm aborted)   2005    27682   27453    21    21    5   99.17%
+
+All 2047 classes ran.  ERROR 28 -> 4, FAIL 18 -> 11.  Fourteen classes are
+non-clean (counting TIMEOUTs), and against the Cog baseline taken the same
+morning: **four at exact parity with Cog, one BETTER than Cog**
+(`StDebuggerTest`, 2 F to Cog's 3), three partly shared, three slow-but-correct,
+and **three ours** -- `TraitFileOutTest` (a working-directory artifact whose own
+error text names the cause), `TKTWorkerTest` (flaky worker timing) and
+`StSpotterTest` (one real failure).
+
+The whole display family is gone: all 178 `Sp*` classes clean, and the ten
+previously non-clean `Sp*`/`FTTableMorph` classes clean.  16 E and 7 F removed
+by the prep alone.
+
+`DUP-FRAME` is **0** on the same workload that produced 126 before -- the
+corrected detector agreeing that all 126 were the region-rebuild false
+positive.
+
+Costs and caveats measured, not assumed: the fake-GUI prep wedges batch 651-700
+on `KeyboardKeyTest>>testEqual` (recovery pass gets all 31 classes back, so
+wall-clock not coverage), and this run's four `MISDISPATCH` lines are the other
+detector's `CleanBlockClosure` false positives, fixed after the sweep started.
+
 ## Right now (2026-09-03, 07:30)
 
 **All three tiers are green on both arches, and the sweeps agree.**
