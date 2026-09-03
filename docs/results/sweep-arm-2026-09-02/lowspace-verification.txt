@@ -1,0 +1,26 @@
+# Low-space breaker verification, 2026-09-03 — it fires, and the heap survives
+#
+# storm_repro_freeze_recursion.st under PHARO_MAX_OLD_SPACE_MB=512, on a
+# build-rel carrying the latch (34b251b3 / 3c75aca5) but NOT yet the bounded
+# trace or the headroom cap.
+#
+#   [LOW-SPACE] lines : 462
+#   FATAL abort       : 0
+#
+# Before the fix, the same repro is documented by its own header as ending in
+# "[VM] FATAL old space exhausted" with a Context-dominated census, and the
+# 2026-09-02 arm64 sweep burned 12 GB with zero [LOW-SPACE] lines.
+
+[LOW-SPACE] threshold crossed (free=12 MB) — signaling LowSpaceSemaphore, culprit recorded
+[LOW-SPACE] threshold crossed (free=12 MB) — signaling LowSpaceSemaphore, culprit recorded
+[LOW-SPACE] threshold crossed (free=12 MB) — signaling LowSpaceSemaphore, culprit recorded
+...
+# The image acts on it exactly as the 2026-07 design intended -- the P60
+# lowSpaceWatcher preempts the P40 hog and signals OutOfMemory into it:
+
+[XFER-20] old=0x113cbb150 pri=40 -> new=0x113c42108 pri=60
+[XFER-21] old=0x113c42108 pri=60 -> new=0x7341401c08 pri=60
+
+# And the hog swallows the OutOfMemory and re-crosses, which is why there are
+# 462 of them rather than one -- predicted before the run, and the reason the
+# trace is bounded in a later commit.

@@ -228,7 +228,13 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     default-on with opt-out knobs only (`ObjectMemory.cpp:1803`, `:1895`,
     `:558`).  So "the 2026-07 trigger fix silently reverted" is already
     partly refuted; a second trigger is the likelier reading.
- 2. **Verify the low-space breaker actually fires — NOT with a bare `eval`.**
+ 2. ~~**Verify the low-space breaker actually fires**~~ — DONE 2026-09-03:
+    462 `[LOW-SPACE]` lines and zero FATAL aborts on
+    `storm_repro_freeze_recursion.st` at `PHARO_MAX_OLD_SPACE_MB=512`, with the
+    P60 watcher preempting the P40 hog.  And it worked in a bare `eval`, which
+    the 2026-07 dossier said was impossible.  Original note kept below.
+
+ 2b. (superseded) **Verify the low-space breaker actually fires — NOT with a bare `eval`.**
     The "before" evidence is on record (12 GB consumed, zero `[LOW-SPACE]`
     lines).  The obvious "after" test is
     `PHARO_MAX_OLD_SPACE_MB=512 ./build-rel/test_load_image <image> eval

@@ -99,8 +99,26 @@ the image had registered one disarmed the breaker permanently and signalled
 nothing.  It now disarms only once it can deliver.
 
 Closes LEAD 19 in `docs/vm-compat-bugs.md`, which asked for the artifact or
-the retraction.  arm64 C++ tier green, no spurious `[LOW-SPACE]`.  Verifying
-it against a live storm is still open.
+the retraction.
+
+**VERIFIED 2026-09-03.**  `storm_repro_freeze_recursion.st` under
+`PHARO_MAX_OLD_SPACE_MB=512`:
+
+    [LOW-SPACE] lines : 462
+    FATAL abort       : 0
+
+The breaker fires, and the heap never exhausts.  The image acts on it exactly
+as the 2026-07 design intended — `[XFER] old=... pri=40 -> new=... pri=60`, the
+P60 `lowSpaceWatcher` preempting the P40 hog, and `OutOfMemory>>signalerContext`
+in the traces.  Before the fix the same repro is documented by its own header
+as ending in a Context-dominated `FATAL old space exhausted`, and the
+2026-09-02 arm64 sweep burned 12 GB with zero `[LOW-SPACE]` lines.  Raw in
+`docs/results/sweep-arm-2026-09-02/lowspace-verification.txt`.
+
+That also corrects `docs/history/arm-context-storm-2026-07.md`, which says the
+mitigation is "DISARMED in bare `eval`" because the image never runs
+`installLowSpaceWatcher` there.  It is not: this was a bare `eval` and the
+breaker armed and fired.
 
 **Do not expect this to cure the storm.**  Read from the image's own source:
 `lowSpaceWatcher` ends in `installLowSpaceWatcher`, so the image re-arms prim
