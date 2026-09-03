@@ -2792,9 +2792,21 @@ void Interpreter::checkLowSpaceSignal() {
     memory_.armLowSpaceThreshold(0);   // also clears the latch
     memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
                              getActiveProcess());
-    fprintf(stderr, "[LOW-SPACE] threshold crossed (free=%zu MB) — "
-            "signaling LowSpaceSemaphore, culprit recorded\n",
-            memory_.freeOldSpaceBytes() / (1024 * 1024));
+    // Bounded trace.  This is not necessarily a one-shot event: the image's
+    // `lowSpaceWatcher` ends in `installLowSpaceWatcher`, which re-arms prim
+    // 125, and its action is `preemptedProcess signalException: OutOfMemory
+    // new`.  OutOfMemory is an Error, so a hog whose loop sits under an
+    // `on: Error do:` swallows it and immediately re-crosses -- which is
+    // exactly the shape of the 2026-09-02 storm.  Delivering the signal is
+    // our job; whether the image acts on it is the image's policy, and it is
+    // Cog's policy too.  Print the first few and then thin out.
+    lowSpaceSignalCount_++;
+    if (lowSpaceSignalCount_ <= 5 || (lowSpaceSignalCount_ & 0x3F) == 0) {
+        fprintf(stderr, "[LOW-SPACE] threshold crossed #%llu (free=%zu MB) — "
+                "signaling LowSpaceSemaphore, culprit recorded\n",
+                (unsigned long long)lowSpaceSignalCount_,
+                memory_.freeOldSpaceBytes() / (1024 * 1024));
+    }
     synchronousSignal(lowSem);
 }
 

@@ -38,6 +38,19 @@ Closes LEAD 19 in `docs/vm-compat-bugs.md`, which asked for the artifact or
 the retraction.  arm64 C++ tier green, no spurious `[LOW-SPACE]`.  Verifying
 it against a live storm is still open.
 
+**Do not expect this to cure the storm.**  Read from the image's own source:
+`lowSpaceWatcher` ends in `installLowSpaceWatcher`, so the image re-arms prim
+125 after every event, and its action is
+
+    UIManager>>lowSpaceWatcherDefaultAction: preemptedProcess
+        preemptedProcess signalException: OutOfMemory new
+
+`OutOfMemory` is an `Error`, so a hog whose loop sits under an `on: Error do:`
+handler — which is precisely the shape of the 2026-09-02 storm, 6.66M caught
+Errors — swallows it and re-crosses immediately.  Delivering the signal is the
+VM's job and this is Cog's policy too; acting on it is the image's.  The trace
+is bounded (first five, then every 64th) for that reason.
+
 ## 2026-09-02 — lifter use-after-free in multi-entry loader construction
 
 `test_sista_ir` segfaulted on x86_64 (rc=139, no output because stdout was

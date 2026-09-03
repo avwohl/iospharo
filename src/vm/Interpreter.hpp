@@ -1440,6 +1440,13 @@ private:
     /// definition in Interpreter.cpp for why it is latched, not sampled.
     void checkLowSpaceSignal();
 
+    /// How many times the low-space interrupt has been delivered this run.
+    /// The image re-arms after handling (`lowSpaceWatcher` ends in
+    /// `installLowSpaceWatcher`), so a hog that swallows the resulting
+    /// OutOfMemory keeps re-crossing; the trace is bounded rather than
+    /// per-crossing.
+    uint64_t lowSpaceSignalCount_ = 0;
+
     // VM start time for ioMSecs() - millisecond clock base
     std::chrono::steady_clock::time_point vmStartTime_ = std::chrono::steady_clock::now();
 
