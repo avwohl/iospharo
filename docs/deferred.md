@@ -87,6 +87,33 @@ The history lives in `docs/history/`; nothing was deleted.
   IS delivered from this loop as of `3c75aca5`, which matters more here than
   on the main path precisely because everything allocated here is tenured.
 
+## The primitive surface is much larger than the primitive table
+
+Audited 2026-09-02, recorded so nobody re-derives it and reads it as breakage:
+`Interpreter.hpp` declares **828** `primitive*` members and only **460** are
+reachable through `primitiveTable_` (`src/ios/generated_primitives.inc` plus
+the explicit assignments in `Interpreter.cpp`).  The 368 that are not fall into
+three groups, all deliberate:
+
+  * **The iOS device surface** — Camera, MIDI, IAP, Notification, Keychain,
+    Location, Joystick, Serial, Sound mixer, SSL, Clipboard, Share, Haptics.
+    Nothing in a desktop Pharo image calls these, and the named-primitive
+    registry (`registerNamedPrimitive`, `InterpreterProxy.cpp`) is populated
+    from the plugin tables with free functions, not these members.
+  * **Squeak-era slots Pharo 13 does not use.**  `primitiveScanCharacters` is
+    the clearest: it is declared `// 103`, fully implemented, and
+    `primitiveTable_[103] = nullptr` — and the image contains **zero**
+    `<primitive: 103>` call sites, so wiring it would change nothing.  (Worth
+    stating because the character scanner is the glyph path and defect #19 is
+    about glyph drawing being 12-25x slower; this is not that.)
+  * **Helpers reached by direct call rather than by index** — e.g.
+    `primitiveShallowCopy`, called from `primitiveClone`.
+
+One member was genuinely dead and is gone (`primitiveBecome`, `c4f4106c`): no
+slot pointed at it, nothing called it, and Spur has no scalar two-way become
+for it to be.  The audit found no other case of an implemented primitive that
+the image actually calls and the table leaves null.
+
 ## Platform validation status
 
 - **Windows has no CI job and has not been validated in ~250 commits** (last
