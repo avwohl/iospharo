@@ -2176,6 +2176,40 @@ finds nothing, and the signal recurses forever.  The next dump extends the
 walk to the materialized context chain and marks primitive 199/198 frames,
 which either confirms the handler is missing from the chain or refutes it.
 
+#### The chain is TRUNCATED, and the loop is a non-local return that cannot land
+
+A second storm, captured with the context walk, is the whole bug in eleven
+lines:
+
+    [SEND-CHAIN] active-process frames, innermost first (depth=4, ...)
+    [SEND-CHAIN]   running  #signal                                     rcvr=0x15db0dd20
+    [SEND-CHAIN]   [    3] #signal:                                     rcvr=0x15db0dd20
+    [SEND-CHAIN]   [    2] #error:                                      rcvr=0x15db0dd58
+    [SEND-CHAIN]   [    1] #cannotReturn:                               rcvr=0x15db0dd58
+    [SEND-CHAIN]   [    0] #runSingleTest:selector:timeout:priority:on: rcvr=0x12168e078
+    [SEND-CHAIN] materialized context chain from activeContext_=0x15db0dd58:
+    [SEND-CHAIN]   ctx[  0] 0x15db0dd58 #runSingleTest:selector:timeout:priority:on: prim=0
+    [SEND-CHAIN]   ctx[  1] 0x15db2a470 [] in #ifTrue:ifFalse:                        prim=0
+    [SEND-CHAIN] walked 2 contexts: 0 handler(s), 0 unwind(s)
+                 -- NO on:do: IN REACH, which is why signal never terminates
+
+Read it inside out.  `Context>>cannotReturn:` is the BlockCannotReturn path: a
+non-local return could not find its home, so the VM sends `cannotReturn:` per
+spec, which sends `error:` -> `signal:` -> `signal`.  `signal` then scans the
+sender chain for a handler and the chain is **two contexts long** — it ends at
+`[] in #ifTrue:ifFalse:` whose sender is nil.  Everything above that, including
+the `on:do:` the runner method's own selector advertises, is simply not in the
+chain.  No handler, so the unhandled-error path runs, which returns from a
+block whose home is equally unreachable, which is another `cannotReturn:`.
+One `Error`, one `FullBlockClosure` and about five `Context`s per turn, forever
+— which is the census, exactly.
+
+So defect #23 is not a separate bug from #22.  Both are the JIT losing the
+frame a non-local return needs; #22 lost the home method's identity and was
+fixable by matching literals, and #23 loses the sender chain outright.  The
+knob bisect points at inline J2J, which is precisely the emit that runs a
+callee WITHOUT pushing an interpreter frame.
+
 #### The fatal now says WHO, not just WHAT
 
 The census has twice been unable to name the loop behind a Context storm:
