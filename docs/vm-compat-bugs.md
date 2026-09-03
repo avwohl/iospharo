@@ -2314,8 +2314,11 @@ Every A/B above ran the same five-class batch, and every one of them said the
 fix was clean.  The full arm64 sweep said otherwise within four batches:
 
     binary                       batch 1-100      sweep's first 408 classes
-    unfixed (2026-09-02)         0 non-clean      --
+    unfixed (2026-09-02)         0, 0 non-clean   --
     fix 1 + storm guard         11 non-clean      55 non-clean
+    fix 1 + fix 2 + guard       12, 12 non-clean  --
+
+Fix 2 adds nothing on top: the damage is all fix 1's.
 
 and the failures are the shifted-operand-stack signature, not anything to do
 with storms: `NonBooleanReceiver: proceed for truth` and
