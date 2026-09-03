@@ -8382,6 +8382,15 @@ void Interpreter::returnFromMethod() {
             // home method. Follow the chain until we reach the actual CompiledMethod
             // (whose last literal is NOT a CompiledMethod — it's the class binding).
             Oop homeMethodOop = Oop::nil();
+            // The outermost CompiledBlock of the chain we walk below — i.e. the
+            // block whose outerCode IS homeMethodOop.  Needed because a TRAIT
+            // method and every class copy of it SHARE that block object while
+            // its outerCode names only the trait's method; see the shared-block
+            // pass at the savedFrames_ scan.  Measured on Pharo 13.1:
+            //   (RSAbstractLine>>#markersIncludesPoint:) block
+            //     == (RSTMarkeable>>#markersIncludesPoint:) block   -> true
+            //   that block's outerCode == RSTMarkeable's method     -> true
+            Oop topBlockOop = method_;
             if (method_.isObject() && method_.rawBits() > 0x10000) {
                 Oop hdr = memory_.fetchPointer(0, method_);
                 if (hdr.isSmallInteger()) {
@@ -8415,6 +8424,7 @@ void Interpreter::returnFromMethod() {
                                 break;
                             }
                             // It's a CompiledBlock — follow the chain
+                            topBlockOop = enclosing;
                             enclosing = ecLastLit;
                             chainDepth++;
                         }
@@ -8468,8 +8478,65 @@ void Interpreter::returnFromMethod() {
 
                 // ALSO check savedFrames_ (activateBlock sets SIZE_MAX but the home
                 // might still be in inline frames if block was re-pushed after materialization)
+                //
+                // TWO passes.  The first is oop identity against homeMethodOop,
+                // which is what this has always done.  The second exists for
+                // TRAIT METHOD COPIES: a class that uses a trait gets its own
+                // CompiledMethod, but that copy SHARES the trait's
+                // CompiledBlock object, and the block's outerCode names only
+                // the trait's method.  So the frame on the stack holds the
+                // class's copy while homeMethodOop is the trait's, identity
+                // can never match, the context-chain search below finds
+                // nothing either, and the VM sends cannotReturn: on a home
+                // that is alive — `BlockCannotReturn` (defect #22,
+                // RSLinesTest>>testMarkerOffset; 677 installed methods in a
+                // stock Pharo 13.1 image carry a block with a foreign
+                // outerCode AND a non-local return in it).
+                //
+                // Matching on "this frame's method holds the very block we are
+                // returning from" is the identity that survives the copy.
+                // Only reached when identity already failed, so it costs
+                // nothing on the normal path.  A home method present on the
+                // stack more than once is ambiguous here — the closure's
+                // outerContext is the real answer and the dynamic fallback
+                // below uses it; this pass keeps the same first-match-from-
+                // outermost order as the identity pass rather than inventing a
+                // different one.
+                size_t nlrHomeFrameIdx = SIZE_MAX;
                 for (size_t si = 0; si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                        nlrHomeFrameIdx = si;
+                        break;
+                    }
+                }
+                if (nlrHomeFrameIdx == SIZE_MAX
+                        && topBlockOop.isObject() && topBlockOop.rawBits() > 0x10000) {
+                    for (size_t si = 0; si < frameDepth_; si++) {
+                        Oop fm = savedFrames_[si].savedMethod;
+                        if (!fm.isObject() || fm.rawBits() <= 0x10000) continue;
+                        Oop fhdr = memory_.fetchPointer(0, fm);
+                        if (!fhdr.isSmallInteger()) continue;
+                        int fLits = fhdr.asSmallInteger() & 0x7FFF;
+                        bool holdsBlock = false;
+                        for (int li = 1; li <= fLits; li++) {
+                            if (memory_.fetchPointer(li, fm).rawBits() == topBlockOop.rawBits()) {
+                                holdsBlock = true;
+                                break;
+                            }
+                        }
+                        if (holdsBlock) {
+                            if (__builtin_expect(nlrTrace, 0))
+                                fprintf(stderr, "[NLR-HOME] shared-block match frame=%zu "
+                                        "(home #%s is a trait copy)\n", si,
+                                        memory_.selectorOf(fm).c_str());
+                            nlrHomeFrameIdx = si;
+                            break;
+                        }
+                    }
+                }
+                if (nlrHomeFrameIdx != SIZE_MAX) {
+                    {
+                        size_t si = nlrHomeFrameIdx;
                         // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
                         if (__builtin_expect(nlrTrace, 0))
