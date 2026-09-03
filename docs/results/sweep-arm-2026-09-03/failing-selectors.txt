@@ -1,0 +1,53 @@
+FTTableMorphTest                           ERROR: testCanAlternateRowColors (SubscriptOutOfBounds: 1 in #())
+LibTTYTest                                 ERROR: test1 (SymbolNotFoundError: Could not find symbol named: #tty_spawn searching in module: 'libtty.dylib')
+LibTTYTest                                 ERROR: test2 (SymbolNotFoundError: Could not find symbol named: #tty_spawn searching in module: 'libtty.dylib')
+LibTTYTest                                 ERROR: test3 (SymbolNotFoundError: Could not find symbol named: #tty_spawn searching in module: 'libtty.dylib')
+LibTTYTest                                 ERROR: test4 (SymbolNotFoundError: Could not find symbol named: #tty_spawn searching in module: 'libtty.dylib')
+LibTTYTest                                 ERROR: test5 (SymbolNotFoundError: Could not find symbol named: #tty_spawn searching in module: 'libtty.dylib')
+MCSmalltalkhubRepositoryTest               TIMEOUT: testVersionFromFileNamed (exceeded 80s)
+NoUnusedVariablesLeftTest                  TIMEOUT: testNoUnusedTemporaryVariablesLeft (exceeded 80s)
+OCClassBuilderTest                         ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+RSRoassalTest                              ERROR: testOpen (MessageNotUnderstood: Message not understood: ByteSymbol >> #numArgsError:)
+ReleaseTest                                FAIL: testNoDeadSubscriptions [Got an Array(a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to MethodModified)) instead of #().]
+ReleaseTest                                TIMEOUT: testNoShadowedVariablesInMethods (exceeded   RUN: testNoSuperInitializeOnClassSideInitialization
+ReleaseTest                                FAIL: testUnknownProcesses [Found unknown processes: 'CommandLine handler process'':'a Process in SessionManager>>snapshot:andQuit:
+SpAthensAdapterTest                        ERROR: testResizeMakesCanvasResize (MessageNotUnderstood: receiver of "x" is nil)
+SpComponentListAdapterTest                 ERROR: testAddPresenterAddsWidget (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest                ERROR: testChangeListInPresenterUpdatesWidget (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest                ERROR: testDoubleClickActivatesRowInDoubleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest                ERROR: testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph (AssertionFailure: Assertion failed)
+SpListCommonPropertiestTest                ERROR: testSetColumnTitleInPresenterPutsColumnHeaderMorph (SubscriptOutOfBounds: 1 in #())
+SpListCommonPropertiestTest                ERROR: testSingleClickActivatesRowInSingleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpTableCommonPropertiestTest               ERROR: testChangeListInPresenterUpdatesWidget (SubscriptOutOfBounds: 1 in #())
+SpTableCommonPropertiestTest               ERROR: testDoubleClickActivatesRowInDoubleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpTableCommonPropertiestTest               ERROR: testSingleClickActivatesRowInSingleClickActivationMode (SubscriptOutOfBounds: 1 in #())
+SpTreeAdapterMultipleSelectionTest         ERROR: testClickDoesNotAccumulatesSelection (SubscriptOutOfBounds: 1 in #())
+SpTreeAdapterMultipleSelectionTest         ERROR: testShiftClicktAccumulatesSelection (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterMultiColumnMultiSelectionTest   FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterMultiColumnMultiSelectionTest   ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterMultiColumnTest          FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterMultiColumnTest          ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterSingleColumnMultiSelectionTest   FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterSingleColumnMultiSelectionTest   ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+SpTreeTableAdapterSingleColumnTest         FAIL: testAfterOpeningEmptyLazyChildrenExpandIconVanish [Denial failed]
+SpTreeTableAdapterSingleColumnTest         ERROR: testChangingRootsUpdateWidget (SubscriptOutOfBounds: 1 in #())
+StDebuggerInspectorTest                    FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+StDebuggerTest                             FAIL: testIsInSelectedContextPackage [Got #on:do: instead of #runTestCaseUnderWatchdog:.]
+StDebuggerTest                             FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+StSpotterModelTest                         FAIL: testAnnounceQueryEndedIsSentOnce [Got 0 instead of 1.]
+StSpotterModelTest                         FAIL: testSpotterModelShouldWaitToPerformActualSearch [Assertion failed]
+StSpotterTest                              FAIL: testOpenSpotterRefreshesPreviewOnce [Got 0 instead of 1.]
+StTranscriptPresenterTest                  FAIL: testAnnouncementIsWritten [Got '' instead of 'test'.]
+StTranscriptPresenterTest                  FAIL: testClear [Got '' instead of 'test'.]
+StTranscriptPresenterTest                  FAIL: testReset [Got '' instead of 'test'.]
+SystemDependenciesTest                     FAIL: testExternalUIDependencies [Given Collections do not match!
+TKTCommonQueueWorkerPoolTest               TIMEOUT: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection (exceeded 8Total: 7 P:6 F:0 E:0 S:0 T:1
+TKTWorkerPoolTest                          TIMEOUT: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection (exceeded 80s)
+TKTWorkerTest                              ERROR: testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected (TKTTimeoutException: )
+TKTWorkerTest                              ERROR: testWorkerProcessDiesAfterWorkerIsCollected (TKTTimeoutException: )
+TKTWorkerTest                              TIMEOUT: testWorkerProcessIsWorkingUntilAllTasksAreDone (exceeded 80s)
+TraitFileOutTest                           ERROR: testFileOutCategory (FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/Generated-Trait-Test-Package.st')
+TraitFileOutTest                           ERROR: testFileOutCategory (KeyNotFound: key #'Generated-Trait-Test-Package' not found in PackageOrganizer)
+TraitFileOutTest                           ERROR: testFileOutTrait (FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/T6.st')
+WeakAnnouncerTest                          FAIL: testNoDeadWeakSubscriptions [an Array(a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodModified) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved)) should have been empty]
+ZnClientTest                               FAIL: testQueryGoogle [Assertion failed]
