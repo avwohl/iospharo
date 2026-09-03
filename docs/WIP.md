@@ -58,10 +58,39 @@ pass-rate numbers:
     the runner sorts immediately after `TonelWriterV3Test` (index 1912).
 
 The **x86_64 sweep is in flight** with the same settings, output under the
-session scratchpad `sweep-x86/`.  Nothing may touch `/tmp/sunit_*` until it
-finishes -- that rules out re-running arm batch 1901-1950, naming the storm's
-class, and verifying the watchdog fix, all of which are queued behind it.
-The package tier on both arches follows.
+session scratchpad `sweep-x86/`.
+
+### Queued behind the x86_64 sweep — do these in order when it finishes
+
+Everything here is blocked for one of two reasons: every SUnit runner
+invocation reads and writes the same fixed `/tmp/sunit_*` paths (a targeted
+run hijacks the sweep's next batch, and `test_load_image ... eval` touches
+`/tmp/sunit_run_completed.txt`, which makes `SUnitRunner>>startUp:` skip a
+batch entirely), or the sweep is running the binary that would be replaced.
+
+ 1. **Rebuild `build-x86`.**  It is mid-sweep on the binary, so this MUST NOT
+    happen before the sweep exits.  It is behind `2c2c4616` (lifter scoping),
+    `34b251b3` and `3c75aca5` (low-space breaker).
+ 2. **Name the class that storms.**  Re-run arm batch 1901-1950:
+    `printf '1901 1950' > /tmp/sunit_batch.txt` and launch the prepped image.
+    The x86 sweep will also pass through that range and may name it for free.
+    Index 1911 is `TonelWriterV3Test`; 1951 is `UndefinedPackageTest`.
+ 3. **Verify the low-space breaker actually fires.**  The "before" evidence is
+    already on record (12 GB consumed, zero `[LOW-SPACE]` lines).  For "after":
+    `PHARO_MAX_OLD_SPACE_MB=512 ./build-rel/test_load_image <image> eval
+    "<contents of scripts/pharo-headless-test/storm_repro_freeze_recursion.st>"`
+    -- expect a `[LOW-SPACE]` line instead of the tenure FATAL.
+ 4. **Verify the runner watchdog fix.**  Re-prep an image with the current
+    submodule (`7830936`) and run a class with a known timeout
+    (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line start.
+ 5. **Reproduce `RSLinesTest>>testMarkerOffset`** on its own.  Both errors are
+    `BlockCannotReturn` on a 4-frame non-local return
+    (`markersIncludesPoint:` -> `markerShapesInPositionDo:` ->
+    `withEnd:controlPoints:do:` -> `setPositionTo:vector:do:` -> `aBlock value:`,
+    all synchronous), which is VM-visible, not display.  Bisect with
+    `PHARO_NO_JIT=1` first, then the T1 knobs.
+ 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.
+ 7. Package tier on both arches.
 
 ## Where the three tiers stand
 
