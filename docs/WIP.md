@@ -221,6 +221,14 @@ which waits on the sweep's pid; the rest are by hand.
     comparison script is in the session scratchpad (`compare-sweeps.sh`);
     the arm side is staged at `sweep-arm/all_results.txt`.
  7. Package tier on both arches.
+ 7b. **Chase defect #25's DNUs** — the highest-value single item to come out of
+    tonight.  Our headless resume restarts `MorphicRenderLoop` at pri-80, it
+    busy-spins `WorldState>>drawWorld:` on Morphic DNUs, and the Delay
+    scheduler dies; the runner's first startup action is to suspend it, and
+    that suspension is what makes nine classes fail (#24).  The runner
+    suspends the loop before the DNUs can be observed, so resume WITHOUT the
+    suspension and read what `drawWorld:` sends that the image does not
+    understand.
  8. **Run the full Δcog sweep.**  `scripts/cog-sweep.sh` (new) drives stock Cog
     in batches with `SUNIT_PREFIX` namespacing, so its `/tmp` state cannot
     collide with ours:
