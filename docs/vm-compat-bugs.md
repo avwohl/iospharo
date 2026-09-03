@@ -2062,7 +2062,13 @@ interleaving it produces is not the one that races.
 `PHARO_DET_SCHED_QUANTUM=N` widens that to N x 1024 bytecodes — coarser, closer
 to the wall-clock interleaving, still deterministic — and walking it up is the
 next thing to try: a quantum that storms every time turns this into a fixed
-repro.  Raw in `docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
+repro.
+
+**Practical note on the knob**: at quantum 1 it costs ~15x.  The 5-class range
+goes 4 s -> 45 s, and a whole 51-class batch does not finish — one attempt
+reached 14 of 51 classes in 900 s.  At quantum 4 the cost is back to 4-6 s.  So
+DET_SCHED at the default quantum is usable for a handful of classes and not for
+a batch; widen it or narrow the range.  Raw in `docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
 
 Note the Context count barely moves across storms — 2654994, 2655137, 2655142 —
 because it is set by the heap size, not by the bug; do not read it as a
