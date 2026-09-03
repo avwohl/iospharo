@@ -1924,6 +1924,19 @@ default-on with opt-out knobs only (`:1803`, `:1895`, `:558`).  See
 `docs/history/arm-context-storm-2026-07.md`, which identifies the storm's
 trigger as exactly a trait-class rebuild with live instances.
 
+**Where to start: `TraitChangesTest`.**  There are 41 `*Test`/`*TestCase`
+classes between `TonelWriterV3Test` and `UndefinedPackageTest`, and exactly 39
+never ran — the two the runner drops as abstract are `TraitAbstractTest` and
+`TraitTestCase`, so the first index the storm could have reached, 1912, is the
+first concrete one after them in the runner's sort.
+
+The rest of that range on Cog is also on record (same file): `TrueTest`,
+`Tutorial*`, `UDPSocket*`, `UUID*`, `Undeclared*` and `Undefined*` are all
+clean and take milliseconds, so nothing else in the batch is a candidate.
+Note `TraitAbstractTest suite` aggregates the whole block — 273 tests, and it
+takes Cog **76.5 s**, so the trait block is genuinely heavy work, not a
+trivial suite our VM trips over.
+
 Next: run the block one class at a time (chunks of five is enough to bracket
 it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.
 

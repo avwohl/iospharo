@@ -37,3 +37,22 @@ TraitWithPackagesTest  P:10 F:0 E:0 total:10
 TraitWithSlotsTest  P:9 F:0 E:0 total:9
 
 # TOTAL: 27 classes, 270 tests, 0 F, 0 E
+# Cog baseline for the 39 classes the storm ate — the non-Trait remainder
+# plus the two the runner treats as abstract.  Cog v10.3.9, x86_64/Rosetta.
+
+TrueTest  P:17 F:0 E:0 total:17  103ms
+TutorialPlayerTutorialAccessorTest  P:2 F:0 E:0 total:2  10ms
+TutorialPlayerWithMockTutorialTest  P:4 F:0 E:0 total:4  10ms
+TutorialTest  P:12 F:0 E:0 total:12  10ms
+UDPSocketEchoTest  P:1 F:0 E:0 total:1  14ms
+UDPSocketTest  P:2 F:0 E:0 total:2  79ms
+UUIDGeneratorTest  P:5 F:0 E:0 total:5  288ms
+UUIDPrimitivesTest  P:13 F:0 E:0 total:13  19ms
+UUIDTest  P:9 F:0 E:0 total:9  10ms
+UndeclaredVariableTest  P:4 F:0 E:0 total:4  133ms
+UndefinedClassTest  P:13 F:0 E:0 total:13  187ms
+UndefinedObjectTest  P:19 F:0 E:0 total:19  79ms
+UndefinedPackageTagTest  P:4 F:0 E:0 total:4  12ms
+TraitAbstractTest  P:273 F:0 E:0 total:273  76540ms
+TraitTestCase  P:19 F:0 E:0 total:19  19997ms
+DONE
