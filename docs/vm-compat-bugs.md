@@ -2189,6 +2189,12 @@ has never been filed.  It contains the threaded-FFI block —
     x86_64 2026-09-02  same, and idling at ~1% CPU when observed at +20 min
     stock Cog          the whole block: 429 tests, 0 F / 0 E, ~7.4 s total
 
+**It is a 55-second batch.**  The `[PROGRESS]` lines in the arm64 batch log
+date the first `[primitiveQuit] Deferred` to between 50 s and 60 s in, and then
+run to 1790 s — so the batch does its work in under a minute and **idles for
+1730 s** waiting to be killed.  The fix recovers essentially the whole of it,
+per sweep per architecture.
+
 The tests are not the problem, and the results file proves how far it got —
 the batch writes its per-class results, its `=== BATCH TOTAL ===` block
 (1306 P / 1 F / 0 E / 10 S), its completion marker, and `=== BATCH COMPLETE ===`.
