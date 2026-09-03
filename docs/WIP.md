@@ -591,10 +591,12 @@ not expanded — the full narrative is in
     `Array new: 4`; COMPILE300 1.54 ms per `Compiler evaluate: '1+1'`. Block
     activation and small-object allocation sit 18-23x above the fast integer
     path.
-33. **Whether this VM is slower than Cog on these workloads is unanswerable on
-    this host** (stock Cog aborts on the fixed-address codeZone), which gates
-    every timeout-class failure. Separately, Rosetta overhead vs x86_64 backend
-    code quality has never been split.
+33. ~~**Whether this VM is slower than Cog on these workloads is unanswerable
+    on this host**~~ — SUPERSEDED 2026-09-02. The abort is arch-specific: the
+    **x86_64** Cog runs under Rosetta (`arch -x86_64`, see CLAUDE.md), so the
+    comparison IS available, and it is fair against `build-x86` since both are
+    x86_64 under Rosetta. Separately, Rosetta overhead vs x86_64 backend code
+    quality has still never been split.
 34. **`-Wnontrivial-memcall` has an array-form blind spot** — it fires on
     `memset(p, 0, sizeof(OpenPort))` but not on
     `memset(gPorts, 0, sizeof(gPorts))`. Any warning-driven sweep inherits the
