@@ -30026,6 +30026,35 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 homeMethod_ = state.method;
             }
 
+            // DEFECT #23 FIX (2026-09-03).  Pending J2J saves are caller
+            // activations the JIT entered WITHOUT pushing interpreter frames.
+            // createFullBlockWithLiteral materializes the frame stack to give
+            // the closure its outerContext, and materializeFrameStack can only
+            // see savedFrames_ -- so with saves still pending the closure
+            // captures a sender chain that TERMINATES at the innermost
+            // materialized frame.  A non-local return through that closure
+            // then finds neither its home nor any handler above it:
+            // Context>>cannotReturn: -> error: -> signal: -> signal, signal
+            // scans a two-context chain, finds no on:do:, and the unhandled
+            // path returns from a block whose home is equally unreachable --
+            // one Error, one FullBlockClosure and ~5 Contexts per turn until
+            // old space is gone.  That is the arm64 Context storm, and it is
+            // why PHARO_T1_NO_INLINE_J2J makes it vanish (0 storms of 6 vs
+            // 4 of 6): no inline J2J, no hidden callers.
+            //
+            // The same unsoundness is already documented as the reason
+            // PHARO_T1_INLINE_BLOCK_CREATE stays opt-in ("caller frames
+            // invisible to materialize").  This DEFAULT path had it too.
+            //
+            // Materialize first.  Legal here because the JIT has already
+            // exited -- tryResume returned this exit -- which is exactly when
+            // every other handler consumes its saves.  And strictly better
+            // than before: enableJ2J() below rebases the save slice and zeroes
+            // j2jDepth, so any saves pending at this exit were silently
+            // DROPPED and the materializeJ2J() after tryResume never saw them.
+            const bool hadPendingJ2J = state.j2jDepth > 0;
+            materializeJ2J();
+
             // Extract block parameters from cachedTarget
             uint64_t packed = state.cachedTarget.rawBits();
             int litIndex = static_cast<int>(packed & 0xFFFF);
@@ -30053,7 +30082,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // refresh from C++ globals as before.
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
-            if (state.j2jDepth > 0) {
+            // hadPendingJ2J, not state.j2jDepth: the materialize above
+            // consumed the saves and zeroed the depth, but what this branch
+            // is FOR has not changed -- the JIT reached this exit inside a
+            // cross-method chain, so receiver/tempBase/method/argCount in
+            // state are the CALLEE's and must not be refreshed from the
+            // caller's C++ globals.
+            if (hadPendingJ2J) {
                 // J2J chain active — receiver/tempBase/method/argCount
                 // already correctly callee's from the JIT cross-method
                 // emit.  Don't overwrite those with caller's globals.
