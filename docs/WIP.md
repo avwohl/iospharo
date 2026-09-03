@@ -112,6 +112,14 @@ which waits on the sweep's pid; the rest are by hand.
     answer `NO-HUSK`; anything else says the trigger fix has regressed and
     explains the trait batch dying.  If it does answer `NO-HUSK`, there is a
     second trigger and the per-class hunt is the way in.
+
+    Two halves of that fix were re-checked by reading, 2026-09-02, so do not
+    re-derive them: `collectInstancesOfClass` still skips forwarded objects
+    (`ObjectMemory.cpp:3386`, `!obj->isForwarded()`), and both
+    `becomeForward`-leaves-forwarder and classOf-follows-forwarders are still
+    default-on with opt-out knobs only (`ObjectMemory.cpp:1803`, `:1895`,
+    `:558`).  So "the 2026-07 trigger fix silently reverted" is already
+    partly refuted; a second trigger is the likelier reading.
  2. **Verify the low-space breaker actually fires — NOT with a bare `eval`.**
     The "before" evidence is on record (12 GB consumed, zero `[LOW-SPACE]`
     lines).  The obvious "after" test is
