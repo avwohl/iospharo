@@ -3797,6 +3797,34 @@ and one is a dead remote resource.  What is still worth knowing is HOW slow the
 two scans are against Cog -- that is a JIT performance question, not a
 correctness one, and it is the only thing left in this group.
 
+## Defects #24/#25 — the display family: `setup_fake_gui.st` in the prep fixes most of it
+
+The largest single group in the residual is the "no display" family, ~13 F and
+~16 E across `Sp*`/`St*` classes.  `CLAUDE.md` has recorded the lever for
+months -- "For Spec presenter tests, inject `setup_fake_gui.st` into the prep
+step BEFORE the runner... without it, ~350 Spec tests fail with 'receiver of
+activate is nil'; with it, 94.6% pass rate on 64 GUI classes" -- and **no sweep
+image this project has measured was prepped with it**, 2026-09-03's included.
+
+Measured 2026-09-03 on the 15 affected classes, same VM, same day, the only
+difference being the prep:
+
+    prep                          classes   PASS   FAIL  ERROR  SKIP
+    runner only                     15       209    13     16     7
+    setup_fake_gui.st + runner      15       232     6      0     7
+
+**Every error goes away** and the failures more than halve.  That is 16 E and
+7 F off the sweep residual, which is most of what is left after the storm was
+bounded.
+
+Note what this does NOT say.  It does not fix a VM defect -- it gives the image
+the Display and World that Morphic needs, which is what defect #24 identified
+when the same failures reproduced on Cog with `MorphicUIManager` installed and
+its UI process suspended.  The remaining 6 FAILs are the interesting ones now:
+they survive a working fake GUI.
+
+A full sweep on a fake-GUI-prepped image is running to confirm at scale.
+
 ## Defect #27 — a ByteSymbol runs `BlockClosure>>value:`
 
 `RSRoassalTest>>testOpen`, arm64, 2026-09-03 sweep:
