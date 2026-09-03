@@ -69,8 +69,29 @@ the running sweep:
     their suites 12641, so the reported test count understates the suite by
     ~38%.  This is a denominator fact, not a failure cause.
 
+  * **The threaded-FFI batch never exits** (#26).  Batch 1801-1850 writes all
+    its results and `=== BATCH COMPLETE ===`, then hangs until the harness
+    kills it at 1800 s — on both arches.  Stock Cog runs the whole block
+    (TF/TFUFFI + Step* + TCPSocket*, 429 tests) in **7.4 s**, 0 F / 0 E.  Only
+    two statements run after `BATCH COMPLETE`, `[Smalltalk exitSuccess] on:
+    Error do:` and `Smalltalk quitPrimitive`; stderr landmarks were added
+    around both so the next sweep says which one hangs.  This is 30 minutes of
+    every sweep on every arch.
+
 Full Δcog for the residual in
 `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
+
+### Defects filed tonight
+
+    #22  BlockCannotReturn on a trait-copied block's non-local return
+         ROOT-CAUSED and a fix committed (unbuilt) — the copy shares the
+         trait's CompiledBlock, whose outerCode names only the trait's method
+    #23  The trait-test Context storm — ours; Cog runs all 27 classes clean
+    #24  Nine-plus classes fail because the runner must suspend the UI process
+         REPRODUCED on Cog; two earlier explanations refuted and recorded
+    #25  The resumed MorphicRenderLoop busy-spins on Morphic DNUs and kills
+         the Delay scheduler — the root behind #24
+    #26  The threaded-FFI batch never exits: 1800 s per sweep per arch
 
 **The arm64 SUnit sweep is done** (`STEP=50 PER_BATCH_TIMEOUT=1800`,
 `PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000
