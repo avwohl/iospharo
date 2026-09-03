@@ -1,5 +1,65 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-09-03 — a bounded quit, a trait-copy home, and 30 minutes a sweep
+
+Three VM fixes, all found by reading logs and the image rather than by
+reproduction, and all queued for verification behind the x86_64 sweep.
+
+**The deferred quit was unbounded, and it cost 1730 s of every sweep**
+(defect #26).  `primitiveQuit` defers when `callbackDepth_ > 0` so a C caller's
+frames can unwind, and `pendingQuit_` is honoured in exactly one place, under
+`pendingQuit_ && callbackDepth_ == 0`.  After `TFCallbacksTest` — whose
+old-session test abandons a same-thread invocation BY DESIGN — neither half can
+ever hold: the depth stays 1 for the rest of the run, and a VM parked in
+`enterInterpreterFromCallback`'s nested loop is not running the checkpoint that
+would look.  Sweep batch 1801-1850 does its work in under a minute, writes
+`=== BATCH COMPLETE ===`, and then idles until the harness kills it at 1800 s.
+On both arches.  Stock Cog runs the same 429 tests in 7.4 s.
+
+The trace had been in the logs the whole time, buried in 4 MB of periodic JIT
+stats: `[primitiveQuit] Deferred: 1 callback(s) outstanding`, five times on
+arm64 and sixty-one on x86_64.
+
+Fixed by recording `g_stepNum` at the first deferral and honouring the quit
+after `kQuitGraceSteps` (2M bytecodes) whether or not the callback unwound —
+from the nested callback loop as well as the checkpoint, since that is the only
+loop running while a callback is outstanding.  Stranding a C frame matters
+while the VM keeps running; it does not when the process is exiting, and Cog
+simply exits.  Two related facts are on the record with it: `callbackDepth_` is
+decremented only by `primitiveCallbackReturn` and the two worker-timeout
+`[XTCB-DEAD-POP]` paths, so an abandoned same-thread invocation is never popped
+by construction; and `drainCallbackGraveyard()` bails on the same condition, so
+every retired libffi closure and `ffi_cif` after that point is buried and never
+freed.
+
+**A block's home could not be found when the home method is a trait copy**
+(defect #22).  The inline non-local return walks the executing
+`CompiledBlock`'s `outerCode` chain to a `CompiledMethod` and matches that oop
+against the frames.  For a trait method that identity can never hold: a class
+using a trait gets its own `CompiledMethod`, but the copy SHARES the trait's
+`CompiledBlock`, whose `outerCode` names only the trait's method.  Verified
+against the image on stock Cog:
+
+    (RSAbstractLine>>#markersIncludesPoint:) block
+      == (RSTMarkeable>>#markersIncludesPoint:) block   -> true
+    that block's outerCode == RSTMarkeable's method     -> true
+    RSLinesTest on Cog                                   -> 18 P / 0 F / 0 E
+
+So the VM sent `cannotReturn:` on a home that was alive — `BlockCannotReturn`.
+A second pass, reached only when identity has already failed, matches on "this
+frame's method holds the very block we are returning from", which is the
+identity that survives the copy; applied to the context-chain search as well.
+677 installed methods in a stock Pharo 13.1 image carry a block with a foreign
+`outerCode` AND a non-local return in it, so this is not one test's problem.
+
+**Dead code removed**: `ObjectMemory::forceGC`/`needsGC` (nothing ever called
+either, so the flag was only ever cleared), `classTableEntryAddress` and
+`edenFreeCellAddr` (the latter carrying a comment claiming the JIT emit used
+it — the emit bakes `g_jitEdenFreeCell`, published in the constructor), and
+`primitiveBecome`, 75 lines of two-way become that no primitive slot points at
+and that Spur has no primitive for.  `forEachRoot`'s registered-roots loop now
+says what is true: nothing calls `addRoot`, so it is a no-op today.
+
 ## 2026-09-02 — the low-space circuit breaker could not fire, by construction
 
 The runaway-allocation guard added on 2026-07-07 (`22fcb0e7`) never fired on
