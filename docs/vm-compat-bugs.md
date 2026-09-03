@@ -1924,6 +1924,20 @@ default-on with opt-out knobs only (`:1803`, `:1895`, `:558`).  See
 `docs/history/arm-context-storm-2026-07.md`, which identifies the storm's
 trigger as exactly a trait-class rebuild with live instances.
 
+**A correlation worth carrying into the hunt:** `[DIAG-TIMER] ... timerSem=nil`
+— the Delay scheduler's timer semaphore gone — appears in only 7 of the arm64
+sweep's 41 batches, once each, EXCEPT in the two pathological ones:
+
+    batch 1901-1950 (this storm)          16 occurrences
+    batch 1801-1850 (defect #26's hang)   22 occurrences
+    five other batches                     1 each
+
+A dead Delay scheduler means `valueWithin:onTimeout:` never fires, so anything
+that retries under a timeout retries forever — which is the shape of an
+unbounded recursion that signals and catches an Error at every level.  Whether
+that is cause or consequence here is not established; it is a place to look
+early, and `PHARO_DET_SCHED=1` makes the ordering reproducible.
+
 **Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
 is generated from the image and archived at
 `docs/results/sweep-arm-2026-09-02/class-index-map.txt`.  It reproduces
