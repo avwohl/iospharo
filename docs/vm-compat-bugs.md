@@ -2308,6 +2308,33 @@ corpse marker -- the NLR home search in `returnValue`, and
 `handleContextNLRUnwind`'s kill of `startCtx..ensureCtx` -- and both are now
 counted, so the next storm says which unwind left the frame behind.
 
+#### Fix 1's first form was a regression, and only the full sweep caught it
+
+Every A/B above ran the same five-class batch, and every one of them said the
+fix was clean.  The full arm64 sweep said otherwise within four batches:
+
+    binary                       batch 1-100      sweep's first 408 classes
+    unfixed (2026-09-02)         0 non-clean      --
+    fix 1 + storm guard         11 non-clean      55 non-clean
+
+and the failures are the shifted-operand-stack signature, not anything to do
+with storms: `NonBooleanReceiver: proceed for truth` and
+`MessageNotUnderstood` with a receiver that is not the intended one
+(`SmallInteger >> #byteSize`, `MCWorkingCopy >> #detect:ifNone:`), 304 and 424
+of them respectively.
+
+The cause is the RESUME, not the materialize.  `enableJ2J()` further down the
+handler rebases the save slice the JIT is about to resume onto -- harmless
+while the saves were simply dropped, which is what the code did before, and not
+harmless once they are live interpreter frames whose `materializedRetSlot`s
+point into the operand stack that resumed code keeps using.  Fix 1 now
+materializes and then BAILS to the interpreter rather than resuming, which
+costs one interpreter re-entry per block created inside a J2J chain.
+
+The lesson is about measurement, not about J2J: **a five-class repro batch
+cannot tell you a fix is safe.**  It can only tell you whether the bug it
+reproduces still fires.
+
 #### The fatal now says WHO, not just WHAT
 
 The census has twice been unable to name the loop behind a Context storm:
