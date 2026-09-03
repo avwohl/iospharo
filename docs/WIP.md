@@ -36,24 +36,53 @@ lifter** (`SistaBuilder.cpp` Pass 5) -- `test_sista_ir` rc=139 on x86_64,
 passing by luck on arm64.  Fixed and ASan-verified on both arches; see
 `docs/changes.md` 2026-09-02.
 
-An arm64 SUnit sweep is in flight (`STEP=50 PER_BATCH_TIMEOUT=1800`,
+**The arm64 SUnit sweep is done** (`STEP=50 PER_BATCH_TIMEOUT=1800`,
 `PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000
-PHARO_MAX_OLD_SPACE_MB=12288`), output under the session scratchpad
-`sweep-arm/`.  x86_64 sweep and the package tier on both arches follow.
+PHARO_MAX_OLD_SPACE_MB=12288`): 2007 classes, 27692 tests, 27461 P / 21 F /
+21 E / 7 T / 182 S, 99.17%.  Full write-up and the per-class residual in
+`docs/results/sweep-arm-2026-09-02.md`, artifacts in
+`docs/results/sweep-arm-2026-09-02/`.  Two things came out of it that are not
+pass-rate numbers:
+
+  * **A write splice in the runner dropped two classes from every
+    aggregation** -- the P60 watchdog published `testDone` before printing its
+    verdict, so the P80 main wrote the class `Total:` line into the middle of
+    it and then suspended the watchdog mid-line.  Fixed in the submodule
+    (compose off-stream, publish `testDone` after the flush).  NOT yet
+    verified by a run, because a targeted run would collide with the x86_64
+    sweep's `/tmp` state.
+  * **Batch 1901-1950 died of a Context storm** (`rc=134`, 33M Contexts / 6.6M
+    Errors / 12.3 GB) and took 39 classes with it, `TraitTest` among them.
+    Same signature as the 2026-08-22 batch 601-650 crash and the open
+    "Monticello runaway".  First time it is bracketed to one class: whatever
+    the runner sorts immediately after `TonelWriterV3Test` (index 1912).
+
+The **x86_64 sweep is in flight** with the same settings, output under the
+session scratchpad `sweep-x86/`.  Nothing may touch `/tmp/sunit_*` until it
+finishes -- that rules out re-running arm batch 1901-1950, naming the storm's
+class, and verifying the watchdog fix, all of which are queued behind it.
+The package tier on both arches follows.
 
 ## Where the three tiers stand
 
-Last complete measurement (2026-08-23 04:00, before today's JIT fixes):
+    tier       arm64                            x86_64
+    VM C++     4/4 green (2026-09-02)           4/4 green (2026-09-02)
+    packages   9382 P / 16 F / 18 E             9382 P / 16 F / 18 E   (2026-08-23, identical)
+    SUnit      27461 P / 21 F / 21 E / 7 T      in flight (2026-09-02)
+               (2026-09-02 full sweep, 2007
+                of ~2047 classes, 99.17%)
 
-    tier       arm64                       x86_64
-    VM C++     4/4 green                   4/4 green
-    packages   9382 P / 16 F / 18 E        9382 P / 16 F / 18 E   (identical)
-    SUnit      800 P / 13 F / 3 E / 1 T    798 P / 15 F / 4 E / 1 T
-               (30 residual classes, fake-GUI image, runner path)
+The 2026-08-23 SUnit line this replaces read `800 P / 13 F / 3 E / 1 T` on
+arm and `798 P / 15 F / 4 E / 1 T` on x86 -- that was the 30-class residual
+re-measured against a fake-GUI image, not a full sweep, and the two are not
+comparable.
 
 Every non-pass is attributed by name in
-`docs/results/sweep-{arm,x86}-final-2026-08-22.md`. No demonstrated VM
-computation error remains in either tier's residual.
+`docs/results/sweep-arm-2026-09-02.md` (and, for the 2026-08-22 runs,
+`docs/results/sweep-{arm,x86}-final-2026-08-22.md`). One newcomer is
+untriaged: `RSLinesTest` errors twice with `BlockCannotReturn`, which is a
+VM-visible condition rather than a display one. Everything else is display,
+network, image drift, or the two known GC/finalization items.
 
 VM C++ tier re-verified green today on both arches after the JIT changes:
 `test_class_table`, `test_sista_ir`, `test_sista_survey`, `test_relaunch` (3/3

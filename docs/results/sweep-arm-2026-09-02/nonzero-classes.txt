@@ -1,0 +1,26 @@
+FTTableMorphTest                                     Total: 1 P:0 F:0 E:1 S:0
+LinkInstallerTest                                    Total: 40 P:39 F:1 E:0 S:0
+NoUnusedVariablesLeftTest                            Total: 3 P:2 F:0 E:0 S:0 T:1
+OCClassBuilderTest                                   Total: 26 P:25 F:0 E:1 S:0
+ReleaseTest                                          Total: 44 P:39 F:2 E:0 S:1 T:2
+RSLinesTest                                          Total: 18 P:16 F:0 E:2 S:0
+SpAthensAdapterTest                                  Total: 9 P:8 F:0 E:1 S:0
+SpComponentListAdapterTest                           Total: 8 P:7 F:0 E:1 S:0
+SpListCommonPropertiestTest                          Total: 23 P:18 F:0 E:5 S:0
+SpTableCommonPropertiestTest                         Total: 17 P:14 F:0 E:3 S:0
+SpTreeAdapterMultipleSelectionTest                   Total: 21 P:18 F:0 E:2 S:1
+SpTreeTableAdapterMultiColumnMultiSelectionTest      Total: 20 P:18 F:1 E:1 S:0
+SpTreeTableAdapterMultiColumnTest                    Total: 20 P:18 F:1 E:1 S:0
+SpTreeTableAdapterSingleColumnMultiSelectionTest     Total: 20 P:18 F:1 E:1 S:0
+SpTreeTableAdapterSingleColumnTest                   Total: 19 P:17 F:1 E:1 S:0
+StDebuggerActionModelTest                            Total: 55 P:53 F:1 E:0 S:1
+StDebuggerInspectorTest                              Total: 11 P:10 F:1 E:0 S:0
+StDebuggerTest                                       Total: 67 P:58 F:3 E:0 S:6
+StSpotterModelTest                                   Total: 2 P:0 F:2 E:0 S:0
+StSpotterTest                                        Total: 3 P:2 F:1 E:0 S:0
+StTranscriptPresenterTest                            Total: 5 P:2 F:3 E:0 S:0
+SystemDependenciesTest                               Total: 17 P:16 F:1 E:0 S:0
+TKTWorkerTest                                        Total: 7 P:5 F:0 E:1 S:0 T:1
+WeakAnnouncerTest                                    Total: 34 P:32 F:1 E:0 S:1
+ZnClientTest                                         Total: 50 P:49 F:1 E:0 S:0
+ZnHTTPSTest                                          Total: 10 P:7 F:0 E:0 S:2 T:1
