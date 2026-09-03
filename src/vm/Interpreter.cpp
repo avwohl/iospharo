@@ -482,6 +482,7 @@ namespace pharo {
 extern uint64_t g_cannotReturnSite[6];
 extern uint64_t g_blockCreatePendingJ2J[2];
 extern uint64_t g_contextsKilledByUnwind[2];
+extern uint64_t g_duplicateActivation[2];
  namespace jit {
 class JITRuntime;
 void dumpBailGateHisto(ObjectMemory& mem);
@@ -2280,6 +2281,12 @@ uint64_t g_blockCreatePendingJ2J[2] = {0, 0};
 // million times in a defect-#23 storm -- so these two tallies say which unwind
 // left the frame behind.
 uint64_t g_contextsKilledByUnwind[2] = {0, 0};
+// [0] popFrame killed a materialized context that was ALREADY dead -- the same
+// activation returned twice.  [1] a J2J save was materialized onto a frame
+// pointer one of the top frames already uses, which is the same duplicate seen
+// from the other end.  Either one being non-zero says the residual dead-sender
+// loop is a duplicated activation rather than a lost context handover.
+uint64_t g_duplicateActivation[2] = {0, 0};
 static const char* const kCannotReturnSiteName[6] = {
     "nlr-home-sender-nil",         // NLR: home context found, its sender is nil/invalid
     "return-into-dead-sender",     // normal return: sender's pc is nil or -1 (returned-from)
@@ -2375,6 +2382,11 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                             (unsigned long long)g_cannotReturnSite[i]);
             fprintf(stderr, "\n");
         }
+        if (g_duplicateActivation[0] || g_duplicateActivation[1])
+            fprintf(stderr, "[SEND-CHAIN] duplicate activations: "
+                    "double-returns=%llu dup-frame-pointers=%llu\n",
+                    (unsigned long long)g_duplicateActivation[0],
+                    (unsigned long long)g_duplicateActivation[1]);
         if (g_contextsKilledByUnwind[0] || g_contextsKilledByUnwind[1])
             fprintf(stderr, "[SEND-CHAIN] contexts killed by unwind: "
                     "nlr-home-search=%llu aboutToReturn-unwind=%llu\n",
@@ -8204,6 +8216,20 @@ terminate_process:
             && !currentFrameMaterializedCtx_.isNil()
             && currentFrameMaterializedCtx_.rawBits() > 0x10000
             && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
+        // Already dead means this activation is returning a SECOND time --
+        // the duplicate the residual dead-sender loop would need.  Counted,
+        // not corrected: the store below is idempotent.
+        Oop wasPC = memory_.fetchPointer(1, currentFrameMaterializedCtx_);
+        if (wasPC.isNil()
+                || (wasPC.isSmallInteger() && wasPC.asSmallInteger() == -1)) {
+            g_duplicateActivation[0]++;
+            if (g_duplicateActivation[0] <= 3)
+                fprintf(stderr, "[DOUBLE-RETURN #%llu] #%s returning again from a "
+                        "context already marked dead (0x%llx)\n",
+                        (unsigned long long)g_duplicateActivation[0],
+                        memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)currentFrameMaterializedCtx_.rawBits());
+        }
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
     }
@@ -27957,6 +27983,22 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     currentFrameMaterializedCtx_ = nil;
     frame.ctxSynced = false;
     frame.savedFP = save.tempBase - 1;
+    // Same activation materialized twice?  Two frames on one frame pointer
+    // means two returns, and the second lands in a context the first killed.
+    for (size_t bi = 0, n = frameDepth_ > 8 ? 8 : frameDepth_; bi < n; bi++) {
+        SavedFrame& other = savedFrames_[frameDepth_ - 1 - bi];
+        if (&other != &frame && other.savedFP == frame.savedFP
+                && other.savedMethod.rawBits() == frame.savedMethod.rawBits()) {
+            g_duplicateActivation[1]++;
+            if (g_duplicateActivation[1] <= 3)
+                fprintf(stderr, "[DUP-FRAME #%llu] J2J save for #%s materialized "
+                        "onto fp=%p, which frame %zu already holds\n",
+                        (unsigned long long)g_duplicateActivation[1],
+                        memory_.selectorOf(frame.savedMethod).c_str(),
+                        (void*)frame.savedFP, frameDepth_ - 1 - bi);
+            break;
+        }
+    }
     frame.materializedRetSlot = save.sp - (saveNArgs + 1);
     frame.savedArgCount = saveJM->argCount;
     frame.homeFrameDepth = SIZE_MAX;
