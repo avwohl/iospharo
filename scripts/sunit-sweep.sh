@@ -141,9 +141,15 @@ for lib in libtty.dylib libTestLibrary.dylib; do
 done
 
 mkdir -p "$OUT"
-: > "$OUT/all_results.txt"
-: > "$OUT/sweep.log"
-: > "$OUT/damaged.txt"
+# Truncate only on a fresh sweep.  A START_AT resume appends to what the
+# interrupted run already wrote.
+if [ -z "${START_AT:-}" ]; then
+    : > "$OUT/all_results.txt"
+fi
+if [ -z "${START_AT:-}" ]; then
+    : > "$OUT/sweep.log"
+    : > "$OUT/damaged.txt"
+fi
 
 # A leftover class/method filter silently OVERRIDES the batch range -- the
 # runner documents that the names file takes priority. Symptom is every batch
@@ -208,7 +214,12 @@ run_batch() {                       # $1 = log path
     wait "$pid"
 }
 
-start=1
+# START_AT resumes a sweep that was cut short -- a spot reclaim, a kill, a
+# reboot.  Everything before it is left alone, so point it at the first index
+# the previous run did not finish and append to the same outdir.  With
+# START_AT set the results files are NOT truncated (see above), because the
+# whole point is to keep what the earlier attempt already produced.
+start=${START_AT:-1}
 while [ "$start" -le "$TOTAL" ]; do
     end=$(( start + STEP - 1 ))
     [ "$end" -gt "$TOTAL" ] && end=$TOTAL
