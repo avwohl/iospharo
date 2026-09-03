@@ -199,7 +199,9 @@ entirely; and ANY binary started on the PREPPED image does the same, which is
 how batch 1001-1050 was lost tonight), or the sweep is running the binary that
 would be replaced.
 
-Steps 0-4 are automated in the session scratchpad, chained on each other:
+Steps 0-4 are automated in the session scratchpad, chained on each other
+(`post-sweep-running.sh` -> `-2-` -> `-3-` -> `-4-` -> `-5-`, each waiting on
+the previous one's "done" line):
 `post-sweep-running.sh` (waits on the sweep's pid; recovers the damaged x86
 batch, `test_relaunch` on `base.image`, the low-space control, the storm hunt
 in chunks of 5, rebuild x86), then `post-sweep-2-running.sh` (rebuild both with
@@ -347,7 +349,10 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     quickly anyway — while a wrong GC call corrupts the heap in every later
     run, and tonight there is no way to verify it properly.  Do it when a GC
     A/B can be run.
- 7. Package tier on both arches.
+ 7. Package tier on both arches.  The arm64 run is chained as
+    `post-sweep-5-running.sh` (baseline to beat: 9382 P / 16 F / 18 E from
+    2026-08-22); x86_64 follows, and should use `REUSE_FROM=<arm work dir>`
+    since the loads cannot run there.
  7b. **Chase defect #25's DNUs** — the highest-value single item to come out of
     tonight.  Our headless resume restarts `MorphicRenderLoop` at pri-80, it
     busy-spins `WorldState>>drawWorld:` on Morphic DNUs, and the Delay
