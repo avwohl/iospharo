@@ -60,6 +60,15 @@ Queued, in order, running unattended:
    images.  Baselines to beat: arm64 9326 P / 16 F / 16 E / 1 T, x86_64
    9376 / 16 / 24 / 0.
 
+**A copied VM loses its dylibs.**  The arm64 sweep runs a COPY of the binary
+(so a rebuild cannot change it mid-run), and the copy left `libtty.dylib` and
+`libTestLibrary.dylib` behind: `LibTTYTest` went 5 P to 5 E with
+`SymbolNotFoundError: Could not find symbol named: #tty_spawn searching in
+module: 'libtty.dylib'`.  Same shape as the x86-VM-loses-libgit2 note in
+memory.  Both dylibs are now staged beside the copies, and the x86_64 sweep
+runs `./build-x86/test_load_image` in place rather than a copy -- that tree
+stages about 200 dylibs.
+
 **Standing rule from tonight:** run `scripts/sunit-sweep.sh` on batch `1 100`
 before believing any VM change -- about four minutes, and the unfixed binary
 scores 0 non-clean, so any non-zero is the change.  A five-class repro batch
