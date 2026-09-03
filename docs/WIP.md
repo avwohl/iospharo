@@ -64,7 +64,13 @@ pass-rate numbers:
     fails on a trait composition.
 
 The **x86_64 sweep is in flight** with the same settings, output under the
-session scratchpad `sweep-x86/`.
+session scratchpad `sweep-x86/`.  **Its batch 1001-1050 is damaged and must be
+re-run**: `test_relaunch` was run on the PREPPED image while the sweep was
+going, and a prepped image auto-starts `SUnitRunner` on resume, so it wrote
+`/tmp/sunit_test_results.txt` underneath the batch, which then reported
+`classes=1` instead of 51.  The recovery is automated in the post-sweep script.
+The rule this broke is wider than the one written down: it is not "do not run
+`test_load_image`", it is "do not start ANY VM binary on the prepped image".
 
 ### Queued behind the x86_64 sweep — do these in order when it finishes
 
