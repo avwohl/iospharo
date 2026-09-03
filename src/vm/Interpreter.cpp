@@ -2771,6 +2771,14 @@ void Interpreter::traceExtentBytecode(uint8_t bc) {
 void Interpreter::checkLowSpaceSignal() {
     if (__builtin_expect(lowSpaceThreshold_ == 0, 1)) return;
     if (!memory_.lowSpaceCrossed()) return;
+    // Not between an extension byte and the bytecode that consumes it:
+    // synchronousSignal can resume a higher-priority waiter, and a process
+    // switch runs executeFromContext, which resets extA_/extB_ and corrupts
+    // the next bytecode's argument.  Every other process-switch-triggering
+    // check at both call sites is guarded the same way; this one was not,
+    // which mattered little while it never fired and matters now that it can.
+    // The latch is only cleared on delivery, so deferring loses nothing.
+    if (inExtension_) return;
     Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
     if (!lowSem.isObject() || lowSem.isNil()) return;
     // Disarm only once we can actually deliver.  The old code zeroed the
