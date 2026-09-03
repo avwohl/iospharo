@@ -197,6 +197,16 @@ which waits on the sweep's pid; the rest are by hand.
     comparison script is in the session scratchpad (`compare-sweeps.sh`);
     the arm side is staged at `sweep-arm/all_results.txt`.
  7. Package tier on both arches.
+ 8. **Run the full Δcog sweep.**  `scripts/cog-sweep.sh` (new) drives stock Cog
+    in batches with `SUNIT_PREFIX` namespacing, so its `/tmp` state cannot
+    collide with ours:
+
+        scripts/cog-sweep.sh docs/results/sweep-arm-2026-09-02/class-index-map.txt \
+            <scratch>/cog-sweep
+
+    That produces the first full-suite Δcog baseline this host has ever had.
+    Do it on an idle machine — namespacing solves the `/tmp` collision, not the
+    wall-clock sensitivity.  Then `scripts/classify-sunit.py cog.txt ours.txt`.
  8. **Use the Cog baseline that is now available.**  DONE 2026-09-02: the
     stock VM's `codeZone` abort was arch-specific, not host-specific, and the
     **x86_64** Cog under Rosetta runs here.  Installed at `/tmp/harness-x86`,
