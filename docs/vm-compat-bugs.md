@@ -1777,8 +1777,11 @@ different findings that look identical in a log.
 
 ### 22. `RSLinesTest` — `BlockCannotReturn` on a four-frame non-local return — NEW 2026-09-02, NOT YET REPRODUCED
 
-Two errors in the 2026-09-02 arm64 sweep, and the only newcomer in that
-residual that is VM-visible rather than display-, network- or image-related:
+Two errors in the 2026-09-02 arm64 sweep and one in the x86_64 sweep
+(`testMarkersIncludesPoint` on both, `testMarkerOffset` on arm only), so the
+defect is **arch-independent** — as a home-resolution bug in shared C++ should
+be.  It is the only newcomer in that residual that is VM-visible rather than
+display-, network- or image-related:
 
     ERROR: testMarkerOffset          (BlockCannotReturn: )
     ERROR: testMarkersIncludesPoint  (BlockCannotReturn: )
@@ -1904,6 +1907,21 @@ taking 39 classes with it — all 27 `Trait*Test` plus `TrueTest`, `Tutorial*`,
 `docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`; the ratios say an
 unbounded recursion that signals and catches an `Error` at every level and
 never unwinds (1.00 closures per Error, 5.01 Contexts per Error).
+
+**And the x86_64 sweep ran the whole block without storming** (2026-09-03):
+batch 1901-1950 completed in 270 s with all 51 classes.  So the storm is
+**arm64-only** in this pair of runs — which narrows it a great deal, and makes
+`PHARO_DET_SCHED=1` on arm the obvious next instrument.  It also means the
+trait block finally has one of our own measurements to compare against Cog:
+
+    TraitTest             53 P / 1 F   testTraitsUsersSanity [Assertion failed]
+    TraitFileOutTest       2 P / 2 E   FileDoesNotExistException — the test
+                                        writes its fileOut into the CWD
+    TraitInTraitClassTest  1 P / 1 T
+    the other 24 classes   clean
+
+`TraitTest>>testTraitsUsersSanity` is the selector behind the entry this file
+has carried since 2026-06-01.  See `docs/results/sweep-x86-2026-09-03.md`.
 
 **Stock Cog runs the same 27 classes clean, in seconds:**
 

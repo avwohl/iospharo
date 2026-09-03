@@ -361,14 +361,20 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
 ## Where the three tiers stand
 
     tier       arm64                            x86_64
-    VM C++     4/4 as of 10f5f330; the day's    4/4 as of 10f5f330; same
-               later commits are unbuilt        caveat, and further behind
+    VM C++     test_relaunch 3/3 on base.image;  4/4 as of 10f5f330;
+               rest as of 10f5f330, the day's    the day's commits unbuilt
+               later commits unbuilt
     packages   9382 P / 16 F / 18 E             9382 P / 16 F / 18 E   (2026-08-23, identical)
-    SUnit      27461 P / 21 F / 21 E / 7 T      in flight (2026-09-02)
-               (2026-09-02 full sweep, 2007
-                of ~2047 classes, 99.17%; the
-                denominator is ~38% short of the
-                real suite -- see #24)
+    SUnit      27453 P / 21 F / 21 E / 5 T      27833 P / 22 F / 26 E / 10 T
+               2005 classes, 99.17%             2046 classes, 99.15%
+               (39 classes lost to the storm)   (ran the block arm lost)
+
+Both sweeps are 2026-09-02/03 and use the same prepped image.  The x86_64 run
+is the more complete of the two: batch 1901-1950 storms on arm64 and runs clean
+on x86_64 in 270 s.  Every arch-only difference is a Rosetta timeout, a
+wall-clock assertion, a missing Windows-only symbol, a CWD artifact, or a class
+the other arch never reached — **no codegen divergence in 28071 tests**.  The
+denominator on both is ~38% short of the real suite (see #24).
 
 The 2026-08-23 SUnit line this replaces read `800 P / 13 F / 3 E / 1 T` on
 arm and `798 P / 15 F / 4 E / 1 T` on x86 -- that was the 30-class residual
