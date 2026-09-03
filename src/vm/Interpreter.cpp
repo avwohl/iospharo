@@ -2759,6 +2759,18 @@ bool Interpreter::methodHoldsLiteral(Oop method, Oop lit) {
     Oop hdr = memory_.fetchPointer(0, method);
     if (!hdr.isSmallInteger()) return false;
     int numLits = hdr.asSmallInteger() & 0x7FFF;
+    if (numLits < 1) return false;
+    // A real CompiledMethod only.  A CompiledBlock's LAST literal is its
+    // enclosing code, so a nested block holds the outer block in its literals
+    // — and a caller looking for "which frame owns this block" would match the
+    // inner block's own frame and return from the wrong one.  "Last literal is
+    // compiled code" is exactly the CompiledBlock test the outerCode walk in
+    // the non-local return uses.
+    Oop last = memory_.fetchPointer(numLits, method);
+    if (last.isObject() && last.rawBits() > 0x10000
+            && last.asObjectPtr()->isCompiledMethod()) {
+        return false;
+    }
     for (int i = 1; i <= numLits; i++) {
         if (memory_.fetchPointer(i, method).rawBits() == lit.rawBits()) return true;
     }
@@ -8549,26 +8561,8 @@ void Interpreter::returnFromMethod() {
                         && topBlockOop.isObject() && topBlockOop.rawBits() > 0x10000) {
                     for (size_t si = 0; si < frameDepth_; si++) {
                         Oop fm = savedFrames_[si].savedMethod;
-                        // Only a real CompiledMethod can be a home.  A nested
-                        // block's last literal IS its enclosing block, so a
-                        // frame running the inner block would otherwise match
-                        // the containment test and the NLR would return from
-                        // the wrong frame.  A CompiledBlock is exactly "last
-                        // literal is compiled code" — the same test the
-                        // outerCode walk above uses.
-                        if (fm.isObject() && fm.rawBits() > 0x10000) {
-                            Oop fh = memory_.fetchPointer(0, fm);
-                            if (fh.isSmallInteger()) {
-                                int fn = fh.asSmallInteger() & 0x7FFF;
-                                if (fn >= 1) {
-                                    Oop fLast = memory_.fetchPointer(fn, fm);
-                                    if (fLast.isObject() && fLast.rawBits() > 0x10000
-                                            && fLast.asObjectPtr()->isCompiledMethod()) {
-                                        continue;   // this frame is a block, not a method
-                                    }
-                                }
-                            }
-                        }
+                        // methodHoldsLiteral answers false for a CompiledBlock,
+                        // so a frame running a NESTED block cannot match here.
                         if (methodHoldsLiteral(fm, topBlockOop)) {
                             if (__builtin_expect(nlrTrace, 0))
                                 fprintf(stderr, "[NLR-HOME] shared-block match frame=%zu "

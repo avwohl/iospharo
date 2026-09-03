@@ -1435,7 +1435,8 @@ private:
     // Low space threshold for GC (bytes) - signals TheLowSpaceSemaphore when free < threshold
     size_t lowSpaceThreshold_ = 0;
 
-    /// True when `method`'s literal slots hold `lit`.  Used by the non-local
+    /// True when `method` is a real CompiledMethod (not a CompiledBlock) whose
+    /// literal slots hold `lit`.  Used by the non-local
     /// return to recognise a home method that is a TRAIT COPY: the copy is a
     /// different CompiledMethod from the trait's, but shares its CompiledBlock,
     /// so "holds the block we are returning from" is the identity that
