@@ -89,6 +89,22 @@ largest source of stderr in a sweep, and the same trace a past session misread
 as forwarded-object MNUs.  Guarded with `ifNotNil:`, along with the three other
 suspend/terminate sites.
 
+**The x86_64 backend is not producing wrong answers.**  Comparing the two
+sweeps class by class while the x86 one was still running (both at **99.17%**),
+every class non-clean on x86_64 and clean on arm64 was a timeout or a
+wall-clock assertion, not a codegen difference:
+
+    IntegerTest                     1 TIMEOUT (80 s)
+    STONWritePrettyPrinterReadTest  1 TIMEOUT
+    SpTreePresenterExpandTest       1 TIMEOUT
+    RSSequentialAnimationTest       Error: Time up
+    SpJobListPresenterTest          Got 68 instead of 100
+
+Rosetta runs that build at roughly half arm64's speed against a fixed 80 s
+per-test bound — the same 2x rule `scripts/package-tests-selfhosted.sh` already
+documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
+(submodule `db42c37`), so the next x86 sweep should use `SUNIT_TIMEOUT_MULT=2`.
+
 ### Defects filed tonight
 
     #22  BlockCannotReturn on a trait-copied block's non-local return
@@ -262,7 +278,8 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     P80 processes hold the worker well past a 2 s deadline.  The 3/3 run
     earlier the same day used `base.image`.  Re-run there for the record; the
     C++ tier is not being claimed green for `test_relaunch` until it is.
- 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.  **Recover its
+ 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.  Re-run it with
+    `SUNIT_TIMEOUT_MULT=2` if the timeout-class failures are to be excluded.  **Recover its
     damaged batches first**: 1001-1050 (my own interference; automated in the
     post-sweep script) and, if it storms there too, 1901-1950.  The recovery
     pass added to `sunit-sweep.sh` will NOT have run for this sweep — the
