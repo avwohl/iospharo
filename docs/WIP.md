@@ -91,14 +91,25 @@ batch entirely), or the sweep is running the binary that would be replaced.
  4. **Verify the runner watchdog fix.**  Re-prep an image with the current
     submodule (`7830936`) and run a class with a known timeout
     (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line start.
- 5. **Reproduce `RSLinesTest>>testMarkerOffset`** on its own.  Both errors are
+ 5. **Reproduce `RSLinesTest>>testMarkerOffset`** on its own.  It was clean in
+    the 2026-08-22 sweep and dirty in this one, so treat it as timing-sensitive
+    and reach for `PHARO_DET_SCHED=1` first (CLAUDE.md).  Both errors are
     `BlockCannotReturn` on a 4-frame non-local return
     (`markersIncludesPoint:` -> `markerShapesInPositionDo:` ->
     `withEnd:controlPoints:do:` -> `setPositionTo:vector:do:` -> `aBlock value:`,
     all synchronous), which is VM-visible, not display.  Bisect with
     `PHARO_NO_JIT=1` first, then the T1 knobs.
- 6. x86_64 sweep write-up plus the arm-vs-x86 residual diff.
- 7. Package tier on both arches.
+ 6. **Re-run `test_relaunch` on an idle machine.**  Run at 22:5x while the
+    x86_64 sweep was saturating the box it failed 2 of 3 cycles
+    (`[VM-STOP-TIMEOUT] interpret() has not returned 2s after stop()`, the
+    worker still executing -- `[JIT] Stats:` sends kept climbing, so not a
+    wedge).  It was 3/3 earlier the same day on an idle machine.  A 2 s hard
+    deadline under load is the obvious explanation and the low-space change is
+    inert here (`lowSpaceCrossed()` false, zero `[LOW-SPACE]` lines in the
+    log), but that is an argument, not a measurement -- so the C++ tier is NOT
+    being claimed green for `test_relaunch` until this is re-run idle.
+ 7. x86_64 sweep write-up plus the arm-vs-x86 residual diff.
+ 8. Package tier on both arches.
 
 ## Where the three tiers stand
 
