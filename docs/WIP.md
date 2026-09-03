@@ -129,14 +129,29 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
 ### Defects filed tonight
 
     #22  BlockCannotReturn on a trait-copied block's non-local return
-         ROOT-CAUSED and a fix committed (unbuilt) — the copy shares the
-         trait's CompiledBlock, whose outerCode names only the trait's method
-    #23  The trait-test Context storm — ours; Cog runs all 27 classes clean
-    #24  Nine-plus classes fail because the runner must suspend the UI process
-         REPRODUCED on Cog; two earlier explanations refuted and recorded
+         FIXED + VERIFIED — RSLinesTest 18/18 with the JIT and without, from
+         16 P / 2 E (arm) and 17 P / 1 E (x86).  The class's copy of a trait
+         method shares the trait's CompiledBlock, whose outerCode names only
+         the trait's method, so the home match by method oop could not succeed.
+    #23  The trait-test Context storm — ours; Cog runs all 27 classes clean.
+         arm64-only: x86_64 ran the block in 270 s.  Chunks cannot reproduce
+         it (needs one image).  TraitTest>>testTraitsUsersSanity is the cheap
+         handle — a whole-image traitUsers invariant that a rebuild breaks.
+    #24  Fourteen classes fail because the runner must suspend the UI process.
+         REPRODUCED on Cog; two earlier explanations refuted and recorded.
+         Our PRISTINE headless environment is identical to Cog's, so the
+         difference is the prepped image's live Morphic world.
     #25  The resumed MorphicRenderLoop busy-spins on Morphic DNUs and kills
          the Delay scheduler — the root behind #24
-    #26  The threaded-FFI batch never exits: 1800 s per sweep per arch
+    #26  The threaded-FFI batch never exits.  FIXED + VERIFIED —
+         1800 s -> 54 s, rc=0, 51 of 51 classes.  ~29 minutes per sweep per
+         arch.
+    LEAD 19  The low-space breaker could not fire.  FIXED + VERIFIED —
+         462 firings, zero FATAL aborts.
+
+The C++ tier is green on both arches with all of tonight's commits:
+`test_sista_ir`, `test_class_table`, `test_sista_survey` and `test_relaunch`
+3/3 on arm64; `test_sista_ir` and `test_class_table` on x86_64.
 
 **The arm64 SUnit sweep is done** (`STEP=50 PER_BATCH_TIMEOUT=1800`,
 `PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000
