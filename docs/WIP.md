@@ -34,10 +34,13 @@ emit, and one candidate fix is in and NOT yet vindicated.**  In order:
   `ExitBlockCreate` handler called `createFullBlockWithLiteral` with J2J saves
   still pending, and `enableJ2J()` below it then DROPPED them.  Fixed
   (`7724f3fe`) by materializing first.
-- **The A/B says that fix is not the storm.**  Interleaved, 4 CPU hogs holding
-  the load steady, matched binaries: base 3 storms of 5, fixed 2 of 5 so far.
-  The fix stands on its own merits -- dropped saves are dropped frames -- but
-  defect #23 is still open.
+- **The A/B says that fix is most of the storm.**  Interleaved, 4 CPU hogs
+  holding the load steady, matched binaries, 12 reps each:
+  **base 9 storms of 12, fixed 3 of 12.**  (An earlier note here called the
+  fix ineffective off the first 5 reps -- base 3, fixed 2 -- which was reading
+  a coin-flip's worth of data.  9-vs-3 is the number.)  So the pending-saves
+  block-create is the majority path and something else accounts for the
+  residual quarter.
 
 Next instrument, already built and queued behind the A/B: six per-site
 counters on the `cannotReturn:` sends, printed in the fatal dump.  Only two of

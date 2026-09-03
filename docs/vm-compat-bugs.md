@@ -2210,6 +2210,34 @@ fixable by matching literals, and #23 loses the sender chain outright.  The
 knob bisect points at inline J2J, which is precisely the emit that runs a
 callee WITHOUT pushing an interpreter frame.
 
+#### Fix: materialize pending J2J saves before building the closure
+
+The chain loop's `ExitBlockCreate` handler called `createFullBlockWithLiteral`
+with J2J saves still pending, and `enableJ2J()` further down then rebased the
+save slice and zeroed `j2jDepth` -- so those saves were not merely invisible to
+the closure's `outerContext`, they were silently DROPPED, and the
+`materializeJ2J()` after `tryResume` never saw them.  Materializing first is
+legal at that point because the JIT has already exited (`tryResume` returned
+this exit), which is exactly when every other handler consumes its saves.
+
+Measured interleaved -- base and fixed alternating rep by rep, four CPU hogs
+holding the load steady, matched binaries built from the same tree:
+
+    arm       storms
+    base       9 of 12
+    fixed      3 of 12
+
+Interleaving is not a nicety here.  The rate tracks machine load (6 of 8 with
+the package tier running, 4 of 6 later, 1 of 6 idle), so blocked A-then-B arms
+measure the load as much as the change.  An earlier read of this same A/B at
+five reps (base 3, fixed 2) said the fix did nothing; that was a coin-flip's
+worth of data.
+
+Three of twelve is not zero, so a second path remains.  The resume loop has the
+same `ExitBlockCreate` twin and does NOT materialize -- its handlers are
+documented to assume `depth==0` -- and a counter now says whether that
+assumption holds in practice.
+
 #### The fatal now says WHO, not just WHAT
 
 The census has twice been unable to name the loop behind a Context storm:

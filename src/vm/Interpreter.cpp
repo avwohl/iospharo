@@ -480,6 +480,7 @@ namespace pharo {
 
 // See the definition next to dumpSendChain: per-site cannotReturn: tallies.
 extern uint64_t g_cannotReturnSite[6];
+extern uint64_t g_blockCreatePendingJ2J[2];
  namespace jit {
 class JITRuntime;
 void dumpBailGateHisto(ObjectMemory& mem);
@@ -2264,6 +2265,13 @@ void Interpreter::dumpJITStats() {
 // per-process count/deadline guard, which is why a loop through the others
 // never self-limits.
 uint64_t g_cannotReturnSite[6] = {0, 0, 0, 0, 0, 0};
+// Block creations reached with J2J saves still pending, per loop.  [0] is the
+// chain loop's ExitBlockCreate, which now materializes them first; [1] is the
+// resume loop's twin, which does NOT -- its handlers are documented to assume
+// depth==0, and this counter is how we find out whether that holds.  A closure
+// built with saves pending captures a sender chain missing every J2J-hidden
+// caller, which is defect #23's mechanism.
+uint64_t g_blockCreatePendingJ2J[2] = {0, 0};
 static const char* const kCannotReturnSiteName[6] = {
     "nlr-homeSender-nil", "nlr-ctxchain-homeSender-nil", "return-top-of-chain(guarded)",
     "returnFromMethod-no-sender", "returnFromBlock-no-outer", "activateContext-no-sender",
@@ -2299,6 +2307,12 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                             (unsigned long long)g_cannotReturnSite[i]);
             fprintf(stderr, "\n");
         }
+        if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
+            fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
+                    "chain-loop=%llu (materialized first) resume-loop=%llu "
+                    "(NOT materialized)\n",
+                    (unsigned long long)g_blockCreatePendingJ2J[0],
+                    (unsigned long long)g_blockCreatePendingJ2J[1]);
     }
     size_t lo = (frameDepth_ > maxFrames) ? (frameDepth_ - maxFrames) : 0;
     for (size_t i = frameDepth_; i > lo; i--) {
@@ -25586,6 +25600,14 @@ void Interpreter::tryJITResumeInCaller() {
             bool receiverOnStack = (flags >> 7) & 1;
             bool ignoreOuterContext = (flags >> 6) & 1;
 
+            // NOT materialized here, unlike the chain loop's twin: this loop's
+            // handlers are documented to assume depth==0 (the "resume-internal"
+            // materialize above forces that for internal J2J).  The counter
+            // says whether that assumption actually holds -- if it fires, this
+            // path builds closures with J2J-hidden callers missing from the
+            // captured sender chain, exactly as the chain loop did before the
+            // defect-#23 fix.
+            if (state.j2jDepth > 0) g_blockCreatePendingJ2J[1]++;
             createFullBlockWithLiteral(litIndex, numCopied, receiverOnStack, ignoreOuterContext);
             instructionPointer_ += 3;
             continue;  // Try to resume JIT at next bytecode
@@ -30090,6 +30112,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // j2jDepth, so any saves pending at this exit were silently
             // DROPPED and the materializeJ2J() after tryResume never saw them.
             const bool hadPendingJ2J = state.j2jDepth > 0;
+            if (hadPendingJ2J) g_blockCreatePendingJ2J[0]++;
             materializeJ2J();
 
             // Extract block parameters from cachedTarget
