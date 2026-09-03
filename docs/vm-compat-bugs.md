@@ -3878,3 +3878,23 @@ worth building carefully: a per-send class check is not free.
 Worth ruling out first, cheaply: `classOf` returning the wrong class for a
 moment (a GC or become artifact) would produce exactly this pair without any IC
 being at fault.
+
+**Third instrument, and it needed two corrections before it could be believed.**
+The victim-side check -- reaching `BlockClosure>>value:`'s primitive with a
+receiver that is not a closure -- is the right idea, because it does not depend
+on guessing which dispatch path is at fault.  Its first version was wrong twice:
+
+- it sat AFTER the primitive's failure exits, so the receiver it was built to
+  catch could never have reached it (a non-closure fails the slot-2 numArgs
+  read and returns first);
+- it treated `FullBlockClosure` as the only closure class, so its first sweep
+  reported four hits and all four were `CleanBlockClosure` -- a perfectly good
+  closure.
+
+Both were caught by the detector's own output, because it printed the receiver's
+class name rather than a bare count.  A count would have read as four
+confirmations of defect #27.
+
+**The four MISDISPATCH lines in the 2026-09-03 fake-GUI sweep are those false
+positives**, not sightings.  The corrected detector is in `build-rel` and was
+not in the binary that sweep runs.
