@@ -1803,8 +1803,9 @@ LEAD 19. CLOSED 2026-09-02 — the prevention did not work, and there is now an
     artifact.  The 2026-08-22 low-space circuit breaker (`22fcb0e7`) never
     fired on the first real storm we have a log for: arm64 sweep batch
     1901-1950 ran old space from 12 GB free down to 16 bytes with 33.4M
-    Contexts / 6.66M Errors and printed no `[LOW-SPACE]` line at all
-    (`docs/results/sweep-arm-2026-09-02/`).  Root cause is structural, not a
+    Contexts / 6.66M Errors and printed no `[LOW-SPACE]` line at all.  The
+    artifact this lead asked for is now in the repo:
+    `docs/results/sweep-arm-2026-09-02/storm-heap-census.txt`.  Root cause is structural, not a
     tuning miss: the threshold was sampled on the interpreter's per-1024-
     bytecode checkpoint, but old space is consumed almost entirely by scavenge
     tenure, in steps of up to one eden (22 MB on that image).  Pharo arms the
