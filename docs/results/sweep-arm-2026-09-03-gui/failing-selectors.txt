@@ -1,0 +1,22 @@
+NoUnusedVariablesLeftTest                  TIMEOUT: testNoUnusedTemporaryVariablesLeft (exceeded 80s)
+OCClassBuilderTest                         ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+ReleaseTest                                FAIL: testNoDeadSubscriptions [Got an Array(a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to MethodModified)) instead of #().]
+ReleaseTest                                TIMEOUT: testNoNullCharacter (exceeded 80s)
+ReleaseTest                                TIMEOUT: testNoShadowedVariablesInMethods (exceeded 80s)
+ReleaseTest                                FAIL: testUnknownProcesses [Found unknown processes: 'CommandLine handler process'':'a Process in SessionManager>>snapshot:andQuit:
+StDebuggerInspectorTest                    FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+StDebuggerTest                             FAIL: testIsInSelectedContextPackage [Got #on:do: instead of #runTestCaseUnderWatchdog:.]
+StDebuggerTest                             FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+StSpotterModelTest                         FAIL: testAnnounceQueryEndedIsSentOnce [Got 0 instead of 1.]
+StSpotterModelTest                         FAIL: testSpotterModelShouldWaitToPerformActualSearch [Assertion failed]
+StSpotterTest                              FAIL: testOpenSpotterRefreshesPreviewOnce [Got 5 instead of 1.]
+SystemDependenciesTest                     FAIL: testExternalUIDependencies [Given Collections do not match!
+TKTWorkerPoolTest                          TIMEOUT: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection (exceeded 80s)
+TKTWorkerTest                              ERROR: testWorkerProcessDiesAfterWorkerIsCollected (TKTTimeoutException: )
+TKTWorkerTest                              TIMEOUT: testWorkerProcessIsWorkingUntilAllTasksAreDone (exceeded 80s)
+TraitFileOutTest                           ERROR: testFileOutCategory (FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/Generated-Trait-Test-Package.st')
+TraitFileOutTest                           ERROR: testFileOutCategory (KeyNotFound: key #'Generated-Trait-Test-Package' not found in PackageOrganizer)
+TraitFileOutTest                           ERROR: testFileOutTrait (FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/T6.st')
+WeakAnnouncerTest                          FAIL: testNoDeadWeakSubscriptions [an Array(a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodModified) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved)) should have been empty]
+ZnClientTest                               FAIL: testQueryGoogle [Assertion failed]
+ZnHTTPSTest                                TIMEOUT: testTransfers (exceeded 80s)

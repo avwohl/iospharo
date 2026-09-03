@@ -33,9 +33,26 @@ classes are non-clean, against 24 in the previous run.
     TKTWorkerTest             1 E / 1 T       clean        OURS (flaky worker timing)
     TraitFileOutTest          2 E             clean        OURS (known CWD artifact)
 
-So of eleven non-clean classes, four are at exact parity with Cog, one is
-better than Cog, three are partly shared, and **three are ours** -- one of
-which is a known working-directory artifact and one a flaky timing test.
+Counting TIMEOUTs as non-clean too (they are failures for the goal, and the
+report script keyed on F and E only until this run) adds three more, all of
+them slow rather than wrong:
+
+    NoUnusedVariablesLeftTest  1 T   whole-image scan; passes given time, and
+                                     passes on Cog inside the bound
+    TKTWorkerPoolTest          1 T   worker-collection timing
+    ZnHTTPSTest                1 T   network
+
+So of fourteen non-clean classes: four at exact parity with Cog, one better
+than Cog, three partly shared, three slow-but-correct, and **three ours** --
+one a known working-directory artifact, one a flaky worker-timing test, one a
+real Spotter failure.
+
+`TraitFileOutTest`'s two errors name their own cause:
+`FileDoesNotExistException: '/Users/wohl/src/iospharo-jit/Generated-Trait-Test-Package.st'`.
+The test files a package out and reads it back; the write lands beside the
+image and the read looks in the sweep's working directory, which is the repo
+root.  Running the sweep with its working directory set to the image's would
+fix it -- worth trying, and it is two errors, not a VM defect.
 
 ## The whole display family is gone
 

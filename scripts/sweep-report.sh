@@ -19,11 +19,15 @@ for f in all_results.txt retry_results.txt; do
     END { printf "  %-18s classes=%d P=%d F=%d E=%d S=%d T=%d\n",
                  tag, n, t["P"], t["F"], t["E"], t["S"], t["T"] }'
 done
-echo "--- non-clean classes"
+echo "--- non-clean classes (F, E or T non-zero)"
+# T counts.  An earlier version keyed on F and E only, and TIMEOUTs -- which
+# ARE failures for the goal -- were invisible in the class list while still
+# showing in the totals.
 tr '\r' '\n' < "$D/all_results.txt" 2>/dev/null | awk '
   /^=== / { cls=$2 }
-  /^Total:/ { split($4,f,":"); split($5,e,":");
-              if (f[2]+0>0 || e[2]+0>0) printf "  %-45s %s\n", cls, $0 }'
+  /^Total:/ { split($4,f,":"); split($5,e,":"); t=0;
+              for (i=6;i<=NF;i++) { split($i,kv,":"); if (kv[1]=="T") t=kv[2] }
+              if (f[2]+0>0 || e[2]+0>0 || t+0>0) printf "  %-45s %s\n", cls, $0 }'
 echo "--- defect #23 instrumentation"
 for pat in CANNOT-RETURN-STORM DEAD-SENDER DOUBLE-RETURN DUP-FRAME "FATAL: old space"; do
   n=$(cat "$D"/batch_*.log "$D"/retry_*.log 2>/dev/null | grep -ac "$pat")
