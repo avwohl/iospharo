@@ -15,7 +15,34 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 03:05)
+## Right now (2026-09-03, 03:20)
+
+**Fix 1 is reverted; it broke 11 classes that the storm's repro batch never
+runs.**  The full sweep found it within four batches: batch 1-100 goes from 0
+non-clean on the unfixed VM to 11 with fix 1, with the shifted-operand-stack
+signature (`NonBooleanReceiver: proceed for truth`, `MessageNotUnderstood` on
+`SmallInteger >> #byteSize`).  Materializing pending J2J saves at
+`ExitBlockCreate` is simply not valid there -- bailing to the interpreter
+instead of resuming the JIT scores the same 11.
+
+Which means **every "the fix works" number from tonight's storm A/Bs is
+suspect**: all of them had fix 1 in the binary, and a change that breaks 11
+classes can suppress a storm by breaking the code that reaches it.  What is
+being measured now, in order: batch 1-100 must be clean on the reverted build,
+then the storm A/B against base, then the full sweep.  Nothing is claimed for
+the storm until that runs.
+
+Still in: fix 2 (the materialized-context handover -- the probe clears it of
+any part in the regression) and the `cannotReturn:` storm guard.  Still open,
+and now the central question: how to give a closure built inside a J2J chain a
+complete `outerContext` WITHOUT consuming saves the JIT still owns.  It happens
+481 times in a 20-second run.
+
+**Standing rule from tonight:** run `scripts/sunit-sweep.sh` on batch `1 100`
+before believing any VM change -- about four minutes, and the unfixed binary
+scores 0 non-clean, so any non-zero is the change.  A five-class repro batch
+only ever says whether the bug still fires.
+
 
 **Defect #23 is bounded and mostly fixed; the loop still starts sometimes.**
 Two fixes and a bound are in, and across three interleaved A/Bs under held load
