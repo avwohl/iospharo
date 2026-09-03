@@ -2013,8 +2013,22 @@ Note `TraitAbstractTest suite` aggregates the whole block — 273 tests, and it
 takes Cog **76.5 s**, so the trait block is genuinely heavy work, not a
 trivial suite our VM trips over.
 
-Next: run the block one class at a time (chunks of five is enough to bracket
-it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
+**Chunks of five do NOT reproduce it** (2026-09-03): chunks 1912-1916 and
+1917-1921 both ran clean in 31 s and 10 s.  That is a property of the hunt, not
+evidence against the defect — `sunit-sweep.sh` relaunches from a pristine image
+per chunk, and the storm needs the accumulated state of many trait rebuilds in
+ONE image.  The sweep runs all 51 classes in a single VM; the hunt must too.
+
+So bisect by CLASS COUNT within one image, not by fresh chunks: run
+1901-1950 whole (it storms), then 1901-1930, then 1901-1920, and so on.  The
+`traitUsers` invariant above is the cheaper instrument for the same question —
+`scripts/pkg-jit-test/probe_trait_users_sanity.st` runs all 27 classes in one
+image and re-checks the invariant after each, so it names the first class that
+breaks it without needing the storm at all.  Stock Cog scores 0 violations at
+all 28 checkpoints
+(`docs/results/sweep-x86-2026-09-03/cog-trait-invariant-baseline.txt`).
+
+Then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
 `PHARO_MAX_OLD_SPACE_MB=1024` for the hunt — the storm took 758 s to reach the
 FATAL at 12288 and should take about a twelfth of that at 1024, and the census
 ratios that identify it do not depend on the absolute counts.
