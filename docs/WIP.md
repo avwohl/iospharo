@@ -112,6 +112,20 @@ per-test bound — the same 2x rule `scripts/package-tests-selfhosted.sh` alread
 documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
 (submodule `db42c37`), so the next x86 sweep should use `SUNIT_TIMEOUT_MULT=2`.
 
+**Verified overnight**, from the chained post-sweep scripts:
+
+  * `test_relaunch` **3/3 PASS on `base.image`** — the earlier 2/3 was the
+    prepped image, as diagnosed; not a regression and not machine load.
+  * The **low-space breaker fires**: 462 `[LOW-SPACE]` lines and **zero** FATAL
+    aborts on the storm repro at `PHARO_MAX_OLD_SPACE_MB=512`, with the P60
+    watcher preempting the P40 hog.  In a bare `eval`, which the 2026-07
+    dossier said was impossible.
+  * The **x86_64 sweep finished at 99.15%** on 2046 classes — see above.
+  * The **storm does not reproduce in chunks**: all eight covering 1912-1950
+    ran clean in 135 s total.  It needs one image; the bisect must be by class
+    count, not by fresh chunks.
+  * Batch 1001-1050, which I damaged mid-sweep, recovered clean in ten chunks.
+
 ### Defects filed tonight
 
     #22  BlockCannotReturn on a trait-copied block's non-local return

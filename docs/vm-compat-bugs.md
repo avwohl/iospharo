@@ -2013,8 +2013,9 @@ Note `TraitAbstractTest suite` aggregates the whole block — 273 tests, and it
 takes Cog **76.5 s**, so the trait block is genuinely heavy work, not a
 trivial suite our VM trips over.
 
-**Chunks of five do NOT reproduce it** (2026-09-03): chunks 1912-1916 and
-1917-1921 both ran clean in 31 s and 10 s.  That is a property of the hunt, not
+**Chunks of five do NOT reproduce it** (2026-09-03): all eight chunks covering
+1912-1950 ran clean, 135 s for the whole 39 classes that the sweep never got
+to.  That is a property of the hunt, not
 evidence against the defect — `sunit-sweep.sh` relaunches from a pristine image
 per chunk, and the storm needs the accumulated state of many trait rebuilds in
 ONE image.  The sweep runs all 51 classes in a single VM; the hunt must too.
