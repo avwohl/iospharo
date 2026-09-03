@@ -2048,13 +2048,25 @@ matches the Heisenbug character the 2026-07 dossier records ("2/10 real-catalog
 runs").  The storming run reported 3 classes before dying, i.e. it went down
 during index 1904 `TonelReaderTest`, and its census is the same 2.65M Contexts.
 
-**So the next instrument is `PHARO_DET_SCHED=1`**, which CLAUDE.md prescribes
-for exactly this shape: it drives the force-yield from the bytecode checkpoint
-instead of the wall clock, so the interleaving is identical every run and the
-bug stops vanishing when observed.  With an 18-second repro and deterministic
-scheduling this should become tractable; without DET_SCHED, a bisect over
-run-to-run noise will keep contradicting itself the way this one does.  Raw in
-`docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
+**Rate, measured on the same range** (1901-1950's prefix 1901-1905, 1024 MB):
+
+    wall clock          1 of 3 runs storms      18 s when it does, 4 s when not
+    PHARO_DET_SCHED=1   0 of 3 runs storms      45 s every time
+
+So it is roughly a one-in-three race under the wall clock, and
+`PHARO_DET_SCHED=1` **suppresses** it rather than pinning it — the opposite of
+what that knob did for the aigraph transient CLAUDE.md cites.  Its 1024-bytecode
+yield quantum is far finer than the ~2 ms heartbeat it replaces, so the
+interleaving it produces is not the one that races.
+
+`PHARO_DET_SCHED_QUANTUM=N` widens that to N x 1024 bytecodes — coarser, closer
+to the wall-clock interleaving, still deterministic — and walking it up is the
+next thing to try: a quantum that storms every time turns this into a fixed
+repro.  Raw in `docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
+
+Note the Context count barely moves across storms — 2654994, 2655137, 2655142 —
+because it is set by the heap size, not by the bug; do not read it as a
+signature.
 
 #### The breaker DOES fire in the storm — once — and that is the problem
 
