@@ -62,9 +62,11 @@ if [ ! -f "$HARNESS/sunit-gui.image" ]; then
          '$REPO/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn" ) 2>&1 | tail -2
     log "prepped image: $(stat -c%s "$HARNESS/sunit-gui.image") bytes"
 fi
-# the runner must be IN there, or every batch reports nothing
-"$STOCK/pharo" "$HARNESS/sunit-gui.image" eval \
-    "(Smalltalk globals includesKey: #SUnitRunner) printString" 2>&1 | tail -1
+# DO NOT "verify" the prep by resuming the prepped image.  It carries
+# SUnitRunner's SessionManager startUp: handler, so ANY resume -- including a
+# one-line `eval` -- starts a full test run.  A verification eval here hung the
+# script on 2026-09-03 while quietly running the suite in the background.
+# The first batch's classes= count is the verification.
 
 # --- checkpoint loop: keep S3 within a batch of the truth ---
 ( while sleep 60; do aws s3 sync "$OUT" "$S3" --quiet 2>/dev/null; done ) &
