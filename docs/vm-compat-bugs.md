@@ -2238,6 +2238,31 @@ worth of data.
 
 Three of thirty-two is not zero, and all three were on the fix-1-only build.
 
+#### What is still broken: the loop starts, the guard ends it
+
+A marginal A/B -- fix 1 alone against fix 1 + fix 2, 16 interleaved reps each
+under held load -- counting guard fires as well as aborts:
+
+    build            aborts    runs that tripped the guard    total guard fires
+    fix 1            0 of 16          7 of 16                       39
+    fix 1 + fix 2    0 of 16          8 of 16                       18
+
+So fix 2 does not change how OFTEN the dead-sender loop starts (7 runs against
+8) but roughly halves how many separate episodes a run has (39 fires against
+18).  Each fire is one process terminated, so that is fewer processes killed
+per run, and it settles the question the last note raised: fix 2 earns its
+place and does not make the loop more frequent.
+
+What neither fix does is stop the loop starting.  About half of all runs still
+trip the guard at its default burst of 64, complete the batch, and report every
+class.  The guard is therefore load-bearing, not a belt-and-braces addition,
+and defect #23's remaining question is unchanged: why does a return find its
+sender already dead when no unwind has run?  Every frame push now hands the
+materialized context over correctly -- `pushFrame` (both variants) and the J2J
+materializer are the only three -- so the next place to look is whether one
+activation is materialized TWICE, which would give two returns and a second one
+into a corpse.
+
 The second A/B's zero belongs to the FIX, not to the storm guard: the guard's
 `[CANNOT-RETURN-STORM]` line appears in none of those ten runs, so it never
 fired.  That is worth stating plainly because it means the guard is, as of this
