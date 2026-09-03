@@ -27934,7 +27934,27 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
 #endif
     }
     frame.savedActiveContext = activeContext_;
-    frame.materializedContext = nil;
+    // DEFECT #23, second path.  pushFrame's rule -- "the frame being saved
+    // takes the interpreter's current materialized context, and the current
+    // slot is cleared for the new frame" (see ~18142) -- was skipped here, and
+    // that leaves currentFrameMaterializedCtx_ pointing at a frame that is no
+    // longer current.  The first save materialized IS that frame: a J2JSave
+    // records the CALLER's state at the call, so the first one restores the
+    // activation whose context this is, and the ones after it belong to
+    // callers entered inside the JIT that never had a context.
+    //
+    // Left uncorrected, the next popFrame runs the "mark the returning frame's
+    // materialized context dead" store (~8203) against a context whose
+    // activation is still LIVE, nil'ing its sender and pc.  When that
+    // activation's real callee returns, it returns into a corpse marked
+    // pc=nil -- which is exactly what the storm trace shows, with both unwind
+    // counters at zero: "#runSingleTest:... returning into a dead sender
+    // (#ifTrue:ifFalse:, pc=nil); unwind kills so far: nlr=0 aboutToReturn=0".
+    //
+    // Costs nothing on the hot path: currentFrameMaterializedCtx_ is nil
+    // unless something reified this frame's context.
+    frame.materializedContext = currentFrameMaterializedCtx_;
+    currentFrameMaterializedCtx_ = nil;
     frame.ctxSynced = false;
     frame.savedFP = save.tempBase - 1;
     frame.materializedRetSlot = save.sp - (saveNArgs + 1);
