@@ -131,11 +131,15 @@ SOURCES=$(ls "$IMAGE_DIR"/*.sources 2>/dev/null | head -1)
 # thing to want -- it stops a rebuild changing the binary mid-sweep -- so warn
 # rather than refuse, and name the fix.
 VM_DIR=$(cd "$(dirname "$VM")" && pwd)
-for lib in libtty.dylib libTestLibrary.dylib; do
+# .dylib on macOS, .so on Linux -- checking only for .dylib warned falsely on
+# every Linux run.
+case "$(uname -s)" in Darwin) LIBEXT=dylib ;; *) LIBEXT=so ;; esac
+for base in libtty libTestLibrary; do
+    lib="$base.$LIBEXT"
     if [ ! -f "$VM_DIR/$lib" ]; then
         echo "WARNING: $lib is not beside the VM ($VM_DIR)." >&2
         echo "         Tests that FFI into it will fail with SymbolNotFoundError." >&2
-        echo "         Copy the build directory's *.dylib next to the VM, or run" >&2
+        echo "         Copy the build directory's *.$LIBEXT next to the VM, or run" >&2
         echo "         the VM in place from its build directory." >&2
     fi
 done
