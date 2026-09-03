@@ -2050,9 +2050,33 @@ The five that do fail are specific, and they cluster:
     testSetColumnTitleInPresenterPutsColumnHeaderMorph        SubscriptOutOfBounds: 1 in #()
     testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure
 
-i.e. click activation and column headers — event simulation and morph
-structure, not world creation.  Start there, on those five, rather than on the
-environment.
+Reading the five, they all go through `backendForTest`:
+
+    testChangeListInPresenterUpdatesWidget
+        self presenter items: #('1' '2' '3').
+        backendForTest assertList: self adapter displayItems: #('1' '2' '3')
+    testSingleClickActivatesRowInSingleClickActivationMode
+        backendForTest clickFirstRowAndColumn: self adapter.
+    testSetColumnTitleInPresenterPutsColumnHeaderMorph
+        self presenter headerTitle: 'test'.
+        backendForTest assertListHeaderOf: self adapter equals: #('test')
+
+which is informative in two ways.  `backendForTest` is plainly NOT nil for us —
+a nil one would MNU on `assertList:`, and we get `SubscriptOutOfBounds: 1 in
+#()` from INSIDE the assertion instead.  So the backend is there, the presenter
+built, and the widget simply has no rows and no header by the time the
+assertion looks.
+
+That points at the update never being applied rather than at the setup.  The
+sharpest candidate is the UI manager: Cog headless runs
+`NonInteractiveUIManager`, and if ours ends up with `MorphicUIManager` (we do
+have a display path where stock Pharo has none), then every `defer:`-ed widget
+refresh is queued to a UI process that is not running, and the assertion reads
+an empty list.  That would also explain why `setup_fake_gui.st` "fixes" the
+bucket: it starts a UI process.
+
+So the environment probe below is not a formality — `UIManager default class`
+is the value to read first.
 
 **Still worth running once our VM is free**, because it is one line and pins
 the environment difference either way:
