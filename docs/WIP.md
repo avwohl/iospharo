@@ -147,8 +147,14 @@ entirely; and ANY binary started on the PREPPED image does the same, which is
 how batch 1001-1050 was lost tonight), or the sweep is running the binary that
 would be replaced.
 
-Steps 0-4 are automated in the session scratchpad's `post-sweep-running.sh`,
-which waits on the sweep's pid; the rest are by hand.
+Steps 0-4 are automated in the session scratchpad, chained on each other:
+`post-sweep-running.sh` (waits on the sweep's pid; recovers the damaged x86
+batch, `test_relaunch` on `base.image`, the low-space control, the storm hunt
+in chunks of 5, rebuild x86), then `post-sweep-2-running.sh` (rebuild both with
+tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
+`RSLinesTest` with and without the JIT, the defect-#22 block probe), then
+`post-sweep-3-running.sh` (re-run batch 1801-1850 and check it no longer idles
+1730 s).  The rest are by hand.
 
  0. **Neither build matches the tree.**  Everything from `77f12ac6` on is
     syntax-checked only — the `!inExtension_` guard, the bounded trace, the
