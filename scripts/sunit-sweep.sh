@@ -196,9 +196,22 @@ rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
 # timeout out.  timeout(1) is still the outer bound for a batch that hangs
 # BEFORE finishing, which is the case the marker cannot see.
 SHUTDOWN_GRACE=${SHUTDOWN_GRACE:-30}
+# RUN_FROM_IMAGE_DIR=1 runs the VM with its working directory set to the
+# outdir, where run.image lives.  Some tests write a file and read it back:
+# TraitFileOutTest files a package out and then fails with
+# "FileDoesNotExistException: <repo>/Generated-Trait-Test-Package.st" because
+# the write lands beside the image and the read looks in the sweep's working
+# directory.  Off by default because it changes the working directory for every
+# test at once, which is exactly the kind of thing that moves failures around;
+# turn it on deliberately and diff the result.
 run_batch() {                       # $1 = log path
     local log=$1 grace=0 pid
-    timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$log" 2>&1 < /dev/null &
+    if [ "${RUN_FROM_IMAGE_DIR:-0}" = "1" ]; then
+        ( cd "$OUT" && exec timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" ) \
+            > "$log" 2>&1 < /dev/null &
+    else
+        timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$log" 2>&1 < /dev/null &
+    fi
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         if [ -f /tmp/sunit_run_completed.txt ]; then
