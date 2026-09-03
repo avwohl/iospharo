@@ -67,12 +67,19 @@ errors and 7 failures, removed by the prep.
 ## The cost, and it is real
 
 Batch 651-700 was lost entirely: `rc=124` after the full 1800 s with 20 of 51
-classes done, wedged on `KeyboardKeyTest>>testEqual`.  The in-image watchdog
+classes done, wedged somewhere in `KeyboardKeyTest`.  The in-image watchdog
 could not interrupt it, so no Smalltalk process was running -- the VM itself
-was blocked, presumably on an event queue the fake GUI creates and nothing
-pumps.  The recovery pass ran the 31 lost classes in chunks and got all of them
-back (36 classes / 232 P / 0 F / 0 E), so the price is wall-clock, not
-coverage.
+was blocked.
+
+**But the class is not the cause by itself.**  `KeyboardKeyTest` run alone
+passes 3 of 3 in under 100 s on this image AND on the runner-only image.  So
+"the fake GUI makes KeyboardKeyTest hang" is not what happened; the wedge needs
+the preceding 20 classes' state or timing, and blaming the prep for it is one
+data point against one.  Reproducing it means re-running the whole batch, not
+the class.
+
+The recovery pass ran the 31 lost classes in chunks and got all of them back
+(36 classes / 232 P / 0 F / 0 E), so the price was wall-clock, not coverage.
 
 ## Instrumentation
 

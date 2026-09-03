@@ -412,13 +412,16 @@ Also remember our VM's eval mode touches /tmp/sunit_run_completed.txt
     #   setup_fake_gui.st + runner  232 P /  6 F /  0 E
     # Every ERROR in that family is the missing Display/World, not the VM.
     #
-    # It has a COST, measured the same day: with a fake GUI installed,
-    # KeyboardKeyTest>>testEqual wedged the VM past the in-image watchdog and
-    # burned a whole 1800 s batch (batch 651-700, rc=124, 20 of 51 classes).
-    # An event-dependent test blocks on a queue that now exists and never
-    # delivers.  The recovery pass gets those classes back, so the price is
-    # wall-clock rather than coverage -- but do not run a fake-GUI sweep with a
-    # short PER_BATCH_TIMEOUT and assume it behaves like a plain one.
+    # It may have a COST: the 2026-09-03 fake-GUI sweep lost batch 651-700
+    # entirely (rc=124 after the full 1800 s, 20 of 51 classes), wedged
+    # somewhere in KeyboardKeyTest past the in-image watchdog -- i.e. no
+    # Smalltalk process was running, the VM itself was blocked.  KeyboardKeyTest
+    # ALONE passes 3/3 on that image in under 100 s, and on a runner-only image
+    # too, so the class is not the cause by itself and the wedge is unproven
+    # against the prep.  One wedge in one fake-GUI sweep and none in the
+    # runner-only sweep is one data point each.  The recovery pass got all 31
+    # lost classes back, so the price was wall-clock, not coverage -- but keep
+    # PER_BATCH_TIMEOUT generous and RETRY_DAMAGED on.
     ./build/test_load_image /tmp/harness/Pharo-jit.image eval \
       "'$PWD/scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
        '$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
