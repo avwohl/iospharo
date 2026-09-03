@@ -558,6 +558,34 @@ IMAGE LOADER bug, and the tell was in the image header all along —
 `scripts/image-segments.py <image>` answers it in milliseconds.  **Check the
 other packages in #2a/#2b for multi-segment before assuming anything else.**
 
+#### The table above is stale — five of the 13 were re-measured on 2026-08-13
+
+Acting on exactly that lesson closed most of #2a, and the results sat in the
+repo-root `WIP.md` (now `docs/history/wip-root-2026-08-13.md`) rather than
+here, which is why this defect still reads as 13 packages.  Freshly loaded,
+all with segment support:
+
+    package                            cog                 ours
+    mumez-pharo-acp                    168 P/0 F/2 E       168 P/0 F/2 E   EXACT
+    moosetechnology-famix             1293 P/5 F/2 E      1292 P/5 F/2 E/1 T
+    fedeloch-ume                      times out at 1200s  loads + runs (6 segments)
+    moosetechnology-famixtagging         0 P/115 E           0 P/115 E    broken pkg, parity
+    apptivegrid-soil                   464 P/6 F/1 E      runs; bounded by #6
+
+`famix` was never a hang and `famixtagging` fails identically on both VMs, so
+it should never have been counted as ours.  `ume` prints
+`[IMGLOAD-MULTISEG] 6 segments` and boots where it used to answer "Interpreter
+initialization failed".  `soil`'s SIGABRT was `544740ac` — super sends did not
+honour `objectAsMethod`.
+
+Still open from the two lists: `evref-bl-mcp`, `pillar-markup-pillar`,
+`tomooda-viennatalk`, `moosetechnology-gitprojecthealth` (2a), and `jrpc` /
+`anthropic-sdk` (2b) — the latter two no longer "exit 0 after CLASSES" but
+fail on sockets instead (`EADDRINUSE` on the ~12th server start;
+`primSocketReceiveDataAvailable:` inside a threaded Zn mock).  Nobody has
+re-run the six against a current build, and there is no live Cog baseline on
+this host to compare them to.
+
 **2026-08-13: acted on that lesson — two more closed, and the family is
 smaller than it looked.**  Each package reloaded from scratch with stock Cog,
 segment-checked, then run on both VMs:
