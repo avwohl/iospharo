@@ -15,7 +15,22 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 02:45)
+## Right now (2026-09-03, 03:05)
+
+**Defect #23 is bounded and mostly fixed; the loop still starts sometimes.**
+Two fixes and a bound are in, and across three interleaved A/Bs under held load
+the unfixed binary storms 24 times in 32 reps against the fixed build's 3 (all
+three on the fix-1-only build).  What is NOT fixed: the underlying dead-sender
+return loop still starts -- roughly a third of runs trip the
+`cannotReturn:` storm guard at its default burst of 64 -- and the guard
+terminates that one process while the batch completes normally.  So the cost
+went from a 12 GB abort that takes 39 classes with it to one terminated
+process.
+
+Sweeps on both arches are queued behind a marginal A/B (fix 1 alone against
+fix 1 + fix 2, 16 reps each, counting guard fires as well as aborts, because
+fix 2's marginal value is not yet established).
+
 
 **Defect #23 (the arm64 Context storm) is root-caused down to its loop and its
 emit, and one candidate fix is in and NOT yet vindicated.**  In order:
