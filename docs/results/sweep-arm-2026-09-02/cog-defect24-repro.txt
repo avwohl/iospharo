@@ -37,3 +37,31 @@ pass=18 fail=5
    testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
    testSetColumnTitleInPresenterPutsColumnHeaderMorph  SubscriptOutOfBounds: 1 in #()
    testSingleClickActivatesRowInSingleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+
+# The rest of the 'no display' bucket under the same suspended-UI-process
+# condition on stock Cog.
+
+Morphic installed, uiProcess suspended
+
+FTTableMorphTest  pass=0 fail=1
+     testCanAlternateRowColors  SubscriptOutOfBounds: 1 in #()
+StDebuggerActionModelTest  pass=55 fail=0
+StSpotterModelTest  pass=2 fail=0
+StTranscriptPresenterTest  pass=2 fail=3
+     testAnnouncementIsWritten  TestFailure: Got '' instead of 'test'.
+     testClear  TestFailure: Got '' instead of 'test'.
+     testReset  TestFailure: Got '' instead of 'test'.
+StDebuggerInspectorTest  pass=10 fail=1
+     testUpdateLayoutForContextsWithAssertionFailure  TestFailure: Got 4 instead of 2.
+StSpotterTest  pass=2 fail=1
+     testOpenSpotterRefreshesPreviewOnce  TestFailure: Got 0 instead of 1.
+SpAthensAdapterTest  pass=8 fail=1
+     testResizeMakesCanvasResize  MessageNotUnderstood: receiver of "x" is nil
+SpComponentListAdapterTest  pass=7 fail=1
+     testAddPresenterAddsWidget  SubscriptOutOfBounds: 1 in #()
+
+StDebuggerTest (Morphic suspended)  pass=63 fail=4
+   testDynamicVariableEvaluation  TestFailure: Got nil instead of 42.
+   testGenerateAndProceed  MessageNotUnderstood: receiver of "clear" is nil
+   testIsInSelectedContextPackage  TestFailure: Got #DoIt instead of #runTestCaseUnderWatchdog:.
+   testUpdateLayoutForContextsIfAssertionFailure  TestFailure: Got 4 instead of 2.

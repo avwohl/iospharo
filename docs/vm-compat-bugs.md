@@ -2030,7 +2030,31 @@ That is our arm64 sweep's result for this class exactly — same count, same fiv
 selectors, same messages.  Leave the UI process RUNNING and Cog is back to
 23 / 23, so it is the suspension and nothing else: the widget refreshes are
 deferred to the UI process, and with it suspended the assertions read an empty
-list.  Raw in `docs/results/sweep-arm-2026-09-02/cog-defect24-repro.txt`.
+list.
+
+**The same condition reproduces most of the rest of the bucket**, which is why
+this entry is no longer about nine classes:
+
+    class                      Cog suspended            ours (arm64 sweep)
+    FTTableMorphTest           0P/1F SubscriptOOB       0P/1E, same test+message
+    StTranscriptPresenterTest  2P/3F "Got '' ..."       2P/3F, same three
+    SpAthensAdapterTest        8P/1F MNU "x" is nil     8P/1E, same test+message
+    SpComponentListAdapterTest 7P/1F SubscriptOOB       7P/1E, same test+message
+    StDebuggerTest            63P/4F                    58P/3F, all three among them
+    StDebuggerInspectorTest   10P/1F                    same — but Cog fails it
+                                                        UNSUSPENDED too: parity
+    StSpotterTest              2P/1F                    same — parity likewise
+    ---- not reproduced: still ours ----
+    StDebuggerActionModelTest 55P/0F                    53P/1F testEventAfterProceed
+    StSpotterModelTest         2P/0F                    0P/2F
+
+Counting the whole 2026-09-02 arm64 residual against that: **9 of the 21 FAILs
+and 17 of the 21 ERRORs are downstream of this one suspension.**  Three more
+FAILs are parity with Cog (image issues), and three are genuinely ours and
+unexplained — `StDebuggerActionModelTest>>testEventAfterProceed` and
+`StSpotterModelTest`'s two.
+
+Raw in `docs/results/sweep-arm-2026-09-02/cog-defect24-repro.txt`.
 
 **Restoring `NonInteractiveUIManager` afterwards does not help** — tested:
 install Morphic, suspend the UI process, then set `NonInteractiveUIManager` back
