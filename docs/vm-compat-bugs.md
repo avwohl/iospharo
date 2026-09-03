@@ -2047,11 +2047,20 @@ So in the runner/sweep context prim 125 is **never armed at all** — the image
 does not install a `LowSpaceWatcher`.  (In a bare `eval` it does, and the
 breaker fires 462 times; the 2026-07 dossier has this exactly backwards.)  The
 latch fix is still right and still needed, but it cannot help a run where the
-image never arms the threshold.  Why the prepped image skips
-`installLowSpaceWatcher` is the next question, and `lowSpaceWatcher`'s own
-guard is the place to look: it bails with "Not enough memory to launch the
-lowSpaceWatcher" unless `garbageCollectMost` or `garbageCollect` answers more
-than 400000.
+image never arms the threshold.
+
+**And the same image arms it in `eval` and not under the runner**, which points
+at the runner rather than the VM: `Smalltalk installLowSpaceWatcher` is called
+from `ProcessorScheduler>>installIdleProcess`, part of image startup, and
+`SUnitRunner class>>startUp:` runs during that same startup and does not
+return — it goes straight into the batch.  If the runner's handler is ordered
+before the scheduler's, the watcher is simply never installed.  Two checks
+settle it: evaluate `Smalltalk specialObjectsArray at: 24` (the low-space
+semaphore) inside a runner batch, and compare the `SessionManager` startup list
+position of `SUnitRunner` against `ProcessorScheduler`.  The other candidate is
+`lowSpaceWatcher`'s own guard, which bails with "Not enough memory to launch
+the lowSpaceWatcher" unless `garbageCollectMost` or `garbageCollect` answers
+more than 400000.
 
 #### (superseded) Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
 is generated from the image and archived at
