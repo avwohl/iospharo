@@ -268,6 +268,12 @@ public:
     /// ("2.6M Contexts, 517K Errors") has twice failed to name the loop
     /// that made them.
     void dumpSendChain(const char* why, size_t maxFrames = 60);
+
+    /// Rate-limit repeated cannotReturn: sends from ONE process, terminating
+    /// it when the image's error handling demonstrably is not.  Returns true
+    /// if the process was terminated (the caller must return immediately and
+    /// NOT send cannotReturn:).
+    bool cannotReturnStormGuard(const char* site);
     void dumpTimerWedgeState();  // one-shot at first [TIMER-NOT-REARMED]; see timer-scheduler-wedge
     // Pin every JIT method live in ANY process's Smalltalk stack (incl. SUSPENDED
     // processes like the Delay timer runner), so CodeZone LRU eviction can't free
@@ -1162,6 +1168,12 @@ private:
     Oop lastCannotReturnProcess_;  // Process that triggered cannotReturn: (GC root)
     int cannotReturnCount_;        // Counter for cannotReturn: events per process
     uint64_t cannotReturnDeadline_; // Step deadline for cannotReturn: handling (0 = none)
+    // Storm guard for the UNGUARDED cannotReturn: sites (see
+    // cannotReturnStormGuard).  Separate from cannotReturnCount_ so it cannot
+    // perturb the count-<=2 rule the top-of-chain site already runs.
+    uint64_t cannotReturnStormCount_ = 0;
+    uint64_t cannotReturnStormStep_ = 0;
+    Oop      cannotReturnStormProcess_ = Oop::nil();
     int argCount_;
 
     // Sista V1 extension bytes (reset after each instruction)

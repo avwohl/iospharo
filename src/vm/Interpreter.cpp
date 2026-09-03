@@ -2273,9 +2273,67 @@ uint64_t g_cannotReturnSite[6] = {0, 0, 0, 0, 0, 0};
 // caller, which is defect #23's mechanism.
 uint64_t g_blockCreatePendingJ2J[2] = {0, 0};
 static const char* const kCannotReturnSiteName[6] = {
-    "nlr-homeSender-nil", "nlr-ctxchain-homeSender-nil", "return-top-of-chain(guarded)",
-    "returnFromMethod-no-sender", "returnFromBlock-no-outer", "activateContext-no-sender",
+    "nlr-home-sender-nil",         // NLR: home context found, its sender is nil/invalid
+    "return-into-dead-sender",     // normal return: sender's pc is nil or -1 (returned-from)
+    "return-top-of-chain",         // return with no sender at all -- the guarded site
+    "block-return-home-returned",  // block return, home method already returned
+    "block-return-home-not-found", // block return, home not in the context chain
+    "activate-dead-context",       // activateContext on a context whose pc is nil/-1
 };
+
+// Rate-limit repeated cannotReturn: sends from one process.
+//
+// Four of the six cannotReturn: sites have no bound at all, and defect #23 is
+// what that costs: a storm captured on 2026-09-03 sent 515,981 of them from a
+// single site ("return-into-dead-sender") in one run.  The loop is
+// self-sustaining -- cannotReturn: -> error: -> signal -> no handler ->
+// UnhandledError defaultAction -> handleError:log: -> Context>>freeze, which
+// COPIES the whole context chain, and the chain is one round longer every
+// time.  That is where 2.6M Contexts, 517K Errors and 517K FullBlockClosures
+// come from, and it ends in a 12 GB old-space abort that takes the rest of the
+// test batch with it (39 classes lost per sweep).
+//
+// The VM already has this protection at the top-of-chain site: "Too many
+// cannotReturn: events -- error handler is not terminating.  Fall through to
+// terminate the process."  This applies the same rule to the sites that lacked
+// it.  It is a bound, not a diagnosis: the underlying question of why a JIT'd
+// frame returns into a context an earlier unwind already marked dead is open,
+// and PHARO_NO_JIT makes the storm vanish entirely, so the answer is in the
+// JIT.  What the bound buys is that the storm costs one terminated process
+// instead of the whole batch.
+//
+// Deliberately loose: 64 sends inside a 2,000,000-step window.  A legitimate
+// BlockCannotReturn that an image handler resumes (ProcessTest>>testResumeAfter
+// BCR) sends a handful; a storm sends half a million.
+static constexpr uint64_t kCannotReturnBurst = 64;
+static constexpr uint64_t kCannotReturnWindowSteps = 2000000;
+
+bool Interpreter::cannotReturnStormGuard(const char* site) {
+    Oop proc = getActiveProcess();
+    if (proc.rawBits() != cannotReturnStormProcess_.rawBits()
+            || g_stepNum - cannotReturnStormStep_ > kCannotReturnWindowSteps) {
+        cannotReturnStormCount_ = 0;
+        cannotReturnStormProcess_ = proc;
+    }
+    cannotReturnStormStep_ = g_stepNum;
+    if (++cannotReturnStormCount_ <= kCannotReturnBurst) return false;
+
+    fprintf(stderr,
+        "[CANNOT-RETURN-STORM] %llu cannotReturn: sends from site \"%s\" by "
+        "process 0x%llx within %llu steps -- the image's error handling is not "
+        "terminating it, so the VM is. See defect #23.\n",
+        (unsigned long long)cannotReturnStormCount_, site,
+        (unsigned long long)proc.rawBits(),
+        (unsigned long long)kCannotReturnWindowSteps);
+    fflush(stderr);
+    cannotReturnStormCount_ = 0;
+    cannotReturnStormProcess_ = Oop::nil();
+    terminateCurrentProcess();
+    if (tryReschedule()) return true;
+    if (bootstrapStartup()) return true;
+    stopVM("No runnable processes after cannotReturn: storm termination");
+    return true;
+}
 
 // Innermost frames of the ACTIVE process at a fatal heap abort.  The census
 // tells you 2.6M Contexts and 517K Errors were live; it cannot tell you which
@@ -7831,6 +7889,7 @@ void Interpreter::returnValue(Oop value) {
                         push(activeContext_);
                         push(savedValue);
                         g_cannotReturnSite[0]++;
+                        if (cannotReturnStormGuard(kCannotReturnSiteName[0])) return;
                         sendSelector(selectors_.cannotReturn, 1);
                     }
                 }
@@ -7917,6 +7976,7 @@ void Interpreter::returnValue(Oop value) {
                             push(activeContext_);  // receiver: the returning context
                             push(value);           // arg: the value being returned
                             g_cannotReturnSite[1]++;
+                            if (cannotReturnStormGuard(kCannotReturnSiteName[1])) return;
                             sendSelector(selectors_.cannotReturn, 1);
                             return;
                         }
@@ -9054,6 +9114,7 @@ void Interpreter::returnFromMethod() {
         push(activeContext_);  // receiver: the context that cannot return
         push(value);           // arg: the value that was being returned
         g_cannotReturnSite[3]++;
+        if (cannotReturnStormGuard(kCannotReturnSiteName[3])) return;
         sendSelector(selectors_.cannotReturn, 1);
         return;
     }
@@ -9245,6 +9306,7 @@ void Interpreter::returnFromBlock() {
     push(activeContext_);  // receiver: the context that cannot return
     push(value);           // arg: the value that was being returned
     g_cannotReturnSite[4]++;
+    if (cannotReturnStormGuard(kCannotReturnSiteName[4])) return;
     sendSelector(selectors_.cannotReturn, 1);
 }
 
@@ -21563,6 +21625,7 @@ bool Interpreter::executeFromContext(Oop context) {
         push(context);
         push(memory_.specialObject(SpecialObjectIndex::NilObject));
         g_cannotReturnSite[5]++;
+        if (cannotReturnStormGuard(kCannotReturnSiteName[5])) return true;
         sendSelector(selectors_.cannotReturn, 1);
         return true;  // context was activated (cannotReturn: handler will run)
     }
