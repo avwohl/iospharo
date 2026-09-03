@@ -34,13 +34,27 @@ emit, and one candidate fix is in and NOT yet vindicated.**  In order:
   `ExitBlockCreate` handler called `createFullBlockWithLiteral` with J2J saves
   still pending, and `enableJ2J()` below it then DROPPED them.  Fixed
   (`7724f3fe`) by materializing first.
+- **The storm guard's path is exercised and works.**  It cannot fire in a
+  healthy run, so its burst limit is a knob (`PHARO_CANNOT_RETURN_BURST`,
+  default 64); at `burst=2` the guard fires, terminates the storming process,
+  and the batch completes.
+- **The dead sender was NOT killed by either unwind.**  From that same
+  validation run: `#runSingleTest:selector:timeout:priority:on: returning into
+  a dead sender (#ifTrue:ifFalse:, pc=nil); unwind kills so far: nlr=0
+  aboutToReturn=0`.  Both unwind counters are ZERO and the marker is `pc=nil`,
+  not the `-1` sentinel an unwind writes -- so the sender died the ordinary
+  way, by RETURNING.  The caller returned before its callee did, and the callee
+  then returned into the corpse.  That is a duplicate or stale activation,
+  which is what a J2J save popped twice (or an activation materialized twice)
+  would look like.  Next instrument: whether the returning frame carries a
+  `materializedRetSlot`, which puts it on the J2J materialize path directly.
 - **The A/B says that fix is most of the storm.**  Interleaved, 4 CPU hogs
-  holding the load steady, matched binaries, 12 reps each:
-  **base 9 storms of 12, fixed 3 of 12.**  (An earlier note here called the
-  fix ineffective off the first 5 reps -- base 3, fixed 2 -- which was reading
-  a coin-flip's worth of data.  9-vs-3 is the number.)  So the pending-saves
-  block-create is the majority path and something else accounts for the
-  residual quarter.
+  holding the load steady, matched binaries: **base 9 storms of 12, fixed 3 of
+  12**, and a second A/B against the fix-plus-guard build gave **base 7 of 10,
+  fixed 0 of 10** -- 16 of 22 against 3 of 22 combined.  (An earlier note here
+  called the fix ineffective off the first 5 reps -- base 3, fixed 2 -- which
+  was reading a coin-flip's worth of data.)  So the pending-saves block-create
+  is the majority path and something else accounts for the residual.
 
 Next instrument, already built and queued behind the A/B: six per-site
 counters on the `cannotReturn:` sends, printed in the fatal dump.  Only two of
