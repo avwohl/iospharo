@@ -806,10 +806,10 @@ public:
     //
     // So: arm it here, test it at the two sites that advance oldSpaceFree_,
     // and let the interpreter consume a latched flag.  The effective
-    // threshold is max(image threshold, one eden) -- the invariant being that
-    // the image gets its interrupt while at least one more worst-case
-    // scavenge can still be absorbed.  A 400 KB threshold cannot express that
-    // when the allocation granularity above it is 22 MB.
+    // threshold is max(image threshold, min(one eden, reservation/16)) -- the
+    // invariant being that the image gets its interrupt while at least one
+    // more worst-case scavenge can still be absorbed.  A 400 KB threshold
+    // cannot express that when the allocation granularity above it is 22 MB.
     void armLowSpaceThreshold(size_t bytes) {
         lowSpaceThresholdBytes_ = bytes;
         if (bytes == 0) lowSpaceCrossed_ = false;
@@ -911,9 +911,19 @@ private:
     /// signalling from inside a scavenge is not an option.
     void noteOldSpaceAdvance() {
         if (__builtin_expect(lowSpaceThresholdBytes_ == 0, 1)) return;
+        // One worst-case scavenge's worth of headroom, but never more than a
+        // sixteenth of the whole reservation: `newSpaceSize` is settable
+        // (PHARO_NEWSPACE_MB, a bisect knob), and a big eden against a small
+        // old space would otherwise turn "nearly exhausted" into "a quarter
+        // used" and fire on every run.  A bisect knob must not quietly change
+        // low-space semantics.  The image's own threshold always wins if it
+        // asks for more than either.
         size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
-        size_t effective = lowSpaceThresholdBytes_ > edenCapacity
-                               ? lowSpaceThresholdBytes_ : edenCapacity;
+        size_t reservation  = static_cast<size_t>(oldSpaceEnd_ - oldSpaceStart_);
+        size_t headroom     = edenCapacity < reservation / 16 ? edenCapacity
+                                                              : reservation / 16;
+        size_t effective    = lowSpaceThresholdBytes_ > headroom
+                                  ? lowSpaceThresholdBytes_ : headroom;
         if (freeOldSpaceBytes() < effective) lowSpaceCrossed_ = true;
     }
 

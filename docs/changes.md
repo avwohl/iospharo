@@ -23,11 +23,15 @@ process aborts before any checkpoint can look.
 The crossing is now **latched where old space is actually spent** — the
 scavenge tenure copy (`ObjectMemory.cpp:2133`) and the old-space bump
 allocation (`:3620`) — and the checkpoint consumes the latch instead of
-re-sampling.  The effective threshold is `max(image threshold, one eden)`: a
+re-sampling.  The effective threshold is `max(image threshold, min(one eden, reservation/16))`: a
 400 KB threshold cannot express "stop before exhaustion" when the granularity
 above it is 22 MB, and the invariant worth holding is that the image is
 interrupted while one more worst-case scavenge can still be absorbed.  At the
-default 4 GB reservation that trips at 99.45% full.
+default 4 GB reservation that trips at 99.45% full.  The `reservation/16` cap
+exists because `newSpaceSize` is settable (`PHARO_NEWSPACE_MB`, a bisect knob)
+and a big eden against a small old space would otherwise turn "nearly
+exhausted" into "a quarter used"; a bisect knob must not quietly change
+low-space semantics.
 
 One more defect in the same block: the old code zeroed `lowSpaceThreshold_`
 *before* looking `TheLowSpaceSemaphore` up, so a crossing that arrived before
