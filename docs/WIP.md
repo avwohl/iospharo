@@ -15,7 +15,36 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 03:20)
+## Right now (2026-09-03, 03:30)
+
+**Defect #23 is bounded, and the bound is the whole fix that survives.**  With
+fix 1 reverted, the build carrying fix 2 and the `cannotReturn:` storm guard
+takes the storm batch from 7 aborts of 10 to **0 of 10**, with the guard firing
+in 7 of those runs -- every storm becomes one terminated process and the batch
+completes -- and it scores 0 non-clean classes on batch 1-100, twice, matching
+the unfixed VM.  That is the configuration now running a full arm64 sweep.
+
+What is still open is the hole itself: a closure created while inline-J2J saves
+are pending captures an `outerContext` missing every J2J-hidden caller, 481
+times in a 20-second run.  A candidate fix is written and inert
+(`PHARO_T1_J2J_EXCLUDE_BLOCK_CREATE`, both arches): refuse inline-J2J for a
+callee whose body contains `PushFullBlock`/`PushClosure`, which is what the BV
+inline prep already does one layer down.  Its validation is queued.
+
+Queued, in order, running unattended:
+
+1. full arm64 sweep, fix 2 + guard (started 03:21)
+2. gate ON: batch 1-100 smoke, then a storm A/B whose tell is the GUARD --
+   without the gate it fires in 7 of 10 runs, so if the gate closes the hole it
+   should stop firing, not merely stop aborting
+3. full x86_64 sweep, gate OFF (the shipping default)
+
+**Standing rule from tonight:** run `scripts/sunit-sweep.sh` on batch `1 100`
+before believing any VM change -- about four minutes, and the unfixed binary
+scores 0 non-clean, so any non-zero is the change.  A five-class repro batch
+only ever says whether the bug still fires; three interleaved A/Bs on one
+called a fix clean that broke 11 classes.
+
 
 **Fix 1 is reverted; it broke 11 classes that the storm's repro batch never
 runs.**  The full sweep found it within four batches: batch 1-100 goes from 0
