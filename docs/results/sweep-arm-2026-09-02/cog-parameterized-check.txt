@@ -46,3 +46,31 @@ TKTWorkerTest
    allTestSelectors: 7
    suite tests     : 7
    parameters      : a ParametrizedTestMatrix
+# Why nine Sp* classes fail for us and pass on headless Cog — the instance
+# our runner builds has no parameters.  Cog v10.3.9, 2026-09-02.
+
+BARE       (SpListCommonPropertiestTest)
+    testSelector = #testChangeListInPresenterUpdatesWidget
+    expectedFails = nil
+    parametersToUse = nil
+    presenter = nil
+    specInitializationStrategy = nil
+    window = nil
+    backendForTest = nil
+suite instances for this selector: 2
+SUITE#1 (SpListCommonPropertiestTest)
+    testSelector = #testChangeListInPresenterUpdatesWidget
+    expectedFails = nil
+    parametersToUse = an Array(#specInitializationStrategy->[ SpInitializationStrategy beforeTest ] #backendForTest->SpMorphicBackendForTest)
+    presenter = nil
+    specInitializationStrategy = nil
+    window = nil
+    backendForTest = nil
+SUITE#2 (SpListCommonPropertiestTest)
+    testSelector = #testChangeListInPresenterUpdatesWidget
+    expectedFails = nil
+    parametersToUse = an Array(#specInitializationStrategy->[ SpInitializationStrategy afterTest ] #backendForTest->SpMorphicBackendForTest)
+    presenter = nil
+    specInitializationStrategy = nil
+    window = nil
+    backendForTest = nil

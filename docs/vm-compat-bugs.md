@@ -1981,13 +1981,25 @@ Cog's:
     SpTreeTableAdapterSingleColumnMultiSel..    20        40      40      20
     SpTreeTableAdapterSingleColumnTest          19        38      38      19
 
+The instances differ exactly as predicted — asked of Cog side by side:
+
+    BARE       parametersToUse = nil
+    SUITE#1    parametersToUse = { #specInitializationStrategy -> [...beforeTest],
+                                   #backendForTest -> SpMorphicBackendForTest }
+    SUITE#2    parametersToUse = { #specInitializationStrategy -> [...afterTest],
+                                   #backendForTest -> SpMorphicBackendForTest }
+
+`backendForTest` is filled from `parametersToUse` when the case runs, so a bare
+instance never gets one.
+
 So these are not VM defects and not display defects: they are tests the harness
-runs wrong.  Fix belongs in `run_sunit_tests.st` — build the suite via
-`testClass suite` (or expand `ParametrizedTestCase` selectors into configured
-instances) instead of `testClass selector: sel`.  Until then their F/E should
-not be counted against the VM.  `setup_fake_gui.st` "fixing" them is a second
-clue in the same direction: it supplies state the parameterisation was
-supposed to.
+runs wrong.  **Fixed in the submodule** (`9145af6`): take the instance from
+`testClass suite`, cached per class, falling back to the old construction on
+error.  It compiles — filed into a pristine image under stock Cog — but the
+behaviour is NOT yet verified, which needs a prepped image and a run.  Until a
+run confirms it, their F/E should not be counted against the VM.
+`setup_fake_gui.st` "fixing" them is a second clue in the same direction: it
+supplies state the parameterisation was supposed to.
 
 **Four are not parameterised, and stay ours.**  Checked the same way —
 `testParameters` absent, suite size == selector count:

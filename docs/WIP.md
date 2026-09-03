@@ -161,9 +161,17 @@ which waits on the sweep's pid; the rest are by hand.
     appear — plural, because the image re-arms after each one and its action
     (`signalException: OutOfMemory`) is an `Error` the hog's handler can
     swallow.
- 3. **Verify the runner watchdog fix.**  Re-prep an image with the current
-    submodule (`7830936`) and run a class with a known timeout
-    (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line start.
+ 3. **Verify BOTH runner fixes.**  Re-prep an image with the current submodule
+    (`9145af6`) — both changes compile (filed into a pristine image under stock
+    Cog) but neither has been run.
+
+      a. The watchdog splice: run a class with a known timeout
+         (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line
+         start.
+      b. The parameterised-instance fix: run `SpListCommonPropertiestTest`.
+         Before, 18 P / 5 E; it should now be 23 P / 0 E, because the instance
+         carries `parametersToUse` and therefore a backend.  If it does, 16 of
+         the sweep's 21 ERRORs and 4 of its 21 FAILs disappear with it.
  4. **Defect #22 is root-caused; what is left is the fix.**  Cog runs
     `RSLinesTest` 18/18, and the image says
     `RSAbstractLine>>markersIncludesPoint:`'s inner block has
