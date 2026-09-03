@@ -2094,7 +2094,18 @@ spends the last 22 MB.  The queue dump names the culprit:
 
     [DIAG-QUEUE] P79 proc=... susp=Error>>or:
 
-So the storming process is at P79, inside `Error`.  One firing at 22 MB is not
+That print is `<receiver class>>><method selector>` of the process's suspended
+context (`Interpreter.cpp:4529-4540`), so what is solid is: **the storming
+process is at P79 and its suspended context's receiver is an `Error`.**  Read
+the selector with care — `or:` is compiler-inlined when its argument is a
+literal block, so a context whose method is `or:` is unusual, and
+`selectorOf` on a `CompiledBlock` does not answer what it does on a method.
+Do not build on the selector until it is confirmed from a live process dump.
+
+The census puts a tight constraint on any explanation: **one `FullBlockClosure`
+per `Error`** (516808 : 524544, a ratio of 1.015) and **5.1 `Context`s per
+`Error`**.  Whatever the loop is, each turn of it allocates exactly one closure
+and one Error.  One firing at 22 MB is not
 enough headroom for a process minting ~150k Contexts a second, and after that
 firing there is no second chance.  (In a bare `eval` it does, and the
 breaker fires 462 times; the 2026-07 dossier has this exactly backwards.)  The
