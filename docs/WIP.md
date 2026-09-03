@@ -43,6 +43,19 @@ loses -- and both emit a clean `Total:` on their own line, including the one
 that TIMED OUT, which is the case that used to splice.  Use `sunit2.image` for
 the next sweep: it is worth 2 classes and 20 tests.
 
+**Two of the three open items closed themselves under measurement.**  The four
+x86-only `XMLParser` errors are `TestTookTooMuchTime` -- SUnit's own per-test
+time limit, recorded as an ERROR -- so the package tier's whole x86-vs-arm
+ERROR gap is Rosetta speed, not codegen.  And the three arm64 TIMEOUTs are two
+slow whole-image scans (one passes 3 of 3 given time; the other is capped by
+`SUnitMaxPerTestSeconds`, not by the multiplier) plus one test whose remote
+resource is dead (`ZipArchiveError: can't find EOCD position` from
+Smalltalkhub).  None is a correctness defect.
+
+That leaves ONE open correctness question in the whole residual -- defect #27,
+the ByteSymbol mis-dispatch, at one test per sweep -- plus a performance
+question about how slow those image scans are against Cog.
+
 **The largest single chunk of the residual has an untried lever.**  The
 "no display" family is ~9 F and ~16 E across `Sp*`/`St*` classes (defects
 #24/#25).  `CLAUDE.md` records that prepping with `setup_fake_gui.st` BEFORE

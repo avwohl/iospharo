@@ -23,9 +23,16 @@ a coherent cluster around attribute-default validation, clean on arm64.  The
 other two are PolyMath, whose per-class timeout boundary the two arches hit
 differently.
 
-That XMLParser cluster is the last unexplained arch-specific failure in the
-package tier.  Two attempts to reproduce it in isolation both died on harness
-problems rather than on the tests -- a stale `startup.st` in the shared working
-directory the first time, and eval mode's `startup.st` staging colliding
-between two VMs the second.  A third attempt runs each VM from its own
-directory.
+**Resolved the same morning: that cluster is not a VM failure.**  Isolated (each
+VM in its own directory, after two attempts died on `startup.st` in a shared
+one), the four reproduce on x86_64 and pass on arm64 -- and `TestCase>>debug`,
+which does not trap, names the exception as **`TestTookTooMuchTime`**.  That is
+SUnit's own per-test `timeLimit`, recorded by a TestResult as an ERROR.  The
+stack is string-heavy DTD work (`XMLAttributeValidator>>furtherNormalize
+AttributeValue:`, `String>>format:`, `WideString>>copyFrom:to:`), which is
+where a 2x-slower machine shows up first.
+
+So the whole x86-vs-arm ERROR gap in this tier is Rosetta speed, not codegen,
+and the package tier has no unexplained arch-specific failure left.  What
+remains is a performance question, shared with the two whole-image scans that
+time out on both arches.
