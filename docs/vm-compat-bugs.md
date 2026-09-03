@@ -2252,6 +2252,15 @@ timeouts).  A same-thread invocation the image abandons is never popped by
 construction, so the depth cannot come back to zero on its own.  That is why
 bounding the deferral, rather than waiting for the depth, is the fix.
 
+**And the quit is not the only thing that stalls on it.**
+`Interpreter::drainCallbackGraveyard()` opens with `if (callbackDepth_ != 0)
+return;` — so once `TFCallbacksTest` has abandoned an invocation, every retired
+libffi closure and `ffi_cif` for the REST OF THE RUN is buried and never freed.
+Small per entry and not fatal, but unbounded in principle, and it is a second
+symptom of the same stuck counter.  A deeper fix that popped the depth on
+abandonment would clear both; bounding the quit only clears the one that costs
+30 minutes a sweep.
+
 The mechanism is already described in our own source.  `Interpreter.cpp`'s
 `enterInterpreterFromCallback` comment says an *"abandoned same-thread
 invocation (TFCallbacksTest's old-session test, by design) parks everything
