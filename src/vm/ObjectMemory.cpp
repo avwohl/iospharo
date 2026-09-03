@@ -2132,12 +2132,15 @@ GCResult ObjectMemory::scavenge() {
             // apart.  Now it can.
             fprintf(stderr,
                 "[VM] low-space breaker at abort: threshold=%zu bytes (%s), "
-                "crossing latched=%s\n",
+                "crossing latched=%s, delivered %llu time(s)\n",
                 lowSpaceThresholdBytes_,
                 lowSpaceThresholdBytes_ ? "armed by the image via prim 125"
-                                        : "DISARMED — the image never installed "
-                                          "a LowSpaceWatcher (bare eval mode does not)",
-                lowSpaceCrossed_ ? "yes, but never delivered" : "no");
+                    : (lowSpaceDeliveries_
+                        ? "disarmed by its own one-shot delivery; the image did "
+                          "not re-arm in time"
+                        : "never armed — the image installed no LowSpaceWatcher"),
+                lowSpaceCrossed_ ? "yes, but never delivered" : "no",
+                (unsigned long long)lowSpaceDeliveries_);
             dumpHeapCensus(25);   // say WHAT filled the heap before dying
             fflush(stderr);
             std::abort();

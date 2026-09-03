@@ -2056,16 +2056,35 @@ scheduling this should become tractable; without DET_SCHED, a bisect over
 run-to-run noise will keep contradicting itself the way this one does.  Raw in
 `docs/results/sweep-arm-2026-09-02/defect23-bisect.txt`.
 
-#### The FATAL now says why the breaker did not fire, and it is not sampling
+#### The breaker DOES fire in the storm — once — and that is the problem
 
-The diagnostic added the same day answers the question this defect's sibling
-raised:
+I read this wrong twice, so the evidence first.  Both storm runs contain
 
-    [VM] low-space breaker at abort: threshold=0 bytes (DISARMED — the image
-         never installed a LowSpaceWatcher), crossing latched=no
+    [LOW-SPACE] threshold crossed #1 (free=22 MB) — signaling LowSpaceSemaphore
 
-So in the runner/sweep context prim 125 is **never armed at all** — the image
-does not install a `LowSpaceWatcher`.  (In a bare `eval` it does, and the
+exactly once, and then
+
+    [VM] low-space breaker at abort: threshold=0 bytes (DISARMED ...)
+
+The threshold is zero at the abort **because the breaker disarmed itself on
+delivery** — Cog's one-shot contract, where the image re-arms from
+`lowSpaceWatcher`'s tail.  It is not "never armed", which is what a bare
+`threshold=0` reading suggested and what an earlier version of this entry said.
+(The diagnostic now prints the delivery count so the two cannot be confused
+again.)
+
+22 MB free is exactly the effective threshold the fix computes —
+`max(400000, min(one eden, reservation/16))` with a 1 GB reservation — so the
+mechanism worked as designed.  What did not happen is the image stopping the
+hog: `[DIAG-TIMER] ... timerSem=nil` right beside it says the Delay scheduler is
+already dead, so the P60 `lowSpaceWatcher` cannot run to re-arm, and the storm
+spends the last 22 MB.  The queue dump names the culprit:
+
+    [DIAG-QUEUE] P79 proc=... susp=Error>>or:
+
+So the storming process is at P79, inside `Error`.  One firing at 22 MB is not
+enough headroom for a process minting ~150k Contexts a second, and after that
+firing there is no second chance.  (In a bare `eval` it does, and the
 breaker fires 462 times; the 2026-07 dossier has this exactly backwards.)  The
 latch fix is still right and still needed, but it cannot help a run where the
 image never arms the threshold.

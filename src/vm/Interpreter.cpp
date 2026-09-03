@@ -2814,6 +2814,7 @@ void Interpreter::checkLowSpaceSignal() {
     // signalled nothing.
     lowSpaceThreshold_ = 0;
     memory_.armLowSpaceThreshold(0);   // also clears the latch
+    memory_.noteLowSpaceDelivered();   // so the exhaustion FATAL can say so
     memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
                              getActiveProcess());
     // Bounded trace.  This is not necessarily a one-shot event: the image's

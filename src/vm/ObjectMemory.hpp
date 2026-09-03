@@ -808,6 +808,12 @@ public:
         lowSpaceThresholdBytes_ = bytes;
         if (bytes == 0) lowSpaceCrossed_ = false;
     }
+    /// The interpreter calls this each time it actually signals the image.
+    /// Kept HERE so the exhaustion FATAL can tell "never armed" from "armed,
+    /// fired, and disarmed itself on delivery" -- a distinction that cost two
+    /// wrong readings of the same log on 2026-09-03, because the threshold is
+    /// zero in both cases.
+    void noteLowSpaceDelivered() { lowSpaceDeliveries_++; }
     /// Peek at the latch.  Cleared by disarming (armLowSpaceThreshold(0)),
     /// which is what the interpreter does once it has actually signalled --
     /// so a crossing with no semaphore registered yet is not thrown away.
@@ -895,6 +901,7 @@ private:
     // Low-space breaker state; see armLowSpaceThreshold().
     size_t lowSpaceThresholdBytes_ = 0;   // 0 = disarmed
     bool   lowSpaceCrossed_ = false;      // latched at the crossing
+    uint64_t lowSpaceDeliveries_ = 0;     // times the image was actually signalled
 
     /// Called wherever oldSpaceFree_ advances.  Latches the crossing so the
     /// interpreter can signal TheLowSpaceSemaphore at its next safe point --
