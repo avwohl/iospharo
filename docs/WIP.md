@@ -53,12 +53,12 @@ the running sweep:
     shape with a non-local return in the block.
   * **Fourteen of the sixteen "no display" classes are root-caused, and the
     defect is the render loop** (#24, root #25).  That is 9 of the sweep's 21
-    FAILs and 17 of its 21 ERRORs; three more FAILs are parity with Cog, and
-    only three are genuinely ours
-    ours — and of those two, `StDebuggerActionModelTest` is clean on x86_64 (the
-    ONLY class in 1800 covered classes that is non-clean on arm and clean on
-    x86), so it is timing.  `StSpotterModelTest`'s two failures are the entire
-    consistent, unexplained GUI residual.  On stock Cog, installing `MorphicUIManager` and suspending
+    FAILs and 17 of its 21 ERRORs; three more FAILs are parity with Cog.  That
+    leaves three genuinely ours, and the x86 sweep narrows even those:
+    `StDebuggerActionModelTest` is the ONLY class in 1800 covered classes that
+    is non-clean on arm and clean on x86, so its one failure is timing —
+    leaving `StSpotterModelTest`'s two as the entire consistent, unexplained
+    GUI residual.  On stock Cog, installing `MorphicUIManager` and suspending
     its UI process reproduces our result for `SpListCommonPropertiestTest`
     exactly — 18 P / 5 E, same five selectors, same messages; leave the process
     running and Cog is 23 / 23.  Our runner suspends it as its first startup
