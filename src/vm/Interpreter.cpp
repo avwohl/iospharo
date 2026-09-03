@@ -30287,6 +30287,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Advance IP past PushFullBlock (3 bytes)
             instructionPointer_ += 3;
 
+            if (hadPendingJ2J) {
+                // Saves were live, so they are now interpreter frames -- BAIL
+                // to the interpreter instead of resuming the JIT.  Resuming was
+                // measured to corrupt the operand stack: batch 1-100 went from
+                // 0 non-clean classes to a scatter of NonBooleanReceiver and
+                // MessageNotUnderstood-with-the-wrong-receiver, the classic
+                // shifted-stack signature.  enableJ2J() below rebases the save
+                // slice the resumed code runs on, which was harmless while the
+                // saves were simply dropped (the old behaviour) and is not once
+                // they are live frames whose materializedRetSlots point into
+                // the operand stack that code keeps using.
+                //
+                // The bail costs one interpreter re-entry per block created
+                // inside a J2J chain -- 481 in a 20-second run -- and keeps the
+                // closure's captured sender chain complete, which is the whole
+                // point of materializing here.  The globals are already
+                // coherent: receiver_/framePointer_/method_ were synced from
+                // state at the top of this handler, the closure is pushed, and
+                // the IP is past the PushFullBlock.
+                return true;
+            }
+
             // Try to resume JIT at next bytecode
             method = method_;  // Refresh: GC may have moved the method
             uint32_t bcOffset = computeCurrentBCOffset();
