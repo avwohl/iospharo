@@ -827,11 +827,12 @@ public:
     }
     void ensurePinArena();
 
-    /// Addresses of the eden bump cells, for the JIT inline-alloc emit
-    /// (PHARO_T1_INLINE_NEW_ASM). The emitted code loads/stores edenFree_ and
-    /// compares against survivorStart_ (the eden limit) directly — one stable
-    /// ObjectMemory instance, so these addresses can be baked at emit time.
-    uint8_t** edenFreeCellAddr() { return &edenFree_; }
+    /// Address of the survivor-start cell.  NOTE the JIT does NOT come through
+    /// here: the inline-alloc emit (PHARO_T1_INLINE_NEW_ASM) bakes
+    /// `g_jitEdenFreeCell` / `g_jitSurvivorStartCell`, published in the
+    /// constructor.  The matching `edenFreeCellAddr()` existed alongside this
+    /// one with a comment saying the emit used it, and had no callers at all;
+    /// removed 2026-09-02.
     uint8_t** survivorStartCellAddr() { return &survivorStart_; }
 
     /// Public young-gen bump for the JIT new fast-path (jit_rt_new_prim).
@@ -867,11 +868,6 @@ public:
         return false;
     }
 
-    /// Debug: Get address of class table entry for detecting corruption
-    void* classTableEntryAddress(uint32_t index) const {
-        if (index >= classTable_.size()) return nullptr;
-        return const_cast<void*>(static_cast<const void*>(&classTable_[index]));
-    }
 
 private:
     // Memory regions
@@ -1282,7 +1278,11 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor, bool includeClassTable) 
         }
     }
 
-    // Registered roots (interpreter stack pointers, etc.)
+    // Registered roots (interpreter stack pointers, etc.).  EMPTY in practice:
+    // nothing in this VM calls addRoot(), so this loop is a no-op today.  The
+    // hook is kept because it is the right place to register a C++-side Oop
+    // that must survive GC; if you find yourself pinning one some other way,
+    // use this.
     for (Oop* root : roots_) {
         if (root) {
             visitor(*root);
