@@ -15,7 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-09-03, 13:15)
+## Right now (2026-09-03, 13:45)
+
+**The real-x86 sweep is running on AWS** -- `i-021aa136e1c7cc9b8`, m5.4xlarge
+spot, tonight's tree built on the box (`CANNOT-RETURN-STORM` verified in the
+binary), fake-GUI-prepped image, batched with per-batch S3 checkpointing.  It
+RESUMED at index 51 from the S3 state the first (reaped) box left behind, so
+`START_AT` earns its keep on its first real use.
+
+The lease is fixed: `awohl.com`'s `authorized_keys` had no `aws-lease` entry,
+so the first box was reaped at 18 minutes.  Appended (backup at
+`~/.ssh/authorized_keys.bak-claude-*`), `lease.sh list` answers, and a watcher
+beats it every 5 min while the sweep runs.
+
+**First real-hardware finding, and it corrects me.**  Batch 51-100 came back
+`rc=137` on native x86 Linux -- the shutdown wedge, where the batch finishes
+all 51 classes and the VM then refuses to exit.  I had been treating that as a
+Rosetta artifact.  It is not: it happens on real hardware, and the arm64 sweep
+had zero of them in 41 batches.  The Rosetta run continues locally as a control
+so the two can be diffed.
+
 
 **The shutdown wedge is an x86 phenomenon, and the early kill is earning its
 keep.**  In the running x86 sweep, 4 of the first 13 batches wrote their
