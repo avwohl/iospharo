@@ -169,6 +169,23 @@ which waits on the sweep's pid; the rest are by hand.
     comparison script is in the session scratchpad (`compare-sweeps.sh`);
     the arm side is staged at `sweep-arm/all_results.txt`.
  7. Package tier on both arches.
+ 8. **Try to get a Cog baseline back — as an x86_64 VM under Rosetta.**
+    Untested idea, cheap to falsify.  The arm64 stock VM aborts here because
+    it wants its code zone at a fixed `0x320000000` that Darwin 27 will not
+    grant (`docs/history/`, CLAUDE.md, memory
+    `stock-cog-vm-cannot-run-here`), which is why there is no live Δcog
+    baseline on this host and why several defect verdicts are stuck.  The
+    Rosetta x86_64 address space is laid out differently, so an **x86_64**
+    Cog may well get that address:
+
+        arch -x86_64 /bin/bash -c 'cd /tmp/harness-x86 && curl -sL https://get.pharo.org/64/130+vm | bash'
+        arch -x86_64 /tmp/harness-x86/pharo /tmp/harness-x86/Pharo.image eval '42 factorial printString'
+
+    Either it prints, and the whole Δcog method in `docs/vm-compat-bugs.md`
+    works again on this machine, or it prints the same
+    `allocateHeap: Could not allocate codeZone` and the idea is dead in one
+    command.  Do NOT skip the `eval` check: the failure mode is an abort with
+    rc=255, not a missing binary.
 
 ## Where the three tiers stand
 
