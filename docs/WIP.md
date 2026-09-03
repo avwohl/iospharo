@@ -153,11 +153,12 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
          1800 s -> 54 s, rc=0, 51 of 51 classes.  ~29 minutes per sweep per
          arch.
     LEAD 19  The low-space breaker could not fire.  FIXED + VERIFIED —
-         462 firings, zero FATAL aborts in a bare eval.  But the new FATAL
-         diagnostic shows the SWEEP never arms it at all
-         ("threshold=0 bytes ... the image never installed a
-         LowSpaceWatcher"), so that run had two causes and the second is in
-         the image's startup.  Open.
+         462 firings and zero FATAL aborts in a bare eval, and it fires under
+         the runner too, once, at exactly the computed threshold.  The
+         threshold=0 in an exhaustion FATAL is the one-shot disarm on
+         delivery, not "never armed" — I read that wrong twice, and the FATAL
+         now prints the delivery count.  What is left belongs to #23: the
+         image cannot re-arm because the Delay scheduler is already dead.
 
 The C++ tier is green on both arches with all of tonight's commits:
 `test_sista_ir`, `test_class_table`, `test_sista_survey` and `test_relaunch`
