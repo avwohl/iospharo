@@ -60,6 +60,23 @@ Queued, in order, running unattended:
    images.  Baselines to beat: arm64 9326 P / 16 F / 16 E / 1 T, x86_64
    9376 / 16 / 24 / 0.
 
+**Two confirmations from the sweep in flight**, against the 2026-09-02
+baseline via the new `scripts/sweep-diff.sh`:
+
+    RSLinesTest       16 P / 2 E  ->  18 P / 0 E   defect #22's fix holds at
+                                                   full-sweep scale
+    LinkInstallerTest 39 P / 1 F  ->  40 P / 0 F
+    ReleaseTest       39 P / 2 T  ->  40 P / 1 T
+    RSRoassalTest      6 P        ->   5 P / 1 E   defect #27 (new, filed)
+    LibTTYTest         5 P        ->   5 E         harness, the copied VM
+
+**Queued after the current chain:** the timeout residue.  `NoUnusedVariables
+LeftTest>>testNoUnusedTemporaryVariablesLeft`, `MCSmalltalkhubRepositoryTest>>
+testVersionFromFileNamed` and two `ReleaseTest` cases exceed the 80 s per-test
+bound on arm64 and pass on Cog.  A TIMEOUT counts as a failure for the goal,
+and these are the only ones left that are plainly about speed rather than
+semantics -- worth measuring against Cog before assuming they need a JIT fix.
+
 **C++ tier, both arches:** `test_sista_ir` PASS, `test_class_table` rc=0,
 `test_sista_survey` rc=0, `test_asmjit_t1_stub` PASS (1000 reentrant calls all
 writing EXIT_SEND).  `test_platform` and `test_ios_bridge` are display smoke
