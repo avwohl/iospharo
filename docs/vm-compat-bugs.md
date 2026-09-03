@@ -2130,6 +2130,52 @@ does NOT fix it.  So the storm is in JIT'd code, but not in the JIT'd exception
 core, and a rate that barely moves (6/8 -> 4/8) is what an unrelated knob looks
 like.
 
+#### The loop is `Error>>signal` looking for a handler it cannot find
+
+The first storm captured with the new dump answers the question the census
+never could:
+
+    [SEND-CHAIN] active-process frames, innermost first (depth=2, ...)
+    [SEND-CHAIN]   running  #findNextHandlerContext rcvr=0x165251a98
+    [SEND-CHAIN]   [    1] #nextHandlerContext     rcvr=0x165251bd8
+    [SEND-CHAIN]   [    0] #signal                 rcvr=0x165252318
+
+    Active process: 0x12a156458  priority=79
+
+That is the image's exception machinery: `Error>>signal` asks
+`Context>>nextHandlerContext`, which runs `findNextHandlerContext` up the
+sender chain looking for a context whose method is primitive 199
+(`BlockClosure>>on:do:`).  If that search comes back empty the error is
+unhandled, which signals again, and each turn of the loop costs exactly what
+the census shows: one `Error`, one `FullBlockClosure`, about five `Context`s.
+
+Note `depth=2`.  The native frame chain is only the tip — the recursion lives
+in the MATERIALIZED context chain, which is why 2.6M Contexts is the whole
+symptom.
+
+#### Inline J2J is the emit that does it: 0 storms of 6 with it off
+
+Five arms, six reps each, same batch and conditions:
+
+    arm                                 storms   clean-run time
+    BASE                                 4 of 6   4 s
+    PHARO_JIT_NO_BLOCKS=1                3 of 6   3-4 s
+    PHARO_T1_NO_INLINE_J2J=1             0 of 6   3-4 s
+    PHARO_NO_FRAME0_REUSE=1              4 of 4   (aborts before any class)
+
+`PHARO_T1_NO_INLINE_J2J` is the one that clears it, and it clears it without
+buying the result with slowness: its clean runs take the same 3-4 s as BASE's
+clean runs, so this is not "slower, therefore misses the window".
+`NO_FRAME0_REUSE` is not a second finding — it aborts with `classes=0`, before
+any class finishes, which is a different failure and needs its own look.
+
+That fits the send chain exactly.  Inline J2J emits a call into an already-JIT'd
+callee without the full frame push; if the elided frame is the `on:do:`
+activation, `findNextHandlerContext` walks a chain the handler is not in,
+finds nothing, and the signal recurses forever.  The next dump extends the
+walk to the materialized context chain and marks primitive 199/198 frames,
+which either confirms the handler is missing from the chain or refutes it.
+
 #### The fatal now says WHO, not just WHAT
 
 The census has twice been unable to name the loop behind a Context storm:

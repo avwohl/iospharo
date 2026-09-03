@@ -2282,6 +2282,46 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
     }
     if (lo > 0)
         fprintf(stderr, "[SEND-CHAIN]   ... %zu outer frame(s) not shown\n", lo);
+
+    // The native frame chain is only the tip.  A signal storm lives in the
+    // MATERIALIZED context chain -- 2.6M Contexts is the whole symptom -- and
+    // the question it has to answer is whether an on:do: handler context is
+    // present in that chain at all.  Primitive 199 marks BlockClosure>>on:do:
+    // and 198 marks ensure:/ifCurtailed:, which is exactly what the image's
+    // Context>>findNextHandlerContext scans for; if the JIT elides the frame,
+    // signal finds no handler, raises again, and recurses forever.
+    Oop ctx = activeContext_;
+    if (ctx.isObject() && ctx.rawBits() > 0x10000) {
+        fprintf(stderr, "[SEND-CHAIN] materialized context chain from "
+                        "activeContext_=0x%llx (sender links, up to %zu):\n",
+                (unsigned long long)ctx.rawBits(), maxFrames);
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        size_t handlers = 0, unwinds = 0, n = 0;
+        for (; n < maxFrames; n++) {
+            if (!ctx.isObject() || ctx.rawBits() <= 0x10000
+                    || ctx.rawBits() == nilObj.rawBits()) break;
+            ObjectHeader* ch = ctx.asObjectPtr();
+            if (ch->slotCount() < 6) break;
+            Oop meth = memory_.fetchPointer(3, ctx);
+            Oop clos = memory_.fetchPointer(4, ctx);
+            int prim = primitiveIndexOf(meth);
+            if (prim == 199) handlers++;
+            if (prim == 198) unwinds++;
+            fprintf(stderr, "[SEND-CHAIN]   ctx[%3zu] 0x%llx %s#%s prim=%d%s\n",
+                    n, (unsigned long long)ctx.rawBits(),
+                    (clos.isObject() && clos.rawBits() > 0x10000
+                        && clos.rawBits() != nilObj.rawBits()) ? "[] in " : "",
+                    memory_.selectorOf(meth).c_str(), prim,
+                    prim == 199 ? "   <== HANDLER (on:do:)"
+                                : (prim == 198 ? "   <== unwind (ensure:)" : ""));
+            ctx = memory_.fetchPointer(0, ctx);   // sender
+        }
+        fprintf(stderr, "[SEND-CHAIN] walked %zu contexts: %zu handler(s), "
+                        "%zu unwind(s)%s\n",
+                n, handlers, unwinds,
+                handlers == 0 ? "  -- NO on:do: IN REACH, which is why signal "
+                                "never terminates" : "");
+    }
     fflush(stderr);
 }
 
