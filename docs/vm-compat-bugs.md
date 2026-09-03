@@ -1734,6 +1734,37 @@ to be one: for anything that ends without output, elapsed time and exit status
 have to be recorded, because "produced no result" and "did not terminate" are
 different findings that look identical in a log.
 
+### 22. `RSLinesTest` — `BlockCannotReturn` on a four-frame non-local return — NEW 2026-09-02, NOT YET REPRODUCED
+
+Two errors in the 2026-09-02 arm64 sweep, and the only newcomer in that
+residual that is VM-visible rather than display-, network- or image-related:
+
+    ERROR: testMarkerOffset          (BlockCannotReturn: )
+    ERROR: testMarkersIncludesPoint  (BlockCannotReturn: )
+
+The non-local return in question is short and entirely synchronous — read out
+of this image's `.sources`:
+
+    RSLine>>includesPoint:            ^ self hasBorder and: [ ... or: [ self markersIncludesPoint: aPoint ] ]
+    RSShape>>markersIncludesPoint:    self markerShapesInPositionDo: [ :m |
+                                          (m shape preciseIncludesPoint: aPoint) ifTrue: [ ^ true ] ]
+    RSLine>>markerShapesInPositionDo: self markerEnd ifNotNil: [ :marker | marker withEnd: cp do: aBlock ]
+    RSMarker>>withEnd:controlPoints:do:  ... self setPositionTo: to vector: to-from do: aBlock
+    RSMarker>>setPositionTo:vector:do:   ... aBlock value: shape
+
+`ifNotNil:` with a literal block is inlined by the compiler, so the `^ true`
+returns through four live method activations to a home that is still on the
+stack.  `BlockCannotReturn` means the VM decided that home was gone.  Not the
+#15 depth family (that was a 200-frame cap on the context-NLR home search,
+raised to 70000; this is four frames), and not the Build-80
+`HasBeenReturnedFrom` resume case, which is about resuming an already-returned
+context rather than returning to a live one.
+
+**Intermittent**: clean in the 2026-08-22 sweep, present in the pre-reboot
+residual and in this one.  Reach for `PHARO_DET_SCHED=1` before adding
+instrumentation.  Bisect `PHARO_NO_JIT=1` first — if it survives that, the
+defect is in the interpreter's NLR path, not in a T1 specialization.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
