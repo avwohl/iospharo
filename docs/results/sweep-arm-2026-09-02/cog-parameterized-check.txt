@@ -204,3 +204,15 @@ TFUFFIDifferentCallingConventionFunctionCallTest  selectors=1 suite=2
 TFUFFIFunctionCallTest  selectors=3 suite=6
 TFUFFIMethodRegistryTest  selectors=1 suite=2
 TFUFFIStructuresTest  selectors=11 suite=22
+
+# Stock Cog's headless GUI state, in the run where the Sp*/St* classes PASS.
+
+UIManager default class       = NonInteractiveUIManager
+Display                       = nil
+Display class                 = UndefinedObject
+World                         = a WorldMorph(170953216) [world]
+WorldMorph allInstances size  = 1
+Smalltalk isHeadless          = true
+currentWorld                  = a WorldMorph(170953216) [world]
+SpApplication defaultBackend  = a SpMorphicBackend
+Morph defaultBackend?         = SpMorphicBackendForTest

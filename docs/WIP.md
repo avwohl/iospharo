@@ -57,8 +57,11 @@ the running sweep:
     the same evening, wrote a runner change for it, and then **refuted and
     reverted both**: `ParametrizedTestCase>>setUp` applies the first parameter
     set when none was supplied, and a bare instance driven by `runCase` passes
-    23 of 23 on Cog.  `setup_fake_gui.st` clearing the bucket remains the best
-    lead.
+    23 of 23 on Cog.  The live hypothesis is now `WorldMorph allInstances`
+    answering empty on ours: Cog passes these with `Display` nil and a
+    `NonInteractiveUIManager`, but with one findable `WorldMorph`, and
+    `setup_fake_gui.st`'s first action is to create one `ifEmpty:`.  There is a
+    one-line eval in defect #24 that settles it.
   * **A separate, real coverage gap: 10,567 test cases** — 241 of the 2047
     concrete test classes are parameterised, their selectors total 2074 and
     their suites 12641, so the reported test count understates the suite by

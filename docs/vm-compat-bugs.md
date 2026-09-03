@@ -2003,15 +2003,47 @@ cases have never been run by this harness — but it is a coverage gap, not a
 cause of these failures.  (`scripts/package-tests-selfhosted.sh` already runs
 `c suite run`, so the package tier is unaffected either way.)
 
-#### So the cause is still open
+#### The live hypothesis: `WorldMorph allInstances` is empty on ours
 
-Not the display, on the evidence — Cog is headless too.  Not the
-parameterisation.  `scripts/pharo-headless-test/setup_fake_gui.st` clears the
-whole bucket for us (2026-08-22: 167 tests, 0 F / 0 E with the prelude filed
-in), which makes it a workaround for something stock Pharo provides natively,
-and therefore still the best lead: whatever it installs that we lack is the
-answer.  A diff of what the prelude sets up against what a bare headless run of
-ours has is the next step.
+Not the display: asked of stock Cog in the state where these tests PASS,
+
+    UIManager default class       = NonInteractiveUIManager
+    Display                       = nil
+    Smalltalk isHeadless          = true
+    World                         = a WorldMorph [world]
+    WorldMorph allInstances size  = 1
+    SpApplication new backend     = a SpMorphicBackend
+
+Cog has **no Display and a non-interactive UI manager** and still passes, so
+"we have no display" cannot be the difference.  What it does have is a
+`WorldMorph` that `allInstances` can find.
+
+And `setup_fake_gui.st`, which is measured to clear this whole bucket for us
+(2026-08-22: 167 tests, 0 F / 0 E with the prelude filed in), opens with
+
+    WorldMorph allInstances ifEmpty: [ ... create one ... ]
+
+i.e. the prelude is a no-op on that step unless `allInstances` answers empty on
+our VM.  That fits the symptom exactly: no world for the adapter to attach to,
+so the widget list is `#()` and the first index raises
+`SubscriptOutOfBounds: 1 in #()`.
+
+This repo has already had one defect of precisely that shape —
+`collectInstancesOfClass` matching `classIndex 0` so `allInstances` of a class
+with no class-table entry answered an Array of free chunks, which is what
+killed class-shape migration (fixed 2026-08-23; see the `PHARO_OLDSPACE_FREELIST`
+comment in `src/vm/debug_vars.h`).  The class-table-only-holds-classes-with-
+instances behaviour is the same family.
+
+**Probe, the moment our VM is free** (needs no sweep, no runner):
+
+    ./build-rel/test_load_image <image> eval \
+      "{ WorldMorph allInstances size. (Smalltalk globals at: #World ifAbsent: [nil]) class.
+         UIManager default class. Smalltalk isHeadless } printString"
+
+Cog answers `#(1 WorldMorph NonInteractiveUIManager true)`.  If ours answers 0
+for the first slot while `World` is a `WorldMorph`, the defect is in
+`allInstances`, not in Spec.
 
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.
