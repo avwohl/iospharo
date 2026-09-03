@@ -2317,6 +2317,7 @@ fix was clean.  The full arm64 sweep said otherwise within four batches:
     unfixed (2026-09-02)         0, 0 non-clean   --
     fix 1 + storm guard         11 non-clean      55 non-clean
     fix 1 + fix 2 + guard       12, 12 non-clean  --
+    fix 1 bailing, not resuming 11, 11 non-clean  --
 
 Fix 2 adds nothing on top: the damage is all fix 1's.
 
@@ -2326,13 +2327,18 @@ with storms: `NonBooleanReceiver: proceed for truth` and
 (`SmallInteger >> #byteSize`, `MCWorkingCopy >> #detect:ifNone:`), 304 and 424
 of them respectively.
 
-The cause is the RESUME, not the materialize.  `enableJ2J()` further down the
-handler rebases the save slice the JIT is about to resume onto -- harmless
-while the saves were simply dropped, which is what the code did before, and not
-harmless once they are live interpreter frames whose `materializedRetSlot`s
-point into the operand stack that resumed code keeps using.  Fix 1 now
-materializes and then BAILS to the interpreter rather than resuming, which
-costs one interpreter re-entry per block created inside a J2J chain.
+The first guess was that the RESUME did it -- `enableJ2J()` further down the
+handler rebases the save slice the JIT is about to resume onto, which is
+harmless while the saves are simply dropped and looks unsafe once they are live
+frames.  Wrong: materializing and then BAILING to the interpreter instead of
+resuming scores the same 11 non-clean, twice.
+
+So converting live J2J saves into interpreter frames is not valid at this exit
+at all, whatever happens afterwards, and **fix 1 is reverted**.  The hole it
+was aimed at is real and still open -- a closure built here captures a chain
+missing every J2J-hidden caller, 481 times in a 20-second run, and the counter
+that says so is kept.  Closing it needs a way to give the closure a complete
+`outerContext` WITHOUT consuming the saves the JIT still owns.
 
 The lesson is about measurement, not about J2J: **a five-class repro batch
 cannot tell you a fix is safe.**  It can only tell you whether the bug it

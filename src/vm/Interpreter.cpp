@@ -30243,35 +30243,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 homeMethod_ = state.method;
             }
 
-            // DEFECT #23 FIX (2026-09-03).  Pending J2J saves are caller
-            // activations the JIT entered WITHOUT pushing interpreter frames.
-            // createFullBlockWithLiteral materializes the frame stack to give
-            // the closure its outerContext, and materializeFrameStack can only
-            // see savedFrames_ -- so with saves still pending the closure
-            // captures a sender chain that TERMINATES at the innermost
-            // materialized frame.  A non-local return through that closure
-            // then finds neither its home nor any handler above it:
-            // Context>>cannotReturn: -> error: -> signal: -> signal, signal
-            // scans a two-context chain, finds no on:do:, and the unhandled
-            // path returns from a block whose home is equally unreachable --
-            // one Error, one FullBlockClosure and ~5 Contexts per turn until
-            // old space is gone.  That is the arm64 Context storm, and it is
-            // why PHARO_T1_NO_INLINE_J2J makes it vanish (0 storms of 6 vs
-            // 4 of 6): no inline J2J, no hidden callers.
+            // REVERTED 2026-09-03.  This handler used to materialize the
+            // pending J2J saves here so the closure about to be built would
+            // capture a COMPLETE sender chain -- saves are caller activations
+            // the JIT entered without pushing interpreter frames, and
+            // materializeFrameStack can only see savedFrames_, so the closure
+            // captured a chain that stopped at the innermost materialized
+            // frame.  That reasoning still holds and is still defect #23's
+            // mechanism.  Materializing HERE is not the way to fix it: batch
+            // 1-100 went from 0 non-clean classes to 11, with the
+            // shifted-operand-stack signature (NonBooleanReceiver "proceed for
+            // truth", MessageNotUnderstood on SmallInteger>>#byteSize).  It was
+            // not the JIT resume that did it -- bailing to the interpreter
+            // instead of resuming scored the same 11 -- so converting live
+            // saves into interpreter frames is simply not valid at this exit,
+            // whatever happens afterwards.
             //
-            // The same unsoundness is already documented as the reason
-            // PHARO_T1_INLINE_BLOCK_CREATE stays opt-in ("caller frames
-            // invisible to materialize").  This DEFAULT path had it too.
-            //
-            // Materialize first.  Legal here because the JIT has already
-            // exited -- tryResume returned this exit -- which is exactly when
-            // every other handler consumes its saves.  And strictly better
-            // than before: enableJ2J() below rebases the save slice and zeroes
-            // j2jDepth, so any saves pending at this exit were silently
-            // DROPPED and the materializeJ2J() after tryResume never saw them.
+            // The counter stays: it says how often a closure is built with
+            // J2J-hidden callers missing from its captured chain (481 in a
+            // 20-second run), which is the size of the hole a real fix has to
+            // close.
             const bool hadPendingJ2J = state.j2jDepth > 0;
             if (hadPendingJ2J) g_blockCreatePendingJ2J[0]++;
-            materializeJ2J();
 
             // Extract block parameters from cachedTarget
             uint64_t packed = state.cachedTarget.rawBits();
@@ -30287,27 +30280,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Advance IP past PushFullBlock (3 bytes)
             instructionPointer_ += 3;
 
-            if (hadPendingJ2J) {
-                // Saves were live, so they are now interpreter frames -- BAIL
-                // to the interpreter instead of resuming the JIT.  Resuming was
-                // measured to corrupt the operand stack: batch 1-100 went from
-                // 0 non-clean classes to a scatter of NonBooleanReceiver and
-                // MessageNotUnderstood-with-the-wrong-receiver, the classic
-                // shifted-stack signature.  enableJ2J() below rebases the save
-                // slice the resumed code runs on, which was harmless while the
-                // saves were simply dropped (the old behaviour) and is not once
-                // they are live frames whose materializedRetSlots point into
-                // the operand stack that code keeps using.
-                //
-                // The bail costs one interpreter re-entry per block created
-                // inside a J2J chain -- 481 in a 20-second run -- and keeps the
-                // closure's captured sender chain complete, which is the whole
-                // point of materializing here.  The globals are already
-                // coherent: receiver_/framePointer_/method_ were synced from
-                // state at the top of this handler, the closure is pushed, and
-                // the IP is past the PushFullBlock.
-                return true;
-            }
 
             // Try to resume JIT at next bytecode
             method = method_;  // Refresh: GC may have moved the method
@@ -30322,12 +30294,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // refresh from C++ globals as before.
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
-            // hadPendingJ2J, not state.j2jDepth: the materialize above
-            // consumed the saves and zeroed the depth, but what this branch
-            // is FOR has not changed -- the JIT reached this exit inside a
-            // cross-method chain, so receiver/tempBase/method/argCount in
-            // state are the CALLEE's and must not be refreshed from the
-            // caller's C++ globals.
+            // hadPendingJ2J is state.j2jDepth > 0 read at entry; nothing
+            // between here and there changes it now that the materialize is
+            // gone, and reading it once keeps the two uses in step if a fix
+            // for the captured-chain hole ever does consume the saves again.
             if (hadPendingJ2J) {
                 // J2J chain active — receiver/tempBase/method/argCount
                 // already correctly callee's from the JIT cross-method
