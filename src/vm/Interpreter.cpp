@@ -27992,10 +27992,12 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
             g_duplicateActivation[1]++;
             if (g_duplicateActivation[1] <= 3)
                 fprintf(stderr, "[DUP-FRAME #%llu] J2J save for #%s materialized "
-                        "onto fp=%p, which frame %zu already holds\n",
+                        "onto fp=%p at site \"%s\", which frame %zu already "
+                        "holds\n",
                         (unsigned long long)g_duplicateActivation[1],
                         memory_.selectorOf(frame.savedMethod).c_str(),
-                        (void*)frame.savedFP, frameDepth_ - 1 - bi);
+                        (void*)frame.savedFP, siteTag ? siteTag : "?",
+                        frameDepth_ - 1 - bi);
             break;
         }
     }
