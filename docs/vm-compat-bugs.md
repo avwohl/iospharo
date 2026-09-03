@@ -2352,6 +2352,32 @@ The lesson is about measurement, not about J2J: **a five-class repro batch
 cannot tell you a fix is safe.**  It can only tell you whether the bug it
 reproduces still fires.
 
+#### The duplicate is real, and it has a name: `#methodNode`
+
+The duplicate-activation detector fired on its first sweep.  27 hits across the
+first eight batches -- every batch has some -- and every one of them is the
+same shape:
+
+    [DUP-FRAME #1] J2J save for #methodNode materialized onto fp=0x773a012d80,
+                   which frame 56 already holds
+
+Same frame pointer AND same method as a frame already on the stack, at depths
+53-83.  Two different activations of one method have different frame pointers,
+and a save is pushed per J2J call and popped on return, so two pending saves
+naming one caller frame is one activation represented twice -- exactly the
+shape the dead-sender loop needs: two returns, the second landing in the
+context the first killed.
+
+Worth being precise about what this does NOT say.  Those same eight batches are
+408 classes at 6633 P / 0 F / 0 E, so the duplicate is usually harmless: both
+frames return, the second one finds a dead context, sends `cannotReturn:`, and
+the image handles it.  It becomes defect #23 only when the resulting error
+cannot find a handler.
+
+So the next question is narrow and answerable: why are two J2JSaves for one
+`#methodNode` activation pending at once?  A save pushed twice, or a pop that
+did not happen.
+
 #### What a real fix looks like, and why neither candidate was taken tonight
 
 The hole is precise: a closure created while J2J saves are pending captures an
