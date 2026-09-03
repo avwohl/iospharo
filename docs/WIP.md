@@ -138,7 +138,9 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
          TonelWriterV1Test; 1912 was only where a 12 GB heap ran out.  The 27
          trait classes are clean in isolation on our VM (0 traitUsers
          violations, TraitTest 54/54, no storm).  Bisect forward from 1901
-         through the Tonel block, 18 s a run.
+         through the Tonel block, 18 s a run — chained as
+         `post-sweep-6-running.sh`, after the package tier so its load times
+         are not contended.
     #24  Fourteen classes fail because the runner must suspend the UI process.
          REPRODUCED on Cog; two earlier explanations refuted and recorded.
          Our PRISTINE headless environment is identical to Cog's, so the
