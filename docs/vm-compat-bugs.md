@@ -2193,13 +2193,20 @@ So the chain is complete, and the defect is not where it was filed:
 **What is proven and what is not.**  Proven: the suspended-UI-process state
 reproduces our exact failure set on stock Cog.  Taken from the runner's own
 comment, not re-measured tonight: that our headless resume installs Morphic and
-that the render loop DNUs.  Confirm with
+that the render loop DNUs.
 
-    ./build-rel/test_load_image <image> eval \
-      "{ UIManager default class. Smalltalk isHeadless.
-         WorldMorph allInstances size } printString"
+**Measured 2026-09-03, and on a PRISTINE image we are identical to Cog:**
 
-(Cog answers `#(NonInteractiveUIManager true 1)`), and then chase the
+    ours: {NonInteractiveUIManager. true. 1. WorldMorph. UndefinedObject}
+    Cog:  #(NonInteractiveUIManager  true  1  WorldMorph  UndefinedObject)
+
+(`UIManager default class`, `isHeadless`, `WorldMorph allInstances size`,
+`World class`, `Display class`.)  So there is no environment difference in a
+bare boot at all, and the divergence has to come from the PREPPED image —
+which is snapshotted with a live Morphic world, and is why the resume has a
+render loop to restart and the runner has one to suspend.  That promotes
+"prep with `NonInteractiveUIManager` and no world before `snapshot:andQuit:`"
+from a cheaper lever to **the** thing to try.  Then chase the
 `WorldState>>drawWorld:` DNUs — **now filed separately as defect #25**, because
 a pri-80 busy-spin that kills the Delay scheduler is a defect in its own right.
 Fixing it retires nine classes of residual without touching Spec.
