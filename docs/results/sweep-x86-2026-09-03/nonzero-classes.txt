@@ -1,0 +1,36 @@
+FTTableMorphTest                                     Total: 1 P:0 F:0 E:1 S:0
+IntegerTest                                          Total: 83 P:79 F:0 E:0 S:3 T:1
+LinkInstallerTest                                    Total: 40 P:39 F:1 E:0 S:0
+MCSmalltalkhubRepositoryTest                         Total: 1 P:0 F:0 E:0 S:0 T:1
+OCClassBuilderTest                                   Total: 26 P:25 F:0 E:1 S:0
+RBBrowserEnvironmentTest                             Total: 27 P:26 F:0 E:0 S:0 T:1
+ReleaseTest                                          Total: 44 P:38 F:2 E:0 S:1 T:3
+RSLinesTest                                          Total: 18 P:17 F:0 E:1 S:0
+RSSequentialAnimationTest                            Total: 5 P:4 F:0 E:1 S:0
+SpAthensAdapterTest                                  Total: 9 P:8 F:0 E:1 S:0
+SpComponentListAdapterTest                           Total: 8 P:7 F:0 E:1 S:0
+SpJobListPresenterTest                               Total: 14 P:13 F:1 E:0 S:0
+SpListCommonPropertiestTest                          Total: 23 P:18 F:0 E:5 S:0
+SpTableCommonPropertiestTest                         Total: 17 P:14 F:0 E:3 S:0
+SpTreeAdapterMultipleSelectionTest                   Total: 21 P:18 F:0 E:2 S:1
+SpTreePresenterExpandTest                            Total: 11 P:10 F:0 E:0 S:0 T:1
+SpTreeTableAdapterMultiColumnMultiSelectionTest      Total: 20 P:18 F:1 E:1 S:0
+SpTreeTableAdapterMultiColumnTest                    Total: 20 P:18 F:1 E:1 S:0
+SpTreeTableAdapterSingleColumnMultiSelectionTest     Total: 20 P:18 F:1 E:1 S:0
+SpTreeTableAdapterSingleColumnTest                   Total: 19 P:17 F:1 E:1 S:0
+StDebuggerInspectorTest                              Total: 11 P:10 F:1 E:0 S:0
+StDebuggerTest                                       Total: 67 P:59 F:2 E:0 S:6
+STONWritePrettyPrinterReadTest                       Total: 37 P:36 F:0 E:0 S:0 T:1
+StSpotterModelTest                                   Total: 2 P:0 F:2 E:0 S:0
+StSpotterTest                                        Total: 3 P:2 F:1 E:0 S:0
+StTranscriptPresenterTest                            Total: 5 P:2 F:3 E:0 S:0
+SystemDependenciesTest                               Total: 17 P:16 F:1 E:0 S:0
+TFFunctionCallTest                                   Total: 8 P:7 F:0 E:1 S:0
+TFUFFIDifferentCallingConventionFunctionCallTest     Total: 1 P:0 F:0 E:1 S:0
+TKTWorkerTest                                        Total: 7 P:4 F:0 E:2 S:0 T:1
+TraitFileOutTest                                     Total: 4 P:2 F:0 E:2 S:0
+TraitInTraitClassTest                                Total: 2 P:1 F:0 E:0 S:0 T:1
+TraitTest                                            Total: 54 P:53 F:1 E:0 S:0
+WeakAnnouncerTest                                    Total: 34 P:32 F:1 E:0 S:1
+ZnClientTest                                         Total: 50 P:49 F:1 E:0 S:0
+ZnStaticFileServerDelegateTest                       Total: 6 P:5 F:1 E:0 S:0
