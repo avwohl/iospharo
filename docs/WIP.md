@@ -74,6 +74,13 @@ The rule this broke is wider than the one written down: it is not "do not run
 
 ### Queued behind the x86_64 sweep — do these in order when it finishes
 
+ 0. **`build-rel` is one commit behind the tree**: `77f12ac6` (the
+    `!inExtension_` guard on low-space delivery) is syntax-checked only.
+    Rebuild arm64 and re-run the C++ tier before trusting any arm64 number.
+    Also re-apply the `sunit-sweep.sh` header note about not starting a VM on
+    the prepped image -- that file was edited while an instance of it was
+    running, which is its own hazard and should not be repeated mid-sweep.
+
 Everything here is blocked for one of two reasons: every SUnit runner
 invocation reads and writes the same fixed `/tmp/sunit_*` paths (a targeted
 run hijacks the sweep's next batch, and `test_load_image ... eval` touches
