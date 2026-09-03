@@ -2352,6 +2352,26 @@ The lesson is about measurement, not about J2J: **a five-class repro batch
 cannot tell you a fix is safe.**  It can only tell you whether the bug it
 reproduces still fires.
 
+#### Both candidate fixes measured: neither closes the hole
+
+One binary, four configurations, 10 storm reps each under held load, plus the
+batch-1-100 smoke test on every one:
+
+    configuration              smoke      aborts   guard fired   DUP-FRAME
+    defaults                   0 / 1*      0/10       7/10          --
+    block-create gate ON       0, 0        0/10       5/10        10/10
+    site5 depth-clear ON       0, 0        0/10       6/10        10/10
+    both ON                    0, 0        0/10       8/10        10/10
+
+(* one default rep flagged `BlockClosureTest` 47 P / 1 F -- a `valueWithin:`
+timing test, and four CPU hogs were holding the load.  That is the smoke test
+being run under deliberate contention, not a regression.)
+
+Aborts are 0 everywhere because the guard is doing that job.  The tell was
+meant to be the guard's FIRING rate, and it does not move: 5, 6 and 8 against
+the default's 7, on ten reps each.  Neither candidate closes the hole, and both
+stay opt-in with these numbers recorded at the knob.
+
 #### RETRACTED: the "duplicate activation" was the detector's own false positive
 
 The section below claimed 27 (later 126) duplicate activations, all
