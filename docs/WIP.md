@@ -51,17 +51,16 @@ the running sweep:
     method carries a block whose `outerCode` is still
     `RSTMarkeable>>#markersIncludesPoint:`.  677 installed methods carry that
     shape with a non-local return in the block.
-  * **"No display" was the wrong label for sixteen classes** — headless Cog,
-    same image, no prelude, scores 0 F / 0 E on all of them.  Defect #24; the
-    cause is open.  I filed a parameterisation explanation for nine of them
-    the same evening, wrote a runner change for it, and then **refuted and
-    reverted both**: `ParametrizedTestCase>>setUp` applies the first parameter
-    set when none was supplied, and a bare instance driven by `runCase` passes
-    23 of 23 on Cog.  A "no WorldMorph on ours" theory is also refuted:
-    nilling `World` on Cog gives 2 P / 21 F, all
-    `MessageNotUnderstood: receiver of "displayScaleFactor" is nil`, where we
-    fail 5 of 23 with `SubscriptOutOfBounds: 1 in #()`.  The five that fail are
-    click activation and column headers; defect #24 names them.
+  * **Nine "no display" classes are root-caused, and the defect is the render
+    loop** (#24).  On stock Cog, installing `MorphicUIManager` and suspending
+    its UI process reproduces our result for `SpListCommonPropertiestTest`
+    exactly — 18 P / 5 E, same five selectors, same messages; leave the process
+    running and Cog is 23 / 23.  Our runner suspends it as its first startup
+    action because on our VM the headless resume restarts `MorphicRenderLoop`,
+    which busy-spins with Morphic DNUs until the Delay scheduler dies.  Fix the
+    DNUs and nine classes of residual go with them.  Two earlier explanations
+    (the missing display; a `ParametrizedTestCase` parameterisation bug) were
+    filed and refuted the same evening and are recorded under #24.
   * **A separate, real coverage gap: 10,567 test cases** — 241 of the 2047
     concrete test classes are parameterised, their selectors total 2074 and
     their suites 12641, so the reported test count understates the suite by

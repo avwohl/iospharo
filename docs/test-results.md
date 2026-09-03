@@ -17,11 +17,13 @@
 > (`docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`): six classes
 > are at exact parity on the same failing test, everything else is ours, and
 > the sixteen classes long bucketed as "the missing display" score 0 F / 0 E on
-> **headless** Cog with no prelude, so that label is wrong and the cause is
-> open (defect #24).  A same-evening claim that nine of them were a harness
-> parameterisation bug was refuted and retracted.  Separately, the runner runs
-> one case per selector where parameterised suites define several, so the test
-> count understates the suite by ~38% — 10567 cases image-wide.  `RSLinesTest`'s
+> **headless** Cog with no prelude.  Nine of them are root-caused (defect #24):
+> installing `MorphicUIManager` on Cog and suspending its UI process reproduces
+> our exact failure set, and our runner suspends that process because our
+> headless resume restarts `MorphicRenderLoop` into a busy-spin of Morphic
+> DNUs.  Separately, the runner runs one case per selector where parameterised
+> suites define several, so the test count understates the suite by ~38% —
+> 10567 cases image-wide.  `RSLinesTest`'s
 > `BlockCannotReturn` is root-caused as defect #22 (a trait method copy whose
 > block still names the trait's method), and the storm that ate the trait
 > tests is defect #23 (Cog runs those 27 classes clean).
