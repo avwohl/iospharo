@@ -1,5 +1,43 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-09-02 — the low-space circuit breaker could not fire, by construction
+
+The runaway-allocation guard added on 2026-07-07 (`22fcb0e7`) never fired on
+the first real storm we have a log for.  Arm64 sweep batch 1901-1950 ran old
+space from 12 GB free down to **16 bytes**, minting 33.4M `Context`s and 6.66M
+`Error`s, and printed no `[LOW-SPACE]` line before the tenure abort
+(`docs/results/sweep-arm-2026-09-02/`).
+
+Not a tuning miss.  The check sampled `freeOldSpaceBytes()` on the
+interpreter's per-1024-bytecode checkpoint, but old space is not spent
+smoothly — essentially all of it goes out through **scavenge tenure**, in
+steps of up to one full eden (22003584 bytes on that image).  Pharo arms the
+threshold at `SmalltalkImage>>lowSpaceThreshold` = 400000 bytes, so a step
+lands inside the observable window
+
+    400000 / 22003584  =  1.8%
+
+of the time; the other 98.2% the next tenure overruns `oldSpaceEnd_` and the
+process aborts before any checkpoint can look.
+
+The crossing is now **latched where old space is actually spent** — the
+scavenge tenure copy (`ObjectMemory.cpp:2133`) and the old-space bump
+allocation (`:3620`) — and the checkpoint consumes the latch instead of
+re-sampling.  The effective threshold is `max(image threshold, one eden)`: a
+400 KB threshold cannot express "stop before exhaustion" when the granularity
+above it is 22 MB, and the invariant worth holding is that the image is
+interrupted while one more worst-case scavenge can still be absorbed.  At the
+default 4 GB reservation that trips at 99.45% full.
+
+One more defect in the same block: the old code zeroed `lowSpaceThreshold_`
+*before* looking `TheLowSpaceSemaphore` up, so a crossing that arrived before
+the image had registered one disarmed the breaker permanently and signalled
+nothing.  It now disarms only once it can deliver.
+
+Closes LEAD 19 in `docs/vm-compat-bugs.md`, which asked for the artifact or
+the retraction.  arm64 C++ tier green, no spurious `[LOW-SPACE]`.  Verifying
+it against a live storm is still open.
+
 ## 2026-09-02 — lifter use-after-free in multi-entry loader construction
 
 `test_sista_ir` segfaulted on x86_64 (rc=139, no output because stdout was
