@@ -139,6 +139,16 @@ mkdir -p "$OUT"
 # and appends into the same results file. Done accidentally on 2026-08-22
 # while chasing a crash mid-sweep. While a sweep runs, investigate with things
 # that do not touch these paths (log reads, `sample`, eval-mode runs) or wait.
+#
+# "Do not start a runner" is too narrow, and following it literally still cost a
+# batch on 2026-09-02. The PREPPED image carries SUnitRunner's SessionManager
+# startUp: handler, so ANY VM binary that resumes it starts a test run of its
+# own: test_relaunch, run on the prepped image for three 8 s cycles, wrote
+# /tmp/sunit_test_results.txt underneath a live x86_64 sweep and batch 1001-1050
+# reported classes=1 instead of 51 -- 50 classes lost, and a foreign partial
+# result merged into all_results.txt. The tell is a classes= count far below the
+# batch size on an rc=0 completed=yes line. Point C++ tier tests at the pristine
+# base.image instead, or wait for the sweep.
 rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
 
 {
@@ -148,6 +158,38 @@ rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
   echo "  sources $SOURCES"
   echo "  total=$TOTAL step=$STEP timeout=${PER_BATCH_TIMEOUT}s"
 } >> "$OUT/sweep.log"
+
+# Run one batch and leave its exit status in $?.  Once the runner writes
+# /tmp/sunit_run_completed.txt every class in the batch has been recorded, so a
+# VM still alive SHUTDOWN_GRACE seconds later is wedged in shutdown and has
+# nothing left to contribute.  The 2026-09-02 x86_64 sweep burned its whole
+# 1800 s budget exactly that way -- batch 1801-1850 came back rc=124 with
+# classes=51 completed=yes, i.e. 1800 s spent for a batch that had finished its
+# work in a fraction of it.  Kill it at the marker rather than waiting the
+# timeout out.  timeout(1) is still the outer bound for a batch that hangs
+# BEFORE finishing, which is the case the marker cannot see.
+SHUTDOWN_GRACE=${SHUTDOWN_GRACE:-30}
+run_batch() {                       # $1 = log path
+    local log=$1 grace=0 pid
+    timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$log" 2>&1 < /dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ -f /tmp/sunit_run_completed.txt ]; then
+            grace=$(( grace + 1 ))
+            if [ "$grace" -ge "$SHUTDOWN_GRACE" ]; then
+                # kill BOTH: killing timeout(1) orphans the VM it wraps.  The
+                # image path is unique to this sweep's outdir, so the pkill
+                # pattern cannot reach another sweep or a package run.
+                kill -9 "$pid" 2>/dev/null
+                pkill -9 -f "$OUT/run.image" 2>/dev/null
+                wait "$pid" 2>/dev/null
+                return 137
+            fi
+        fi
+        sleep 1
+    done
+    wait "$pid"
+}
 
 start=1
 while [ "$start" -le "$TOTAL" ]; do
@@ -163,7 +205,7 @@ while [ "$start" -le "$TOTAL" ]; do
     rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
 
     t0=$(date +%s)
-    timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$OUT/batch_${start}.log" 2>&1
+    run_batch "$OUT/batch_${start}.log"
     rc=$?
     t1=$(date +%s)
 
@@ -222,8 +264,9 @@ if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
             rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
 
             t0=$(date +%s)
-            # </dev/null: the VM must not eat the `read` loop's stdin.
-            timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$OUT/retry_${s2}.log" 2>&1 < /dev/null
+            # run_batch redirects the VM's stdin from /dev/null, which this site
+            # needs regardless: the VM must not eat the `read` loop's stdin.
+            run_batch "$OUT/retry_${s2}.log"
             rc=$?
             t1=$(date +%s)
 
