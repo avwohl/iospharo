@@ -261,6 +261,13 @@ public:
     void interpret();
     void stopVM(const char* reason);
     void dumpProcessQueues();
+
+    /// Innermost frames of the ACTIVE process, selectors only.  The heap
+    /// census says WHAT filled the heap; this says WHO.  Called from the
+    /// old-space-exhaustion FATAL, where a class histogram on its own
+    /// ("2.6M Contexts, 517K Errors") has twice failed to name the loop
+    /// that made them.
+    void dumpSendChain(const char* why, size_t maxFrames = 60);
     void dumpTimerWedgeState();  // one-shot at first [TIMER-NOT-REARMED]; see timer-scheduler-wedge
     // Pin every JIT method live in ANY process's Smalltalk stack (incl. SUSPENDED
     // processes like the Delay timer runner), so CodeZone LRU eviction can't free

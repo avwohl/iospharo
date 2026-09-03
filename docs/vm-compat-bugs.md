@@ -2104,7 +2104,42 @@ the earlier runs — 1901-1902 never storms, 1903-1909 as a group never storms,
 1905 and 1909 alone never storm — the target is `TonelReaderTest` running after
 `TimespanDoTest`, `TimespanTest` and `TonelParserTest` have gone before it.
 
-The shape of the table is the finding in itself.  The storm needs a yield
+The shape of the table is the finding in itself.
+
+#### It is the JIT's.  Three arms, eight reps each, same conditions
+
+Batch 1901-1905, `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=16
+PHARO_MAX_OLD_SPACE_MB=1024`, the three arms run back to back in one script so
+they share machine conditions:
+
+    arm                              storms   clean-run time
+    BASE (JIT on, as shipped)         6 of 8   3-4 s
+    PHARO_NO_JIT=1                    0 of 8   2-3 s
+    PHARO_JIT_EXCLUDE_EXC_INFRA=1     4 of 8   3-4 s
+
+**Interpreted, it does not storm at all.**  That moves defect #23 out of "some
+image or interpreter problem the JIT happens to expose" and into the JIT
+itself, which is where the /loop goal wants it.
+
+The honest caveat: `PHARO_NO_JIT` also changes timing wholesale, and this bug
+is timing-sensitive, so 0 of 8 is strong evidence rather than proof.  What
+makes it more than a timing artifact is the second arm — restoring the old
+hardcoded blacklist that refuses to JIT the exception/NLR core (`#signal`,
+`#signalerContext`, `#handleSignal:`, `#aboutToReturn:through:`, `#doesNotUnderstand:`)
+does NOT fix it.  So the storm is in JIT'd code, but not in the JIT'd exception
+core, and a rate that barely moves (6/8 -> 4/8) is what an unrelated knob looks
+like.
+
+#### The fatal now says WHO, not just WHAT
+
+The census has twice been unable to name the loop behind a Context storm:
+"2.6M Contexts, 517K Errors, 524K FullBlockClosures" says an unbounded
+signal/catch recursion and stops there.  `Interpreter::dumpSendChain` now runs
+at the old-space-exhaustion FATAL, after the census, printing the active
+process's innermost 60 frames.  It is deliberately minimal — the abort fires
+INSIDE a scavenge, so it reads only selectors (out of CompiledMethods, which
+live in old space) and prints receivers as raw oops rather than dereferencing
+them through possibly-forwarded pointers.  The storm needs a yield
 interval of roughly 16 x 1024 bytecodes or coarser; at 4 x 1024 and finer it
 never fires, and the ~2 ms wall-clock heartbeat only lands in the window about
 a third of the time.  Quantum 16 storms every time but not identically

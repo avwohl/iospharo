@@ -2142,6 +2142,15 @@ GCResult ObjectMemory::scavenge() {
                 lowSpaceCrossed_ ? "yes, but never delivered" : "no",
                 (unsigned long long)lowSpaceDeliveries_);
             dumpHeapCensus(25);   // say WHAT filled the heap before dying
+            // ...and WHO made it.  The census alone has twice been unable to
+            // name the loop behind a Context storm.  Census first: it is the
+            // proven-safe dump, and the chain walk runs with a scavenge half
+            // finished, so it is the one that might not survive.
+            if (interpreter_) {
+                interpreter_->dumpSendChain(
+                    "old space exhausted during scavenge tenure", 60);
+                interpreter_->dumpProcessQueues();
+            }
             fflush(stderr);
             std::abort();
         }

@@ -2251,6 +2251,40 @@ void Interpreter::dumpJITStats() {
 #endif
 }
 
+// Innermost frames of the ACTIVE process at a fatal heap abort.  The census
+// tells you 2.6M Contexts and 517K Errors were live; it cannot tell you which
+// loop signalled them, and two separate sessions have stalled on exactly that
+// gap.  Best-effort by construction: the abort fires INSIDE a scavenge, so
+// young objects may be half-forwarded.  So this prints only what survives
+// that -- each frame's selector, read from its CompiledMethod, which lives in
+// old space -- and shows receivers as raw oops rather than dereferencing them
+// to name a class.
+void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
+    fprintf(stderr,
+            "[SEND-CHAIN] %s\n"
+            "[SEND-CHAIN] active-process frames, innermost first (depth=%zu, "
+            "showing up to %zu; receivers are raw oops -- a scavenge is in "
+            "flight and classOf would follow forwarded pointers)\n",
+            why, frameDepth_, maxFrames);
+    fprintf(stderr, "[SEND-CHAIN]   running  #%s rcvr=0x%llx\n",
+            memory_.selectorOf(method_).c_str(),
+            (unsigned long long)receiver_.rawBits());
+    size_t lo = (frameDepth_ > maxFrames) ? (frameDepth_ - maxFrames) : 0;
+    for (size_t i = frameDepth_; i > lo; i--) {
+        const SavedFrame& sf = savedFrames_[i - 1];
+        bool isBlock = sf.savedClosure.isObject()
+                    && sf.savedClosure.rawBits() > 0x10000
+                    && !sf.savedClosure.isNil();
+        fprintf(stderr, "[SEND-CHAIN]   [%5zu] %s#%s rcvr=0x%llx\n",
+                i - 1, isBlock ? "[] in " : "",
+                memory_.selectorOf(sf.savedMethod).c_str(),
+                (unsigned long long)sf.savedReceiver.rawBits());
+    }
+    if (lo > 0)
+        fprintf(stderr, "[SEND-CHAIN]   ... %zu outer frame(s) not shown\n", lo);
+    fflush(stderr);
+}
+
 void Interpreter::dumpProcessQueues() {
     fprintf(stderr, "\n=== Process Scheduler Dump ===\n");
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
