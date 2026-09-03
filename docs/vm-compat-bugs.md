@@ -1801,15 +1801,25 @@ instrumentation.
     markerShapesInPositionDo: aBlock   RSAbstractLine   +  RSTMarkeable
 
 `RSTMarkeable`'s own class comment says "I am a trait to create markers in some
-especific classes".  A class that uses a trait gets a COPY of the trait's
-compiled method in its method dictionary — and the inline NLR resolves the
-`^ true`'s home by matching the **method oop** of the block's static
-`outerCode` literal against `savedFrames_[si].savedMethod`
-(`Interpreter.cpp:8470`).  If the copy in `RSAbstractLine` carries a
-`CompiledBlock` whose `outerCode` still names the TRAIT's method, that identity
-match cannot succeed against the frame actually on the stack, the context-chain
-search finds nothing either, and the VM sends `cannotReturn:` — which is
-exactly `BlockCannotReturn` on a home that is demonstrably alive.
+especific classes", and the image stores two separate sources for each
+selector, so two `CompiledMethod`s exist rather than one shared object.
+
+The inline NLR resolves the `^ true`'s home by matching the **method oop** of
+the block's static `outerCode` literal against `savedFrames_[si].savedMethod`
+(`Interpreter.cpp:8470`).  So the question that decides this defect is one an
+`eval` answers in a line: does `RSAbstractLine>>markersIncludesPoint:`'s inner
+`CompiledBlock` have an `outerCode` that is *that* method, or the trait's?  If
+it is the trait's, the identity match cannot succeed against the frame actually
+on the stack, the context-chain search finds nothing either, and the VM sends
+`cannotReturn:` — `BlockCannotReturn` on a home that is demonstrably alive.
+
+    (RSAbstractLine >> #markersIncludesPoint:) literals
+        detect: [ :l | l isCompiledBlock ] ifNone: [ nil ]
+        -> then compare `that outerCode == (RSAbstractLine >> #markersIncludesPoint:)`
+
+This is a hypothesis with a one-line check, not a finding.  What IS established
+is that the two selectors on the failing return each exist twice with a trait
+as one owner, and that the VM's home resolution is an oop-identity match.
 
 The code already knows this failure shape.  The comment at
 `Interpreter.cpp:8432` describes it for a different cause ("the CompiledBlock
