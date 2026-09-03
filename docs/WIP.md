@@ -81,6 +81,14 @@ the running sweep:
 Full Δcog for the residual in
 `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
 
+Also cleaned up: the runner sent `#suspend` to **nil once per test**
+(`backupWatchdog`, assigned nil right after the watchdog fork and never set
+again, with its own temp declared "unused").  Each one costs a 17-line `[DNU]`
+frame dump plus `[DNU-RCVR]` and `[SISTA-RING]` traces — together the single
+largest source of stderr in a sweep, and the same trace a past session misread
+as forwarded-object MNUs.  Guarded with `ifNotNil:`, along with the three other
+suspend/terminate sites.
+
 ### Defects filed tonight
 
     #22  BlockCannotReturn on a trait-copied block's non-local return
