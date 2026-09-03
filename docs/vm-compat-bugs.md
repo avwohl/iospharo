@@ -1950,93 +1950,68 @@ it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
 FATAL at 12288 and should take about a twelfth of that at 1024, and the census
 ratios that identify it do not depend on the absolute counts.
 
-### 24. ~~Sixteen GUI-adapter classes fail for us and pass on headless Cog~~ — RECLASSIFIED 2026-09-02: nine of them are a HARNESS gap, four are ours
+### 24. Sixteen classes fail for us and pass on headless Cog — NEW 2026-09-02, MEDIUM
 
-Filed earlier the same evening off the Δcog: sixteen classes long bucketed as
-"the missing display" score 0 F / 0 E on stock Cog, headless, same image, no
-prelude.  Asking the image why splits the population cleanly.
+Carried through several sweeps as "the missing display" and therefore as a
+residual that could not be helped.  The 2026-09-02 Δcog says otherwise: stock
+Cog v10.3.9, **headless**, on the same pristine Pharo 13.1 image, with no
+fake-GUI prelude, scores 0 F / 0 E on every one of them.
 
-**Nine are parameterised tests our runner runs unparameterised.**  Every `Sp*`
-adapter test descends from `ParametrizedTestCase`:
+    class                                    Cog        ours (arm64 sweep)
+    SpAthensAdapterTest                      18P/0F/0E   8P/0F/1E
+    SpComponentListAdapterTest               16P/0/0     7P/0/1
+    SpListCommonPropertiestTest              46P/0/0    18P/0/5
+    SpTableCommonPropertiestTest             34P/0/0    14P/0/3
+    SpTreeAdapterMultipleSelectionTest       40P/0/0    18P/0/2
+    SpTreeTableAdapterMultiColumnMultiSel..  40P/0/0    18P/1/1
+    SpTreeTableAdapterMultiColumnTest        40P/0/0    18P/1/1
+    SpTreeTableAdapterSingleColumnMultiSel.. 40P/0/0    18P/1/1
+    SpTreeTableAdapterSingleColumnTest       40P/0/0    17P/1/1
+    FTTableMorphTest                          1P/0/0     0P/0/1
+    StDebuggerActionModelTest                54P/0/0    53P/1/0
+    StSpotterModelTest                        2P/0/0     0P/2/0
+    StTranscriptPresenterTest                 5P/0/0     2P/3/0
 
-    SpListCommonPropertiestTest < SpAbstractListCommonPropertiestTest
-        < SpAbstractWidgetAdapterTest < SpAbstractAdapterTest
-        < ParametrizedTestCase
+The dominant error on our side is `SubscriptOutOfBounds: 1 in #()` reaching for
+an adapter's widget list, plus `MessageNotUnderstood: receiver of "x" is nil`.
 
-and `SpAbstractLayoutTest class>>testParameters` is
-`forSelector: #backendForTest addOptions: SpAbstractBackendForTest allSubclasses`
-— i.e. the suite is the selectors crossed with the BACKENDS.  Our runner
-iterates `allTestSelectors` and runs `testClass selector: sel`, which never
-assigns `backendForTest`, so the presenter has no backend and the adapter
-reaches into an empty collection.  That is where `SubscriptOutOfBounds: 1 in
-#()` comes from.  The arithmetic confirms it — every one of the nine has a
-suite exactly twice its selector count, and our sweep ran exactly half of
-Cog's:
+#### Ruled out: the parameterisation (2026-09-02, and I got this wrong first)
 
-    class                                    selectors  suite  Cog ran  we ran
-    SpAthensAdapterTest                          9        18      18       9
-    SpComponentListAdapterTest                   8        16      16       8
-    SpListCommonPropertiestTest                 23        46      46      23
-    SpTableCommonPropertiestTest                17        34      34      17
-    SpTreeAdapterMultipleSelectionTest          21        42      40      21
-    SpTreeTableAdapterMultiColumnMultiSel..     20        40      40      20
-    SpTreeTableAdapterMultiColumnTest           20        40      40      20
-    SpTreeTableAdapterSingleColumnMultiSel..    20        40      40      20
-    SpTreeTableAdapterSingleColumnTest          19        38      38      19
+The nine `Sp*` classes descend from `ParametrizedTestCase`, their suites are
+exactly twice their selector count, and our runner ran exactly half of what Cog
+ran — so the obvious story was that the runner builds
+`testClass selector: sel`, whose `parametersToUse` really is nil, leaving the
+adapter with no backend.  I filed that, wrote a runner change for it, and it is
+**wrong**.  `ParametrizedTestCase>>setUp` carries a workaround for precisely
+this case:
 
-The instances differ exactly as predicted — asked of Cog side by side:
+    (self parametersToUse isEmpty and: [self class testParameters isNotEmpty])
+        ifTrue: [ self class testParameters expandMatrix first
+                    do: [ :aParameter | aParameter applyTo: self ] ]
 
-    BARE       parametersToUse = nil
-    SUITE#1    parametersToUse = { #specInitializationStrategy -> [...beforeTest],
-                                   #backendForTest -> SpMorphicBackendForTest }
-    SUITE#2    parametersToUse = { #specInitializationStrategy -> [...afterTest],
-                                   #backendForTest -> SpMorphicBackendForTest }
+so a bare instance applies the first parameter set anyway.  Measured on Cog
+along the runner's own path — a bare `SpListCommonPropertiestTest` driven by
+`runCase` passes **23 of 23** selectors.  The change was reverted
+(submodule `ad78260`).  Do not re-derive this: an instance dump showing
+`parametersToUse = nil` is not evidence, because `setUp` fills it in.
 
-`backendForTest` is filled from `parametersToUse` when the case runs, so a bare
-instance never gets one.
+What the parameterisation DOES explain is the count difference, and only that:
+our 23 against Cog's 46 is one case per selector versus the whole matrix.
+Image-wide that is a real coverage gap — 241 of the 2047 concrete test classes
+are parameterised, their selectors total 2074 and their suites 12641, so 10567
+cases have never been run by this harness — but it is a coverage gap, not a
+cause of these failures.  (`scripts/package-tests-selfhosted.sh` already runs
+`c suite run`, so the package tier is unaffected either way.)
 
-So these are not VM defects and not display defects: they are tests the harness
-runs wrong.  **Fixed in the submodule** (`9145af6`): take the instance from
-`testClass suite`, cached per class, falling back to the old construction on
-error.  It compiles — filed into a pristine image under stock Cog — but the
-behaviour is NOT yet verified, which needs a prepped image and a run.  Until a
-run confirms it, their F/E should not be counted against the VM.
-`setup_fake_gui.st` "fixing" them is a second clue in the same direction: it
-supplies state the parameterisation was supposed to.
+#### So the cause is still open
 
-**Four are not parameterised, and stay ours.**  Checked the same way —
-`testParameters` absent, suite size == selector count:
-
-    FTTableMorphTest            1 == 1     Cog  1P/0/0    ours 0P/0/1E
-    StDebuggerActionModelTest  55 == 55    Cog 54P/0/0    ours 53P/1F
-    StSpotterModelTest          2 == 2     Cog  2P/0/0    ours  0P/2F
-    StTranscriptPresenterTest   5 == 5     Cog  5P/0/0    ours  2P/3F
-
-`TKTWorkerTest` is parameterised but with a one-case matrix (7 selectors, 7
-tests), so its failure is ours too.
-
-**And the coverage cost is much larger than these nine classes.**  Counted over
-the whole image:
-
-    2047    concrete TestCase subclasses
-     241    of those are ParametrizedTestCase subclasses
-    2074    their allTestSelectors total        <- what our runner runs
-   12641    their suite tests total             <- what the suites define
-   10567    cases the runner has never run
-
-So the 27692 tests the 2026-09-02 sweep reports understate the suite by about
-38%.  A few classes carry most of it — `OCCodeSnippetTest` has 19 selectors and
-a suite of 6707, `OCCodeSnippetScriptingTest` 4 and 1176,
-`CoCompletionEngineCodeSnippetTest` 1 and 353 — which is why running the full
-matrix is a deliberate second step and not part of the fix above: it changes
-the denominator of every recorded sweep and needs the report format to
-disambiguate repeated selectors.
-
-**The package tier is not affected.**  `scripts/package-tests-selfhosted.sh`
-already runs `c suite run`, which is the correct thing; only the SUnit sweep's
-`run_sunit_tests.st` went by selector.  So the package numbers in
-`docs/results/packages-*.md` need no re-reading, and the fix brings the two
-drivers into line rather than changing policy.
+Not the display, on the evidence — Cog is headless too.  Not the
+parameterisation.  `scripts/pharo-headless-test/setup_fake_gui.st` clears the
+whole bucket for us (2026-08-22: 167 tests, 0 F / 0 E with the prelude filed
+in), which makes it a workaround for something stock Pharo provides natively,
+and therefore still the best lead: whatever it installs that we lack is the
+answer.  A diff of what the prelude sets up against what a bare headless run of
+ours has is the next step.
 
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.

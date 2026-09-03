@@ -52,14 +52,17 @@ the running sweep:
     `RSTMarkeable>>#markersIncludesPoint:`.  677 installed methods carry that
     shape with a non-local return in the block.
   * **"No display" was the wrong label for sixteen classes** — headless Cog,
-    same image, no prelude, scores 0 F / 0 E on all of them.  Nine are our
-    runner running `ParametrizedTestCase` suites unparameterised, which is
-    **16 of the sweep's 21 ERRORs and 4 of its 21 FAILs**; four are genuinely
-    ours.  Defect #24.  Fixed in the submodule (`c6af842`) and the instance
-    selection validated on Cog, though not yet through our own runner.
-  * **The same gap costs 10,567 test cases** — 241 of the 2047 concrete test
-    classes are parameterised, their selectors total 2074 and their suites
-    12641, so the reported test count understates the suite by ~38%.
+    same image, no prelude, scores 0 F / 0 E on all of them.  Defect #24; the
+    cause is open.  I filed a parameterisation explanation for nine of them
+    the same evening, wrote a runner change for it, and then **refuted and
+    reverted both**: `ParametrizedTestCase>>setUp` applies the first parameter
+    set when none was supplied, and a bare instance driven by `runCase` passes
+    23 of 23 on Cog.  `setup_fake_gui.st` clearing the bucket remains the best
+    lead.
+  * **A separate, real coverage gap: 10,567 test cases** — 241 of the 2047
+    concrete test classes are parameterised, their selectors total 2074 and
+    their suites 12641, so the reported test count understates the suite by
+    ~38%.  This is a denominator fact, not a failure cause.
 
 Full Δcog for the residual in
 `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
@@ -174,17 +177,15 @@ which waits on the sweep's pid; the rest are by hand.
     appear — plural, because the image re-arms after each one and its action
     (`signalException: OutOfMemory`) is an `Error` the hog's handler can
     swallow.
- 3. **Verify BOTH runner fixes.**  Re-prep an image with the current submodule
-    (`9145af6`) — both changes compile (filed into a pristine image under stock
+ 3. **Verify the runner watchdog fix.**  Re-prep an image with the current submodule
+    (`ad78260`) — both changes compile (filed into a pristine image under stock
     Cog) but neither has been run.
 
       a. The watchdog splice: run a class with a known timeout
          (`MCSmalltalkhubRepositoryTest`); its `Total:` line must be at line
          start.
-      b. The parameterised-instance fix: run `SpListCommonPropertiestTest`.
-         Before, 18 P / 5 E; it should now be 23 P / 0 E, because the instance
-         carries `parametersToUse` and therefore a backend.  If it does, 16 of
-         the sweep's 21 ERRORs and 4 of its 21 FAILs disappear with it.
+      b. (The parameterised-instance change that was here is reverted — its
+         premise was refuted, see defect #24.  Nothing to verify.)
  4. **Defect #22 is root-caused; what is left is the fix.**  Cog runs
     `RSLinesTest` 18/18, and the image says
     `RSAbstractLine>>markersIncludesPoint:`'s inner block has
@@ -258,11 +259,9 @@ which waits on the sweep's pid; the rest are by hand.
     packages   9382 P / 16 F / 18 E             9382 P / 16 F / 18 E   (2026-08-23, identical)
     SUnit      27461 P / 21 F / 21 E / 7 T      in flight (2026-09-02)
                (2026-09-02 full sweep, 2007
-                of ~2047 classes, 99.17%; ~17 F
-                / 5 E once the parameterised-
-                suite artifacts come out, and
-                the denominator is ~38% short
-                of the real suite -- see #24)
+                of ~2047 classes, 99.17%; the
+                denominator is ~38% short of the
+                real suite -- see #24)
 
 The 2026-08-23 SUnit line this replaces read `800 P / 13 F / 3 E / 1 T` on
 arm and `798 P / 15 F / 4 E / 1 T` on x86 -- that was the 30-class residual

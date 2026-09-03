@@ -23,15 +23,14 @@ Cog   (stock, x86)             12778    4     96            <- buggier per-test 
   failures.
 
   > **2026-09-02 — the "tests Cog runs that our harness skips" now has a
-  > cause.** Our runner iterated `allTestSelectors` and ran
-  > `testClass selector: sel`, so every `ParametrizedTestCase` subclass
-  > contributed one test per selector where Cog's suite contributes one per
-  > selector *per parameter case* — and, worse, ran unconfigured
-  > (`parametersToUse` nil), which is where nine Spec adapter classes'
-  > `SubscriptOutOfBounds: 1 in #()` came from. Fixed in the submodule
-  > (`9145af6`); see defect #24 in `docs/vm-compat-bugs.md`. So this pass gap
-  > was never neutral bookkeeping: part of it was the harness running tests
-  > wrong and scoring the result against the VM.
+  > cause, and it is bookkeeping after all.** Our runner iterates
+  > `allTestSelectors` and runs `testClass selector: sel`, so every
+  > `ParametrizedTestCase` subclass contributes one test per selector where
+  > Cog's suite contributes one per selector *per parameter case*. Image-wide
+  > that is 10,567 cases we never run. It does NOT explain any failure —
+  > `ParametrizedTestCase>>setUp` applies the first parameter set when none
+  > was supplied, so the instances we build are configured; a claim to the
+  > contrary was filed and retracted the same evening (defect #24).
 - **x86 JIT introduces ZERO deterministic regressions.** The 4 x86 "regressions
   vs Cog" were each re-run in isolation + interp-vs-JIT and classified:
   - `ProcessMonitorTestServiceTest>>testFailTestWhen…` — PASS in isolation on
