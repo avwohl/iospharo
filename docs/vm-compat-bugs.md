@@ -2164,6 +2164,36 @@ image does not understand.  A Morphic DNU under a display-less resume is
 usually a missing plugin primitive answering nil where a Form or an event
 buffer is expected.
 
+### 26. The threaded-FFI batch never exits — 1800 s per sweep per arch — NEW 2026-09-02, MEDIUM
+
+Sweep batch 1801-1850 is the single largest wall-clock item in a full sweep and
+has never been filed.  It contains the threaded-FFI block —
+`TFCallbacksTest`, `TFUFFICallbackTest`, `TFUFFIConcurrencyTest`, the
+`TFUFFI*Marshalling*` families — plus `Step*Test` and `TCPSocket*Test`.
+
+    arm64 2026-09-02   rc=124, 1800 s, classes=51, completed=yes
+    x86_64 2026-09-02  same, and idling at ~1% CPU when observed at +20 min
+    stock Cog          the whole block: 429 tests, 0 F / 0 E, ~7.4 s total
+
+The tests are not the problem: our sweep reports all 51 classes and writes its
+completion marker, and none of these classes appears in the residual.  **The
+VM then never exits**, and the harness kills it at `PER_BATCH_TIMEOUT`.  So
+this is a shutdown hang, not a test failure, and it costs 30 minutes of every
+sweep on every architecture — an hour a night at the current cadence.
+
+The mechanism is already described in our own source.  `Interpreter.cpp`'s
+`enterInterpreterFromCallback` comment says an *"abandoned same-thread
+invocation (TFCallbacksTest's old-session test, by design) parks everything
+after it inside this loop"*.  A VM parked in that nested loop has left the main
+`interpret()` loop, so whatever asks it to quit is not being seen — the loop
+polls `hasPendingSignals`, `checkTimerSemaphore`, the xtcb adoption drain and
+(since `3c75aca5`) the low-space latch, but nothing that ends the session.
+
+Two things to check, in order: whether `running_` / the quit path is observed
+by that loop at all, and whether the abandoned invocation can be reaped at
+image-quit time instead of parking forever.  Raw Cog numbers in
+`docs/results/sweep-arm-2026-09-02/cog-tf-callback-baseline.txt`.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
