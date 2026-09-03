@@ -1,0 +1,28 @@
+
+# Defect 24 reproduced on stock Cog, 2026-09-02: MorphicUIManager installed
+# with its UI process SUSPENDED gives our exact failure set.
+
+UIManager default = MorphicUIManager
+uiProcess suspended? = true
+pass=18 fail=5
+   testChangeListInPresenterUpdatesWidget  SubscriptOutOfBounds: 1 in #()
+   testDoubleClickActivatesRowInDoubleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+   testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
+   testSetColumnTitleInPresenterPutsColumnHeaderMorph  SubscriptOutOfBounds: 1 in #()
+   testSingleClickActivatesRowInSingleClickActivationMode  SubscriptOutOfBounds: 1 in #()
+
+# For contrast, the same image with Morphic installed and the UI process RUNNING:
+
+before: UIManager default = NonInteractiveUIManager
+after : UIManager default = MorphicUIManager
+uiProcess = a Process in MorphicRenderLoop>>doOneCycleWhile:
+pass=23 fail=0
+
+# And with World nilled instead (a different, wrong hypothesis):
+
+WorldMorph allInstances before = 1
+WorldMorph allInstances after  = 1
+pass=2 fail=21
+   testChangeListInPresenterUpdatesWidget  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
+   testChangingHelpAffectTheWidget  MessageNotUnderstood: receiver of "displayScaleFactor" is nil
+   testDoubleClickActivatesRowInDoubleClickActivationMode  MessageNotUnderstood: receiver of "displayScaleFactor" is nil

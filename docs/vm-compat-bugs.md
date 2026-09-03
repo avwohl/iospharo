@@ -1950,7 +1950,7 @@ it), then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
 FATAL at 12288 and should take about a twelfth of that at 1024, and the census
 ratios that identify it do not depend on the absolute counts.
 
-### 24. Sixteen classes fail for us and pass on headless Cog — NEW 2026-09-02, MEDIUM
+### 24. Nine classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
 
 Carried through several sweeps as "the missing display" and therefore as a
 residual that could not be helped.  The 2026-09-02 Δcog says otherwise: stock
@@ -2003,89 +2003,66 @@ cases have never been run by this harness — but it is a coverage gap, not a
 cause of these failures.  (`scripts/package-tests-selfhosted.sh` already runs
 `c suite run`, so the package tier is unaffected either way.)
 
-#### Narrowing it: not the world either, and it is five specific tests
+#### ROOT CAUSE, reproduced on stock Cog: Morphic installed, UI process suspended
 
-Not the display: asked of stock Cog in the state where these tests PASS,
+Two wrong hypotheses first, both refuted by test rather than argument, and both
+worth not re-deriving:
 
-    UIManager default class       = NonInteractiveUIManager
-    Display                       = nil
-    Smalltalk isHeadless          = true
-    World                         = a WorldMorph [world]
-    WorldMorph allInstances size  = 1
-    SpApplication new backend     = a SpMorphicBackend
+  * *No display.*  Cog passes these with `Display` nil, `UIManager default` =
+    `NonInteractiveUIManager` and `isHeadless` true.
+  * *No `WorldMorph`.*  Nilling `World` on Cog gives 2 P / 21 F, every one
+    `MessageNotUnderstood: receiver of "displayScaleFactor" is nil` — not our
+    signature at all.
 
-Cog has **no Display and a non-interactive UI manager** and still passes, so
-"we have no display" cannot be the difference.  What it does have is a
-`WorldMorph` that `allInstances` can find.
+The answer is the third thing.  On stock Cog, install `MorphicUIManager` and
+then **suspend its UI process**:
 
-And `setup_fake_gui.st`, which is measured to clear this whole bucket for us
-(2026-08-22: 167 tests, 0 F / 0 E with the prelude filed in), opens with
+    UIManager default = MorphicUIManager
+    uiProcess suspended? = true
+    pass=18 fail=5
+       testChangeListInPresenterUpdatesWidget                    SubscriptOutOfBounds: 1 in #()
+       testDoubleClickActivatesRowInDoubleClickActivationMode    SubscriptOutOfBounds: 1 in #()
+       testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure: Assertion failed
+       testSetColumnTitleInPresenterPutsColumnHeaderMorph        SubscriptOutOfBounds: 1 in #()
+       testSingleClickActivatesRowInSingleClickActivationMode    SubscriptOutOfBounds: 1 in #()
 
-    WorldMorph allInstances ifEmpty: [ ... create one ... ]
+That is our arm64 sweep's result for this class exactly — same count, same five
+selectors, same messages.  Leave the UI process RUNNING and Cog is back to
+23 / 23, so it is the suspension and nothing else: the widget refreshes are
+deferred to the UI process, and with it suspended the assertions read an empty
+list.  Raw in `docs/results/sweep-arm-2026-09-02/cog-defect24-repro.txt`.
 
-i.e. the prelude is a no-op on that step unless `allInstances` answers empty on
-our VM.  That fits the symptom exactly: no world for the adapter to attach to,
-so the widget list is `#()` and the first index raises
-`SubscriptOutOfBounds: 1 in #()`.
+**And our runner suspends it deliberately.**  `run_sunit_tests.st`'s
+`startUp:` does it as its very first action, and says why:
 
-This repo has already had one defect of precisely that shape —
-`collectInstancesOfClass` matching `classIndex 0` so `allInstances` of a class
-with no class-table entry answered an Array of free chunks, which is what
-killed class-shape migration (fixed 2026-08-23; see the `PHARO_OLDSPACE_FREELIST`
-comment in `src/vm/debug_vars.h`).  The class-table-only-holds-classes-with-
-instances behaviour is the same family.
+> Suspend the saved WorldMorph render loop FIRST, before any other startup
+> work.  On our custom VM the headless resume restarts MorphicRenderLoop at
+> pri-80; it busy-spins `WorldState>>drawWorld:` (Morphic DNUs), starves the
+> pri-80 Delay scheduler, and the scheduler dies (timerSem=nil) → only-idle
+> wedge before any test runs.
 
-**But the strong form of that is already refuted.**  Nilling `World` on Cog and
-re-running the class gives 2 P / 21 F — and every one of the 21 is
-`MessageNotUnderstood: receiver of "displayScaleFactor" is nil`, not our
-signature.  We fail 5 of 23, not 21, and with `SubscriptOutOfBounds: 1 in #()`.
-So "no world at all" is the wrong shape: most of the widget path plainly works
-for us.
+So the chain is complete, and the defect is not where it was filed:
 
-The five that do fail are specific, and they cluster:
+    our VM's headless resume restarts MorphicRenderLoop
+      -> it busy-spins with Morphic DNUs and kills the Delay scheduler   <- THE DEFECT
+      -> the runner suspends the UI process to survive that
+      -> deferred widget refreshes never run
+      -> nine Sp* classes fail, and got labelled "the missing display"
 
-    testChangeListInPresenterUpdatesWidget                    SubscriptOutOfBounds: 1 in #()
-    testSingleClickActivatesRowInSingleClickActivationMode    SubscriptOutOfBounds: 1 in #()
-    testDoubleClickActivatesRowInDoubleClickActivationMode    SubscriptOutOfBounds: 1 in #()
-    testSetColumnTitleInPresenterPutsColumnHeaderMorph        SubscriptOutOfBounds: 1 in #()
-    testRemoveHeaderTitleInPresenterRemovesColumnHeaderMorph  AssertionFailure
+`setup_fake_gui.st` clears the bucket because it starts a UI process again.
 
-Reading the five, they all go through `backendForTest`:
-
-    testChangeListInPresenterUpdatesWidget
-        self presenter items: #('1' '2' '3').
-        backendForTest assertList: self adapter displayItems: #('1' '2' '3')
-    testSingleClickActivatesRowInSingleClickActivationMode
-        backendForTest clickFirstRowAndColumn: self adapter.
-    testSetColumnTitleInPresenterPutsColumnHeaderMorph
-        self presenter headerTitle: 'test'.
-        backendForTest assertListHeaderOf: self adapter equals: #('test')
-
-which is informative in two ways.  `backendForTest` is plainly NOT nil for us —
-a nil one would MNU on `assertList:`, and we get `SubscriptOutOfBounds: 1 in
-#()` from INSIDE the assertion instead.  So the backend is there, the presenter
-built, and the widget simply has no rows and no header by the time the
-assertion looks.
-
-That points at the update never being applied rather than at the setup.  The
-sharpest candidate is the UI manager: Cog headless runs
-`NonInteractiveUIManager`, and if ours ends up with `MorphicUIManager` (we do
-have a display path where stock Pharo has none), then every `defer:`-ed widget
-refresh is queued to a UI process that is not running, and the assertion reads
-an empty list.  That would also explain why `setup_fake_gui.st` "fixes" the
-bucket: it starts a UI process.
-
-So the environment probe below is not a formality — `UIManager default class`
-is the value to read first.
-
-**Still worth running once our VM is free**, because it is one line and pins
-the environment difference either way:
+**What is proven and what is not.**  Proven: the suspended-UI-process state
+reproduces our exact failure set on stock Cog.  Taken from the runner's own
+comment, not re-measured tonight: that our headless resume installs Morphic and
+that the render loop DNUs.  Confirm with
 
     ./build-rel/test_load_image <image> eval \
-      "{ WorldMorph allInstances size. (Smalltalk globals at: #World ifAbsent: [nil]) class.
-         UIManager default class. Smalltalk isHeadless } printString"
+      "{ UIManager default class. Smalltalk isHeadless.
+         WorldMorph allInstances size } printString"
 
-Cog answers `#(1 WorldMorph NonInteractiveUIManager true)`.
+(Cog answers `#(NonInteractiveUIManager true 1)`), and then chase the
+`WorldState>>drawWorld:` DNUs — that is the thing to fix, and fixing it retires
+nine classes of residual without touching Spec.
 
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.
