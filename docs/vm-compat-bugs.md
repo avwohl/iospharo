@@ -1060,6 +1060,17 @@ did not close it; `scripts/perf-activation/README.md` lists four untried
 ablations. The SUnit runner carries an image-side memoize workaround for the
 same wall.
 
+Still open and unchanged on the rebuilt host — the 2026-09-02 arm64 sweep hit
+it three times, and every one of the five TIMEOUTs in that run except the two
+network tests belongs to this defect:
+
+    NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft   80 s
+    ReleaseTest>>testNoShadowedVariablesInMethods                   80 s
+    ReleaseTest>>testNoNullCharacter                                80 s
+
+The first two are named in the list above; `testNoNullCharacter` is a new
+member of the family (a whole-image source scan, same shape).
+
 ### 7. `rko281-restoreforpharo` ~50x slower than Cog on live SQLite — MEDIUM
 
     cog   2354 tests  145 s
