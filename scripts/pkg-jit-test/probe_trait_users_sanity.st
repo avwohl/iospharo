@@ -16,8 +16,16 @@
  Run: build-rel/test_load_image <image> eval
         ""'<this file>' asFileReference fileIn""
  Also useful BEFORE running anything, to confirm a pristine image is clean."
-| out check classes |
+| out check classes path flush |
 out := WriteStream on: String new.
+path := '/tmp/trait_users_sanity.txt'.
+path asFileReference ensureDelete.
+"Flush after every class.  If the run storms -- which is the whole point of
+ pointing this at our VM -- the process dies and a report written only at the
+ end would be lost, taking the one thing we wanted with it."
+flush := [
+    path asFileReference ensureCreateFile.
+    path asFileReference writeStreamDo: [ :s | s nextPutAll: out contents ] ].
 check := [ :label |
     | badClasses badTraits |
     badClasses := OrderedCollection new.
@@ -41,6 +49,7 @@ check := [ :label |
         out nextPutAll: '      '; nextPutAll: l; lf ] ].
 
 check value: 'before running anything'.
+flush value.
 
 classes := (TestCase allSubclasses
     select: [ :c | (c name beginsWith: 'Trait')
@@ -56,7 +65,8 @@ classes do: [ :c |
             ifFalse: [ '  P:' , r expectedPasses size printString ,
                        ' F:' , r failures size printString ,
                        ' E:' , r errors size printString ]); lf.
-    check value: 'after ' , c name ].
+    check value: 'after ' , c name.
+    flush value ].
 
-'/tmp/trait_users_sanity.txt' asFileReference writeStreamDo: [ :s |
-    s nextPutAll: out contents ].
+out nextPutAll: 'DONE'; lf.
+flush value.
