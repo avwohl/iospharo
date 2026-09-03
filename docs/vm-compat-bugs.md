@@ -2089,7 +2089,10 @@ image issues. The Cog comparison shows many are real, fixable VM defects.
 ## Confirmed our-VM bugs (Cog passes, ours errors)
 
     class                   Cog          our VM      notes
-    SystemEnvironmentTest   217P/0/0     79P/138E    boolean mis-eval (below)
+    SystemEnvironmentTest   217P/0/0     217P/0/0    FIXED — our number is from
+                                                     the 2026-09-02 arm64 sweep
+                                                     and is now exact parity;
+                                                     "79P/138E" below is 2026-06
     TraitTest               54P/0/0      errors      now defect #23; Cog number
                                                      re-confirmed 2026-09-02
 
