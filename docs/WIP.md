@@ -36,6 +36,13 @@ sweep, in `batch_1901`, the batch that used to abort and cost 40 classes.  Both
 candidate root fixes were measured and neither closes the hole -- the numbers
 are recorded at the knobs so nobody re-runs them.
 
+**The `Total:`-splice fix is verified.**  A freshly prepped image
+(`work/sunit2.image`, submodule `db42c37`) runs `RSViolinPlotTest` and
+`TKTCommonQueueWorkerPoolTest` -- the two classes every sweep on the old image
+loses -- and both emit a clean `Total:` on their own line, including the one
+that TIMED OUT, which is the case that used to splice.  Use `sunit2.image` for
+the next sweep: it is worth 2 classes and 20 tests.
+
 Two open items with work queued: **defect #27** (a ByteSymbol receiver running
 `BlockClosure>>value:` -- once per sweep, so being chased with
 `PHARO_T1_VALIDATE_IC` instrumentation rather than a repro), and the five
