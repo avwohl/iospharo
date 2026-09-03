@@ -1,0 +1,47 @@
+# Stock Cog v10.3.9 (x86_64 under Rosetta) on our whole 2026-09-02 residual
+# Same pristine Pharo 13.1 build 745 image, headless, one class at a time via
+#   (TestClass suite run), NOT through the SUnit runner.
+#
+# CAVEAT: test COUNTS are not comparable to the sweep's -- 'suite run' expands
+# parameterised/inherited cases that the runner's allTestSelectors list does not.
+# The F/E columns and the timings are the comparable parts.
+#
+# TIMING CAVEAT: this Cog is x86_64 under Rosetta and our sweep was native
+# arm64, so Cog's milliseconds are if anything pessimistic.
+
+FTTableMorphTest  P:1 F:0 E:0 total:1  494ms
+LinkInstallerTest  P:40 F:0 E:0 total:40  3070ms
+NoUnusedVariablesLeftTest  P:3 F:0 E:0 total:3  12007ms
+OCClassBuilderTest  P:25 F:0 E:1 total:26  551ms
+    ERROR: testCreateNormalClassWithTraitComposition
+RSLinesTest  P:18 F:0 E:0 total:18  486ms
+ReleaseTest  P:42 F:1 E:0 total:43  24451ms
+    FAIL: testPharoVersionFileExists
+SpAthensAdapterTest  P:18 F:0 E:0 total:18  3408ms
+SpComponentListAdapterTest  P:16 F:0 E:0 total:16  1588ms
+SpListCommonPropertiestTest  P:46 F:0 E:0 total:46  3183ms
+SpTableCommonPropertiestTest  P:34 F:0 E:0 total:34  2561ms
+SpTreeAdapterMultipleSelectionTest  P:40 F:0 E:0 total:40  2077ms
+SpTreeTableAdapterMultiColumnMultiSelectionTest  P:40 F:0 E:0 total:40  2224ms
+SpTreeTableAdapterMultiColumnTest  P:40 F:0 E:0 total:40  2512ms
+SpTreeTableAdapterSingleColumnMultiSelectionTest  P:40 F:0 E:0 total:40  2002ms
+SpTreeTableAdapterSingleColumnTest  P:38 F:0 E:0 total:38  1822ms
+StDebuggerActionModelTest  P:54 F:0 E:0 total:54  3215ms
+StDebuggerInspectorTest  P:10 F:1 E:0 total:11  694ms
+    FAIL: testUpdateLayoutForContextsWithAssertionFailure
+StDebuggerTest  P:60 F:1 E:0 total:61  64156ms
+    FAIL: testUpdateLayoutForContextsIfAssertionFailure
+StSpotterModelTest  P:2 F:0 E:0 total:2  1873ms
+StSpotterTest  P:2 F:1 E:0 total:3  3740ms
+    FAIL: testOpenSpotterRefreshesPreviewOnce
+StTranscriptPresenterTest  P:5 F:0 E:0 total:5  4710ms
+SystemDependenciesTest  P:16 F:1 E:0 total:17  2790ms
+    FAIL: testExternalUIDependencies
+TKTWorkerTest  P:7 F:0 E:0 total:7  4166ms
+TKTWorkerPoolTest  P:9 F:0 E:0 total:9  967ms
+WeakAnnouncerTest  P:33 F:0 E:0 total:34  560ms
+MCSmalltalkhubRepositoryTest  P:1 F:0 E:0 total:1  1627ms
+ZnClientTest  P:49 F:1 E:0 total:50  22438ms
+    FAIL: testQueryGoogle
+ZnHTTPSTest  P:8 F:0 E:0 total:8  35176ms
+DONE
