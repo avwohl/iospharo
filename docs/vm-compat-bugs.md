@@ -2029,6 +2029,12 @@ matrix is a deliberate second step and not part of the fix above: it changes
 the denominator of every recorded sweep and needs the report format to
 disambiguate repeated selectors.
 
+**The package tier is not affected.**  `scripts/package-tests-selfhosted.sh`
+already runs `c suite run`, which is the correct thing; only the SUnit sweep's
+`run_sunit_tests.st` went by selector.  So the package numbers in
+`docs/results/packages-*.md` need no re-reading, and the fix brings the two
+drivers into line rather than changing policy.
+
 Raw: `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt` and
 `cog-parameterized-check.txt`.
 
