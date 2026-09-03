@@ -2223,12 +2223,19 @@ this exit), which is exactly when every other handler consumes its saves.
 Measured interleaved -- base and fixed alternating rep by rep, four CPU hogs
 holding the load steady, matched binaries built from the same tree:
 
-    A/B                          base      fixed
-    fix 1 only                 9 of 12    3 of 12
-    fix 1 + storm guard        7 of 10    0 of 10
-    fix 1 + guard + fix 2      8 of 10    0 of 10
-    ----------------------------------------------
-    combined                  24 of 32    3 of 32
+    A/B                                  base      other arm
+    fix 1 only                         9 of 12    3 of 12
+    fix 1 + storm guard                7 of 10    0 of 10
+    fix 1 + guard + fix 2              8 of 10    0 of 10
+    guard + fix 2, fix 1 REVERTED      7 of 10    0 of 10   <- the one that counts
+
+The first three lines are void: fix 1 breaks 11 classes on batch 1-100 (below),
+and a change that breaks code can suppress a storm by breaking the path that
+reaches it.  **The last line is the result.**  With fix 1 reverted, the
+`cannotReturn:` storm guard alone takes the abort rate from 7 of 10 to 0 of 10,
+firing in 7 of those 10 runs -- every storm becomes one terminated process and
+the batch completes.  The same build scores 0 non-clean classes on batch 1-100,
+twice, matching the unfixed VM.
 
 Interleaving is not a nicety here.  The rate tracks machine load (6 of 8 with
 the package tier running, 4 of 6 later, 1 of 6 idle), so blocked A-then-B arms
