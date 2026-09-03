@@ -1977,7 +1977,57 @@ unbounded recursion that signals and catches an Error at every level.  Whether
 that is cause or consequence here is not established; it is a place to look
 early, and `PHARO_DET_SCHED=1` makes the ordering reproducible.
 
-**Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
+#### CORRECTION 2026-09-03: it is not the trait tests, it is the Tonel ones
+
+Two runs settle this, and both contradict the "start at `TraitChangesTest`"
+reading below.
+
+*The trait classes are innocent in isolation.*  All 27 of them on our VM
+against the pristine base image, with the `traitUsers` invariant re-checked
+after each: **0 violations at all 28 checkpoints, `TraitTest` 54 P / 0 F / 0 E,
+no storm** — identical to Cog bar `TraitFileOutTest`'s working-directory
+artifact (`docs/results/sweep-x86-2026-09-03/ours-trait-invariant.txt`).
+
+*And the storm starts EARLIER than the class the 12 GB heap died on.*  Re-run
+batch 1901-1950 whole with the heap squeezed to 1024 MB and it reproduces in
+**18 seconds**:
+
+    rc=134, 8 of 51 classes, last reported TonelWriterV1Test (index 1909)
+    [HEAP-CENSUS] 2654994 Context / 516760 Error / 524728 FullBlockClosure
+
+Same 5.1 : 1 : 1 ratios as the sweep's 12 GB census.  A smaller heap fills
+sooner, so the class boundary it dies on moves earlier — 1909 here against 1912
+in the sweep.  **That means index 1912 was never the start; it was where a
+12 GB heap ran out.**  The accumulation is already running during the Tonel
+block:
+
+    1903 TonelParserTest      1907 TonelScannerTest
+    1904 TonelReaderTest      1908 TonelSourceScannerTest
+    1905 TonelReaderTraitCompositionTest
+    1906 TonelRepositoryTest  1909 TonelWriterV1Test
+
+which also explains why the trait block alone never storms.  Bisect from 1901
+forward with `PHARO_MAX_OLD_SPACE_MB=1024` — each run is 18 s.
+
+#### The FATAL now says why the breaker did not fire, and it is not sampling
+
+The diagnostic added the same day answers the question this defect's sibling
+raised:
+
+    [VM] low-space breaker at abort: threshold=0 bytes (DISARMED — the image
+         never installed a LowSpaceWatcher), crossing latched=no
+
+So in the runner/sweep context prim 125 is **never armed at all** — the image
+does not install a `LowSpaceWatcher`.  (In a bare `eval` it does, and the
+breaker fires 462 times; the 2026-07 dossier has this exactly backwards.)  The
+latch fix is still right and still needed, but it cannot help a run where the
+image never arms the threshold.  Why the prepped image skips
+`installLowSpaceWatcher` is the next question, and `lowSpaceWatcher`'s own
+guard is the place to look: it bails with "Not enough memory to launch the
+lowSpaceWatcher" unless `garbageCollectMost` or `garbageCollect` answers more
+than 400000.
+
+#### (superseded) Where to start: `TraitChangesTest`.**  Not inferred any more — the index map
 is generated from the image and archived at
 `docs/results/sweep-arm-2026-09-02/class-index-map.txt`.  It reproduces
 `TOTAL=2047` exactly, and

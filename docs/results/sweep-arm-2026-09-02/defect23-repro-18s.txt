@@ -1,0 +1,20 @@
+# Defect #23 reproduced in 18 s, 2026-09-03 — and it starts in the Tonel block
+
+=== B. arm batch 1901-1950 whole, in ONE image (the sweep's shape) ===
+in the sweep: rc=134 after 758 s, 11 of 51 classes, 12.3 GB
+/private/tmp/claude-501/-Users-wohl-src-iospharo-jit/843c94fb-e30b-4972-adab-c1ede07553bb/scratchpad/post-sweep-4-running.sh: line 44: 90765 Abort trap: 6           PHARO_MAX_OLD_SPACE_MB=1024 timeout 1800 ./build-rel/test_load_image "$S/d23-run.image" > "$S/d23.log" 2>&1 < /dev/null
+rc=134 elapsed=18s  (old space squeezed to 1024 MB to shorten it)
+classes reported: 8 of 51
+--- storm signature ---
+[VM] FATAL: old space exhausted during scavenge tenure (need 328 bytes, 56 free of 1073741824). Live heap has outgrown the old-space reservation (MemoryConfig::oldSpaceMaxSize).
+[HEAP-CENSUS] 4449248 objects, 1049 MB total; top 25 classes by bytes:
+[HEAP-CENSUS]   2654994 objs   930466 KB  Context (idx 36)
+[HEAP-CENSUS]    516760 objs    28260 KB  Error (idx 3191)
+[HEAP-CENSUS]    524728 objs    24551 KB  FullBlockClosure (idx 38)
+[VM] low-space breaker at abort: threshold=0 bytes (DISARMED — the image never installed a LowSpaceWatcher (bare eval mode does not)), crossing latched=no
+1
+--- last class reported ---
+=== TonelSourceScannerTest ===
+=== TonelWriterV1Test ===
+
+=== post-sweep-4 done 2026-09-03 01:09:23 ===
