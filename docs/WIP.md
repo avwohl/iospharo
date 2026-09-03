@@ -360,10 +360,12 @@ tonight's commits, C++ tier on both arches, the #24/#25 environment probe,
     quickly anyway — while a wrong GC call corrupts the heap in every later
     run, and tonight there is no way to verify it properly.  Do it when a GC
     A/B can be run.
- 7. Package tier on both arches.  The arm64 run is chained as
-    `post-sweep-5-running.sh` (baseline to beat: 9382 P / 16 F / 18 E from
-    2026-08-22); x86_64 follows, and should use `REUSE_FROM=<arm work dir>`
-    since the loads cannot run there.
+ 7. ~~Package tier on both arches.~~  arm64 DONE 2026-09-03: 9326 P / 16 F /
+    16 E / 1 T, three fewer errors than 2026-08-22 and loads 1.5-3.5x faster;
+    the 55-pass gap was my `PER_CLASS_TIMEOUT` (now raised to 200 s), not a
+    regression.  x86_64 is chained as `pkg-x86-running.sh` with
+    `REUSE_FROM` the arm64 loads and `PER_CLASS_TIMEOUT=400`, since the loads
+    cannot run under Rosetta and the bound has to be ~2x arm's.
  7b. **Chase defect #25's DNUs** — the highest-value single item to come out of
     tonight.  Our headless resume restarts `MorphicRenderLoop` at pri-80, it
     busy-spins `WorldState>>drawWorld:` on Morphic DNUs, and the Delay
