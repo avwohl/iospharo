@@ -2189,6 +2189,10 @@ has never been filed.  It contains the threaded-FFI block —
     x86_64 2026-09-02  same, and idling at ~1% CPU when observed at +20 min
     stock Cog          the whole block: 429 tests, 0 F / 0 E, ~7.4 s total
 
+Exactly one batch per sweep shows the trace — a grep for
+`[primitiveQuit] Deferred` across all 41 arm64 batch logs hits only
+`batch_1801.log` — so the cost is one occurrence, not a per-batch tax.
+
 **It is a 55-second batch.**  The `[PROGRESS]` lines in the arm64 batch log
 date the first `[primitiveQuit] Deferred` to between 50 s and 60 s in, and then
 run to 1790 s — so the batch does its work in under a minute and **idles for
