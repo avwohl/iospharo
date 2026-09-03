@@ -1,5 +1,41 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+## 2026-09-03 (morning) — three tiers green on both arches, and the arches agree
+
+    tier         arm64                                   x86_64
+    VM C++       4/4 + test_asmjit_t1_stub               same
+    SUnit        2043 cls  27812 P / 18 F / 28 E / 3 T   2042 cls  27810 P / 20 F / 24 E / 8 T
+    packages     354 cls   9383 P / 16 F / 17 E / 0 T    354 cls   9376 P / 16 F / 24 E / 0 T
+
+Both sweeps: 41 batches, `rc=0` on every one, no abort anywhere.
+
+**The arm64 run is the first that is not missing anything.**  Its predecessor
+lost 40 classes when batch 1901-1950 aborted on the Context storm; with the
+`cannotReturn:` storm guard that batch completes and the guard fires once.  The
+trait block runs clean on arm64 for the first time, `TraitTest` 54/54.
+
+**No codegen divergence between the arches.**  Fifteen classes out of 2043
+differ and every one has a non-codegen explanation: five Rosetta timeouts, two
+wall-clock assertions, two `w64Convention` symbols the test dylib does not
+export, defect #27's flake, and one harness mistake of mine (a copied VM
+without its dylibs -- which x86_64 confirms by passing `LibTTYTest` 5/5 after
+running its binary in place).  The package tier now agrees exactly on FAIL: 14
+DataFrame + 2 PolyMath, the same selectors on both.
+
+**Confirmed at full-sweep scale:** defect #22's fix -- `RSLinesTest` 16 P / 2 E
+-> 18 P / 0 E.
+
+**Filed:** defect #27 (a ByteSymbol receiver running `BlockClosure>>value:`,
+once per sweep, pre-existing) and defect #28 (four `XMLParser` attribute-default
+tests failing on x86_64 only, and reproducible in isolation).
+
+**Two candidate root fixes for defect #23's remaining hole were measured and
+neither closes it** -- the numbers are recorded at their knobs so nobody
+re-runs them.  One earlier candidate broke 11 classes on batch 1-100 and was
+reverted; the sweep caught it, three interleaved A/Bs on a five-class repro
+batch had not.
+
+
 ## 2026-09-03 (later) — defect #23 is two lost frames, not a mystery
 
 The arm64 Context storm cost 39 classes of every sweep and had been "a
