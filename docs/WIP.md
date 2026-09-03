@@ -169,23 +169,27 @@ which waits on the sweep's pid; the rest are by hand.
     comparison script is in the session scratchpad (`compare-sweeps.sh`);
     the arm side is staged at `sweep-arm/all_results.txt`.
  7. Package tier on both arches.
- 8. **Try to get a Cog baseline back — as an x86_64 VM under Rosetta.**
-    Untested idea, cheap to falsify.  The arm64 stock VM aborts here because
-    it wants its code zone at a fixed `0x320000000` that Darwin 27 will not
-    grant (`docs/history/`, CLAUDE.md, memory
-    `stock-cog-vm-cannot-run-here`), which is why there is no live Δcog
-    baseline on this host and why several defect verdicts are stuck.  The
-    Rosetta x86_64 address space is laid out differently, so an **x86_64**
-    Cog may well get that address:
+ 8. **Use the Cog baseline that is now available.**  DONE 2026-09-02: the
+    stock VM's `codeZone` abort was arch-specific, not host-specific, and the
+    **x86_64** Cog under Rosetta runs here.  Installed at `/tmp/harness-x86`,
+    Cog v10.3.9, `eval` and `eval --save` both verified.  Every stock-VM
+    command needs the `arch -x86_64` prefix.  See CLAUDE.md.
 
-        arch -x86_64 /bin/bash -c 'cd /tmp/harness-x86 && curl -sL https://get.pharo.org/64/130+vm | bash'
-        arch -x86_64 /tmp/harness-x86/pharo /tmp/harness-x86/Pharo.image eval '42 factorial printString'
+    What this unblocks, in rough order of value:
 
-    Either it prints, and the whole Δcog method in `docs/vm-compat-bugs.md`
-    works again on this machine, or it prints the same
-    `allocateHeap: Could not allocate codeZone` and the idea is dead in one
-    command.  Do NOT skip the `eval` check: the failure mode is an abort with
-    rc=255, not a missing binary.
+      * **`TraitTest`** — "Cog 54 P / 0 F / 0 E, ours errors, not yet drilled",
+        carried since 2026-06-01, and now one of the classes in the batch the
+        storm killed.  A Cog run of the whole trait block says at once whether
+        the storm is ours.
+      * **Defect #19, glyph drawing 12-25x** — needs a Cog timing number.  Use
+        `build-x86` for the comparison, not `build-rel`: both it and the Cog
+        are x86_64 under Rosetta, so the ratio means something.
+      * **The XMLParser ~8.8 s question** in the open list, which is written up
+        as "needs a stock-Cog number this host cannot produce".
+      * **Defect #2's six remaining packages**, which have no current Cog
+        numbers at all.
+      * The whole `scripts/classify-sunit.py cog.txt ours.txt` Δcog path in
+        `docs/vm-compat-bugs.md`, and `run_sunit_cog.st`.
 
 ## Where the three tiers stand
 
