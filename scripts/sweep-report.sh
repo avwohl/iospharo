@@ -5,9 +5,18 @@
 #   $1=batch  $2=<start>-<end>  $3=rc=N  $4=<secs>s  $5=classes=N  $6=completed=yes
 D=${1:?usage: sweep-report.sh <sweep-outdir>}
 echo "=== $D"
-awk '/^batch/{n++; split($3,r,"="); if (r[2]!=0) bad++}
-     END{printf "--- batches: %d run, %d with rc!=0\n", n, bad+0}' "$D/sweep.log"
-grep -a "^batch" "$D/sweep.log" | awk '{split($3,r,"="); if (r[2]!=0) print "  "$0}'
+# rc=137 with completed=yes is the sweep's OWN early kill: the batch wrote the
+# completion marker and the VM then sat wedged in shutdown, so run_batch killed
+# it after SHUTDOWN_GRACE instead of burning the whole per-batch timeout.  That
+# is the mechanism working, not a failure -- counting it as one made a healthy
+# x86 run look like 4 bad batches of 13.
+awk '/^batch/{n++; split($3,r,"=");
+      if (r[2]==137 && $6=="completed=yes") early++
+      else if (r[2]!=0) bad++}
+     END{printf "--- batches: %d run, %d with rc!=0, %d killed early after finishing\n",
+                n, bad+0, early+0}' "$D/sweep.log"
+grep -a "^batch" "$D/sweep.log" | awk '{split($3,r,"=");
+    if (r[2]!=0 && !(r[2]==137 && $6=="completed=yes")) print "  "$0}'
 echo "--- batches that lost classes (classes= below the batch size)"
 grep -a "^batch" "$D/sweep.log" | awk '{split($2,b,"-"); want=b[2]-b[1]+1;
     split($5,c,"="); if (c[2]+0 < want) print "  "$0}'
