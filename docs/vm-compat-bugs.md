@@ -3823,7 +3823,16 @@ when the same failures reproduced on Cog with `MorphicUIManager` installed and
 its UI process suspended.  The remaining 6 FAILs are the interesting ones now:
 they survive a working fake GUI.
 
-A full sweep on a fake-GUI-prepped image is running to confirm at scale.
+**Confirmed at scale.**  In the fake-GUI sweep, **all 178 `Sp*` classes are
+clean**, and the first 9 `St*` classes are too.  The previous sweep had nine
+`Sp*`/`St*` classes non-clean between them.  At 1703 classes the running totals
+are 22789 P / 2 F / 1 E / 3 T, against 2 F / 10 E at the same point without the
+prep, and the only two non-clean classes so far are `OCClassBuilderTest` (the
+build-745 image issue) and `ReleaseTest` (shared with Cog).
+
+`FTTableMorphTest`, which errored with the same `SubscriptOutOfBounds: 1 in #()`
+signature as the family, is clean too -- so it belonged to this group all
+along.
 
 ## Defect #27 — a ByteSymbol runs `BlockClosure>>value:`
 
