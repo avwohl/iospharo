@@ -60,6 +60,15 @@ Queued, in order, running unattended:
    images.  Baselines to beat: arm64 9326 P / 16 F / 16 E / 1 T, x86_64
    9376 / 16 / 24 / 0.
 
+**C++ tier, both arches:** `test_sista_ir` PASS, `test_class_table` rc=0,
+`test_sista_survey` rc=0, `test_asmjit_t1_stub` PASS (1000 reentrant calls all
+writing EXIT_SEND).  `test_platform` and `test_ios_bridge` are display smoke
+tools, not pass/fail tier members -- on the pristine image in 5 s
+`test_platform` reports "No display updates received / TEST INCOMPLETE", which
+is what a run with no Morphic world looks like, and `test_ios_bridge` runs long
+enough to need its own timeout.  Verifying those two means the screenshot route
+in CLAUDE.md, not a return code.
+
 **A copied VM loses its dylibs.**  The arm64 sweep runs a COPY of the binary
 (so a rebuild cannot change it mid-run), and the copy left `libtty.dylib` and
 `libTestLibrary.dylib` behind: `LibTTYTest` went 5 P to 5 E with
