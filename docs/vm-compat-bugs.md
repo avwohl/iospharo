@@ -2074,10 +2074,10 @@ repro.
     64          2     2     17 s   2655317 / 2655317  identical, needs more reps
     256         1     1     18 s   2655312
 
-**Caveat added minutes later, and it matters.**  Three further quantum-16 reps,
-run while the x86_64 package tier was using the machine, went storm / clean /
-clean — so quantum 16 is 3 of 5 overall, not 2 of 2, and its apparent
-reliability was luck.  DET_SCHED removes the heartbeat but NOT `Delay`, which is
+**Caveat added minutes later, and it matters.**  Six further quantum-16 reps,
+run while the x86_64 package tier was using the machine, went
+clean / storm / clean / storm / storm / clean — so quantum 16 is **5 of 8**
+overall, not 2 of 2, and its apparent reliability was luck.  DET_SCHED removes the heartbeat but NOT `Delay`, which is
 still wall-clock, so machine load still leaks in.  The quantum-64 pair was run
 before that contention started and has not been repeated under it.  **Treat
 "64 is deterministic" as promising and unconfirmed until it has six reps on an
@@ -2089,6 +2089,20 @@ times it was run, and landed on the same Context count both times — which woul
 make the whole execution repeatable rather than merely the outcome, and that is
 what makes lldb, a trace or an ablation usable.  Confirm the rate on an idle
 machine before relying on it; see the caveat below.
+
+#### It fires during `TonelReaderTest`, in every storming run
+
+The quantum-16 reps are worth more for WHERE they die than for the rate.  All
+five storming runs stop in the same two classes:
+
+    reps 1, 2, 4, 6   last marker `=== TonelReaderTest ===`               (index 1904)
+    rep 7             last marker `=== TonelReaderTraitCompositionTest ===` (1905)
+
+So the storm is not spread over "the Tonel block": it fires inside
+**`TonelReaderTest`**, occasionally slipping one class later.  Combined with
+the earlier runs — 1901-1902 never storms, 1903-1909 as a group never storms,
+1905 and 1909 alone never storm — the target is `TonelReaderTest` running after
+`TimespanDoTest`, `TimespanTest` and `TonelParserTest` have gone before it.
 
 The shape of the table is the finding in itself.  The storm needs a yield
 interval of roughly 16 x 1024 bytecodes or coarser; at 4 x 1024 and finer it

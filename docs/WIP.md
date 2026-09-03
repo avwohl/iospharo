@@ -146,8 +146,10 @@ documents for the package tier.  The runner now reads `SUNIT_TIMEOUT_MULT`
          times.  Wall clock is 1 of 3, quantum 1 and 4 never fire, quantum 16
          is 3 of 5.  Confirm 64 with six reps on an idle machine before relying
          on it: DET_SCHED removes the heartbeat but not `Delay`, so load still
-         leaks in, and the quantum-16 rate dropped once the package tier
-         started.
+         leaks in, and quantum 16 is 5 of 8 overall rather than the 2 of 2 it
+         first looked like.  **Every storming run dies inside
+         `TonelReaderTest`** (index 1904), occasionally one class later — that
+         is the target.
     #24  Fourteen classes fail because the runner must suspend the UI process.
          REPRODUCED on Cog; two earlier explanations refuted and recorded.
          Our PRISTINE headless environment is identical to Cog's, so the
