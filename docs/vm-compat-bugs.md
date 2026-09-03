@@ -2175,11 +2175,27 @@ has never been filed.  It contains the threaded-FFI block —
     x86_64 2026-09-02  same, and idling at ~1% CPU when observed at +20 min
     stock Cog          the whole block: 429 tests, 0 F / 0 E, ~7.4 s total
 
-The tests are not the problem: our sweep reports all 51 classes and writes its
-completion marker, and none of these classes appears in the residual.  **The
-VM then never exits**, and the harness kills it at `PER_BATCH_TIMEOUT`.  So
-this is a shutdown hang, not a test failure, and it costs 30 minutes of every
-sweep on every architecture — an hour a night at the current cadence.
+The tests are not the problem, and the results file proves how far it got —
+the batch writes its per-class results, its `=== BATCH TOTAL ===` block
+(1306 P / 1 F / 0 E / 10 S), its completion marker, and `=== BATCH COMPLETE ===`.
+Only then does it fail to exit, and the harness kills it at
+`PER_BATCH_TIMEOUT`.  So this is a **shutdown hang**, not a test failure, and
+it costs 30 minutes of every sweep on every architecture — an hour a night at
+the current cadence.
+
+What runs after `BATCH COMPLETE` is exactly two statements:
+
+    [Smalltalk exitSuccess] on: Error do: [:e |].
+    Smalltalk quitPrimitive
+
+and the runner's own comment already distrusts the first (*"exitSuccess goes
+through SessionManager shutdown which may not reach primitiveQuit"*).  If
+`exitSuccess` **hangs** rather than errors, the `on: Error do:` does not help
+and `quitPrimitive` is never reached.  That is the leading candidate: a
+SessionManager shutdown that blocks on a threaded-FFI worker or the abandoned
+callback.  The results stream is closed by the `ensure:` before this runs,
+which is why no log has ever said which of the two it is; stderr landmarks
+were added around both (submodule, 2026-09-02) so the next sweep answers it.
 
 The mechanism is already described in our own source.  `Interpreter.cpp`'s
 `enterInterpreterFromCallback` comment says an *"abandoned same-thread
