@@ -105,15 +105,14 @@ batch entirely), or the sweep is running the binary that would be replaced.
     `withEnd:controlPoints:do:` -> `setPositionTo:vector:do:` -> `aBlock value:`,
     all synchronous), which is VM-visible, not display.  Bisect with
     `PHARO_NO_JIT=1` first, then the T1 knobs.
- 6. **Re-run `test_relaunch` on an idle machine.**  Run at 22:5x while the
-    x86_64 sweep was saturating the box it failed 2 of 3 cycles
-    (`[VM-STOP-TIMEOUT] interpret() has not returned 2s after stop()`, the
-    worker still executing -- `[JIT] Stats:` sends kept climbing, so not a
-    wedge).  It was 3/3 earlier the same day on an idle machine.  A 2 s hard
-    deadline under load is the obvious explanation and the low-space change is
-    inert here (`lowSpaceCrossed()` false, zero `[LOW-SPACE]` lines in the
-    log), but that is an argument, not a measurement -- so the C++ tier is NOT
-    being claimed green for `test_relaunch` until this is re-run idle.
+ 6. **Re-run `test_relaunch` on `base.image`.**  It failed 2 of 3 cycles
+    tonight (`[VM-STOP-TIMEOUT] interpret() has not returned 2s after stop()`,
+    the worker still executing -- `[JIT] Stats:` sends kept climbing, so not a
+    wedge) and that was **my doing, not a regression**: I pointed it at the
+    PREPPED image.  A prepped image auto-starts `SUnitRunner` on resume, whose
+    P80 processes hold the worker well past a 2 s deadline.  The 3/3 run
+    earlier the same day used `base.image`.  Re-run there for the record; the
+    C++ tier is not being claimed green for `test_relaunch` until it is.
  7. x86_64 sweep write-up plus the arm-vs-x86 residual diff.
  8. Package tier on both arches.
 
