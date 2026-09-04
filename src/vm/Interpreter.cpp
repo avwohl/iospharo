@@ -2293,6 +2293,27 @@ uint64_t g_duplicateActivation[2] = {0, 0};
 // site widowed, so a zero here says which path never runs for the frames in
 // question rather than leaving it to be inferred from heap-watch output.
 uint64_t g_contextsWidowedOnReturn[3] = {0, 0, 0};
+
+// PHARO_WIDOW_TRACE_SEL=<substring>: name every activation that IS widowed, so
+// "this context was never widowed" can be established rather than inferred.
+void Interpreter::traceWidow(const char* site, Oop ctx) {
+    const char* want = GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL);
+    if (!want) return;
+    if (!ctx.isObject() || ctx.isNil() || ctx.rawBits() <= 0x10000) return;
+    ObjectHeader* c = ctx.asObjectPtr();
+    if (c->slotCount() <= 5) return;
+    std::string sel  = memory_.selectorOf(c->slotAt(3));
+    std::string rcls = memory_.classNameOf(c->slotAt(5));
+    // Match the SELECTOR or the RECEIVER CLASS: a selector like `start` is
+    // shared by half the image, and the activation you care about is usually
+    // identified by whose it is.
+    if (sel.find(want) == std::string::npos
+            && rcls.find(want) == std::string::npos) return;
+    static int n = 0;
+    if (++n > 400) return;
+    fprintf(stderr, "[WIDOW-TRACE %s] %s>>#%s ctx=0x%llx\n", site,
+            rcls.c_str(), sel.c_str(), (unsigned long long)ctx.rawBits());
+}
 static const char* const kCannotReturnSiteName[6] = {
     "nlr-home-sender-nil",         // NLR: home context found, its sender is nil/invalid
     "return-into-dead-sender",     // normal return: sender's pc is nil or -1 (returned-from)
@@ -8045,6 +8066,7 @@ void Interpreter::returnValue(Oop value) {
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
                     g_contextsWidowedOnReturn[2]++;
+                    traceWidow("ctx-return", activeContext_);
 
                     // Read sender's stackp BEFORE executeFromContext (which uses it).
                     // We need this to place the return value at the correct
@@ -8245,6 +8267,7 @@ terminate_process:
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
         g_contextsWidowedOnReturn[0]++;
+        traceWidow("popFrame", currentFrameMaterializedCtx_);
     }
 
     // Debug: track method_ changes through popFrame
@@ -15672,6 +15695,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());
         g_contextsWidowedOnReturn[1]++;
+        traceWidow("popFrameForJIT", currentFrameMaterializedCtx_);
     }
 
     // Restore interpreter state from saved frame

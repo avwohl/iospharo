@@ -1824,6 +1824,8 @@ public:
     // Defined regardless of JIT — bytecode dispatch in Interpreter.cpp
     // calls this on every backward branch.
     void backwardBranchInterruptCheck();
+    /// PHARO_WIDOW_TRACE_SEL diagnostic: name an activation widowed on return.
+    void traceWidow(const char* site, Oop ctx);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

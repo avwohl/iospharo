@@ -3266,6 +3266,27 @@ distinguish.  So the next question is precisely why the
 `TKTWorkerProcess>>start` activation's context escapes the fd==0 widow that
 fires 335809 times elsewhere in the same run.
 
+`PHARO_WIDOW_TRACE_SEL=<substring>` names every activation that IS widowed,
+matching on the selector OR the receiver class (a bare `start` is shared by
+half the image; the activation you care about is identified by whose it is).
+On the failing run:
+
+    PHARO_WIDOW_TRACE_SEL=privateStart
+      7  ctx-return  TKTWatchDog>>#privateStart
+      4  ctx-return  TKTWorker>>#privateStart
+      1  popFrame    TKTWorker>>#privateStart
+
+Five widowings of `TKTWorker>>privateStart` in a run whose seven tests create
+more workers than that, and the retained chains are exactly the ones that were
+never widowed.  `TKTWorkerProcess>>start` and `TKTWorker>>start` both appear in
+the trace too, so these activations are not systematically excluded — only
+sometimes missed.
+
+**The next mechanical step** is to count `TKTWorker>>privateStart` ACTIVATIONS
+against those 5 widowings.  If activations exceed widowings the gap is proved
+rather than inferred, and the return path those activations take is the thing
+to find.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
