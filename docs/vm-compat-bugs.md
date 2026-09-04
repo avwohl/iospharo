@@ -3517,11 +3517,23 @@ differences above are unaffected; only the site names were wrong.  That also exp
 `PHARO_T1_NO_CALLER_RESUME` both fix the test: they route these returns away
 from this case.
 
-**But the obvious one-line fix is wrong.**  Adding the same two stores there
-does not just fail to help — it HANGS the VM: TKTWorkerTest ran to the 900 s
-harness timeout having executed 6.6M bytecodes, with only
-`ProcessorScheduler>>idleProcess` left in the queue.  Reverted; the note is at
-the site.
+**The obvious one-line fix is FLAKY, not simply wrong** — and this correction
+matters, because the first version of this note said flatly that it hangs.
+Adding the same two stores there, two interleaved reps each way:
+
+    rep   widow at resume-ExitReturn     knob off (default)
+     1    HUNG (900 s timeout, 6.6M      4 P / 2 E / 1 T
+          bytecodes, only idleProcess
+          left in the queue)
+     2    8 P / 0 F / 0 E                4 P / 2 E / 1 T
+
+So rep 2 PASSES CLEAN with the fix on, which is the first time anything has
+made this test pass with the JIT on and the resume path intact.  The lever is
+right; the placement is unsafe — widowing before the return value is delivered
+strands the return when the timing lands wrong.  Reverted anyway, because a
+change that hangs one run in two cannot ship, but it is a much stronger lead
+than "wrong": it needs to move to after the case finishes returning, not to be
+abandoned.  Only two reps, so the 50% rate is indicative, not a measurement.
 
 And that guess was WRONG too, so it is recorded rather than left standing:
 extending the trace to name whose context it is reports
