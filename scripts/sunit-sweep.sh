@@ -196,17 +196,40 @@ rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
 # timeout out.  timeout(1) is still the outer bound for a batch that hangs
 # BEFORE finishing, which is the case the marker cannot see.
 SHUTDOWN_GRACE=${SHUTDOWN_GRACE:-30}
-# RUN_FROM_IMAGE_DIR=1 runs the VM with its working directory set to the
-# outdir, where run.image lives.  Some tests write a file and read it back:
-# TraitFileOutTest files a package out and then fails with
-# "FileDoesNotExistException: <repo>/Generated-Trait-Test-Package.st" because
-# the write lands beside the image and the read looks in the sweep's working
-# directory.  Off by default because it changes the working directory for every
-# test at once, which is exactly the kind of thing that moves failures around;
-# turn it on deliberately and diff the result.
+# RUN_FROM_IMAGE_DIR runs the VM with its working directory set to the outdir,
+# where run.image lives.  DEFAULT ON since 2026-09-03, because it is the
+# FAITHFUL configuration rather than a workaround, and because the diff the
+# older comment asked for has now been run.
+#
+# Why faithful: `Class>>fileOut` ends in
+#
+#     CodeExporter class>>writeSourceCodeFrom:baseName:isSt:
+#         targetFile := FileLocator imageDirectory / baseName, extension
+#
+# so the file-out lands beside the IMAGE, while TraitFileOutTest reads it back
+# with `CodeImporter evaluateFileNamed:` on a bare relative name, which
+# resolves against the WORKING DIRECTORY.  The test therefore passes only when
+# those two coincide -- which is exactly how the stock harness runs, launched
+# from the image's own directory.  Cog passes it 4/4 for that reason and no
+# other.  Our VM resolves relative paths against the process cwd exactly as Cog
+# does (probed: a relative writeStreamDo: and a relative `exists` both hit the
+# cwd), so this is not a VM difference.  Measured on our VM, same binary, same
+# image, nothing but the cwd changed:
+#
+#     cwd = repo root      2 P / 2 E   FileDoesNotExistException '<repo>/T6.st'
+#     cwd = image dir      4 P / 0 E
+#
+# The old comment's worry -- that changing the cwd for every test at once is
+# the kind of thing that moves failures around -- was checked rather than
+# assumed.  Batch 1-100, both arms, two interleaved reps each:
+#
+#     repo cwd    1477 P / 0 F / 0 E / 2 S      (x2)
+#     image cwd   1477 P / 0 F / 0 E / 2 S      (x2)
+#
+# Identical.  Set RUN_FROM_IMAGE_DIR=0 to restore the old behaviour.
 run_batch() {                       # $1 = log path
     local log=$1 grace=0 pid
-    if [ "${RUN_FROM_IMAGE_DIR:-0}" = "1" ]; then
+    if [ "${RUN_FROM_IMAGE_DIR:-1}" = "1" ]; then
         ( cd "$OUT" && exec timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" ) \
             > "$log" 2>&1 < /dev/null &
     else
