@@ -3481,6 +3481,16 @@ emitted code, its later returns happen natively and never reach a widow site.
 Observationally (JIT off sees 19, JIT on sees 3) and interventionally (force
 the returns back through C++ and 19 reappear, and the failure goes) agree.
 
+**A candidate worth validating, not yet proposed:**
+`PHARO_T1_NO_CALLER_RESUME` fixes this test AND is 14% FASTER on defect #6's
+reflective scan (187 s against 217 s, `scripts/perf-activation/README.md`).
+Two wins from one knob is unusual enough to be worth a proper look, but it is
+NOT proposed as a default here: it exists as an x86 sp-leak workaround, and
+disabling caller re-entry should cost send-bound code, which is where the JIT
+actually wins.  Deciding it needs a send-bound benchmark plus a full sweep on
+both arches; an attempt at a quick fib micro-bench in this session produced an
+implausible 15 ms and is not recorded as a number.
+
 **The fix belongs in the emitted return path**: when a frame being popped in
 JIT code has a materialized Context, that Context must be widowed.  Doing it
 unconditionally from emitted code would cost every return, so it wants a
