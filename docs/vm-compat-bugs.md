@@ -3209,6 +3209,23 @@ not because it fixes #28 -- it does not.
 Validated as neutral before keeping it on: batch 1-200, both arms, two
 interleaved reps each, 3184 P / 0 F / 0 E / 21 S / 1 T every time.
 
+#### The widow store in `popFrameForJIT` is MEASURED INERT
+
+Counters at all three widow sites, printed as `[WIDOW]` at exit, over a whole
+TKTWorkerTest run:
+
+    popFrame = 168396    popFrameForJIT = 0    ctx-return = 335809
+
+**Zero.**  `currentFrameMaterializedCtx_` is never a live Context at that point,
+because `materializeFrameStack` sets `frameDepth_ = 0` and hands subsequent
+returns to the fd==0 context path instead.  So the store added there fixes
+nothing, which independently confirms that the 71 -> 47 movement was noise.  It
+is kept only as an assertion of the invariant `popFrame` already holds; it must
+not be cited as a fix.
+
+Contexts ARE widowed in bulk — half a million times a run between the two live
+sites — so the chain below is not a case of widowing being broken in general.
+
 #### What the widow state actually says, and why widowing cannot be the fix
 
 The heap-watch describer now prints each holding Context's widow state.  On the
@@ -3230,6 +3247,24 @@ the chain has to be broken by the dead contexts becoming UNREACHABLE, not by
 clearing fields in them.  The link to break is one hop further out: the
 `createProcessDoing:named:` context that the live closure holds as its
 `outerContext`, whose `sender` still points into the returned chain.
+
+The full chain, identical for every retained worker in the run:
+
+    worker
+     <- Context{TKTWorker>>privateStart}[5]           receiver, LIVE
+     <- Context{TKTWorkerProcess>>start}[0]           sender,   LIVE
+     <- Context{createProcessDoing:named:}[0]         sender,   LIVE
+     <- FullBlockClosure[0]                           outerContext
+     <- Context[4]                                    closureOrNil
+     <- Context{value}[0] <- Context{workerLoop}[1] <- the running process
+
+Widowing `TKTWorkerProcess>>start`'s context alone would be enough: the worker
+is reachable only through that context's sender.  `TKTWorker>>start`'s context
+IS widowed in the same run (the describer shows `WIDOWED` on 96 hits) — note
+the two different `start` methods, which the selector-only annotation does not
+distinguish.  So the next question is precisely why the
+`TKTWorkerProcess>>start` activation's context escapes the fd==0 widow that
+fires 335809 times elsewhere in the same run.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 

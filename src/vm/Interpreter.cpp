@@ -2287,6 +2287,12 @@ uint64_t g_contextsKilledByUnwind[2] = {0, 0};
 // from the other end.  Either one being non-zero says the residual dead-sender
 // loop is a duplicated activation rather than a lost context handover.
 uint64_t g_duplicateActivation[2] = {0, 0};
+// Widow sites: how many materialized Contexts each RETURN path marked dead.
+// [0] popFrame, [1] popFrameForJIT, [2] the fd==0 context-return path.  A
+// retained-receiver chain (docs/vm-compat-bugs.md #28) is a context that no
+// site widowed, so a zero here says which path never runs for the frames in
+// question rather than leaving it to be inferred from heap-watch output.
+uint64_t g_contextsWidowedOnReturn[3] = {0, 0, 0};
 static const char* const kCannotReturnSiteName[6] = {
     "nlr-home-sender-nil",         // NLR: home context found, its sender is nil/invalid
     "return-into-dead-sender",     // normal return: sender's pc is nil or -1 (returned-from)
@@ -2392,6 +2398,11 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                     "nlr-home-search=%llu aboutToReturn-unwind=%llu\n",
                     (unsigned long long)g_contextsKilledByUnwind[0],
                     (unsigned long long)g_contextsKilledByUnwind[1]);
+        fprintf(stderr, "[SEND-CHAIN] contexts widowed on return: "
+                "popFrame=%llu popFrameForJIT=%llu ctx-return=%llu\n",
+                (unsigned long long)g_contextsWidowedOnReturn[0],
+                (unsigned long long)g_contextsWidowedOnReturn[1],
+                (unsigned long long)g_contextsWidowedOnReturn[2]);
         if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
             fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
                     "chain-loop=%llu (materialized first) resume-loop=%llu "
@@ -8033,6 +8044,7 @@ void Interpreter::returnValue(Oop value) {
                     // nil the sender and PC so isDead returns true and sender chain is broken.
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
+                    g_contextsWidowedOnReturn[2]++;
 
                     // Read sender's stackp BEFORE executeFromContext (which uses it).
                     // We need this to place the return value at the correct
@@ -8232,6 +8244,7 @@ terminate_process:
         }
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
+        g_contextsWidowedOnReturn[0]++;
     }
 
     // Debug: track method_ changes through popFrame
@@ -15638,6 +15651,19 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     // `Context>>isDead` reads.  Idempotent, so a second return through the
     // same context is harmless.  PHARO_NO_JIT_WIDOW_ON_POP restores the old
     // (leaking) behaviour for a bisect.
+    //
+    // MEASURED INERT, 2026-09-04.  The `[WIDOW]` tally at exit reports
+    // popFrame=168396 ctx-return=335809 **popFrameForJIT=0** over a whole
+    // TKTWorkerTest run: `currentFrameMaterializedCtx_` is never a live
+    // Context here, because materializeFrameStack sets frameDepth_=0 and
+    // hands subsequent returns to the fd==0 context path instead.  So this
+    // store fixes nothing today and the retention counts that first appeared
+    // to move with it (71 -> 47) were run-to-run noise; four runs read
+    // 71, 47, 96 with it on and 91 with it off.  It is kept, not because it
+    // helps, but because the invariant it asserts is the one popFrame already
+    // holds and a future change that gives JIT frames a materialized context
+    // at pop time must not silently reintroduce the leak.  Do not cite it as
+    // a fix for #28.
     if (__builtin_expect(currentFrameMaterializedCtx_.isObject()
                          && !currentFrameMaterializedCtx_.isNil()
                          && currentFrameMaterializedCtx_.rawBits() > 0x10000, 0)
@@ -15645,6 +15671,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
             && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());
+        g_contextsWidowedOnReturn[1]++;
     }
 
     // Restore interpreter state from saved frame

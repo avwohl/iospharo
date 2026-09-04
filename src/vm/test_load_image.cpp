@@ -1497,6 +1497,18 @@ int main(int argc, char* argv[]) {
         if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
             fprintf(stderr, "[EXIT-TRACE] dumpJITStats done\n");
         }
+        {
+            // Widow-site tallies (docs/vm-compat-bugs.md #28).  One line, only
+            // when something actually widowed, so it costs a branch at exit.
+            using pharo::g_contextsWidowedOnReturn;
+            if (g_contextsWidowedOnReturn[0] || g_contextsWidowedOnReturn[1]
+                    || g_contextsWidowedOnReturn[2])
+                fprintf(stderr, "[WIDOW] contexts widowed on return: "
+                        "popFrame=%llu popFrameForJIT=%llu ctx-return=%llu\n",
+                        (unsigned long long)g_contextsWidowedOnReturn[0],
+                        (unsigned long long)g_contextsWidowedOnReturn[1],
+                        (unsigned long long)g_contextsWidowedOnReturn[2]);
+        }
 
         // In test mode, print results file if it exists
         if (testMode) {
