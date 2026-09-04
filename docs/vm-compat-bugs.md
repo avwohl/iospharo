@@ -3178,18 +3178,23 @@ JIT direct-call paths, had no such store.**  That is the asymmetry, and it
 matches the arm/knob evidence exactly: the interpreter pops through
 `popFrame` and widows; JIT'd frames pop through `popFrameForJIT` and do not.
 
-**The fix is real but PARTIAL, and it does not close the test.**  Adding the
-same two stores to `popFrameForJIT` (default on, opt out with
-`PHARO_NO_JIT_WIDOW_ON_POP`) moves the retention measurably and no further:
+**The fix does NOT close the test, and its apparent effect on the retention
+count was measurement noise.**  Adding the same two stores to `popFrameForJIT`
+(default on, opt out with `PHARO_NO_JIT_WIDOW_ON_POP`) first looked like it
+removed a third of the pinning chains:
 
     build              workers   hits   Context:start   Context:privateStart
     JIT on, before        47      407         71                 71
     JIT on, widowed       47      359         47                 47
     JIT off               38      178          0                  0
 
-A third of the pinning chains go away; the rest do not, and the distinct
-worker count does not move at all.  On the test itself, interleaved, three
-reps each:
+**That reading is withdrawn.**  Two later runs on a newer binary give 96 with
+the knob ON and 91 with it OFF — so across four runs the counts are 71, 47, 96
+(fix on) and 91 (fix off), which is no separation at all.  The number is
+dominated by how many workers happen to be alive when a GC lands, not by the
+change.  What IS solid is the arm difference: 0 with the JIT off, always.
+
+On the test itself, interleaved, three reps each:
 
     rep   widow on        widow off
      1    5 P / 1 E / 1 T  4 P / 2 E / 1 T
@@ -3204,11 +3209,27 @@ not because it fixes #28 -- it does not.
 Validated as neutral before keeping it on: batch 1-200, both arms, two
 interleaved reps each, 3184 P / 0 F / 0 E / 21 S / 1 T every time.
 
-Where the remaining 47 come from is the next question.  The other way frames
-leave the JIT is `frameDepth_ = 0` after `materializeFrameStack()` (17 sites),
-which converts the whole saved-frame stack into Contexts and hands returns to
-the fd==0 context path; whether that path widows every context it created,
-rather than only `activeContext_`, is unverified.
+#### What the widow state actually says, and why widowing cannot be the fix
+
+The heap-watch describer now prints each holding Context's widow state.  On the
+failing run, every hit is one of exactly two shapes, and they disagree:
+
+    96  method=start          WIDOWED               (pc nil AND sender nil)
+    96  method=privateStart   (no annotation)       (pc and sender both live)
+
+identically with `PHARO_NO_JIT_WIDOW_ON_POP` on and off (91/91), so
+`popFrameForJIT` is not what widows `start` and does not reach `privateStart`
+at all.
+
+Two things follow.  **`TKTWorker>>privateStart`'s context is never widowed** —
+a one-line method (`process start`) whose return apparently takes a path that
+widows nothing.  And **widowing would not be enough even if it did**: a widowed
+Context still holds its RECEIVER in slot 5, which is where the worker is.  That
+is correct Cog semantics — `markContextAsDead:` nils only sender and pc — so
+the chain has to be broken by the dead contexts becoming UNREACHABLE, not by
+clearing fields in them.  The link to break is one hop further out: the
+`createProcessDoing:named:` context that the live closure holds as its
+`outerContext`, whose `sender` still points into the returned chain.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 

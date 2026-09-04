@@ -4327,11 +4327,22 @@ std::string ObjectMemory::describeContextSlot(Oop parent, uint32_t slot) const {
     Oop stackpO = pc->slotCount() > 2 ? pc->slotAt(2) : Oop::nil();
     long long stackp = stackpO.isSmallInteger() ? stackpO.asSmallInteger() : -1;
     long long liveEnd = 6 + stackp;   // slots 0-5 are the fixed fields
-    char buf[192];
-    snprintf(buf, sizeof buf, "{stackp=%lld liveSlots=6..%lld slot%s method=%s}",
+    // Widow state: `Context>>isDead` reads pc, and the sender is what actually
+    // propagates retention along a chain.  A context that is dead but still
+    // has a sender is the shape that pins a whole caller chain, and telling
+    // the two apart is the difference between "this frame is still running"
+    // and "nobody widowed this on return" (docs/vm-compat-bugs.md #28).
+    Oop senderO = pc->slotCount() > 0 ? pc->slotAt(0) : Oop::nil();
+    Oop pcO     = pc->slotCount() > 1 ? pc->slotAt(1) : Oop::nil();
+    const char* widow = pcO.isNil()
+        ? (senderO.isNil() ? " WIDOWED" : " DEAD-BUT-SENDER-LIVE")
+        : (senderO.isNil() ? " live-no-sender" : "");
+    char buf[224];
+    snprintf(buf, sizeof buf, "{stackp=%lld liveSlots=6..%lld slot%s method=%s%s}",
              stackp, liveEnd - 1,
              (stackp >= 0 && (long long)slot >= liveEnd) ? "=DEAD-RESIDUE" : "=live",
-             pc->slotCount() > 3 ? selectorOf(pc->slotAt(3)).c_str() : "?");
+             pc->slotCount() > 3 ? selectorOf(pc->slotAt(3)).c_str() : "?",
+             widow);
     return std::string(buf);
 }
 
