@@ -58,6 +58,43 @@ The history lives in `docs/history/`; nothing was deleted.
   worker thread.
 - **MSYS2 login-shell environment stripping breaks Pharo's WindowsResolver.**
   Operator documentation, not a code gap.
+- **`scripts/aws/preserve.sh` can fast-forward a *revert* onto shared `jit`.**
+  It snapshots the working tree with `git add -A` but commits it with the
+  box's HEAD as parent, and those two can disagree arbitrarily.  On
+  2026-09-03 the disagreement was benign — stale parent `52f6f40c`, current
+  tree copied in by hand — and produced `ede0fd65`, a single squashed
+  snapshot on the shared branch.  The dangerous direction is a box that
+  clones the current tip and then receives a *stale* tree: `add -A` records
+  the deletions, the parent is the true tip, and the push is a clean
+  fast-forward GitHub accepts with no force flag.  `git diff --name-status
+  e4c47863 ede0fd65` already shows `D scripts/sweep-3way.sh` as a live
+  example of that shape.  The submodule guard added after `27d378d2`
+  protects only the two `.gitmodules` paths and does nothing for ordinary
+  source files.  Fix, not applied: point the autosave at a per-box
+  `autosave/<instance-id>` namespace so a crash dump can never reach a ref
+  anyone builds from.  Related: `origin/jit` has no branch protection and the
+  box holds a write-capable deploy key, and nothing detects an autosave
+  landing on `jit` — the previous one (`27d378d2`, 2026-06-03) reverted the
+  asmjit Catalyst pin and went unnoticed for 68 days.
+- **Eleven submodule pins in already-public history are dangling**, so
+  `git submodule update` fails anywhere before `309ab535` (2026-09-02).
+  `749ce144` is the famous one — it is what made `origin/jit` un-cloneable
+  until 2026-09-03, and CI's "Fresh clone builds" job had been failing at
+  `actions/checkout` with `upload-pack: not our ref 749ce144` since
+  2026-08-23 — but `e1c44a2b` alone is pinned by 526 commits, plus
+  `7ae82806`, `74582025`, `b097978c`, `c212d540`, `4e8a4b9c`, `cde7ac7e`,
+  `808c2118`, `725e3e28`, `18308c35`.  They were lost when
+  `scripts/pharo-headless-test` was re-cloned on 2026-09-02; the work in
+  `749ce144` was re-created as `ed885c81`.  A tip clone is unaffected.  A
+  `git bisect` that ranges back through pre-2026-09-02 history is not.
+  Recovering them needs the objects (an old clone, or the S3 preserve
+  bundles); repairing history needs a rewrite of a public branch.  Both are
+  separate decisions.
+- **`sync-repos.sh` cannot see submodules.**  `discover_repos` globs one
+  level under `$SRC_ROOT`, so `scripts/pharo-headless-test` — whose nine
+  unpushed commits are what made `origin/jit` un-cloneable — is invisible to
+  both its branch report and its unpushed-commits report.  A green
+  `sync-repos.sh --status` does not mean the tree is fully pushed.
 
 ## Known structural costs, not yet measured
 
