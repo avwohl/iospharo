@@ -3074,12 +3074,77 @@ What is ruled out so far, each by measurement:
 Standalone reproduction is possible but flaky: compiling the test body as a
 method on `TKTWorkerTest` and calling it 30 times reproduced once (iterations
 29 and 30 report the process still running -- the JIT threshold) and not on
-three later attempts.  A `WeakArray`-observed variant that distinguishes "not
-collected" from "collected but not stopped" showed the worker itself still
-ALIVE (weak slot non-nil) in 5 of 40 iterations on one rep and 0 of 40 on
-seven others.  So the object is genuinely retained rather than finalized late,
-but the retention is not reachable from the root categories `forEachRoot`
-walks, which is the next thing to explain.
+three later attempts.  So the SUnit run is the repro; probes that rewrite the
+test body move the timing and the failure goes away.
+
+#### ROOT CAUSE: JIT-materialized contexts for RETURNED frames pin their receivers
+
+`PHARO_WATCH_HEAP_CLASS=TKTWorker` answers what `PHARO_WATCH_ROOT_CLASS` could
+not.  The root watch reports zero because the worker is not a root; the heap
+watch names the parent that reaches it, and `PHARO_WEAK_SURVIVOR_PATHS` prints
+the whole chain:
+
+    worker <- Context[5]{method=privateStart}          (receiver)
+           <- Context[0]{method=start}                 (sender)
+           <- Context[0]{method=createProcessDoing:named:}   (sender)
+           <- FullBlockClosure[0]                      (outerContext)
+           <- Context[4]{method=?}                     (closureOrNil)
+
+Bottom-up: the worker's own forked process is running a block; the block's
+`outerContext` is `TKTWorkerProcess class>>createProcessDoing:named:`'s
+context; that context's sender chain runs back through
+`TKTWorkerProcess>>start` and `TKTWorker>>privateStart`, whose RECEIVER is the
+worker.  Those two frames returned long before `worker := nil`.
+
+**And the JIT is what creates them.**  Same image, same test, only
+`PHARO_NO_JIT` changed, counting heap-watch parents by class:
+
+    parent class                     JIT on    JIT off
+    FinalizationRegistryEntry          149        92
+    Context:privateStart                71         0
+    Context:start                       71         0
+    TKTWatchDog                         42        27
+    Array                               35        20
+    StThreadSafeTranscript              27        27
+    distinct workers seen               47        38
+    total hits                         407       178
+
+Zero, both selectors, with the JIT off.  The interpreter never builds those
+contexts; the JIT does, and once built they outlive their frames and hold the
+receiver through a chain nothing widows.  Twenty-four percent more distinct
+workers survive with the JIT on, so this is a general retention bug that
+TKTWorkerTest merely makes visible -- the test asserts on exactly the object
+the chain pins.
+
+**What was ruled out on the way, each by measurement, so nobody repeats it:**
+
+  * finalization in general -- the same worker dance in a plain `eval` doit
+    collects and stops the process on the FIRST `waitGarbageCollect`, JIT on,
+    six times running;
+  * any VM root -- `PHARO_WATCH_ROOT_CLASS=TKTWorker` reports zero visits
+    across the whole failing run, while the same knob on `Array` reports;
+  * a general failure to collect workers -- 40 unreferenced workers leave
+    exactly 2 alive after 18 GCs, identically with the JIT on and off;
+  * the deferred-drain scheduling -- `PHARO_INLINE_FINALIZE=1` changes
+    nothing;
+  * the frame->context temp sync -- `PHARO_NO_GC_TEMPSYNC=1` changes nothing;
+  * inline J2J -- `PHARO_NO_J2J=1` still fails;
+  * **ordinary context widowing, which WORKS**: `^ [ t ]` returned out of a
+    method gives `outerContext sender = nil` and `pc = nil`, 60 of 60
+    iterations, JIT on and off.  So the general widow-on-return path is fine;
+    it is this materialized chain that escapes it;
+  * **a missing `markContextAsDead:`**, which was the first theory and is
+    wrong.  Cog only calls it from `primitiveTerminateTo` and the page-freeing
+    loop, not from an ordinary return.  A minimal repro of the same shape --
+    fork a process from a block inside a method, drop the receiver, GC --
+    RETAINS the receiver on stock Cog too (60 of 60), so that shape is not the
+    difference and a fix aimed at it would have been wrong.
+
+The open question is narrow now: which JIT path materializes `start` and
+`privateStart` (`materializeFrameStack` is the candidate -- it materializes
+the whole saved-frame stack rather than just the frame that owns the closure),
+and why those contexts are not widowed when their frames return, given that
+the ordinary path widows correctly.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
