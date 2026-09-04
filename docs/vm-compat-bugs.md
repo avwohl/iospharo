@@ -2951,6 +2951,136 @@ by that loop at all, and whether the abandoned invocation can be reaped at
 image-quit time instead of parking forever.  Raw Cog numbers in
 `docs/results/sweep-arm-2026-09-02/cog-tf-callback-baseline.txt`.
 
+### 29. The x86 "shutdown wedge" is not a shutdown hang — the VM is still running Smalltalk — 2026-09-03
+
+The 2026-09-03 real-hardware x86 sweep (AWS `m5.4xlarge`, native x86_64 Linux,
+fake-GUI image) came back `rc=137` on 6 of its first 10 batches, against 0 of
+41 on arm64.  `rc=137` is `sunit-sweep.sh`'s own early kill: the runner has
+written `/tmp/sunit_run_completed.txt`, the VM is still alive
+`SHUTDOWN_GRACE=30` seconds later, so it is killed rather than left to burn the
+1800 s timeout.  That guard is doing its job -- every one of those batches wrote
+all 50 class `Total:` lines and `*** BATCH COMPLETED`, so **the cost is
+wall-clock, not coverage**.
+
+What the batch log says it is doing in that window is the interesting part, and
+it is NOT waiting on anything:
+
+    [DIAG] P79 Set>>or: ip=116 fd=36
+    [DIAG]   [-3] OCCompilationContext>>optionInlineTimesRepeat
+    [DIAG]   [-19] OpalCompiler>>generateIR
+    [DIAG]   [-20] OCMethodNode>>generateIR
+    [DIAG-QUEUE] P40 proc=... susp=Delay>>wait
+    [DIAG-QUEUE] P10 proc=... susp=ProcessorScheduler class>>idleProcess
+    [PROGRESS] 110s: ~8275891489 steps
+
+Eight billion bytecodes, the active process compiling Smalltalk, and the JIT
+still compiling methods (`33322 -> 49019 compiled` across the last few stats
+lines) against a code zone at `196346/196608 KB` -- i.e. full and thrashing.
+The completion marker was written at ~82 s; this is ~25 s later.
+
+**`primitiveQuit` is never reached.**  `Smalltalk exitSuccess` is `self exit: 0`
+and `exit:` is `<primitive: 113>` (verified by reading both sources out of the
+image), and our `primitiveQuit` prints `[primitiveQuit] Deferred: N callback(s)
+outstanding` UNCONDITIONALLY when it defers.  That line appears nowhere in the
+wedged batch log, and the process did not exit -- so the primitive was never
+called at all.  The runner wrote the marker, closed its two streams, and then
+did not get the CPU again.  (The runner's own `[RUNNER] calling exitSuccess`
+line proves nothing here: no image-written `Smalltalk stderr` text reaches the
+batch log at all -- `SCHED-LOGGER-INSTALLED`, `NANO-TRIPWIRE`, `RUN: test` are
+all absent too.)
+
+**It does not reproduce under Rosetta.**  Batch 51-100, the same fake-GUI
+image, `build-x86/test_load_image` on this Mac: the marker appears and the VM
+exits 8 seconds later, 51 classes, clean.  So the two variables that were
+confounded in the original report -- real x86 Linux vs Rosetta, and fake-GUI
+prep vs runner-only -- separate: the fake-GUI image alone does not cause it.
+
+Also settled by the same sweep: batch 651-700, the batch the fake-GUI prep
+wedges on macOS (`KeyboardKeyTest`, rc=124, 20 of 51 classes lost), runs
+`rc=0` in 126 s on real x86 Linux.  That wedge is macOS-specific.
+
+Open: what holds the CPU at P79 after the batch is done.  The DIAG stack says
+the Opal compiler, which points at a leaked test process rather than at
+shutdown, and needs a box to chase.
+
+### 28. Two of the three "ours" classes are not ours, and the third is the JIT's — 2026-09-03
+
+The 2026-09-03 fake-GUI sweep's residual named three classes as ours:
+`TraitFileOutTest`, `TKTWorkerTest` and `StSpotterTest`.  All three were run
+against the x86_64 stock Cog VM under Rosetta the same evening (Cog v10.3.9,
+`run_sunit_cog.st`, `SUNIT_PREFIX=/tmp/cogst`, the three class names in the
+external list).  Two of the three are not ours:
+
+    class                ours (arm64)                    stock Cog x86_64
+    StSpotterTest        1 F  Got 2 instead of 1          1 F  Got 2 instead of 1
+    TraitFileOutTest     2 E  FileDoesNotExistException   4 P
+    TKTWorkerTest        1-2 E  TKTTimeoutException       7 P
+
+**`StSpotterTest>>testOpenSpotterRefreshesPreviewOnce` is SHARED with Cog** --
+same selector, same failure, same numbers ("Got 2 instead of 1").  It is not a
+VM defect and should not be counted as one.  Our own numbers also show the
+count is a function of how many World cycles run: on a runner-only image (no
+`setup_fake_gui.st`, so no paced cycle loop) it reports "Got 0 instead of 1",
+with the fake GUI it reports 2 or 3.  The test wants exactly one cycle and
+nothing in a headless harness delivers exactly one.
+
+**`TraitFileOutTest` is a working-directory mismatch inside the IMAGE**, and
+the image names it itself.  `Class>>fileOut` ends in
+
+    CodeExporter class>>writeSourceCodeFrom:baseName:isSt:
+        targetFile := FileLocator imageDirectory / baseName, extension
+
+so the file-out lands beside the IMAGE, while the test reads it back with
+`CodeImporter evaluateFileNamed: fileName` on a bare relative name, which
+resolves against the WORKING DIRECTORY.  The test therefore passes only when
+those two directories coincide.  Verified both ways on our VM, same binary,
+same image, nothing but the working directory changed:
+
+    cwd = repo root      2 P / 2 E   FileDoesNotExistException '<repo>/T6.st'
+    cwd = image dir      4 P / 0 E
+
+Our VM resolves relative paths against the process CWD exactly as Cog does --
+a relative `writeStreamDo:` and a relative `exists` both hit the CWD, measured
+with a probe file.  Cog passes this test because the stock harness is launched
+from the image's own directory.  `RUN_FROM_IMAGE_DIR=1` in `sunit-sweep.sh` is
+therefore the FAITHFUL configuration, not a workaround.
+
+**`TKTWorkerTest` is ours, and it is the JIT.**  Cog 7/7.  Us, on a
+runner-only image, one class, same binary, only `PHARO_NO_JIT` changed:
+
+    JIT on    5 P / 1 E / 1 T   ...DiesAfterWorkerAndAllFuturesAreCollected,
+                                ...IsWorkingUntilAllTasksAreDone (TIMEOUT)
+    JIT on    5 P / 2 E         + ...DiesAfterWorkerIsCollected
+    JIT off   7 P / 0 E / 0 T
+
+The failing tests are the finalization ones.  `TKTWorker>>privatePrepareProcess:`
+ends with `self noteNeedsToBeFinalized`, and the tests drop the worker, call
+`TKTTestCase>>waitGarbageCollect` (`5 timesRepeat: [Smalltalk garbageCollect.
+100 milliSecond wait]`) and then assert the worker's process has stopped.  With
+the JIT on the process is still running when the 2-second future times out.
+
+What is ruled out so far, each by measurement:
+
+  * **Not the finalization machinery in general.**  The same worker dance in a
+    plain `eval` doit collects and stops the process on the FIRST
+    `waitGarbageCollect`, JIT on, six times in a row.
+  * **Not a VM root.**  `PHARO_WATCH_ROOT_CLASS=TKTWorker` reports ZERO visits
+    across the whole failing run, while the same knob on `Array` does report.
+    So no operand-stack slot, saved frame, J2J save or IC is holding one.
+  * **Not a general failure to collect workers.**  40 unreferenced workers
+    created in a loop leave exactly 2 alive after 18 GCs, identically with the
+    JIT on and off.
+
+Standalone reproduction is possible but flaky: compiling the test body as a
+method on `TKTWorkerTest` and calling it 30 times reproduced once (iterations
+29 and 30 report the process still running -- the JIT threshold) and not on
+three later attempts.  A `WeakArray`-observed variant that distinguishes "not
+collected" from "collected but not stopped" showed the worker itself still
+ALIVE (weak slot non-nil) in 5 of 40 iterations on one rep and 0 of 40 on
+seven others.  So the object is genuinely retained rather than finalized late,
+but the retention is not reachable from the root categories `forEachRoot`
+walks, which is the next thing to explain.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
