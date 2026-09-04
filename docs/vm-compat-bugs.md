@@ -1112,6 +1112,50 @@ is a kill, not a completion, and this Cog is x86_64 under Rosetta against a
 native arm64 build of ours.  Raw in
 `docs/results/sweep-arm-2026-09-02/cog-residual-baseline.txt`.
 
+#### 2026-09-04: the wall measured to COMPLETION, and the JIT is a NET LOSS on it
+
+The 80 s numbers above are kills.  Run outside SUnit entirely (no watchdog, no
+`defaultTimeLimit`) — `tc := NoUnusedVariablesLeftTest new. tc setUp.
+[tc testNoUnusedTemporaryVariablesLeft] timeToRun` — the scan COMPLETES, and
+the real ratio is worse than the lower bound suggested:
+
+    stock Cog (x86_64 Rosetta)     5.76 s
+    ours, JIT on  (native arm64) 216.8 s   217.3 s   218.2 s
+    ours, JIT off (native arm64) 177.4 s   160.9 s   161.2 s
+
+**37x slower than Cog with the JIT on, and the JIT is 35% SLOWER THAN OUR OWN
+INTERPRETER** on this workload — interleaved reps, tight variance on both arms.
+
+That connects this defect to a regression already recorded in
+`docs/results-perfdb.md`: "1M blocks 181 ms vs 33 ms — JIT 5.5x SLOWER ... its
+block-activation path is ~5x heavier than the interpreter's".  A whole-image
+reflective scan is `allMethodsDo: [...]` with nested blocks, i.e. exactly the
+shape the JIT loses on.  So the TIMEOUT residual is not a separate mystery: it
+is the block-activation regression showing up as test failures.
+
+A `sample` of the VM mid-scan attributes the C++ side accordingly (10 s,
+top-of-stack, JIT-emitted code excluded because it carries no symbols):
+
+    724  Interpreter::tryJITResumeInCaller
+    560  Interpreter::activateBlock
+    443  Interpreter::tryJITActivation
+    436  ObjectMemory::scavenge()::$_3
+    386  JITRuntime::noteMethodEntry
+    327  Interpreter::interpret
+    319  JITRuntime::tryResume
+    254  Interpreter::upgradeICToJ2J
+    196  Interpreter::primitiveFullClosureValue
+
+Activation and resume machinery dominates, which is `scripts/perf-activation`'s
+hypothesis 1 (the bcToCode resume-address lookup) sitting at the top on a REAL
+workload rather than a microbenchmark.
+
+Checked and NOT the cause, so nobody re-checks it: `noteMethodEntry`'s
+`sistaRuntimeForGCHook_->hasSplice(m)` looked like the per-call
+`unordered_set` lookup CLAUDE.md warns about, but the Sista runtime is created
+lazily and only when `PHARO_SISTA_COMPILE` or `sistaDispatch` is set, so the
+pointer is null and the lookup never runs in a default build.
+
 ### 7. `rko281-restoreforpharo` ~50x slower than Cog on live SQLite — MEDIUM
 
     cog   2354 tests  145 s
@@ -3025,6 +3069,19 @@ Nothing is lost when it fires: every killed batch had already written all 51
 class totals and `*** BATCH COMPLETED`.  The open question is narrow and is
 in the IMAGE, not the VM: what waits ~22 s between the marker and
 `exitSuccess`.
+
+Measured on all three platforms, same batch (51-100), same prepped image,
+timing the marker file's appearance against process exit:
+
+    arm64 macOS            1 s
+    x86_64 macOS (Rosetta) 7 s
+    x86_64 Linux (native) 22 s
+
+So it is not a fixed Delay (that would be constant) and it does not simply
+track CPU speed either (Rosetta is roughly 2x slower than the arm64 Mac, not
+7x, and the native Linux box should beat Rosetta rather than triple it).  On
+arm64 it is 1 second, which is why the arm sweep has never once hit the 30 s
+grace.  Costs wall-clock only.
 
 (An earlier observation in this section -- a run still alive 120 s after the
 marker -- is not reproduced by any of the four timed runs above and is left
