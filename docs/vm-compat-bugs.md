@@ -2978,30 +2978,57 @@ still compiling methods (`33322 -> 49019 compiled` across the last few stats
 lines) against a code zone at `196346/196608 KB` -- i.e. full and thrashing.
 The completion marker was written at ~82 s; this is ~25 s later.
 
-**`primitiveQuit` is never reached.**  `Smalltalk exitSuccess` is `self exit: 0`
-and `exit:` is `<primitive: 113>` (verified by reading both sources out of the
-image), and our `primitiveQuit` prints `[primitiveQuit] Deferred: N callback(s)
-outstanding` UNCONDITIONALLY when it defers.  That line appears nowhere in the
-wedged batch log, and the process did not exit -- so the primitive was never
-called at all.  The runner wrote the marker, closed its two streams, and then
-did not get the CPU again.  (The runner's own `[RUNNER] calling exitSuccess`
-line proves nothing here: no image-written `Smalltalk stderr` text reaches the
-batch log at all -- `SCHED-LOGGER-INSTALLED`, `NANO-TRIPWIRE`, `RUN: test` are
-all absent too.)
+**CORRECTION (2026-09-04, measured on the box): `primitiveQuit` IS reached,
+and the VM's own shutdown is fast.**  The paragraph this replaces concluded
+"the primitive was never called at all" from the absence of its `[primitiveQuit]
+Deferred` line.  That inference was wrong -- the line only prints on the
+DEFERRAL path, and this quit does not defer.  `PHARO_TRACE_EXIT=1` on the same
+batch on the same instance prints the whole sequence, with wall-clock
+timestamps attached per line:
 
-**It does not reproduce under Rosetta.**  Batch 51-100, the same fake-GUI
-image, `build-x86/test_load_image` on this Mac: the marker appears and the VM
-exits 8 seconds later, 51 classes, clean.  So the two variables that were
-confounded in the original report -- real x86 Linux vs Rosetta, and fake-GUI
-prep vs runner-only -- separate: the fake-GUI image alone does not cause it.
+    481.446  [EXIT-TRACE] executePrimitive(113, 1) entering
+    481.448  [EXIT-TRACE] primitiveQuit called argCount=1
+    481.450  [EXIT-TRACE] running_ = false
+    481.453  [EXIT-TRACE] interpret() returned
+    481.894  [EXIT-TRACE] monitor joined
+    481.940  [EXIT-TRACE] dumpJITStats done
+    481.984  [EXIT-TRACE] main returning 0
+    481.989  [EXIT-TRACE] -> pharo_dnsLookupDrain
+    482.111  [EXIT-TRACE] -> all shutdown steps complete
 
-Also settled by the same sweep: batch 651-700, the batch the fake-GUI prep
-wedges on macOS (`KeyboardKeyTest`, rc=124, 20 of 51 classes lost), runs
-`rc=0` in 126 s on real x86 Linux.  That wedge is macOS-specific.
+**660 milliseconds, end to end.**  There is no shutdown hang.
 
-Open: what holds the CPU at P79 after the batch is done.  The DIAG stack says
-the Opal compiler, which points at a leaked test process rather than at
-shutdown, and needs a box to chase.
+**What the time actually is: ~22 seconds inside the IMAGE, between writing the
+completion marker and calling the quit.**  Measured against the marker file's
+own mtime in the same run:
+
+    marker /tmp/sunit_run_completed.txt written   1788500562.0
+    executePrimitive(113) entering                1788500584.4
+                                                  ------------
+                                                        22.4 s
+
+and it is mostly IDLE time, not work: `[PROGRESS]` counts ~845M bytecodes in
+the 10 s before the marker and ~31M in the 10 s after it.  The runner does
+almost nothing in that window -- `ensure: [stream close. detail close]`, two
+stderr writes, `Smalltalk exitSuccess` -- and the two files are 36 KB and
+49 KB, so the closes are not it.  Something in the image waits ~22 s before
+the exit reaches the primitive.
+
+**So the rc=137 batches are a slow tail crossing a 30 s grace, not a wedge.**
+Timed three times back to back on batch 51-100: 21 s, 19 s and 23 s after the
+marker.  `SHUTDOWN_GRACE` is 30 s, so a batch whose tail runs a little longer
+than usual gets killed and one a little shorter does not -- which is exactly
+the pattern the sweep log shows (a third of batches, scattered).  The arm64
+tail is shorter, hence zero there.
+
+Nothing is lost when it fires: every killed batch had already written all 51
+class totals and `*** BATCH COMPLETED`.  The open question is narrow and is
+in the IMAGE, not the VM: what waits ~22 s between the marker and
+`exitSuccess`.
+
+(An earlier observation in this section -- a run still alive 120 s after the
+marker -- is not reproduced by any of the four timed runs above and is left
+here unexplained rather than quietly dropped.)
 
 ### 28. Two of the three "ours" classes are not ours, and the third is the JIT's — 2026-09-03
 
