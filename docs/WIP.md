@@ -15,6 +15,46 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-09-04, 01:30)
+
+**The real-x86 sweep FINISHED.**  All 2047 classes on native x86_64 Linux:
+
+    arch                classes   tests    PASS   FAIL  ERROR  SKIP   T    rate
+    x86_64 (real HW)      2047    28074   27858    13     5     179   19  99.23%
+    arm64 (same week)     2047    28060   27857    11     4     182    6  99.28%
+
+Two boxes, one `RUN_ID`: the first was reaped at index 500 and the second
+resumed from the S3 checkpoint at 501.  Full report and the per-class
+artifacts are in `docs/results/sweep-x86-real-2026-09-04.md`.
+
+The arch diff is 20 x86-only non-clean classes (12 of them TIMEOUT-only), 4
+arm-only and 10 shared.  Nothing in it looks like codegen: of the 7 x86-only
+FAIL/ERRORs, four carry their own explanation (a wall-clock percentage, a
+terminal command that differs between Linux and macOS, a missing certificate
+file, two Spec layout/selection tests under the fake GUI).
+`LinkInstallerTest`'s "Leaked metalinks" is the one worth a second look.
+A stock-Cog baseline for all 30 non-clean classes is running ON THE SAME BOX,
+which is the airtight way to attribute them.
+
+Two things this settles that Rosetta could not.  **Defect #26's fix holds on
+real hardware**: batch 1801-1850, the threaded-FFI block that used to burn the
+full 1800 s timeout on both arches, ran `rc=0` in 137 s.  **The fake-GUI
+`KeyboardKeyTest` wedge is macOS-specific**: batch 651-700, which costs 20 of
+51 classes on this Mac, ran `rc=0` in 126 s here.
+
+**`popFrameForJIT` now widows the returning frame's context**, as `popFrame`
+already did.  It is a real retention fix and it does NOT close defect #28 --
+Context:start and Context:privateStart heap parents holding dropped TKTWorkers
+go 71 -> 47 each (0 with the JIT off) and the test does not move.  Kept
+because it makes the JIT match a documented invariant of the interpreter path;
+validated neutral on batch 1-200, both arms, two reps each.
+
+**`sunit-sweep.sh` now runs from the image directory by default.**  That is
+the faithful configuration -- Pharo's own `CodeExporter` writes a file-out to
+`FileLocator imageDirectory` while `TraitFileOutTest` reads it back by
+relative name -- and it is worth 2 ERRORs a sweep.  Diffed first: batch 1-200,
+both arms, two reps each, 3184 P / 0 F / 0 E every time.
+
 ## Right now (2026-09-03, 22:20)
 
 **The real-x86 sweep is running again and past halfway.**  New box
