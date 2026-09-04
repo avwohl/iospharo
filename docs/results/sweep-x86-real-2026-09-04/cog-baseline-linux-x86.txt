@@ -1,0 +1,716 @@
+=== Stock Cog SUnit run ===
+Classes to run: 30
+Per-test timeout: 0:00:00:50
+Image: /home/ubuntu/cogbase/C.image
+Started: 2026-09-04T05:12:11.205629+00:00
+
+=== DTTestCoverageTest ===
+  RUN: testCoveragePercentForMock
+  RUN: testCoverageResultIsAnInstanceOfDTTestCoverageResult
+  RUN: testDTTestCoverageResultAsResultForDrTests
+  RUN: testDTTestCoverageResultBuildTreeForUIContainsNodes
+  RUN: testDTTestCoverageResultHas2Nodes
+  RUN: testDTTestCoverageResultHasCovered_Uncovered_PartiallyCoveredMethods
+  RUN: testDTTestCoverageResultTheFirstNodeIsPercent
+  RUN: testDTTestCoverageResultTheSecondNodeSubResultsAreLeafs
+  RUN: testItemsAvailableInTestCoveragePlugin
+  RUN: testNotExecutedMethodList
+  RUN: testPackagesAvailableInTestCoveragePlugin
+Total: 11 P:11 F:0 E:0 S:0
+
+=== FreeTypeCacheTest ===
+  RUN: testConstants
+  RUN: testEntriesRemovedFIFO
+  RUN: testFailedGet
+  RUN: testFreeTypeCacheEntry
+  RUN: testGlyphAccessIsThreadSafe
+  RUN: testGlyphAccessIsThreadSafeWhenAskingWidth
+  RUN: testInstanceInitialization
+  RUN: testMaximumSizeRespectedOnIfAbsentPut
+  RUN: testMaximumSizeRespectedOnPut
+  RUN: testNormalGetIfAbsentPut
+  RUN: testNormalGetIfAbsentPutTwice
+  RUN: testNormalGetIfAbsentPutTwiceIntoNonEmptyCache
+  RUN: testNormalPutGet
+  RUN: testNormalPutGetTwice
+  RUN: testNormalPutGetWidth
+  RUN: testPutSameElementTwice
+  RUN: testRemoveAll
+  RUN: testRemoveAllForFont
+  RUN: testRemoveAllForType
+  RUN: testReport
+  RUN: testSetMaximumSize
+  RUN: testSetMaximumSizeGrow
+  RUN: testSetMaximumSizeShrink
+  RUN: testSetMaximumSizeUnbounded
+  RUN: testSingleton
+Total: 25 P:25 F:0 E:0 S:0
+
+=== IntegerTest ===
+  RUN: testANegativeIntegerCannotBeAPowerOfTwo
+  RUN: testAsLargerPowerOfTwo
+  RUN: testAsSmallerPowerOfTwo
+  RUN: testAsStringWithCommas
+  RUN: testBadBase
+  RUN: testBenchFib
+  RUN: testBigReceiverInexactNthRoot
+  RUN: testBigReceiverInexactSqrt
+  RUN: testBitAnd
+  RUN: testBitAt
+  RUN: testBitClear
+  RUN: testBitLogic
+  RUN: testBitMask
+  RUN: testBitOr
+  RUN: testBitShift
+  RUN: testBitString
+  RUN: testBitXor
+  RUN: testCreationFromBytes1
+  SKIP: testCreationFromBytes1 ()
+  RUN: testCreationFromBytes2
+  SKIP: testCreationFromBytes2 ()
+  RUN: testCreationFromBytes3
+  SKIP: testCreationFromBytes3 ()
+  RUN: testCrossSumBase
+  RUN: testDegreeCos
+  RUN: testDegreeSin
+  RUN: testDifferentBases
+  RUN: testDigitSum
+  RUN: testDigitSumOnNegative
+  RUN: testDigitsAccess
+  RUN: testEven
+  RUN: testExactRaisedTo
+  RUN: testExactSqrt
+  RUN: testFactorial
+  RUN: testFloorLog
+  RUN: testHex
+  RUN: testHexString
+  RUN: testHighBit
+  RUN: testHighBitOfMagnitude
+  RUN: testHumanReadableByteSizeString
+  RUN: testHumanReadableSISizeString
+  RUN: testIntegerHex
+  RUN: testIntegerPadding
+  RUN: testIntegerReadsNotOkFromStream
+  RUN: testIntegerReadsNotOkFromString
+  RUN: testIntegerReadsOkFromStream
+  RUN: testIntegerReadsOkFromString
+  RUN: testIsAbstract
+  RUN: testIsInteger
+  RUN: testIsPowerOfTwo
+  RUN: testIsPrime
+  RUN: testIsPrime2
+  RUN: testIsPrime3
+  RUN: testIsProbablyPrime
+  RUN: testLargePrimesUpTo
+  RUN: testLargePrimesUpTo2
+  RUN: testLn
+  RUN: testLog
+  RUN: testLowBit
+  RUN: testNegativeIntegerPrinting
+  RUN: testNew
+  RUN: testNotInstantiable
+  RUN: testNthRoot
+  RUN: testNthRootErrorConditions
+  RUN: testNthRootExactness
+  RUN: testNthRootTruncated
+  RUN: testNumberOfDigits
+  RUN: testPositiveIntegerPrinting
+  RUN: testPrimesUpTo
+  RUN: testPrintOnBaseShowRadix
+  RUN: testPrintSeparatedByEverySignedOn
+  RUN: testPrintStringBase
+  RUN: testPrintStringHex
+  RUN: testRaisedToErrorConditions
+  RUN: testReadFrom
+  RUN: testReadFromWithError
+  RUN: testReciprocalModulo
+  RUN: testRomanPrinting
+  RUN: testRounding
+  RUN: testSlowFactorial
+  RUN: testSqrtErrorConditions
+  RUN: testSqrtFloor
+  RUN: testStoreOn
+  RUN: testStringAsNumber
+  RUN: testTwoComplementBitLogicWithCarry
+  RUN: testTwoComplementRightShift
+Total: 83 P:80 F:0 E:0 S:3
+
+=== LinkInstallerTest ===
+  RUN: testCallToSuper
+  RUN: testCallToSuperWithArgs
+  RUN: testFindingAnonymousNodes
+  RUN: testLinkOnASTProgramNode
+  RUN: testLinkOnClassVar
+  RUN: testLinkOnClassVarForObject
+  RUN: testLinkOnTempVar
+  RUN: testLinkOnTempVarForObject
+  RUN: testLinkTargetsObjectsByIdentity
+  RUN: testMetaLinkOnOneObject
+  RUN: testMetaLinkWithAnonymousClasses
+  RUN: testMethodModified
+  RUN: testMethodRemoved
+  RUN: testNodesRemovedFromLinkWhenMethodRemoved
+  RUN: testNodesRemovedFromLinkWhenMethodRemovedFromObject
+  RUN: testObjectsAreWeakReferenced
+  RUN: testOneMetaLinkClassAndObjects
+  RUN: testOneMetaLinkManyObjects
+  RUN: testPermaLinkNotInstalledOnObjectIfExistsInClass
+  RUN: testPropagateClassScopedLinks
+  RUN: testPropagateClassScopedLinksOnMethodNode
+  RUN: testPropagateClassScopedLinksRemoval
+  RUN: testPropagateClassScopedLinksRemovalFromMethodNode
+  RUN: testPropagateLinksOnRBProgramNode
+  RUN: testPropagateNewClassScopedLinks
+  RUN: testPropagateNewClassScopedLinksOnMethodNode
+  RUN: testRemovingMetaLinkOnOneObject
+  RUN: testRemovingMethodNodes
+  RUN: testRemovingNodeFromObject
+  RUN: testRemovingNodes
+  RUN: testRemovingNodesWithSuper
+  RUN: testSlotOrVarLinksAddedAfterMethodAddition
+  RUN: testSlotOrVarLinksAddedAfterMethodAdditionForObject
+  RUN: testSlotOrVarLinksRemainAfterMethodModification
+  RUN: testSlotOrVarLinksRemainAfterMethodModificationForObject
+  RUN: testTwoMetaLinksOneObject
+  RUN: testUninstallLink
+  RUN: testUninstallLinkFromNode
+  RUN: testUninstallLinkOnSlotOrVar
+  RUN: testUninstallOneMetaLinkManyObjects
+Total: 40 P:40 F:0 E:0 S:0
+
+=== MCSmalltalkhubRepositoryTest ===
+  RUN: testVersionFromFileNamed
+Total: 1 P:1 F:0 E:0 S:0
+
+=== MicGitHubRessourceReferenceTest ===
+  RUN: testContents
+  RUN: testExtractFolderReferencesFrom
+  RUN: testExtractMicrodownDocReferencesFrom
+  RUN: testGithubTreesApiRequest
+  RUN: testLoadChildren
+  RUN: testUri
+  RUN: testUri_defaultBranch
+  RUN: testUri_defaultBranch_Pharo
+  RUN: testUri_defaultBranch_Pharo_withDoc
+  RUN: testUri_defaultPath
+Total: 10 P:10 F:0 E:0 S:0
+
+=== NavigationInteractionTest ===
+  RUN: testBrowseClassViaImplementorActuallyBrowseTheClass
+  RUN: testBrowseMethodViaImplementorActuallyBrowseTheClass
+  SKIP: testBrowseMethodViaImplementorActuallyBrowseTheClass ()
+  RUN: testSenderOnClassViaSenderActuallyBrowseSenders
+Total: 3 P:2 F:0 E:0 S:1
+
+=== NoUnusedVariablesLeftTest ===
+  RUN: testNoUnusedClassVariablesLeft
+  RUN: testNoUnusedInstanceVariablesLeft
+  RUN: testNoUnusedTemporaryVariablesLeft
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OCClassBuilderTest ===
+  RUN: testCreateEphemeronClassNamed
+  RUN: testCreateEphemeronClassWithAll
+  RUN: testCreateImmediateClassNamed
+  RUN: testCreateImmediateClassWithAll
+  RUN: testCreateNilSubclass
+  RUN: testCreateNormalClassNamed
+  RUN: testCreateNormalClassSuperClass
+  RUN: testCreateNormalClassWithClassVariable
+  RUN: testCreateNormalClassWithIV
+  RUN: testCreateNormalClassWithPackage
+  RUN: testCreateNormalClassWithSharedPools
+  RUN: testCreateNormalClassWithTrait
+  RUN: testCreateNormalClassWithTraitComposition
+  ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+  RUN: testCreateTraitUsingAnotherSingleTrait
+  RUN: testCreateTraitUsingAnotherTraitComposition
+  RUN: testCreateTraitWithoutOtherTraits
+  RUN: testCreateVariableByteClassNamed
+  RUN: testCreateVariableByteClassWithAll
+  RUN: testCreateVariableClassNamed
+  RUN: testCreateVariableClassWithAll
+  RUN: testCreateVariableWordClassNamed
+  RUN: testCreateVariableWordClassWithAll
+  RUN: testCreateWeakClassNamed
+  RUN: testCreateWeakClassWithAll
+  RUN: testDefaultResolve
+  RUN: testUseUndefinedClass
+Total: 26 P:25 F:0 E:1 S:0
+
+=== RBBrowserEnvironmentTest ===
+  RUN: testAndAnOrEnvironmentAndAnotherOrEnvironment
+  RUN: testAndEnvironment
+  RUN: testAndEnvironmentWithStoreOn
+  RUN: testAndPackageEnvironmentAndClassEnvironment
+  RUN: testBrowserEnvironment
+  RUN: testClassEnvironment
+  RUN: testConstructedClassEnvironment
+  RUN: testConstructedSelectorEnvironment
+  RUN: testEnvironmentWrapper
+  RUN: testHierarchyEnvironment
+  RUN: testImplementorsMatching
+  RUN: testMatches
+  RUN: testNotEnvironment
+  RUN: testNotEnvironmentWithClassEnvironments
+  RUN: testOrEnvironment
+  RUN: testPackageEnvironment
+  RUN: testPragmaEnvironment
+  RUN: testProtocolEnvironment
+  RUN: testRemoveSelectorByAndAndNot
+  RUN: testSelectMethods
+  RUN: testSelectorEnvironment
+  RUN: testSelectorEnvironmentRemovesEmptyClasses
+  RUN: testSystemIntegrity
+  RUN: testVariableEnvironmentAddRemove
+  RUN: testVariableEnvironmentClassVars
+  RUN: testVariableEnvironmentInstVars
+  RUN: testWithoutClassesRemovesClassesFromSender
+Total: 27 P:27 F:0 E:0 S:0
+
+=== ReleaseTest ===
+  RUN: testAllClassPoolBindingAreClassVariables
+  RUN: testAllClassPoolBindingHaveDefiningClass
+  RUN: testAllGlobalBindingAreGlobalVariables
+  RUN: testAllInstanceVariablesDefiningClass
+  RUN: testAllInstanceVariablesOwningClass
+  RUN: testAllInstanceVariablesStartLowercase
+  RUN: testAllSharedVariablesOwningClass
+  RUN: testClassesShadow
+  RUN: testExistingPackageNamesDoesNotContainIllegalCharacters
+  RUN: testExplicitRequirementMethodsShouldBeImplementedInTheirUsers
+  RUN: testInstanceSideMethodsWithNilKeyInLastLiteral
+  RUN: testKeyClassesArePresentInStartupList
+  RUN: testLayoutIntegrity
+  RUN: testLocalMethodsOfTheClassShouldNotBeRepeatedInItsTraits
+  RUN: testManifestNamesAccordingToPackageNames
+  RUN: testMethodsContainNoHalt
+  RUN: testNoDeadSubscriptions
+  RUN: testNoEmptyPackages
+  RUN: testNoEquivalentSuperclassMethods
+  RUN: testNoLiteralIsPinnedInMemory
+  RUN: testNoNilAssignmentInInitializeMethod
+  RUN: testNoNullCharacter
+  RUN: testNoOrphanPackage
+  RUN: testNoPackagesOverride
+  RUN: testNoPeriodInMethodSignature
+  RUN: testNoShadowedVariablesInMethods
+  RUN: testNoSuperInitializeOnClassSideInitialization
+  RUN: testObsoleteClasses
+  RUN: testOnlyWeakSubscriptions
+  RUN: testPackageOrganizer
+  RUN: testPharoVersionFileExists
+  FAIL: testPharoVersionFileExists [Assertion failed]
+  RUN: testProperManifestClasses
+  RUN: testRatioOfCommentedClasses
+  SKIP: testRatioOfCommentedClasses ()
+  RUN: testShouldFileLocatorBeBeforeSystemSettingsPersistenceInStartupList
+  RUN: testShouldWorldMorphBeAfterFontClassesInStartupList
+  RUN: testTestCasesEndsWithTestOrTestCase
+  RUN: testThatAllMethodsArePackaged
+  RUN: testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented
+  RUN: testUndeclared
+  RUN: testUndefinedPackageShouldBeEmpty
+  RUN: testUnknownProcesses
+  ERROR: testUnknownProcesses (MessageNotUnderstood: Message not understood: DefaultExecutionEnvironment >> #watchDogProcess)
+  RUN: testUnpackagedClasses
+  RUN: testVersionInImageHeaderIsCorrect
+  RUN: testWorldMenuHasHelpForAllEntries
+Total: 44 P:41 F:1 E:1 S:1
+
+=== STONWriteAsciiOnlyReadTest ===
+  RUN: testAlternativeRepresentation
+  RUN: testAssociations
+  RUN: testCharacters
+  RUN: testClasses
+  RUN: testCollections
+  RUN: testCollectionsStructured
+  RUN: testColors
+  RUN: testCustomAssociations
+  RUN: testDatesAndTimes
+  RUN: testDiskFiles
+  RUN: testDomainObject
+  RUN: testEmpty
+  RUN: testFileSystemSupport
+  RUN: testFloats
+  RUN: testFractions
+  RUN: testIdentityCollections
+  RUN: testIntervals
+  RUN: testJsonMode
+  RUN: testKnownObjects
+  RUN: testMemoryFileReferences
+  RUN: testMimeTypes
+  RUN: testOrderedDictionary
+  RUN: testPrimitives
+  RUN: testScaledDecimals
+  RUN: testSharedColors
+  RUN: testSmallDictionary
+  RUN: testSmallIntegers
+  RUN: testSortedCollections
+  RUN: testSpecialCharacters
+  RUN: testSpecialClassNames
+  RUN: testStrings
+  RUN: testSymbols
+  RUN: testTextAndRunArray
+  RUN: testURLs
+  RUN: testUUIDs
+  RUN: testUser
+  RUN: testUser2
+Total: 37 P:37 F:0 E:0 S:0
+
+=== SelfVariableTest ===
+  RUN: testReadInContext
+  RUN: testReadInContextClean
+  RUN: testUsingMethods
+  RUN: testUsingMethodsFFI
+  RUN: testUsingMethodsSuper
+Total: 5 P:5 F:0 E:0 S:0
+
+=== SpDemoTest ===
+  RUN: testExample
+  SKIP: testExample ()
+  RUN: testNewPresenterIsNotBuilt
+  RUN: testNewPresenterIsNotDisplayed
+  RUN: testNonOpenPresenterDoesNotRaiseBuiltEvent
+  RUN: testNonOpenPresenterDoesNotRaiseDisplayedEvent
+  RUN: testOpen
+  RUN: testOpenPresenterIsBuilt
+  RUN: testOpenPresenterIsDisplayed
+  RUN: testOpenPresenterRaisesBuiltEvent
+  RUN: testOpenPresenterRaisesDisplayEvent
+  RUN: testRebuildPresenterDoNotLetReferencesInAnnouncer
+  RUN: testSmokeTestForDemoPages
+Total: 12 P:11 F:0 E:0 S:1
+
+=== SpHorizontalBoxLayoutTest ===
+  RUN: testElementsAreAddedInOrder
+  RUN: testInitialLayoutIsEmpty
+  RUN: testLayoutWithOneElementIsNotEmpty
+  RUN: testNewPresenterIsNotBuilt
+  RUN: testNewPresenterIsNotDisplayed
+  RUN: testNonOpenPresenterDoesNotRaiseBuiltEvent
+  RUN: testNonOpenPresenterDoesNotRaiseDisplayedEvent
+  RUN: testOpenPresenterIsBuilt
+  RUN: testOpenPresenterIsDisplayed
+  RUN: testOpenPresenterRaisesBuiltEvent
+  RUN: testOpenPresenterRaisesDisplayEvent
+  RUN: testPresenterExtentFollowsChildrenExtent
+  RUN: testRebuildPresenterDoNotLetReferencesInAnnouncer
+  RUN: testRemoveElementFromLayoutTakesItOut
+  RUN: testReplaceAtindexWith
+  RUN: testReplaceWith
+  RUN: testReplaceWithFixedWidth
+  RUN: testReplaceWithFixedWidthAllFixed
+  RUN: testReplaceWithFixedWidthComposed
+  RUN: testSpSearchInputFieldPresenterResizeCorrectlyWhenWindowHeightDecrease
+  RUN: testSpSearchInputFieldPresenterResizeCorrectlyWhenWindowWidthDecrease
+Total: 21 P:21 F:0 E:0 S:0
+
+=== SpJobListPresenterTest ===
+  RUN: testExample
+  RUN: testJobIsFinishedWhenWaitingMoreThanWorkBlockDuration
+  RUN: testJobIsNotFinishedWhenWaitingLessThanWorkBlockDuration
+  RUN: testNewPresenterIsNotBuilt
+  RUN: testNewPresenterIsNotDisplayed
+  RUN: testNonOpenPresenterDoesNotRaiseBuiltEvent
+  RUN: testNonOpenPresenterDoesNotRaiseDisplayedEvent
+  RUN: testOpen
+  RUN: testOpenPresenterIsBuilt
+  RUN: testOpenPresenterIsDisplayed
+  RUN: testOpenPresenterRaisesBuiltEvent
+  RUN: testOpenPresenterRaisesDisplayEvent
+  RUN: testProgressDoesNotRefreshMoreThanRefreshRate
+  RUN: testRebuildPresenterDoNotLetReferencesInAnnouncer
+Total: 14 P:14 F:0 E:0 S:0
+
+=== SpTreeAdapterMultipleSelectionTest ===
+  RUN: testChangingHelpAffectTheWidget
+  RUN: testClickDoesNotAccumulatesSelection
+  RUN: testEnabledAffectWidget
+  RUN: testHidePresenterHidesWidget
+  RUN: testRightClickShowsMenu
+  RUN: testSelectManyIndexesKeepsAllSelected
+  RUN: testSelectPresenterIndexOutsideRangeUnsetsSelectedIndexInWidget
+  RUN: testSelectPresenterIndexSetsSelectedIndexInWidget
+  RUN: testSelectPresenterItemSetsSelectedIndexInWidget
+  SKIP: testSelectPresenterItemSetsSelectedIndexInWidget ()
+  RUN: testSelectPresenterWithScrollingMakeSelectedItemVisible
+  RUN: testSelectPresenterWithoutScrollingDoesNotScroll
+  RUN: testSelectWidgetIndexRaisesSelectionIndexChangeEventOnce
+  RUN: testSelectWidgetIndexRaisesSelectionIndexChangeEventWithSelectedIndex
+  RUN: testShiftClicktAccumulatesSelection
+  RUN: testShowPresenterShowsWidget
+  RUN: testStringColumnsShouldBeNonEditable
+  RUN: testSubscribeToEventDoesNotRaiseEvent
+  RUN: testUnselectAllInWidgetRaisesEmptySelectionChangeEvent
+  RUN: testUnselectAllInWidgetRaisesSelectionIndexChangeEventOnce
+  RUN: testVisibilityWithBlock
+  RUN: testVisibilityWithBlockThatReturnsFalse
+Total: 21 P:20 F:0 E:0 S:1
+
+=== StDebuggerInspectorTest ===
+  RUN: testDefaultLayoutSpec
+  RUN: testMaximizeAssertionSpec
+  RUN: testMaximizedAssertionLayoutSpec
+  RUN: testMinimizedAssertionLayoutSpec
+  RUN: testSetAssertionLayoutSpec
+  RUN: testSetDefaultLayoutSpec
+  RUN: testShouldUpdateContext
+  RUN: testToggleMaximizeAssertionSpec
+  RUN: testUpdateLayoutForContextsWithAssertionFailure
+  FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+  RUN: testUpdateLayoutForContextsWithShouldntRaiseFailure
+  RUN: testUpdateLayoutForContextsWithoutAssertionFailure
+Total: 11 P:10 F:1 E:0 S:0
+
+=== StDebuggerTest ===
+  RUN: testAcceptCodeChangesForContext
+  RUN: testActionModelSubscription
+  RUN: testCancelCodeChangesFor
+  RUN: testClearUnsavedChanges
+  RUN: testClose
+  RUN: testCodeChangeAfterContextChange
+  RUN: testCodeSelectionAfterRestart
+  RUN: testCodeSelectionAfterStepping
+  RUN: testContextChangedAfterStepIn
+  RUN: testContextChangedAfterStepOverAndReturn
+  RUN: testContextTempVarList
+  RUN: testContextTempVarListUpdatesAfterRestartingContext
+  RUN: testContextTempVarListUpdatesTempsWhenEnteringOrLeavingInlinedBlocks
+  RUN: testContextTempVarListUpdatesTempsWhenEnteringOrLeavingInlinedBlocksWithRunTo
+  RUN: testContextUnchangedAfterStepOver
+  RUN: testCopyStackToClipboard
+  RUN: testCreateMissingMethodWithUnfilteredStackUpdatesCodePane
+  RUN: testDebuggerActionModel
+  RUN: testDebuggerApplication
+  RUN: testDebuggerDoesNotLogStackToFileSetting
+  RUN: testDiscardCodeChangesFor
+  RUN: testDynamicVariableEvaluation
+  FAIL: testDynamicVariableEvaluation [Got nil instead of 42.]
+  RUN: testExceptionProvidesSameExceptionAsTheActionModelOne
+  RUN: testGenerateAndProceed
+  SKIP: testGenerateAndProceed (Does not work, I do not know why it looks like my test is executed several times with the same debugger)
+  RUN: testInitialCodeSelectionAfterStepping
+  RUN: testInterruptedContextProvidesSameContextAsTheActionModelOne
+  RUN: testInterruptedProcessProvidesSameProcessAsTheActionModelOne
+  RUN: testIsInSelectedContextClass
+  RUN: testIsInSelectedContextPackage
+  FAIL: testIsInSelectedContextPackage [Got #valueWithinMilliseconds:onTimeout: instead of #runTestCaseUnderWatchdog:.]
+  RUN: testNewDebuggerContext
+  RUN: testNewDebuggerContextFor
+  RUN: testOpenDebuggerWithLastKnownPosition
+  RUN: testPreserveLastKnownPositionIsFalse
+  RUN: testPreserveLastKnownPositionIsTrue
+  RUN: testPrintReceiverClassInContext
+  RUN: testReceiverChangedAfterStepIn
+  RUN: testReceiverChangedAfterStepOverAndReturn
+  RUN: testReceiverList
+  RUN: testReceiverUnchangedAfterStepOver
+  RUN: testRecordUnsavedCodeChanges
+  RUN: testRestartContext
+  RUN: testRestoreReceiverRawInspectionSelection
+  SKIP: testRestoreReceiverRawInspectionSelection ()
+  RUN: testRestoreReceiverRawInspectionSelectionAfterContextChange
+  SKIP: testRestoreReceiverRawInspectionSelectionAfterContextChange ()
+  RUN: testRestoreUnsavedCodeChanges
+  RUN: testReturnEnteredValue
+  SKIP: testReturnEnteredValue ()
+  RUN: testSaveCodeModification
+  RUN: testSaveReceiverRawInspectionSelection
+  SKIP: testSaveReceiverRawInspectionSelection ()
+  RUN: testSaveReceiverRawInspectionSelectionAfterContextChange
+  SKIP: testSaveReceiverRawInspectionSelectionAfterContextChange ()
+  RUN: testSavingQuickMethodWhenSteppingIntoStackSizeBeforeIsTheSameAfter
+  RUN: testSavingQuickMethodWhenSteppingIntoStaysInQuickMethod
+  RUN: testSelectLastStackElementWithMoreElements
+  RUN: testSelectLastStackElementWithoutMoreElements
+  RUN: testSessionProvidesSameAsTheActionModelOne
+  RUN: testSessionStackProvidesSameStackAsTheActionModelOne
+  RUN: testStackTableAfterReturn
+  RUN: testStackTableAfterStepIn
+  RUN: testStackTableInitialization
+  RUN: testStackTableSelectionChanged
+  RUN: testStackTableWithNewSession
+  RUN: testToolbarDisplayMode
+  RUN: testToolbarInDNUContext
+  RUN: testUnsavedCodeChanges
+  RUN: testUnsavedCodeChangesFor
+  RUN: testUpdateExtensionSubscription
+  RUN: testUpdateLayoutForContextsIfAssertionFailure
+  FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+  RUN: testUpdateSourceCodeFor
+  RUN: testValueOfLastKnownPositionIsChangedWhenWindowIsClosed
+Total: 67 P:58 F:3 E:0 S:6
+
+=== StFileBrowserOpenTerminalCommandTest ===
+  RUN: testOpenLinuxTerminalShellCommand
+  RUN: testOpenMacTerminalShellCommand
+  RUN: testOpenWindowsTerminalShellCommand
+  RUN: testTerminalShellCommand
+Total: 4 P:4 F:0 E:0 S:0
+
+=== StSpotterTest ===
+  RUN: testDefaultSearchStringIsSelectedWhenInsertsSelectionOptionEnabled
+  RUN: testOpenSpotterRefreshesPreviewOnce
+  FAIL: testOpenSpotterRefreshesPreviewOnce [Got 3 instead of 1.]
+  RUN: testSearchingString
+Total: 3 P:2 F:1 E:0 S:0
+
+=== SystemDependenciesTest ===
+  RUN: testCollectionsShouldNotDependOnRandom
+  RUN: testExternalBasicToolsDependencies
+  RUN: testExternalCompilerDependencies
+  RUN: testExternalDisplayDependencies
+  RUN: testExternalFileSystemDependencies
+  RUN: testExternalKernelDependencies
+  RUN: testExternalLocalMonticelloDependencies
+  RUN: testExternalMetacelloDependencies
+  RUN: testExternalMonticelloDependencies
+  RUN: testExternalMorphicCoreDependencies
+  RUN: testExternalMorphicDependencies
+  RUN: testExternalSUnitDependencies
+  RUN: testExternalSUnitKernelDependencies
+  RUN: testExternalSpec2Dependencies
+  RUN: testExternalUFFIDependencies
+  RUN: testExternalUIDependencies
+  FAIL: testExternalUIDependencies [Given Collections do not match!
+	additions : #('Reflectivity')
+	missing: #()
+]
+  RUN: testFilesShouldNotDependOnRandom
+Total: 17 P:16 F:1 E:0 S:0
+
+=== TKTCommonQueueWorkerPoolTest ===
+  RUN: testWorkerPoolCretesWorkersWhenExecutingATask
+  RUN: testWorkerPoolDoesNotExceedPoolSize
+  RUN: testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel
+  RUN: testWorkerPoolStopStopsWorkers
+  RUN: testWorkerPoolWorkersAreStoppedAfterPoolsCollection
+  RUN: testWorkerPoolWorkersProcessesAreStoppedAfterPoolsCollection
+  RUN: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection
+Total: 7 P:7 F:0 E:0 S:0
+
+=== TKTWorkerTest ===
+  RUN: testWorkerExceptionIsHandledByExceptionHandler
+  RUN: testWorkerProcessDiesAfterStop
+  RUN: testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected
+  RUN: testWorkerProcessDiesAfterWorkerIsCollected
+  RUN: testWorkerProcessIsWorkingUntilAllTasksAreDone
+  RUN: testWorkerRunsAlwaysInSameProcess
+  RUN: testWorkerRunsInSeparateProcess
+Total: 7 P:7 F:0 E:0 S:0
+
+=== TraitFileOutTest ===
+  RUN: testFileOutCategory
+  RUN: testFileOutTrait
+  RUN: testRecompiling
+  RUN: testRemovingMethods
+Total: 4 P:4 F:0 E:0 S:0
+
+=== TraitMethodDescriptionTest ===
+  RUN: testArgumentNames
+  RUN: testConflictMethodCreation
+  RUN: testConflictingProtocols
+  RUN: testProtocols
+Total: 4 P:4 F:0 E:0 S:0
+
+=== WeekTest ===
+  RUN: testByWeekNumber
+  RUN: testByWeekNumberInCurrentYear
+  RUN: testCoverage
+  RUN: testDayNames
+  RUN: testEnumerating
+  RUN: testIndexOfDay
+  RUN: testInquiries
+  RUN: testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses
+  RUN: testNameOfDay
+  RUN: testNew
+  RUN: testOffset
+  RUN: testPreviousNext
+  RUN: testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass
+  RUN: testUnCategorizedMethods
+Total: 14 P:14 F:0 E:0 S:0
+
+=== ZdcPluginSSLSessionTest ===
+  RUN: testCertificateName
+  RUN: testServerName
+Total: 2 P:2 F:0 E:0 S:0
+
+=== ZnChunkedStreamTest ===
+  RUN: testBinaryWriteRead
+  RUN: testGzipWriteRead
+  RUN: testReading
+  RUN: testReadingBuffered
+  RUN: testReadingGzip
+  RUN: testReadingGzipStepped
+  RUN: testReadingNext
+  RUN: testReadingNextInto
+  RUN: testWriting
+  RUN: testWritingBuffered
+Total: 10 P:10 F:0 E:0 S:0
+
+=== ZnClientTest ===
+  RUN: testConnectionClose
+  RUN: testConnectionCloseOnReuseTimeout
+  RUN: testConstruction
+  RUN: testCookies
+  RUN: testCustomUserAgentString
+  RUN: testDownloadSmallHTML
+  RUN: testGetAfterPost
+  RUN: testGetForm
+  RUN: testGetGeoIP
+  RUN: testGetLargeWideStringHTML
+  RUN: testGetSmallHTML
+  RUN: testGetSmallHTMLBinary
+  RUN: testGetSmallHTMLOneShot
+  RUN: testGetSmallHTMLStreaming
+  RUN: testGetSmallHTMLTwice
+  RUN: testGetSmallHTMLUrlConstruction
+  RUN: testGetStreamingConnectionClose
+  RUN: testGetWideStringHTML
+  RUN: testHeadSmallHTML
+  RUN: testIfFailNonExistingHost
+  RUN: testIfFailNotFound
+  RUN: testIfFailWrongType
+  RUN: testIfModifiedSinceNotModified
+  RUN: testJsonRESTGet
+  RUN: testJsonRESTPost
+  RUN: testLogging
+  RUN: testOptions
+  RUN: testPatch
+  RUN: testPostForm
+  RUN: testPostMultipart
+  RUN: testPostMultipartBinary
+  RUN: testPostMultipartNonASCII
+  RUN: testPostTwice
+  RUN: testPrepareRequest
+  RUN: testProgress
+  RUN: testProgressNoIfFail
+  RUN: testQueryGoogle
+  FAIL: testQueryGoogle [Assertion failed]
+  RUN: testRedirect
+  RUN: testRedirectDontFollow
+  RUN: testRedirectWithCookies
+  RUN: testRedirectWithCustomHeader
+  RUN: testRelativeRedirect
+  RUN: testRelativeRedirect307
+  RUN: testRelativeRedirectUp
+  RUN: testSpecialPosts
+  RUN: testTimeout
+  RUN: testUploadSmallDocument
+  RUN: testUsernamePassword
+  RUN: testUsernamePasswordInUserInfo
+  RUN: testUsernamePasswordTwice
+Total: 50 P:49 F:1 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 30
+Pass: 560
+Fail: 8
+Error: 2
+Skip: 13
+Total: 583
+Finished: 2026-09-04T05:14:23.09609+00:00
+
+=== BATCH COMPLETE ===
