@@ -15,6 +15,79 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-09-03, 22:20)
+
+**The real-x86 sweep is running again and past halfway.**  New box
+`i-069e3881670b0cac0` (m6a.4xlarge, us-east-2), `RUN_ID=x86-gui-20260903`, so
+it RESUMED from the S3 checkpoint the reaped box left at index 501 rather than
+restarting.  A local heartbeat loop beats the lease every 5 min.  Batches are
+landing at 60-870 s each; index ~1050 of 2047 at the time of writing.
+
+**What the first 500 real-x86 classes said: 8166 tests, 8116 P, ZERO F, ZERO
+E.**  49 SKIP.  So there is no x86-vs-arm codegen divergence anywhere in that
+range on real hardware, which is the strongest form of the claim the Rosetta
+sweep could only approximate.
+
+**The x86 "shutdown wedge" is not a shutdown hang** (now defect #29).  The
+`rc=137` batches are the sweep's own early kill, and every one of them wrote
+all 50 class totals and `*** BATCH COMPLETED`, so the cost is wall-clock, not
+coverage.  What the VM is doing in that 30-second window is *running*: ~8e9
+bytecodes, the active process inside `OpalCompiler>>generateIR`, the JIT still
+compiling against a full code zone.  `primitiveQuit` is never reached at all --
+its unconditional "Deferred" line is absent and the process does not exit.  It
+does not reproduce under Rosetta (marker, then clean exit 8 s later), which
+separates the two variables that were confounded: real x86 Linux vs Rosetta,
+and fake-GUI prep vs runner-only.  Also settled: batch 651-700, the one the
+fake-GUI prep wedges on macOS, runs rc=0 in 126 s on real x86 Linux, so that
+wedge is macOS-specific.
+
+**Two of the three "ours" classes are not ours** (defect #28).  All three were
+run against stock Cog x86_64 under Rosetta the same evening:
+
+    class                ours (arm64)                    stock Cog x86_64
+    StSpotterTest        1 F  Got 2 instead of 1          1 F  Got 2 instead of 1
+    TraitFileOutTest     2 E  FileDoesNotExistException   4 P
+    TKTWorkerTest        1-2 E  TKTTimeoutException       7 P
+
+`StSpotterTest` is SHARED with Cog, same selector, same numbers.
+`TraitFileOutTest` is a working-directory mismatch inside the image --
+`CodeExporter` writes to `FileLocator imageDirectory` and the test reads a
+bare relative name -- and our VM passes it 4/4 when run from the image
+directory.  `RUN_FROM_IMAGE_DIR=1` is the faithful configuration, not a
+workaround; a batch 1-100 A/B is running to confirm nothing else moves.
+
+**`TKTWorkerTest` is ours and it is the JIT.**  Interleaved A/B, one class,
+same binary, only `PHARO_NO_JIT` changed:
+
+    rep   JIT on            JIT off
+     1    5 P / 2 E         7 P / 0 E
+     2    4 P / 2 E / 1 T   7 P / 0 E
+     3    4 P / 2 E / 1 T   7 P / 0 E
+
+The failures are the finalization tests: the worker is dropped, five full GCs
+run, and the worker's process is still alive.  Ruled out by measurement --
+finalization in general (a plain doit collects and stops on the first GC), any
+VM root (`PHARO_WATCH_ROOT_CLASS=TKTWorker` reports zero visits all run while
+the same knob on `Array` reports), a general collection failure (40
+unreferenced workers leave 2, identically both ways), the deferred-drain
+scheduling (`PHARO_INLINE_FINALIZE=1` changes nothing), and the
+frame->context temp sync (`PHARO_NO_GC_TEMPSYNC=1` changes nothing).
+`PHARO_NO_J2J=1` still fails.  `[GC-EPH]` says `fired=0` on almost every GC
+with `active=375`, so the workers' ephemerons are not firing -- the key is
+still being marked, and the marker is not any root category `forEachRoot`
+walks.  That is the open question.
+
+**`PHARO_NO_ASMJIT_T1=1` segfaults** (LEAD 24), deterministically, on
+`(1 to: 200000) inject: 0 into: [:a :b | a + b]`.  Two `tryExecute` frames at
+the same offset.  It produced no results file at all during the bisect above,
+which reads exactly like a hang; do not mistake it for one.
+
+**`preserve.sh` no longer pushes to a build branch.**  The autosave goes to
+`autosave/<instance-id>` (IMDSv2, hostname fallback).  That closes the
+deferred hazard where a box holding a stale tree could fast-forward a revert
+onto `jit` with no force flag -- the shape `git diff --name-status e4c47863
+ede0fd65` already shows.
+
 ## Right now (2026-09-03, 13:45)
 
 **The real-x86 sweep is running on AWS** -- `i-021aa136e1c7cc9b8`, m5.4xlarge

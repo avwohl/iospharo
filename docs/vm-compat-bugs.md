@@ -3139,6 +3139,24 @@ LEAD 21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
 LEAD 22. SoundPlugin waveOut backend implemented, never runtime-verified.
 LEAD 23. Inline NLR path still uses native ensure-hopping instead of
     `aboutToReturn:through:`; the context path uses the stock protocol.
+LEAD 24. **`PHARO_NO_ASMJIT_T1=1` SEGFAULTS**, so the coarsest JIT bisect arm
+    is unusable.  Deterministic, 2 of 2, on a workload with nothing exotic in
+    it — `./build-rel/test_load_image <image> eval "(1 to: 200000) inject: 0
+    into: [:a :b | a + b]"` returns `rc=139` with
+
+        0  sigsegvAction
+        2  pharo::jit::JITRuntime::tryExecute(...)+1624
+        3  pharo::jit::JITRuntime::tryExecute(...)+1624
+        4  pharo::Interpreter::tryJITActivation(...)+3024
+
+    Two `tryExecute` frames at the SAME offset, i.e. it faults on the
+    re-entrant call.  Found 2026-09-03 while bisecting the TKTWorkerTest
+    finalization defect: the run produced no results file at all, which reads
+    exactly like a hang.  Same class as the "dead code hides its own bugs"
+    note in memory — a knob nothing exercises rots.  Until it is fixed, bisect
+    the JIT with `PHARO_NO_JIT` (works) or the finer per-emit knobs, and do
+    not read a missing results file under this knob as a property of the
+    workload.
 
 ## Corrections to earlier verdicts in this repo
 
