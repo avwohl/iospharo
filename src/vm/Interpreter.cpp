@@ -15609,6 +15609,44 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
         if (materializedFrameCount_ > 0) materializedFrameCount_--;
     }
 
+    // Widow the returning frame's materialized context, exactly as popFrame()
+    // does (~line 8216).  popFrame() had this and popFrameForJIT did not, and
+    // the asymmetry is a RETENTION BUG, not a cosmetic one: a returned
+    // activation whose Context keeps a live `sender` holds its whole caller
+    // chain, and every receiver in it, for as long as anything references the
+    // Context -- which a closure captured out of that frame does by
+    // construction (`outerContext`).
+    //
+    // Measured on TKTWorkerTest (docs/vm-compat-bugs.md #28), same image, only
+    // PHARO_NO_JIT changed, counting the heap parents that reach a dropped
+    // TKTWorker:
+    //
+    //     parent                     JIT on   JIT off
+    //     Context:privateStart          71        0
+    //     Context:start                 71        0
+    //     distinct workers surviving    47       38
+    //
+    // Zero with the JIT off, because the interpreter pops through popFrame()
+    // and widows.  The chain that pinned the worker was
+    //   worker <- Context{privateStart}[receiver] <- Context{start}[sender]
+    //          <- Context{createProcessDoing:named:}[sender]
+    //          <- FullBlockClosure[outerContext] <- the forked process.
+    // Both `start` frames had returned long before the test dropped its
+    // reference.
+    //
+    // Same store as popFrame(): sender=nil and pc=nil, which is what
+    // `Context>>isDead` reads.  Idempotent, so a second return through the
+    // same context is harmless.  PHARO_NO_JIT_WIDOW_ON_POP restores the old
+    // (leaking) behaviour for a bisect.
+    if (__builtin_expect(currentFrameMaterializedCtx_.isObject()
+                         && !currentFrameMaterializedCtx_.isNil()
+                         && currentFrameMaterializedCtx_.rawBits() > 0x10000, 0)
+            && !GET_DEBUG_BOOL(PHARO_NO_JIT_WIDOW_ON_POP)
+            && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
+        memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());
+        memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());
+    }
+
     // Restore interpreter state from saved frame
     stackPointer_ = framePointer_;  // Discard callee's locals
     instructionPointer_ = frame.savedIP;

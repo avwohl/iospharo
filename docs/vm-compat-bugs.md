@@ -3140,11 +3140,48 @@ the chain pins.
     RETAINS the receiver on stock Cog too (60 of 60), so that shape is not the
     difference and a fix aimed at it would have been wrong.
 
-The open question is narrow now: which JIT path materializes `start` and
-`privateStart` (`materializeFrameStack` is the candidate -- it materializes
-the whole saved-frame stack rather than just the frame that owns the closure),
-and why those contexts are not widowed when their frames return, given that
-the ordinary path widows correctly.
+#### The asymmetry found: `popFrameForJIT` does not widow, `popFrame` does
+
+`Interpreter::popFrame` ends a frame by storing nil into its materialized
+Context's `sender` and `pc` (Interpreter.cpp ~8216), and its own comment says
+why: "nil'ing its sender/pc (isDead) breaks the live sender chain that a
+capturing closure would otherwise keep alive -- without which Fuel serializes
+the entire call stack".  **`popFrameForJIT`, the lightweight pop used by the
+JIT direct-call paths, had no such store.**  That is the asymmetry, and it
+matches the arm/knob evidence exactly: the interpreter pops through
+`popFrame` and widows; JIT'd frames pop through `popFrameForJIT` and do not.
+
+**The fix is real but PARTIAL, and it does not close the test.**  Adding the
+same two stores to `popFrameForJIT` (default on, opt out with
+`PHARO_NO_JIT_WIDOW_ON_POP`) moves the retention measurably and no further:
+
+    build              workers   hits   Context:start   Context:privateStart
+    JIT on, before        47      407         71                 71
+    JIT on, widowed       47      359         47                 47
+    JIT off               38      178          0                  0
+
+A third of the pinning chains go away; the rest do not, and the distinct
+worker count does not move at all.  On the test itself, interleaved, three
+reps each:
+
+    rep   widow on        widow off
+     1    5 P / 1 E / 1 T  4 P / 2 E / 1 T
+     2    5 P / 1 E / 1 T  6 P / 1 E
+     3    5 P / 2 E        4 P / 2 E / 1 T
+
+i.e. no signal.  So `popFrameForJIT` was ONE leaking path and there is at
+least one more.  The change is kept because it makes the JIT match a
+documented invariant of the interpreter path and strictly reduces retention,
+not because it fixes #28 -- it does not.
+
+Validated as neutral before keeping it on: batch 1-200, both arms, two
+interleaved reps each, 3184 P / 0 F / 0 E / 21 S / 1 T every time.
+
+Where the remaining 47 come from is the next question.  The other way frames
+leave the JIT is `frameDepth_ = 0` after `materializeFrameStack()` (17 sites),
+which converts the whole saved-frame stack into Contexts and hands returns to
+the fd==0 context path; whether that path widows every context it created,
+rather than only `activeContext_`, is unverified.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
