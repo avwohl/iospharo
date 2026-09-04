@@ -58,7 +58,20 @@ The history lives in `docs/history/`; nothing was deleted.
   worker thread.
 - **MSYS2 login-shell environment stripping breaks Pharo's WindowsResolver.**
   Operator documentation, not a code gap.
-- **`scripts/aws/preserve.sh` can fast-forward a *revert* onto shared `jit`.**
+- **~~`scripts/aws/preserve.sh` can fast-forward a *revert* onto shared `jit`~~
+  — FIXED 2026-09-03.**  The autosave now pushes to a per-box
+  `autosave/<instance-id>` branch (instance id from IMDSv2, hostname as
+  fallback), never to `WORK_BRANCH`.  The work stays durable and fetchable
+  (`git fetch origin autosave/<iid>`); it just cannot be what anyone's next
+  `git pull` picks up, so a stale-tree autosave has no path onto a branch
+  people build from.  `PRESERVE_PUSH_BRANCH` overrides it for a human who
+  means it.  `WORK_BRANCH` is deliberately no longer consulted by the push —
+  it names what the box *builds*, and conflating that with where a crash dump
+  *lands* was the whole bug.  The two related exposures are unchanged and
+  still true: `origin/jit` has no branch protection, and nothing watches for
+  an autosave landing on it.  Original text follows.
+
+  `scripts/aws/preserve.sh` can fast-forward a *revert* onto shared `jit`.
   It snapshots the working tree with `git add -A` but commits it with the
   box's HEAD as parent, and those two can disagree arbitrarily.  On
   2026-09-03 the disagreement was benign — stale parent `52f6f40c`, current
