@@ -1,0 +1,34 @@
+DTTestCoverageTest                             TIMEOUT: testCoveragePercentForMock (exceeded 80s)
+FreeTypeCacheTest                              TIMEOUT: testGlyphAccessIsThreadSafe (exceeded 80s)
+FreeTypeCacheTest                              TIMEOUT: testGlyphAccessIsThreadSafeWhenAskingWidth (exceeded 80s)
+LinkInstallerTest                              FAIL: testPropagateNewClassScopedLinks [Assertion failed]
+LinkInstallerTest                              FAIL: testPropagateNewClassScopedLinks [Leaked metalinks]
+MCSmalltalkhubRepositoryTest                   TIMEOUT: testVersionFromFileNamed (exceeded 80s)
+MicGitHubRessourceReferenceTest                TIMEOUT: testContents (exceeded 80s)
+NavigationInteractionTest                      ERROR: testSenderOnClassViaSenderActuallyBrowseSenders (MessageNotUnderstood: receiver of "extent" is nil)
+NoUnusedVariablesLeftTest                      TIMEOUT: testNoUnusedInstanceVariablesLeft (exceeded 80s)
+NoUnusedVariablesLeftTest                      TIMEOUT: testNoUnusedTemporaryVariablesLeft (exceeded 80s)
+OCClassBuilderTest                             ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+RBBrowserEnvironmentTest                       TIMEOUT: testVariableEnvironmentInstVars (exceeded 80s)
+ReleaseTest                                    TIMEOUT: testNoNullCharacter (exceeded 80s)
+ReleaseTest                                    TIMEOUT: testNoPeriodInMethodSignature (exceeded 80s)
+ReleaseTest                                    TIMEOUT: testNoShadowedVariablesInMethods (exceeded 80s)
+ReleaseTest                                    FAIL: testUnknownProcesses [Found unknown processes: ' 264972800'':'a Process in [| deadline |
+SelfVariableTest                               TIMEOUT: testUsingMethods (exceeded 80s)
+SpHorizontalBoxLayoutTest                      FAIL: testSpSearchInputFieldPresenterResizeCorrectlyWhenWindowWidthDecrease [Assertion failed]
+SpJobListPresenterTest                         FAIL: testJobIsFinishedWhenWaitingMoreThanWorkBlockDuration [Got 72 instead of 100.]
+SpTreeAdapterMultipleSelectionTest             FAIL: testShiftClicktAccumulatesSelection [Got #(#(1)) instead of #(#(2) #(1)).]
+StDebuggerInspectorTest                        FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+StDebuggerTest                                 FAIL: testIsInSelectedContextPackage [Got #on:do: instead of #runTestCaseUnderWatchdog:.]
+StDebuggerTest                                 FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+StFileBrowserOpenTerminalCommandTest           FAIL: testTerminalShellCommand [Assertion failed]
+StSpotterTest                                  FAIL: testOpenSpotterRefreshesPreviewOnce [Got 2 instead of 1.]
+SystemDependenciesTest                         FAIL: testExternalUIDependencies [Given Collections do not match!
+TKTCommonQueueWorkerPoolTest                   TIMEOUT: testWorkerPoolWorkersProcessesAreTerminatedAfterPoolsCollection (exceeded 80s)
+TKTWorkerTest                                  ERROR: testWorkerProcessDiesAfterWorkerAndAllFuturesAreCollected (TKTTimeoutException: )
+TraitFileOutTest                               ERROR: testFileOutCategory (FileDoesNotExistException: '/home/ubuntu/src/iospharo/Generated-Trait-Test-Package.st')
+TraitFileOutTest                               ERROR: testFileOutCategory (KeyNotFound: key #'Generated-Trait-Test-Package' not found in PackageOrganizer)
+TraitFileOutTest                               ERROR: testFileOutTrait (FileDoesNotExistException: '/home/ubuntu/src/iospharo/T6.st')
+ZdcPluginSSLSessionTest                        FAIL: testCertificateName [Got nil instead of 'myCert.pem'.]
+ZnChunkedStreamTest                            TIMEOUT: testGzipWriteRead (exceeded 80s)
+ZnClientTest                                   FAIL: testQueryGoogle [Assertion failed]
