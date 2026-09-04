@@ -13,7 +13,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/config.env"
-source "$HERE/load-creds.sh" >/dev/null 2>&1
+source "${SPOT_DIR:-${AWS_WATCH_DIR:-$HOME/src/aws_watch}/spot}/load-creds.sh" >/dev/null 2>&1
 source "$HERE/state.env"
 
 PEM="${PEM:-$HOME/.ssh/${KEY_NAME}.pem}"

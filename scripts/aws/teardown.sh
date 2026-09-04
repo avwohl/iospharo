@@ -11,7 +11,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # CONFIG_FILE=scripts/aws/config-arm.env ./teardown.sh tears down the arm64 box.
 source "${CONFIG_FILE:-$HERE/config.env}"
-source "$HERE/load-creds.sh"
+source "${SPOT_DIR:-${AWS_WATCH_DIR:-$HOME/src/aws_watch}/spot}/load-creds.sh"
 
 DEL_BUCKET=0; INSTANCE_ONLY=0; DEL_DEPLOY_KEY=0
 for a in "$@"; do

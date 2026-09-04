@@ -11,7 +11,7 @@
 # Defaults: <4% CPU averaged over 4 x 15min = 1h of idle -> terminate.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-[ -n "${AWS_ACCESS_KEY_ID:-}" ] || source "$HERE/load-creds.sh" >/dev/null 2>&1 || true
+[ -n "${AWS_ACCESS_KEY_ID:-}" ] || source "${SPOT_DIR:-${AWS_WATCH_DIR:-$HOME/src/aws_watch}/spot}/load-creds.sh" >/dev/null 2>&1 || true
 
 IID="${1:?usage: idle-alarm.sh <instance-id> [region]}"
 REGION="${2:-${AWS_DEFAULT_REGION:-us-east-2}}"

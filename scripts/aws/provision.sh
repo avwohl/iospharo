@@ -11,7 +11,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # CONFIG_FILE selects the build target: config.env (x86_64, default) or
 # config-arm.env (arm64 Graviton).  e.g. CONFIG_FILE=scripts/aws/config-arm.env ./provision.sh
 source "${CONFIG_FILE:-$HERE/config.env}"
-source "$HERE/load-creds.sh"
+source "${SPOT_DIR:-${AWS_WATCH_DIR:-$HOME/src/aws_watch}/spot}/load-creds.sh"
 
 aws sts get-caller-identity >/dev/null
 echo "== identity OK =="
@@ -248,16 +248,39 @@ else
 fi
 scp -i "$PEM" -o StrictHostKeyChecking=accept-new "$DKEY" ubuntu@"$PUBIP":/home/ubuntu/.ssh/iospharo-x64-deploy
 
-# --- 12. Ship on-instance scripts + env, enable units -----------------------
-scp -i "$PEM" "$HERE/idle-shutdown.sh" "$HERE/spot-watch.sh" "$HERE/preserve.sh" \
-    "$HERE/clone-and-build.sh" ubuntu@"$PUBIP":/tmp/
-ssh -i "$PEM" ubuntu@"$PUBIP" "sudo install -d /opt/iospharo && \
-    sudo install -m755 /tmp/idle-shutdown.sh /tmp/spot-watch.sh /tmp/preserve.sh /opt/iospharo/ && \
-    install -m755 /tmp/clone-and-build.sh /home/ubuntu/clone-and-build.sh && \
-    printf 'BUCKET=%s\nWORK_BRANCH=%s\nBASE_BRANCH=%s\nIDLE_SECONDS=%s\nGIT_REMOTE=%s\n' \
-        '$BUCKET' '$WORK_BRANCH' '$BASE_BRANCH' '$IDLE_SECONDS' '$GIT_REMOTE' | sudo tee /opt/iospharo/env >/dev/null && \
-    sudo systemctl daemon-reload && \
-    sudo systemctl enable --now iospharo-idle.timer iospharo-spot-watch.service"
+# --- 12. Ship the shared spot lifecycle + this project's build script -------
+# The lifecycle (preserve / spot-watch / idle-shutdown and their units) is not
+# in this repo: it is project-independent and lives in avwohl/aws_watch under
+# spot/, beside the reaper and lease table these boxes register with.  We ship
+# that directory and let its own installer place it, so the systemd units and
+# the on-box layout are defined in exactly one place for every project.
+if [ ! -x "$SPOT_DIR/install-box.sh" ]; then
+    echo "ERROR: the shared spot lifecycle is missing at $SPOT_DIR" >&2
+    echo "       git clone git@github.com:avwohl/aws_watch.git ${AWS_WATCH_DIR}" >&2
+    echo "       (or set AWS_WATCH_DIR / SPOT_DIR to an existing checkout)" >&2
+    exit 1
+fi
+# rm -rf first: provision.sh is re-runnable against an existing box, and
+# `scp -r src dst` nests as dst/spot when dst already exists.
+ssh -i "$PEM" ubuntu@"$PUBIP" 'rm -rf /tmp/spot'
+scp -i "$PEM" -r "$SPOT_DIR" ubuntu@"$PUBIP":/tmp/spot
+scp -i "$PEM" "$HERE/clone-and-build.sh" ubuntu@"$PUBIP":/tmp/
+ssh -i "$PEM" ubuntu@"$PUBIP" "install -m755 /tmp/clone-and-build.sh /home/ubuntu/clone-and-build.sh && \
+    sudo env \
+        REPO='$SPOT_REPO' \
+        BUCKET='$BUCKET' \
+        WORK_BRANCH='$WORK_BRANCH' \
+        S3_PREFIX='$S3_PREFIX' \
+        SPOT_PREFIX='$SPOT_PREFIX' \
+        SPOT_USER='$SPOT_USER' \
+        IDLE_SECONDS='$IDLE_SECONDS' \
+        IDLE_ACTIVE_PATTERN='$IDLE_ACTIVE_PATTERN' \
+        AUTOSAVE_AUTHOR_NAME='$AUTOSAVE_AUTHOR_NAME' \
+        AUTOSAVE_AUTHOR_EMAIL='$AUTOSAVE_AUTHOR_EMAIL' \
+        AUTOSAVE_SUBJECT_PREFIX='$AUTOSAVE_SUBJECT_PREFIX' \
+        bash /tmp/spot/install-box.sh && \
+    printf 'BASE_BRANCH=%s\nGIT_REMOTE=%s\n' '$BASE_BRANCH' '$GIT_REMOTE' \
+        | sudo tee -a '$SPOT_PREFIX/env' >/dev/null"
 
 # --- 12b. Ship the keep-alive HEARTBEAT hook + restricted lease key ----------
 # The box's Claude (run on the box for the JIT work) heartbeats its own lease via
@@ -267,12 +290,12 @@ ssh -i "$PEM" ubuntu@"$PUBIP" "sudo install -d /opt/iospharo && \
 # failure here leaves the box reapable, which is the safe direction.
 LEASE_KEY="${AWS_LEASE_KEY:-$HOME/.ssh/aws-lease}"
 if [ -f "$LEASE_KEY" ]; then
-    scp -i "$PEM" "$HERE/aws-lease-beat-hook.sh" "$LEASE_KEY" ubuntu@"$PUBIP":/tmp/ \
+    scp -i "$PEM" "$AWS_WATCH_DIR/aws-lease-beat-hook.sh" "$LEASE_KEY" ubuntu@"$PUBIP":/tmp/ \
     && ssh -i "$PEM" ubuntu@"$PUBIP" "
-        sudo install -m755 /tmp/aws-lease-beat-hook.sh /opt/iospharo/aws-lease-beat-hook.sh && \
+        sudo install -m755 /tmp/aws-lease-beat-hook.sh $SPOT_PREFIX/aws-lease-beat-hook.sh && \
         install -m700 -d /home/ubuntu/.ssh && install -m600 /tmp/aws-lease /home/ubuntu/.ssh/aws-lease && rm -f /tmp/aws-lease && \
         install -m700 -d /home/ubuntu/.claude && \
-        HOOKS='{\"hooks\":{\"PreToolUse\":[{\"matcher\":\".*\",\"hooks\":[{\"type\":\"command\",\"command\":\"/opt/iospharo/aws-lease-beat-hook.sh pre\"}]}],\"PostToolUse\":[{\"matcher\":\".*\",\"hooks\":[{\"type\":\"command\",\"command\":\"/opt/iospharo/aws-lease-beat-hook.sh post\"}]}]}}' && \
+        HOOKS='{\"hooks\":{\"PreToolUse\":[{\"matcher\":\".*\",\"hooks\":[{\"type\":\"command\",\"command\":\"$SPOT_PREFIX/aws-lease-beat-hook.sh pre\"}]}],\"PostToolUse\":[{\"matcher\":\".*\",\"hooks\":[{\"type\":\"command\",\"command\":\"$SPOT_PREFIX/aws-lease-beat-hook.sh post\"}]}]}}' && \
         if grep -q aws-lease-beat-hook /home/ubuntu/.claude/settings.json 2>/dev/null; then
             echo 'keep-alive hook already present'
         elif [ ! -f /home/ubuntu/.claude/settings.json ]; then

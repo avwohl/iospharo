@@ -40,6 +40,15 @@ git pull --ff-only origin "$BASE_BRANCH"
 # spot-interruption autosave — reported "clone-and-build.sh complete", and ran
 # a whole sweep against two-month-old code.  Reuse the remote branch ONLY when
 # it already contains base; otherwise say so and reset it to base.
+#
+# Note what this guard can and cannot do.  On the x86 config BASE_BRANCH and
+# WORK_BRANCH are BOTH `jit`, so "origin/jit contains origin/jit" is trivially
+# true and the else-arm below is unreachable -- the check only bites when a
+# topic WORK_BRANCH has drifted behind base, which is the arm config's shape
+# (jit-arm-linux) and exactly the 2026-08-11 case it was written for.  Against
+# a stale autosave landing on `jit` itself it could do nothing, because such an
+# autosave is a DESCENDANT of base, not behind it.  That hole is closed at the
+# source instead: preserve.sh no longer puts an autosave in git at all.
 if git ls-remote --exit-code --heads origin "$WORK_BRANCH" >/dev/null 2>&1; then
     if git merge-base --is-ancestor "origin/$BASE_BRANCH" "origin/$WORK_BRANCH"; then
         git checkout -B "$WORK_BRANCH" "origin/$WORK_BRANCH"

@@ -30,7 +30,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # so a bare cron run would sweep an empty region and silently reap nothing).
 : "${AWS_DEFAULT_REGION:=us-east-2}"
 export AWS_DEFAULT_REGION
-[ -n "${AWS_ACCESS_KEY_ID:-}" ] || source "$HERE/load-creds.sh" >/dev/null 2>&1 || true
+[ -n "${AWS_ACCESS_KEY_ID:-}" ] || source "${SPOT_DIR:-${AWS_WATCH_DIR:-$HOME/src/aws_watch}/spot}/load-creds.sh" >/dev/null 2>&1 || true
 
 IDLE_CPU="${IDLE_CPU:-5}"
 LOOKBACK_MIN="${LOOKBACK_MIN:-60}"

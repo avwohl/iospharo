@@ -51,44 +51,13 @@ npm install -g @anthropic-ai/claude-code || true
 # --- work dir owned by ubuntu -------------------------------------------------
 install -d -o ubuntu -g ubuntu /home/ubuntu/src
 
-# --- ship the preservation + idle scripts onto the box ------------------------
-# provision.sh scp's idle-shutdown.sh and spot-watch.sh to /opt/iospharo before
-# enabling these units; we just install the unit files here.
-install -d /opt/iospharo
-
-cat >/etc/systemd/system/iospharo-idle.service <<'UNIT'
-[Unit]
-Description=iospharo idle auto-terminate check
-[Service]
-Type=oneshot
-EnvironmentFile=-/opt/iospharo/env
-ExecStart=/opt/iospharo/idle-shutdown.sh
-UNIT
-
-cat >/etc/systemd/system/iospharo-idle.timer <<'UNIT'
-[Unit]
-Description=run iospharo idle check every 5 minutes
-[Timer]
-OnBootSec=15min
-OnUnitActiveSec=5min
-[Install]
-WantedBy=timers.target
-UNIT
-
-cat >/etc/systemd/system/iospharo-spot-watch.service <<'UNIT'
-[Unit]
-Description=iospharo spot-interruption watcher (preserve state on 2-min notice)
-[Service]
-Type=simple
-EnvironmentFile=-/opt/iospharo/env
-ExecStart=/opt/iospharo/spot-watch.sh
-Restart=always
-RestartSec=10
-User=ubuntu
-UNIT
-
-# Timers/units are enabled by provision.sh AFTER the scripts are delivered.
-systemctl daemon-reload
+# --- spot preservation + idle shutdown ---------------------------------------
+# NOT set up here any more.  That machinery is project-independent and lives in
+# avwohl/aws_watch under spot/; provision.sh ships that directory to the box and
+# runs `spot/install-box.sh`, which installs the scripts under $SPOT_PREFIX and
+# writes and enables the systemd units.  Nothing to do at cloud-init time --
+# the scripts cannot be delivered until the deploy key is, which is after this
+# runs.
 
 touch "$MARKER"
 echo "bootstrap.sh complete"

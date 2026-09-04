@@ -15,6 +15,9 @@ IMG=$H/Pharo-prepped.image
 echo "AB-START $(date +%T)  VM=$VM"
 
 # stop idle auto-term + light multi-core keep-alive (3 loops; >3 starves sshd)
+# (the unit is spot-idle.timer since the lifecycle moved to aws_watch/spot;
+#  the old name is still tried so this works on a box provisioned before that)
+sudo systemctl stop spot-idle.timer 2>/dev/null
 sudo systemctl stop iospharo-idle.timer 2>/dev/null
 for i in 1 2 3; do ( while true; do :; done ) & done
 echo "keepalive-armed"

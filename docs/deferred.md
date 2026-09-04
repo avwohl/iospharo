@@ -59,17 +59,39 @@ The history lives in `docs/history/`; nothing was deleted.
 - **MSYS2 login-shell environment stripping breaks Pharo's WindowsResolver.**
   Operator documentation, not a code gap.
 - **~~`scripts/aws/preserve.sh` can fast-forward a *revert* onto shared `jit`~~
-  — FIXED 2026-09-03.**  The autosave now pushes to a per-box
-  `autosave/<instance-id>` branch (instance id from IMDSv2, hostname as
-  fallback), never to `WORK_BRANCH`.  The work stays durable and fetchable
-  (`git fetch origin autosave/<iid>`); it just cannot be what anyone's next
-  `git pull` picks up, so a stale-tree autosave has no path onto a branch
-  people build from.  `PRESERVE_PUSH_BRANCH` overrides it for a human who
-  means it.  `WORK_BRANCH` is deliberately no longer consulted by the push —
-  it names what the box *builds*, and conflating that with where a crash dump
-  *lands* was the whole bug.  The two related exposures are unchanged and
-  still true: `origin/jit` has no branch protection, and nothing watches for
-  an autosave landing on it.  Original text follows.
+  — FIXED 2026-09-04.**  The autosave is no longer in git, and the script is
+  no longer in this repo: the spot box lifecycle moved to `avwohl/aws_watch`
+  under `spot/`, where it is project-independent and sits beside the reaper and
+  lease table these boxes already register with.  `preserve.sh` builds the
+  snapshot with plumbing in a scratch index (so the box's HEAD, index and
+  working tree never move) and writes it to
+  `s3://$BUCKET/autosave/<instance-id>/<ts>/` as a git bundle, beside a plain
+  `wip.diff`, `status.txt` and a manifest.  Committed work still goes to
+  `WORK_BRANCH` as an ordinary push, where a stale box is correctly refused as
+  a non-fast-forward.  Recovery is `aws_watch/spot/restore-autosave.sh`, which
+  lands a dump at `refs/autosave/<instance>/<ts>` and moves nothing else.
+
+  An intermediate version of this fix pushed the dump to a per-box
+  `autosave/<instance-id>` branch instead.  That closed the clobber but not a
+  second problem: a git object is permanent, so every dump's blobs would stay
+  in the pack forever, `add -A` sweeps in whatever untracked build output
+  `.gitignore` misses, and a stale autosave branch is the ref nobody deletes.
+  An S3 object is deletable and can be expired by a lifecycle rule.  For scale:
+  the two autosaves that reached `jit` cost 540 KiB of permanent pack, against
+  20 MiB of `build*/` binaries committed and later untracked — untracking
+  reclaims nothing.
+
+  `aws_watch/spot/test-preserve.sh` now covers all of this against a throwaway
+  repo and a stub `aws`, including the `ede0fd65` clobber itself.  The move
+  also fixed a second live defect it exposed: the idle timer runs as root, but
+  the git deploy key is in the box user's `~/.ssh`, so an idle-triggered
+  preserve's push could never authenticate — only the S3 half of the dump
+  survived, and only the spot watcher (which runs as `ubuntu`) ever pushed.
+  `idle-shutdown.sh` now drops to `$SPOT_USER` for the preserve.
+
+  The two related exposures are unchanged and still true: `origin/jit` has no
+  branch protection, and nothing watches for an autosave landing on it.
+  Original text follows.
 
   `scripts/aws/preserve.sh` can fast-forward a *revert* onto shared `jit`.
   It snapshots the working tree with `git add -A` but commits it with the

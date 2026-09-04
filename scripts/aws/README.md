@@ -10,8 +10,15 @@ For an isolated experiment, set `WORK_BRANCH=<topic>` and merge back deliberatel
 
 ## One-time prerequisites (local machine)
 
+- **A checkout of [`avwohl/aws_watch`](https://github.com/avwohl/aws_watch) next
+  to this one**, at `~/src/aws_watch` (or point `AWS_WATCH_DIR` at it). The spot
+  box lifecycle is not in this repo — see [Where the lifecycle
+  lives](#where-the-lifecycle-lives) below.
+
+      git clone git@github.com:avwohl/aws_watch.git ~/src/aws_watch
+
 - `~/.ssh/aws.txt` holds an AWS access key with enough rights (EC2, S3, and IAM
-  for the instance role). `load-creds.sh` parses it.
+  for the instance role). `aws_watch/spot/load-creds.sh` parses it.
 - `gh` authenticated as the repo owner (`repo` + `admin:public_key` scopes) so a
   scoped deploy key can be registered for the box.
 - AWS CLI v2 (`brew install awscli`).
@@ -46,16 +53,21 @@ scratch, that one script is all you need.
   authoritative defense — see [Keep-alive leases](#keep-alive-leases-no-more-reapskip)
   below. A box stays up only while an actively-working Claude heartbeats it; the
   `aws_watch` reaper on awohl.com terminates boxes whose lease has gone stale.
-- **Idle auto-terminate** (`idle-shutdown.sh`, `iospharo-idle.timer`): every
-  5 min it checks for SSH sessions, build/dev processes, and load. After
-  `IDLE_SECONDS` (default 1800 = 30 min) idle, it preserves state and
-  terminates the instance. (Process-based, so it never false-kills low-CPU work.)
-- **Spot-interruption preservation** (`spot-watch.sh`): watches the IMDS
-  spot/instance-action endpoint; on the ~2-min reclaim notice it runs
+- **Idle auto-terminate** (`aws_watch/spot/idle-shutdown.sh`,
+  `spot-idle.timer`): every 5 min it checks for SSH sessions, processes matching
+  `IDLE_ACTIVE_PATTERN`, and load. After `IDLE_SECONDS` (default 1800 = 30 min)
+  idle, it preserves state and terminates the instance. **`IDLE_ACTIVE_PATTERN`
+  in `config.env` is this project's most dangerous setting** — a sweep that
+  waits on the network looks idle. It cost a 74-minute run on 2026-08-11; the
+  comment above it in `config.env` is the story.
+- **Spot-interruption preservation** (`aws_watch/spot/spot-watch.sh`): watches
+  the IMDS spot/instance-action endpoint; on the ~2-min reclaim notice it runs
   `preserve.sh` immediately.
-- **`preserve.sh`**: commits WIP, pushes the work branch (`$WORK_BRANCH`,
-  default `jit`) to GitHub (durable), and syncs notes/logs to S3. Safe to run by
-  hand anytime.
+- **`aws_watch/spot/preserve.sh`**: pushes the box's *committed* work to
+  `$WORK_BRANCH` (default `jit`), and writes a crash dump of everything else to
+  S3. Safe to run by hand anytime; it never moves the box's HEAD, index or
+  working tree, so a box that is preserved but not actually reclaimed is left
+  exactly as you left it. See [Recovering an autosave](#recovering-an-autosave).
 
 ## Keep-alive leases (no more `Reap=skip`)
 
@@ -119,8 +131,14 @@ or rotating the key). The private half never leaves `~/.ssh` on this machine.
 
 ## Branch flow
 
-The box pushes to `jit` directly (`preserve.sh` → `origin/$WORK_BRANCH`, default
-`jit`), so there's normally no separate merge step — just `git pull` locally.
+The box pushes its **committed** work to `jit` directly (`preserve.sh` →
+`origin/$WORK_BRANCH`, default `jit`), so there's normally no separate merge
+step — just `git pull` locally. That push is an ordinary one: if the box is
+behind, the server refuses it as a non-fast-forward, which is the right answer.
+
+What does *not* go to git is the **autosave** — the `git add -A` snapshot
+preserve.sh takes of whatever the working tree happens to hold. That goes to S3;
+see below.
 
 If you run an isolated experiment with `WORK_BRANCH=<topic>`, fold it back with:
 
@@ -128,3 +146,66 @@ If you run an isolated experiment with `WORK_BRANCH=<topic>`, fold it back with:
     git merge origin/<topic>      # resolve, test
     git push origin jit
     git push origin --delete <topic>   # clean up
+
+## Recovering an autosave
+
+When a box is reclaimed or idle-terminated, `preserve.sh` writes a crash dump to
+
+    s3://iospharo-build-670060058357/autosave/<instance-id>/<timestamp>/
+
+containing a git bundle of everything the box held that `origin` did not, the
+uncommitted work as a plain patch, `git status`, and a manifest. Recover one
+with the shared tool, pointed at this project's config:
+
+    cd ~/src/iospharo-jit
+    CONFIG_FILE=scripts/aws/config.env ~/src/aws_watch/spot/restore-autosave.sh list
+    CONFIG_FILE=scripts/aws/config.env ~/src/aws_watch/spot/restore-autosave.sh show  <instance>/<ts>
+    CONFIG_FILE=scripts/aws/config.env ~/src/aws_watch/spot/restore-autosave.sh fetch <instance>/<ts>
+
+`fetch` lands the dump at `refs/autosave/<instance>/<ts>` and stops — no branch
+moves, no file is touched. Then `git log` / `git diff jit..<ref>` /
+`git cherry-pick`, and `git update-ref -d <ref>` when you're done.
+
+The full runbook, including what to do when a bundle's prerequisites are
+missing, is [`aws_watch/spot/README.md`](https://github.com/avwohl/aws_watch/blob/main/spot/README.md).
+
+### Why the autosave is not in git
+
+Two autosaves have landed on shared `jit` and done damage — `27d378d2`
+(2026-06-03, reverted the asmjit Catalyst pin, 68 days broken) and `ede0fd65`
+(2026-09-03, a 242-commit-stale tree that deleted `scripts/sweep-3way.sh`). The
+cause is structural: the snapshot's *tree* and its *parent* are independent
+inputs, so a current parent with a stale tree records the difference as
+deletions and pushes as a clean fast-forward nothing can refuse.
+
+A per-box `autosave/<instance-id>` branch fixes that much. S3 is better for a
+second reason: a git object is forever. For scale, in this repo the two
+autosaves that reached `jit` cost 540 KiB of permanent pack — small next to the
+20 MiB of `build*/` binaries that were committed and later untracked, which
+reclaimed nothing, but neither is recoverable without rewriting public history.
+An S3 object can be deleted, or expired by a lifecycle rule.
+
+## Where the lifecycle lives
+
+`preserve.sh`, `spot-watch.sh`, `idle-shutdown.sh`, `install-box.sh`,
+`restore-autosave.sh` and `load-creds.sh` are **not in this repo**. They are
+project-independent and live in [`avwohl/aws_watch`](https://github.com/avwohl/aws_watch)
+under `spot/`, beside the reaper and the `instance_lease` table these same boxes
+register with. `aws-lease-beat-hook.sh` used to exist byte-identically in both
+repos; now there is one copy.
+
+    ~/src/aws_watch/spot/     the lifecycle, and its tests
+    scripts/aws/              this project: what to build, and how to configure it
+
+`config.env` is the seam. It sets `AWS_WATCH_DIR`/`SPOT_DIR`, the on-box layout
+(`SPOT_PREFIX`, `SPOT_USER`, `SPOT_REPO`), the autosave commit identity, and
+`IDLE_ACTIVE_PATTERN`. `provision.sh` ships `$SPOT_DIR` to the box and runs
+`spot/install-box.sh`, which installs the scripts and writes and enables the
+systemd units — so the on-box layout is defined once, for every project.
+
+Run the lifecycle's own tests from there:
+
+    ~/src/aws_watch/spot/test-preserve.sh
+
+Ten cases against a throwaway repo and a stub `aws`; it never contacts AWS or
+GitHub. Case 3 is the `ede0fd65` clobber reproduced deliberately.
