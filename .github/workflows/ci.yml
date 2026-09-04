@@ -163,7 +163,41 @@ jobs:
     name: Repo hygiene
     runs-on: ubuntu-latest
     steps:
+      # Full history: the autosave check below has to see every commit a push
+      # introduces, not just the tip.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # An autosave is a crash dump the build box takes with `git add -A`.  Its
+      # tree and its parent are independent inputs, so a box with a current
+      # parent and a stale tree records the difference as DELETIONS and pushes
+      # as a clean fast-forward that nothing can refuse.  Twice now:
+      #   27d378d2  2026-06-03  reverted the asmjit Catalyst pin; fresh clones
+      #                         broken for 68 days because NOTHING LOOKED
+      #   ede0fd65  2026-09-03  a 242-commit-stale tree, deleting a script
+      # Those two are already in public history and are allowlisted here.
+      #
+      # Autosaves no longer reach git at all -- they are git bundles in S3, see
+      # scripts/aws/README.md -- so this is a regression guard.  It fires if
+      # that behaviour comes back, or if an old dump is merged in.  The
+      # signature is read from config.env, so it cannot drift from what
+      # preserve.sh actually writes.
+      - name: No autosave commit on a build branch
+        run: |
+          . scripts/aws/config.env
+          known='^(27d378d2|ede0fd65)'
+          found=$( { git log HEAD --format='%H %an: %s' -F --author="$AUTOSAVE_AUTHOR_NAME"
+                     git log HEAD --format='%H %an: %s' -F --grep="$AUTOSAVE_SUBJECT_PREFIX"
+                   } | sort -u | grep -vE "$known" || true )
+          if [ -n "$found" ]; then
+            echo "::error::an autosave commit is on this branch — a crash dump is not a commit anyone chose to make:"
+            printf '%s\n' "$found"
+            echo "Recover what you need from it, then drop it from the branch."
+            echo "See scripts/aws/README.md, 'Why the autosave is not in git'."
+            exit 1
+          fi
+          echo "no new autosave commits on this branch"
 
       # build-hunt/ (21 MB of object files) was committed because .gitignore
       # listed build directories by exact name and that one was not on the
