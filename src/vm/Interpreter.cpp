@@ -25445,6 +25445,17 @@ void Interpreter::tryJITResumeInCaller() {
         };
         switch (state.exitReason) {
         case jit::ExitReturn:
+            traceReturnPath("jit-resume-return", state.method,
+                            currentFrameMaterializedCtx_);
+            // DO NOT widow currentFrameMaterializedCtx_ here.  This IS the
+            // path the leak takes -- 13 of the 19 returns of a block's home
+            // method arrive here with ctx=present, against 4 at the fd==0
+            // context return (docs/vm-compat-bugs.md #28) -- but widowing it
+            // HANGS the VM: TKTWorkerTest ran 890 s to the harness timeout
+            // with 6.6M steps and only ProcessorScheduler>>idleProcess left in
+            // the queue.  So the field here is not (always) the RETURNING
+            // frame's context; nil'ing its sender destroys a chain still in
+            // use.  Measured 2026-09-04, PHARO_NO_RESUME_WIDOW.
             // Bug-14 diagnostic (tryResume path)
             if (GET_DEBUG_BOOL(PHARO_B5_TRACE)) {
                 static size_t c12791 = 0;
@@ -29330,6 +29341,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
         switch (state.exitReason) {
         case jit::ExitReturn:
+            traceReturnPath("jit-activation-return", state.method,
+                            currentFrameMaterializedCtx_);
             // Bug-14 diagnostic (materialized J2J exit)
             if (GET_DEBUG_BOOL(PHARO_B5_TRACE)) {
                 static size_t c14088 = 0;

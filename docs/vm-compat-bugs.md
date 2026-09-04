@@ -3491,8 +3491,32 @@ actually wins.  Deciding it needs a send-bound benchmark plus a full sweep on
 both arches; an attempt at a quick fib micro-bench in this session produced an
 implausible 15 ms and is not recorded as a number.
 
-**The fix belongs in the emitted return path**: when a frame being popped in
-JIT code has a materialized Context, that Context must be widowed.  Doing it
+#### The fourth path IS `tryJITResumeInCaller`'s ExitReturn — and widowing there HANGS
+
+Tracing the two JIT `ExitReturn` cases as well finds it immediately.  For
+`createProcessDoing:named:` in a failing run:
+
+    13  [RETURN-PATH jit-resume-return] ctx=present    tryJITResumeInCaller
+     4  [RETURN-PATH ctx-return]        ctx=present    the fd==0 path
+     0  popFrame / popFrameForJIT / tryJITActivation
+
+So the leak's path is `tryJITResumeInCaller`'s `case jit::ExitReturn`, it has
+`currentFrameMaterializedCtx_` live in hand, and it does not widow — while the
+4 that reach the fd==0 path do.  That also explains why `PHARO_NO_RESUME` and
+`PHARO_T1_NO_CALLER_RESUME` both fix the test: they route these returns away
+from this case.
+
+**But the obvious one-line fix is wrong.**  Adding the same two stores there
+does not just fail to help — it HANGS the VM: TKTWorkerTest ran to the 900 s
+harness timeout having executed 6.6M bytecodes, with only
+`ProcessorScheduler>>idleProcess` left in the queue.  Reverted; the note is at
+the site.
+
+The conclusion is that `currentFrameMaterializedCtx_` at that point is not
+(always) the RETURNING frame's context — plausibly it is the caller's, the
+frame being resumed INTO — so nil'ing its sender destroys a chain still in
+use.  **Identifying which context that case should widow is the next step**,
+and it now has an exact location instead of a subsystem.  Doing it
 unconditionally from emitted code would cost every return, so it wants a
 cheap guard — the frame already knows whether it was materialized — and a
 runtime helper on the rare true branch.  Not attempted here.
