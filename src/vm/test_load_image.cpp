@@ -1504,7 +1504,7 @@ int main(int argc, char* argv[]) {
             if (g_contextsWidowedOnReturn[0] || g_contextsWidowedOnReturn[1]
                     || g_contextsWidowedOnReturn[2])
                 fprintf(stderr, "[WIDOW] contexts widowed on return: "
-                        "popFrame=%llu popFrameForJIT=%llu ctx-return=%llu\n",
+                        "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu\n",
                         (unsigned long long)g_contextsWidowedOnReturn[0],
                         (unsigned long long)g_contextsWidowedOnReturn[1],
                         (unsigned long long)g_contextsWidowedOnReturn[2]);

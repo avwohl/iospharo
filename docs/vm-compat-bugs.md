@@ -3502,7 +3502,18 @@ Tracing the two JIT `ExitReturn` cases as well finds it immediately.  For
 
 So the leak's path is `tryJITResumeInCaller`'s `case jit::ExitReturn`, it has
 `currentFrameMaterializedCtx_` live in hand, and it does not widow — while the
-4 that reach the fd==0 path do.  That also explains why `PHARO_NO_RESUME` and
+4 that reach the fd==0 path do.
+
+**Label correction:** the site this file and the `[WIDOW]` tally call
+"popFrame" is actually inside `Interpreter::returnValue` (~8270); the real
+`Interpreter::popFrame` (~15355) has NO widow of its own and returns false
+immediately when `frameDepth_ == 0`.  Both bulk-firing widow sites are in
+`returnValue`.  That matters here: the resume ExitReturn case CALLS
+`popFrame()`, which — after block creation zeroed `frameDepth_` — returns
+false without widowing anything, and the case then falls into its own inline
+context return, whose widow of `activeContext_` is guarded on the sender being
+a valid object and evidently does not cover these 16.  The counts and arm
+differences above are unaffected; only the site names were wrong.  That also explains why `PHARO_NO_RESUME` and
 `PHARO_T1_NO_CALLER_RESUME` both fix the test: they route these returns away
 from this case.
 
@@ -3512,11 +3523,16 @@ harness timeout having executed 6.6M bytecodes, with only
 `ProcessorScheduler>>idleProcess` left in the queue.  Reverted; the note is at
 the site.
 
-The conclusion is that `currentFrameMaterializedCtx_` at that point is not
-(always) the RETURNING frame's context — plausibly it is the caller's, the
-frame being resumed INTO — so nil'ing its sender destroys a chain still in
-use.  **Identifying which context that case should widow is the next step**,
-and it now has an exact location instead of a subsystem.  Doing it
+And that guess was WRONG too, so it is recorded rather than left standing:
+extending the trace to name whose context it is reports
+`ctxOf=#createProcessDoing:named: SAME` on **16 of 16** — the field IS the
+returning frame's own context.  So the field is right and the TIMING is
+wrong: the case widows before it has delivered the return value and resumed
+the caller, and nil'ing sender/pc that early strands the return.
+
+**The next step is placement, not identification**: widow after the case has
+finished returning (past the `popFrame()` / inline-context-return fork), or
+extend that fork's own widow to cover the cases its sender guard misses.  Doing it
 unconditionally from emitted code would cost every return, so it wants a
 cheap guard — the frame already knows whether it was materialized — and a
 runtime helper on the rare true branch.  Not attempted here.

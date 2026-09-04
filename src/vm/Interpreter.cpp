@@ -2308,8 +2308,17 @@ void Interpreter::traceReturnPath(const char* site, Oop methodOop, Oop ctx) {
     static int n = 0;
     if (++n > 400) return;
     bool haveCtx = ctx.isObject() && !ctx.isNil() && ctx.rawBits() > 0x10000;
-    fprintf(stderr, "[RETURN-PATH %s] #%s ctx=%s\n", site, sel.c_str(),
-            haveCtx ? "present" : "NONE");
+    // Name WHOSE context it is.  "present" alone cannot distinguish the
+    // returning frame's context from the caller's, and that distinction is
+    // what decides whether widowing here is correct (#28).
+    std::string ctxSel = "-";
+    if (haveCtx && memory_.isValidPointer(ctx)) {
+        ObjectHeader* c = ctx.asObjectPtr();
+        if (c->slotCount() > 3) ctxSel = memory_.selectorOf(c->slotAt(3));
+    }
+    fprintf(stderr, "[RETURN-PATH %s] returning=#%s ctxOf=#%s %s\n", site,
+            sel.c_str(), ctxSel.c_str(),
+            haveCtx ? (ctxSel == sel ? "SAME" : "DIFFERENT") : "NONE");
 }
 
 // PHARO_WIDOW_TRACE_SEL=<substring>: name every activation that IS widowed, so
@@ -2438,7 +2447,7 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                     (unsigned long long)g_contextsKilledByUnwind[0],
                     (unsigned long long)g_contextsKilledByUnwind[1]);
         fprintf(stderr, "[SEND-CHAIN] contexts widowed on return: "
-                "popFrame=%llu popFrameForJIT=%llu ctx-return=%llu\n",
+                "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu\n",
                 (unsigned long long)g_contextsWidowedOnReturn[0],
                 (unsigned long long)g_contextsWidowedOnReturn[1],
                 (unsigned long long)g_contextsWidowedOnReturn[2]);
@@ -8258,7 +8267,7 @@ terminate_process:
         ? savedFrames_[frameDepth_ - 1].materializedRetSlot
         : nullptr;
 
-    traceReturnPath("popFrame", method_, currentFrameMaterializedCtx_);
+    traceReturnPath("returnValue", method_, currentFrameMaterializedCtx_);
 
     // Mark the returning (current) frame's materialized context dead, mirroring
     // the fd==0 context-return path at ~6940.  currentFrameMaterializedCtx_ is THIS
