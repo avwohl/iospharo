@@ -3282,10 +3282,51 @@ never widowed.  `TKTWorkerProcess>>start` and `TKTWorker>>start` both appear in
 the trace too, so these activations are not systematically excluded — only
 sometimes missed.
 
-**The next mechanical step** is to count `TKTWorker>>privateStart` ACTIVATIONS
-against those 5 widowings.  If activations exceed widowings the gap is proved
-rather than inferred, and the return path those activations take is the thing
-to find.
+#### PROVED: the JIT leaves whole Contexts alive that the interpreter never creates
+
+Counting directly, in the image, at the last `tearDown` after a full GC —
+`Context allInstances select: [:c | c method selector == #privateStart]` — and
+counting activations with a bumped global in `TKTWorker>>privateStart` itself.
+Same image, same binary, only `PHARO_NO_JIT` changed:
+
+    arm        privateStart activations   contexts alive   notWidowed   widowed
+    JIT on              19                      7               1           6
+    JIT off             19                      0               0           0
+
+**Zero with the JIT off.**  Same number of activations both ways, so this is
+not "the JIT runs more code" — it is the JIT leaving a reified Context behind
+for 7 of 19 activations that the interpreter never creates at all.
+
+Note that **6 of the 7 survivors are WIDOWED and still alive**, which settles
+the direction of the fix: widowing is not the lever.  A widowed Context keeps
+its receiver in slot 5 (correct Cog semantics — `markContextAsDead:` nils only
+sender and pc), so as long as the Context object itself is reachable, its
+receiver is pinned.
+
+#### ROOT CAUSE: block creation materializes the WHOLE frame stack
+
+`materializeFrameStack()` reifies every entry in `savedFrames_`, not just the
+frame that owns the closure, and the callers then set `frameDepth_ = 0`
+(17 sites; the block-creation one is `outerContextForBlock =
+materializeFrameStack()` at Interpreter.cpp ~17519).  So when
+`createProcessDoing:named:` creates the process body block, the VM builds real
+Context objects for `createProcessDoing:named:`, `TKTWorkerProcess>>start`,
+`TKTWorker>>privateStart` and everything below, wired into a real sender chain.
+The closure holds the innermost one as `outerContext` and the chain does the
+rest.
+
+Cog does not have this problem because a married context's `sender` field holds
+the frame pointer rather than a caller Context, and the caller frames are never
+reified unless something asks for them.  Ours reifies eagerly, so one surviving
+closure pins its entire creating call stack — which is also the "24% more
+distinct workers survive with the JIT on" number above, i.e. this is general
+heap bloat that TKTWorkerTest merely asserts on.
+
+**The fix is to materialize only the frame that owns the closure** and leave
+its sender unreified, which is a real change: the sender chain is what NLR, the
+debugger and exception handling walk, so it needs the lazy-resolution half of
+Cog's married/widowed protocol rather than just a narrower loop.  Not attempted
+here.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
