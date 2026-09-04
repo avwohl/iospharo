@@ -3431,6 +3431,17 @@ with a clean binary arm difference at every step:
     contexts retained 0 vs 7     the consequence
     test        7 P vs 4 P/2 E   the symptom
 
+**Tried and REVERTED: setting `currentFrameMaterializedCtx_` at block
+creation.**  The three block-creation sites do
+`outerContextForBlock = materializeFrameStack()` and then (two of them) assign
+`activeContext_` and zero `frameDepth_`, but none of them updates
+`currentFrameMaterializedCtx_` — which is the field `popFrame` widows.  That
+looked like the whole bug.  Adding the assignment at all three sites changed
+NOTHING: 3 home-context widowings with it and 3 without, test 4 P / 2 E / 1 T
+both ways.  Reverted rather than kept, because an inert change that looks like
+a fix is worse than no change.  So those frames do not return through
+`popFrame` at all, and the missing path is still unidentified.
+
 So the question is now specific and small: **which return path do those 15
 take?**  Three widow sites exist and the `[WIDOW]` tally says `popFrame` and
 the fd==0 context-return fire in bulk while `popFrameForJIT` fires zero times,
