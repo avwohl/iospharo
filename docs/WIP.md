@@ -15,6 +15,60 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-09-04, 04:15)
+
+**The residual is one class, and the rest of the gap is speed.**  A
+matched-runner check (our VM under `run_sunit_cog.st`, the runner stock Cog
+uses) collapsed four "ours" classes to one: `LinkInstallerTest`,
+`SpJobListPresenterTest`, `SpHorizontalBoxLayoutTest` and `TraitFileOutTest`
+all pass on our VM under that runner, `StSpotterTest` fails identically on
+both VMs, and only `TKTWorkerTest` is genuinely ours.  Every Δcog number in
+this repo carries that caveat now — it is only a VM claim when the runners
+match, and ours forks each test into its own process while Cog's runs inline.
+
+**`TKTWorkerTest` (defect #28) is root-caused.**  Measured in the image at the
+last tearDown after a full GC, same binary, only `PHARO_NO_JIT` changed:
+
+    arm        privateStart activations   contexts alive   widowed
+    JIT on              19                      7             6
+    JIT off             19                      0             0
+
+Block creation calls `materializeFrameStack()`, which reifies EVERY saved
+frame rather than only the one owning the closure; the process-body block's
+`outerContext` then drags a real Context chain back to
+`TKTWorker>>privateStart`, pinning its receiver.  Six of the seven survivors
+are already widowed, so widowing is not the lever — a widowed Context still
+holds its receiver.  The fix needs the lazy half of Cog's married/widowed
+protocol (a married context's sender is a frame pointer, not a caller
+Context).  Not attempted.
+
+**The TIMEOUT residual is the JIT being slower than our interpreter.**  Defect
+#6 measured to completion for the first time, outside SUnit so the scan
+finishes instead of being killed:
+
+    stock Cog (x86_64 Rosetta)     5.76 s
+    ours, JIT on                 216.8 / 217.3 / 218.2 s
+    ours, JIT off                177.4 / 160.9 / 161.2 s
+
+37x Cog, and **35% slower than our own interpreter**.  That is the known "1M
+blocks: JIT 5.5x SLOWER" regression showing up as test failures — a
+whole-image scan is `allMethodsDo: [...]`.  A knob triage puts the only
+measurable share on the caller-resume path (`PHARO_T1_NO_CALLER_RESUME`
+-14%, matching `tryJITResumeInCaller` topping the sample); both block-value
+specialisation knobs are within noise.  Full table in
+`scripts/perf-activation/README.md`.
+
+**A validation re-sweep of real x86 is running** with today's two functional
+changes (`RUN_FROM_IMAGE_DIR` default, the `popFrameForJIT` widow), at index
+~1750 of 2047 with 8 F / 3 E so far.
+
+**Two claims of mine were withdrawn after measurement**, both recorded where
+they were made: `primitiveQuit` IS reached in the x86 "wedge" (shutdown is
+660 ms; the ~22 s is inside the image, and it is 1 s on arm64, 7 s under
+Rosetta, 22 s on native Linux), and the `popFrameForJIT` widow store is
+**inert** — the `[WIDOW]` tally reports it firing 0 times per run, so the
+retention improvement first attributed to it was noise.
+
 ## Right now (2026-09-04, 01:30)
 
 **The real-x86 sweep FINISHED.**  All 2047 classes on native x86_64 Linux:
