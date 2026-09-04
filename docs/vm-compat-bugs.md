@@ -3393,11 +3393,40 @@ closure pins its entire creating call stack — which is also the "24% more
 distinct workers survive with the JIT on" number above, i.e. this is general
 heap bloat that TKTWorkerTest merely asserts on.
 
-**The fix is to materialize only the frame that owns the closure** and leave
-its sender unreified, which is a real change: the sender chain is what NLR, the
-debugger and exception handling walk, so it needs the lazy-resolution half of
-Cog's married/widowed protocol rather than just a narrower loop.  Not attempted
-here.
+#### And the fix is narrower than that: ONE link, and it is usually not widowed
+
+Cog does break this chain, and by widowing — but at the link that matters, the
+closure's HOME context.  When `createProcessDoing:named:` returns, its context
+is dead; Cog nils its sender, and everything below is then unreachable.  The
+closure legitimately keeps holding the dead home (that is how
+`BlockCannotReturn` is detected), but a dead home with a nil sender pins
+nothing.
+
+Ours usually does not widow it.  `PHARO_WIDOW_TRACE_SEL=createProcessDoing`
+over the failing run:
+
+    2  ctx-return  TKTPharoProcessProvider>>#createProcessDoing:named:
+    2  popFrame    TKTPharoProcessProvider>>#createProcessDoing:named:
+
+**Four widowings.**  `TKTWorker>>privateStart` runs 19 times in that same run
+and is `process start`, which calls `createProcessDoing:named:`
+unconditionally — so there are at least 19 activations of it and at most 4 of
+their home contexts are ever widowed.  The other 15+ keep a live sender chain,
+and those are exactly the chains the heap watch finds pinning workers.
+
+So the question is now specific and small: **which return path do those 15
+take?**  Three widow sites exist and the `[WIDOW]` tally says `popFrame` and
+the fd==0 context-return fire in bulk while `popFrameForJIT` fires zero times,
+so a fourth path — the JIT's emitted return epilogue, which pops in native
+code without calling either C++ pop — is the candidate.  That is a far smaller
+target than reimplementing the married/widowed protocol, which is what the
+previous paragraph proposed.
+
+(The broader statement still holds and is worth keeping: `materializeFrameStack`
+reifies every saved frame rather than only the one owning the closure, so the
+chain that then fails to be widowed is longer than it needs to be.  Narrowing
+the materialization would reduce the blast radius; widowing the home is what
+actually breaks the retention.)
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
