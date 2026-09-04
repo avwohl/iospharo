@@ -3414,6 +3414,23 @@ unconditionally — so there are at least 19 activations of it and at most 4 of
 their home contexts are ever widowed.  The other 15+ keep a live sender chain,
 and those are exactly the chains the heap watch finds pinning workers.
 
+**And the interpreter widows all of them.**  Same image, same binary, same
+trace, only `PHARO_NO_JIT` changed:
+
+    arm       createProcessDoing:named: widowings   test
+    JIT off        19  (all via popFrame)          7 P / 0 F / 0 E
+    JIT on          4  (2 ctx-return, 2 popFrame)  4 P / 2 E / 1 T
+
+Nineteen activations, nineteen widowings, zero retention, test passes.  With
+the JIT on, four widowings, fifteen live sender chains, workers pinned, the
+finalizer never runs, test fails.  That is the whole chain measured end to end
+with a clean binary arm difference at every step:
+
+    activations 19 = 19          both arms
+    widowed     19 vs 4          the defect
+    contexts retained 0 vs 7     the consequence
+    test        7 P vs 4 P/2 E   the symptom
+
 So the question is now specific and small: **which return path do those 15
 take?**  Three widow sites exist and the `[WIDOW]` tally says `popFrame` and
 the fd==0 context-return fire in bulk while `popFrameForJIT` fires zero times,
