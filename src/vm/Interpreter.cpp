@@ -2294,6 +2294,24 @@ uint64_t g_duplicateActivation[2] = {0, 0};
 // question rather than leaving it to be inferred from heap-watch output.
 uint64_t g_contextsWidowedOnReturn[3] = {0, 0, 0};
 
+// PHARO_WIDOW_TRACE_SEL=<substring>: name every RETURN of a matching
+// activation and whether it had a materialized Context to widow.  The widow
+// trace alone cannot distinguish "returned with no context" from "never
+// returned through this path at all", and that is precisely the open question
+// in docs/vm-compat-bugs.md #28.
+void Interpreter::traceReturnPath(const char* site, Oop methodOop, Oop ctx) {
+    const char* want = GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL);
+    if (!want) return;
+    if (!methodOop.isObject() || methodOop.rawBits() <= 0x10000) return;
+    std::string sel = memory_.selectorOf(methodOop);
+    if (sel.find(want) == std::string::npos) return;
+    static int n = 0;
+    if (++n > 400) return;
+    bool haveCtx = ctx.isObject() && !ctx.isNil() && ctx.rawBits() > 0x10000;
+    fprintf(stderr, "[RETURN-PATH %s] #%s ctx=%s\n", site, sel.c_str(),
+            haveCtx ? "present" : "NONE");
+}
+
 // PHARO_WIDOW_TRACE_SEL=<substring>: name every activation that IS widowed, so
 // "this context was never widowed" can be established rather than inferred.
 void Interpreter::traceWidow(const char* site, Oop ctx) {
@@ -8061,6 +8079,7 @@ void Interpreter::returnValue(Oop value) {
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 
+                    traceReturnPath("ctx-return", method_, activeContext_);
                     // Mark the returning context as dead per Cog VM semantics:
                     // nil the sender and PC so isDead returns true and sender chain is broken.
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
@@ -8238,6 +8257,8 @@ terminate_process:
     Oop* matRetSlot = (frameDepth_ > 0)
         ? savedFrames_[frameDepth_ - 1].materializedRetSlot
         : nullptr;
+
+    traceReturnPath("popFrame", method_, currentFrameMaterializedCtx_);
 
     // Mark the returning (current) frame's materialized context dead, mirroring
     // the fd==0 context-return path at ~6940.  currentFrameMaterializedCtx_ is THIS
@@ -15644,6 +15665,8 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     if (__builtin_expect(frame.materializedRetSlot != nullptr, 0)) {
         if (materializedFrameCount_ > 0) materializedFrameCount_--;
     }
+
+    traceReturnPath("popFrameForJIT", method_, currentFrameMaterializedCtx_);
 
     // Widow the returning frame's materialized context, exactly as popFrame()
     // does (~line 8216).  popFrame() had this and popFrameForJIT did not, and

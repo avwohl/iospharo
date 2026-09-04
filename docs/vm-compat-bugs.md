@@ -3442,13 +3442,37 @@ both ways.  Reverted rather than kept, because an inert change that looks like
 a fix is worse than no change.  So those frames do not return through
 `popFrame` at all, and the missing path is still unidentified.
 
-So the question is now specific and small: **which return path do those 15
-take?**  Three widow sites exist and the `[WIDOW]` tally says `popFrame` and
-the fd==0 context-return fire in bulk while `popFrameForJIT` fires zero times,
-so a fourth path — the JIT's emitted return epilogue, which pops in native
-code without calling either C++ pop — is the candidate.  That is a far smaller
-target than reimplementing the married/widowed protocol, which is what the
-previous paragraph proposed.
+#### ANSWERED: they do not return through any C++ path at all
+
+`PHARO_WIDOW_TRACE_SEL` now also logs every RETURN of a matching activation and
+whether it had a context to widow (`[RETURN-PATH]`), which separates "returned
+with no context" from "never returned through this path".  Same image, same
+binary, only `PHARO_NO_JIT` changed:
+
+    arm        returns of createProcessDoing:named: seen by the C++ paths
+    JIT off    18 popFrame + 1 ctx-return = 19   (all ctx=present)
+    JIT on      2 popFrame + 1 ctx-return =  3   (all ctx=present)
+
+Nineteen activations both ways.  The interpreter's returns are all visible and
+all widow.  **With the JIT on, 16 of the 19 returns are invisible to every C++
+return path** — they are executed entirely by the emitted return epilogue,
+which pops the frame in native code and calls neither `popFrame`,
+`popFrameForJIT` nor the fd==0 context return.  Nothing widows, so the home
+context keeps a live sender chain.
+
+That is the complete mechanism:
+
+    activations                    19 = 19
+    returns seen by a widow site   19 vs 3      <- the defect
+    home contexts widowed          19 vs 4
+    contexts retained               0 vs 7
+    TKTWorkerTest              7 P vs 4 P/2 E
+
+**The fix belongs in the emitted return path**: when a frame being popped in
+JIT code has a materialized Context, that Context must be widowed.  Doing it
+unconditionally from emitted code would cost every return, so it wants a
+cheap guard — the frame already knows whether it was materialized — and a
+runtime helper on the rare true branch.  Not attempted here.
 
 (The broader statement still holds and is worth keeping: `materializeFrameStack`
 reifies every saved frame rather than only the one owning the closure, so the

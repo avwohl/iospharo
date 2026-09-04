@@ -1826,6 +1826,8 @@ public:
     void backwardBranchInterruptCheck();
     /// PHARO_WIDOW_TRACE_SEL diagnostic: name an activation widowed on return.
     void traceWidow(const char* site, Oop ctx);
+    /// PHARO_WIDOW_TRACE_SEL diagnostic: name a RETURN and whether it had a context.
+    void traceReturnPath(const char* site, Oop methodOop, Oop ctx);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:
