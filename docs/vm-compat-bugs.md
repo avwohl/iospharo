@@ -3468,6 +3468,19 @@ That is the complete mechanism:
     contexts retained               0 vs 7
     TKTWorkerTest              7 P vs 4 P/2 E
 
+**Confirmed a second way, interventionally.**  Two knobs force returns back
+through the C++ paths while leaving the JIT ON, and both make the test pass:
+
+    knob                          returns seen   TKTWorkerTest
+    (default)                          3         4 P / 2 E / 1 T
+    PHARO_T1_NO_CALLER_RESUME=1       19         7 P / 0 F / 0 E
+    PHARO_NO_RESUME=1                 19         7 P / 0 F / 0 E
+
+So it is specifically the JIT RESUME path: once the caller is resumed into
+emitted code, its later returns happen natively and never reach a widow site.
+Observationally (JIT off sees 19, JIT on sees 3) and interventionally (force
+the returns back through C++ and 19 reappear, and the failure goes) agree.
+
 **The fix belongs in the emitted return path**: when a frame being popped in
 JIT code has a materialized Context, that Context must be widowed.  Doing it
 unconditionally from emitted code would cost every return, so it wants a
