@@ -1150,6 +1150,20 @@ Activation and resume machinery dominates, which is `scripts/perf-activation`'s
 hypothesis 1 (the bcToCode resume-address lookup) sitting at the top on a REAL
 workload rather than a microbenchmark.
 
+A knob triage on the same workload (one rep each) puts a number on it:
+
+    (default)                    217.3 s     --
+    PHARO_T1_NO_CALLER_RESUME    187.2 s    -14%
+    PHARO_NO_BLOCK_VALUE_SPEC    216.9 s      0
+    PHARO_NO_EAGER_BLOCK_VALUE   217.5 s      0
+    PHARO_T1_NO_INLINE_J2J       220.8 s     +2%
+    PHARO_NO_JIT                 161.0 s    -26%
+
+Only the caller-resume path has a measurable share.  The block-value
+specialisations are both within noise, so the block cost sits in the generic
+activation path rather than those emits.  Full table and method in
+`scripts/perf-activation/README.md`.
+
 Checked and NOT the cause, so nobody re-checks it: `noteMethodEntry`'s
 `sistaRuntimeForGCHook_->hasSplice(m)` looked like the per-call
 `unordered_set` lookup CLAUDE.md warns about, but the Sista runtime is created

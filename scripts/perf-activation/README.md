@@ -57,3 +57,68 @@ Blocks are FASTER than method sends on this bench (the BV-inline path
 is more optimized than plain J2J method send, matching the memory's
 2026-06-25 finding).  Ablation deltas should be read against THESE
 numbers with the SAME bench.
+
+
+## 2026-09-04: a REAL-workload profile and knob triage (not the microbench)
+
+Everything above is `bench_activation.st`.  This section is the same question
+asked of the workload that actually costs test results — the whole-image
+reflective scan behind defect #6's TIMEOUTs
+(`NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft`, run outside
+SUnit so it completes rather than being killed).  Native arm64, quiet machine.
+
+Baseline, interleaved reps:
+
+    stock Cog (x86_64 Rosetta)     5.76 s
+    ours, JIT on                 216.8 / 217.3 / 218.2 s
+    ours, JIT off                177.4 / 160.9 / 161.2 s
+
+**The JIT is 35% slower than our own interpreter here.**  That is consistent
+with `docs/results-perfdb.md`'s "1M blocks: JIT 5.5x SLOWER" — a reflective
+scan is `allMethodsDo: [...]`, i.e. block-activation-bound.
+
+`sample`, 10 s mid-scan, top of stack (JIT-emitted code carries no symbols so
+it is excluded; these are the C++ frames):
+
+    724  Interpreter::tryJITResumeInCaller
+    560  Interpreter::activateBlock
+    443  Interpreter::tryJITActivation
+    436  ObjectMemory::scavenge()::$_3
+    386  JITRuntime::noteMethodEntry
+    327  Interpreter::interpret
+    319  JITRuntime::tryResume
+    295  Interpreter::push
+    254  Interpreter::upgradeICToJ2J
+    196  Interpreter::primitiveFullClosureValue
+
+Knob triage, one rep each, same expression, same machine:
+
+    knob                          time      delta vs default
+    (default)                    217.3 s      --
+    PHARO_T1_NO_CALLER_RESUME    187.2 s     -14%
+    PHARO_NO_BLOCK_VALUE_SPEC    216.9 s       0
+    PHARO_NO_EAGER_BLOCK_VALUE   217.5 s       0
+    PHARO_T1_NO_INLINE_J2J       220.8 s      +2%
+    PHARO_NO_JIT                 161.0 s     -26%
+
+**Only the caller-resume path has a measurable share**, and it is 14% — which
+matches `tryJITResumeInCaller` topping the profile, and makes hypothesis 1 (the
+bcToCode resume-address lookup on the J2J return path) the one with evidence
+behind it.  The other 12% of the gap to the interpreter is spread across
+`activateBlock` / `tryJITActivation` / `noteMethodEntry` and does not fall to
+any single existing knob.
+
+Two things NOT to re-test:
+
+  * the block-value specialisations — `PHARO_NO_BLOCK_VALUE_SPEC` and
+    `PHARO_NO_EAGER_BLOCK_VALUE` are each within noise of the default, so the
+    block cost is in the generic activation path, not in those emits;
+  * `noteMethodEntry`'s `hasSplice()` — it looks like the per-call
+    `unordered_set` lookup CLAUDE.md warns about, but `sistaRuntimeForGCHook_`
+    is null unless `PHARO_SISTA_COMPILE`/`sistaDispatch` is set, so the lookup
+    never runs in a default build.
+
+`PHARO_T1_NO_CALLER_RESUME` is NOT a fix — it is the x86 sp-leak workaround
+knob, it does not close the gap to the interpreter (187 s vs 161 s), and
+disabling caller re-entry costs send-bound code where the JIT does win.  It is
+useful here only as an attribution instrument.
