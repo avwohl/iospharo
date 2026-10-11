@@ -122,3 +122,51 @@ Two things NOT to re-test:
 knob, it does not close the gap to the interpreter (187 s vs 161 s), and
 disabling caller re-entry costs send-bound code where the JIT does win.  It is
 useful here only as an attribution instrument.
+
+
+## 2026-10-11: the gap is general, and two interpreter hot-path fixes
+
+`bench_ast_phases.st` splits defect #6's scan into phases.  Native arm64 for
+ours, stock Cog x86_64 under Rosetta, ms:
+
+    phase            Cog    ours JIT   ours interp   JIT/Cog
+    enumerate         10        73          53          7x
+    sourceCode        70      1849        1327         26x
+    scan             114      1631        1340         14x
+    parse            328      5080        3922         15x
+    parse+semantic   677     12210        9186         18x
+    printString 3M   552     10765        6559         20x
+
+No phase stands out, so it is not the parser.  `1 to: N do: [:i | i
+printString]` alone shows the whole problem and is the repro to use.
+
+Per 1M printString, before -> after the two fixes below:
+
+    interpreter (PHARO_NO_JIT)   1980 -> 1500 ms
+    JIT (default)                3170 -> ~3000 ms
+
+**Fix 1: `Interpreter::push` was the hottest interpreter frame** (863 of
+~6000 samples).  Every push ran a three-region heap-bounds test plus two
+large diagnostic dumps, all inline, so the function could not be inlined.
+Now a one-test fast path with the old body moved byte-for-byte into a cold
+`pushSlow()`.  -21% on the interpreter.
+
+**Fix 2: `patchJITICAfterSend` was an out-of-line call per send** that
+returned at once almost always (no pending patch).  Inline gate now.  -4%.
+
+**What did NOT move the JIT number**, each 2 reps on the printString loop:
+
+    knob                                             ms      vs ~3050
+    PHARO_T1_NO_CALLER_RESUME                        2900-2934  -5%
+    PHARO_NO_RESUME                                  2952-2979  -3%
+    PHARO_T1_ADMIT_BAILMID_CALLEES                   3026-3028  -1%
+    ADMIT_BAILMID + PHARO_T1_XMETHOD_MAX_IC=200      3977-4006  +31%
+
+`PHARO_T1_SEND_CENSUS` on this loop: 69% of sends take the dispatchCached
+round trip (top: `#byteAt:put:` 5.6 per printString, `#digitValue:` 4.9),
+and the census now also prints which early return `upgradeICToJ2J` took.
+Almost all of them leave at "entry matched, extras already set": the IC
+already holds a J2J entry (bit 60) and the emitted send still exits
+ExitSendCached.  Opening the bail-mid and numIC gates does not change the
+69%, so those gates are not what refuses them.  This is the
+`docs/j2j-chain-continuity.md` project (site 1); start there.

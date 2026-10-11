@@ -496,229 +496,25 @@ public:
     // ===== STACK ACCESS (for primitives) =====
     // These are inline for performance — called millions of times per second.
 
-    /// Push a value onto the stack
+    /// Push a value onto the stack.  The fast path is one bounds test and a
+    /// store; every diagnostic (corpse trap, corrupt-sp and overflow dumps,
+    /// push-origin recording) lives in the cold out-of-line pushSlow().  The
+    /// checks used to be inline here, which made push() too large to inline
+    /// and put a three-region heap-bounds test on every push: push() was the
+    /// hottest frame of an interpreter-only profile (863 of ~6000 samples).
     inline void push(Oop value) {
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_CORPSE_PUSH_TRAP), 0)) {
-            if (value.isObject() && value.rawBits() > 0x10000
-                    && memory_.isYoungObject(
-                        reinterpret_cast<void*>(value.rawBits()))
-                    && value.asObjectPtr()->classIndex() == 0) {
-                static int corpsePushLog = 0;
-                if (corpsePushLog++ < 5) {
-                    // Is this value ALSO sitting in the live operand stack, and
-                    // where relative to the current frame?  That is the whole
-                    // question for a use-after-collect: if it is inside
-                    // [stackBase_, stackPointer_) then the GC's own root scan
-                    // walked over it and dropped it anyway, which is a scan
-                    // bug; if it is nowhere in the stack, the holder is
-                    // somewhere the collector never looks (a C++ local, a
-                    // register, JIT state) and the fix belongs there instead.
-                    int copies = 0; long long firstOff = -1;
-                    for (Oop* q = stackBase_; q < stackPointer_; ++q) {
-                        if (q->rawBits() == value.rawBits()) {
-                            ++copies;
-                            if (firstOff < 0) firstOff = (long long)(q - stackBase_);
-                        }
-                    }
-                    // Which BYTECODE is doing the pushing?  That names the
-                    // frame region the value came out of -- a pushTemp: says a
-                    // frame temp slot, a send-return says the callee's result
-                    // slot, and so on.  Without it the origin is guesswork.
-                    long long bcOff = -1; int bcHere = -1;
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        ObjectHeader* mo = method_.asObjectPtr();
-                        Oop hdr0 = mo->slots()[0];
-                        int nLit = hdr0.isSmallInteger()
-                            ? (int)(hdr0.asSmallInteger() & 0x7FFF) : 0;
-                        const uint8_t* base = mo->bytes() + (1 + nLit) * 8;
-                        if (instructionPointer_ && instructionPointer_ > base) {
-                            bcOff = (long long)(instructionPointer_ - 1 - base);
-                            bcHere = *(instructionPointer_ - 1);
-                        }
-                    }
-                    // Was THIS object the most recent allocation, and has a
-                    // scavenge run since?  See the note in allocateSlots.
-                    extern uint64_t g_scavengeCount;
-                    extern uint64_t g_lastAllocAddr;
-                    extern uint64_t g_lastAllocScav;
-                    extern uint32_t g_lastAllocClassIdx;
-                    bool isLastAlloc = (g_lastAllocAddr == value.rawBits());
-                    fprintf(stderr,
-                        "[CORPSE-PUSH] val=0x%llx in=#%s fd=%zu jitState=%d "
-                        "inStack=%d firstSlot=%lld sp=%lld fp=%lld "
-                        "bcOff=%lld bc=0x%02x isLastAlloc=%d allocScav=%llu "
-                        "nowScav=%llu allocCls=%u\n",
-                        (unsigned long long)value.rawBits(),
-                        memory_.selectorOf(method_).c_str(), frameDepth_,
-                        currentJITState_ ? 1 : 0,
-                        copies, firstOff,
-                        (long long)(stackPointer_ - stackBase_),
-                        framePointer_ ? (long long)(framePointer_ - stackBase_) : -1LL,
-                        bcOff, (unsigned)(bcHere & 0xFF),
-                        isLastAlloc ? 1 : 0,
-                        (unsigned long long)g_lastAllocScav,
-                        (unsigned long long)g_scavengeCount,
-                        (unsigned)g_lastAllocClassIdx);
-                }
-            }
-        }
-        // Detect a corrupted stackPointer_ pointing outside both the C++
-        // stack array AND any known Smalltalk heap region.  Tracking A3:
-        // under JIT, after many activations and GCs, stackPointer_
-        // sometimes points at an address that's neither the C++ array
-        // nor a live Smalltalk heap region.  The ">= end" check below
-        // wouldn't catch this because the address isn't contiguous with
-        // the C++ array.
-        {
-            uint8_t* spB = reinterpret_cast<uint8_t*>(stackPointer_);
-            uint8_t* arrBase = reinterpret_cast<uint8_t*>(stack_.data());
-            uint8_t* arrEnd = arrBase + MaxStackDepth * sizeof(Oop);
-            bool inArr = (spB >= arrBase && spB < arrEnd);
-            bool inHeap = false;
-            if (memory_.isInitialized()) {
-                uint8_t* os = memory_.oldSpaceStart();
-                uint8_t* oe = memory_.oldSpaceEnd();
-                uint8_t* ns = memory_.newSpaceStart();
-                uint8_t* ne = memory_.newSpaceEnd();
-                uint8_t* ps = memory_.permSpaceStart();
-                uint8_t* pe = memory_.permSpaceEnd();
-                inHeap = (spB >= os && spB < oe) ||
-                         (spB >= ns && spB < ne) ||
-                         (spB >= ps && spB < pe);
-            }
-            if (__builtin_expect(!inArr && !inHeap, 0)) {
-                // 2026-05-06 A1: with the StackSafetyZone fix shipped in
-                // d9d23903, JIT overflow now lands sp exactly at arr_end
-                // (logical limit) instead of past the safety zone.  Emit
-                // a clearer "Stack overflow" diagnostic for that clean
-                // case rather than the original "CORRUPT" message which
-                // implied actual memory corruption.
-                bool cleanOverflow = (spB == arrEnd);
-                void* ra0 = __builtin_return_address(0);
-                // __builtin_return_address(1) is "unsafe" per clang but
-                // we only use it as a diagnostic aid on a panic path —
-                // a missing/garbage caller PC is fine.  Suppress the
-                // -Wframe-address warning for this single call.
-                #pragma GCC diagnostic push
-                #pragma GCC diagnostic ignored "-Wframe-address"
-                void* ra1 = __builtin_extract_return_addr(__builtin_return_address(1));
-                #pragma GCC diagnostic pop
-                Dl_info info0{}, info1{};
-                int got0 = dladdr(ra0, &info0);
-                int got1 = dladdr(ra1, &info1);
-                fprintf(stderr, "[VM] push() %s stackPointer_=%p "
-                        "(not in stack_[%p..%p) and not in any heap region) "
-                        "fd=%zu method=#%s\n",
-                        cleanOverflow ? "STACK OVERFLOW (sp at arr_end)"
-                                       : "with CORRUPT",
-                        (void*)spB, (void*)arrBase, (void*)arrEnd,
-                        frameDepth_,
-                        memory_.selectorOf(method_).c_str());
-                fprintf(stderr, "[VM]   ra0=%p sym=%s+%lld\n",
-                        ra0,
-                        got0 && info0.dli_sname ? info0.dli_sname : "?",
-                        got0 ? (long long)((uint8_t*)ra0 - (uint8_t*)info0.dli_saddr) : 0LL);
-                fprintf(stderr, "[VM]   ra1=%p sym=%s+%lld\n",
-                        ra1,
-                        got1 && info1.dli_sname ? info1.dli_sname : "?",
-                        got1 ? (long long)((uint8_t*)ra1 - (uint8_t*)info1.dli_saddr) : 0LL);
-                // Decode SP to see if it looks like a SmI / nil / bool
-                uint64_t spBits = (uint64_t)spB;
-                fprintf(stderr, "[VM]   SP raw=0x%llx tag=%d ",
-                        (unsigned long long)spBits, (int)(spBits & 7));
-                if ((spBits & 7) == 1) {
-                    fprintf(stderr, "looks like SmI value=%lld\n",
-                            (long long)((int64_t)spBits >> 3));
-                } else if (spBits == 0x300000000ULL) {
-                    fprintf(stderr, "is nil sentinel\n");
-                } else if (spBits == 0x300000010ULL || spBits == 0x300000020ULL) {
-                    fprintf(stderr, "is true/false\n");
-                } else {
-                    fprintf(stderr, "(unknown encoding)\n");
-                }
-                fprintf(stderr, "[VM]   value being pushed: 0x%llx\n",
-                        (unsigned long long)value.rawBits());
-                fprintf(stderr, "[VM]   receiver_ = 0x%llx (class=%s)\n",
-                        (unsigned long long)receiver_.rawBits(),
-                        memory_.classNameOf(receiver_).c_str());
-                fprintf(stderr, "[VM]   method_ = 0x%llx\n",
-                        (unsigned long long)method_.rawBits());
-                fprintf(stderr, "[VM]   instructionPointer_ = %p\n",
-                        (void*)instructionPointer_);
-                fprintf(stderr, "[VM]   framePointer_ = %p\n",
-                        (void*)framePointer_);
-                // Dump the previous SP value if available — the stencil that
-                // wrote SP usually loaded then stored, so the OLD SP might be
-                // just below the corrupted one.  Look at fp+1..16 area for
-                // recognizable values.
-                if (framePointer_) {
-                    fprintf(stderr, "[VM]   FP[0..6] (low bits):\n");
-                    for (int i = 0; i < 7; i++) {
-                        uint64_t v = ((uint64_t*)framePointer_)[i];
-                        fprintf(stderr, "[VM]     FP[%d] = 0x%llx\n", i,
-                                (unsigned long long)v);
-                    }
-                }
-                // Walk savedFrames_ to show what called this method
-                fprintf(stderr, "[VM]   Saved frame chain (depth %zu):\n",
-                        frameDepth_);
-                for (size_t fi = 0; fi <= frameDepth_ && fi < 8; fi++) {
-                    SavedFrame& sf = savedFrames_[fi];
-                    fprintf(stderr, "[VM]     [%zu] method=%s rcvr=0x%llx\n",
-                            fi,
-                            memory_.selectorOf(sf.savedMethod).c_str(),
-                            (unsigned long long)sf.savedReceiver.rawBits());
-                }
-                stopVM("Corrupt stackPointer_ in push()");
-                return;
-            }
-        }
-        if (__builtin_expect(stackPointer_ >= stack_.data() + MaxStackDepth, 0)) {
-            fprintf(stderr, "[VM] Stack overflow! fd=%zu method=#%s rcvr=0x%llx sp_offset=%lld\n",
-                    frameDepth_, memory_.selectorOf(method_).c_str(),
-                    (unsigned long long)receiver_.rawBits(),
-                    (long long)(stackPointer_ - stack_.data()));
-            // Compute current bytecode offset for context.
-            {
-                ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
-                const uint8_t* bcBase = nullptr;
-                if (mObj) {
-                    Oop hdr = mObj->slots()[0];
-                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                    bcBase = mObj->bytes() + (1 + numLits) * 8;
-                }
-                long long bcOff = (bcBase && instructionPointer_)
-                    ? (long long)(instructionPointer_ - bcBase) : -1;
-                fprintf(stderr, "  current ip=%p bcOff=%lld bc=%02x\n",
-                        (void*)instructionPointer_, bcOff,
-                        (instructionPointer_ ? *instructionPointer_ : 0));
-            }
-            // Dump up to the most recent 40 frames. Guard against size_t underflow
-            // when frameDepth_ < 40 (previous bug: "i > frameDepth_ - 20" underflows
-            // and skips the loop for small fd).
-            // Include each frame's saved FP so we can see which frame is leaking
-            // slots (compare consecutive saved FPs to estimate per-frame slot use).
-            size_t lo = (frameDepth_ > 40) ? (frameDepth_ - 40) : 0;
-            Oop* priorFP = framePointer_;  // current frame's base
-            for (size_t i = frameDepth_; i > lo; i--) {
-                Oop* thisFP = savedFrames_[i-1].savedFP;
-                long long frameSize = priorFP ? (long long)(priorFP - thisFP) : -1;
-                fprintf(stderr, "  frame[%zu] method=#%s rcvr=0x%llx fp=%p size=%lld\n", i,
-                        memory_.selectorOf(savedFrames_[i-1].savedMethod).c_str(),
-                        (unsigned long long)savedFrames_[i-1].savedReceiver.rawBits(),
-                        (void*)thisFP, frameSize);
-                priorFP = thisFP;
-            }
-            stopVM("Stack overflow in push()");
+        if (__builtin_expect(
+                stackPointer_ < stack_.data()
+                || stackPointer_ >= stack_.data() + MaxStackDepth
+                || GET_DEBUG_BOOL(PHARO_CORPSE_PUSH_TRAP)
+                || stackOriginEnabled_, 0)) {
+            pushSlow(value);
             return;
-        }
-        // 2026-05-06 A1: record push origin (C++ return address gives
-        // file:line equivalent via dladdr in the dump).
-        if (__builtin_expect(stackOriginEnabled_, 0)) {
-            recordOrigin(stackPointer_, /*kind=*/1, __builtin_return_address(0));
         }
         *stackPointer_++ = value;
     }
+    /// The original push() with all its checks; see push().
+    [[gnu::noinline, gnu::cold]] void pushSlow(Oop value);
 
     /// Pop a value from the stack
     inline Oop pop() {
@@ -1851,7 +1647,16 @@ public:
 
     // Patch the inline cache after the interpreter resolves a send.
     // Called from sendSelector() after method lookup succeeds.
-    void patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector);
+    // Called after every send.  Almost always nothing is pending, so the
+    // test is inline and the body (patchJITICAfterSendSlow) is only called
+    // when there is a patch or one of its debug knobs wants every call.
+    inline void patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
+        if (pendingICPatch_
+                || __builtin_expect(GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)
+                                    || GET_DEBUG_BOOL(PHARO_IC_PATCH_DEBUG), 0))
+            patchJITICAfterSendSlow(resolvedMethod, receiver, selector);
+    }
+    void patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop selector);
     // Re-resolve a cached IC method against the receiver's live class; returns
     // the fresh method on mismatch (stale-IC dispatch guard, blocker #4 T1).
     Oop validateICTarget(const char* tag, Oop cached, Oop* sp, int sendArgCount);

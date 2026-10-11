@@ -10,8 +10,8 @@
 n := 3000.
 methods := OrderedCollection new.
 t := Time millisecondsToRun: [
-	SystemNavigation default allMethodsDo: [ :m |
-		(methods size < n and: [ m hasTemporaries ]) ifTrue: [ methods add: m ] ] ].
+	Smalltalk globals allBehaviorsDo: [ :c | c methodsDo: [ :m |
+		(methods size < n and: [ m hasTemporaries ]) ifTrue: [ methods add: m ] ] ] ].
 out := String new writeStream.
 out nextPutAll: 'PHASE enumerate '; print: t; cr.
 t := Time millisecondsToRun: [ sources := methods collect: [ :m | m sourceCode ] ].
