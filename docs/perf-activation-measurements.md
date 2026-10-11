@@ -115,3 +115,37 @@ already holds a J2J entry (bit 60) and the emitted send still exits
 ExitSendCached.  Opening the bail-mid and numIC gates does not change the
 69%, so those gates are not what refuses them.  This is the
 `docs/j2j-chain-continuity.md` project (site 1); start there.
+
+## 2026-10-11 (later): two more, now with line-level attribution
+
+`scripts/perf-activation/line-profile.py` turns a `sample` report into self
+time per source line.  Its docstring has the build recipe: with ThinLTO the
+line tables live in temporary objects the linker deletes, so a plain `-g`
+build symbolizes to function+offset only; `-Wl,-object_path_lto,<dir>` plus
+`dsymutil` fixes that.
+
+On the JIT printString loop it put `tryJITActivation` at 29.7% self, its two
+hottest lines being:
+
+- **`jit::SistaSave sistaSavePool[256]`** -- value-initialized because Oop's
+  constexpr default constructor zeroes `receiver`: 256 stores at a 56-byte
+  stride, ~14 KB of cache lines, on EVERY JIT activation, with Sista off by
+  default.  Now raw uninitialized storage (nothing reads past the cursor).
+  -17% on the loop (3050 -> 2540 ms); `tryJITActivation` 29.7% -> 17.3%.
+- `clearJ2JSlice` (4.7%) -- kept: it wipes stale receivers the GC would
+  otherwise pin, and bounding the GC walk instead regressed TFFI (2026-07-03).
+
+**`upgradeICToJ2J` fast exit**: nearly every call finds the site's entry for
+the receiver class already upgraded, but reached that return only after a
+methodMap lookup, the eager-compile test, isJ2JBanned and prim
+classification.  An inline scan at the top returns first.  -4%.
+
+Phase bench after all four fixes, ms (before -> after):
+
+    phase            JIT              interp
+    parse+semantic   12210 -> 10540   9186 -> 8073
+    testBody         12632 -> 11139   9733 -> 8420
+    printString 3M   10765 ->  8643   6559 -> 4960
+
+SUnit batches 1-200 and 1001-1100: same P/F/E as the full sweep, 8-20% less
+wall time.

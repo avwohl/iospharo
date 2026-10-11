@@ -27566,6 +27566,33 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     static bool fillEnabled = !GET_DEBUG_BOOL(PHARO_NO_IC_FILL);
     if (!j2jEnabled || !icData) { g_j2jDeclineLine = __LINE__; return; }
 
+    // Fast exit for the common call: this site already holds an upgraded
+    // entry for the receiver's class.  The full walk below reaches the same
+    // "matched, extras set" return (the census shows it is nearly every
+    // call on send-bound code: #byteAt:put: and #digitValue: 5M times per 1M
+    // printString), but only after a methodMap hash lookup, the eager-compile
+    // test, isJ2JBanned and the prim classification.  Every earlier return
+    // there leaves a matched non-zero entry untouched, so skipping them is
+    // behaviour-identical.  The key derivation mirrors the one further down.
+    {
+        uint64_t rb = stackPointer_[-(sendArgCount + 1)].rawBits();
+        uint64_t tag = rb & 0x7;
+        uint64_t key = (tag == 0 && rb >= 0x10000)
+            ? Oop::fromRawBits(rb).asObjectPtr()->classIndex()
+            : (tag != 0 ? (tag | 0x80000000ULL) : 0);
+        if (key != 0) {
+            for (int e = 0; e < (int)jit::IC_ENTRIES_PER_SITE; e++) {
+                if (icData[e * 3] == key) {
+                    if (icData[e * 3 + 2] != 0) {
+                        g_j2jDeclineLine = -1;   // census: "already upgraded"
+                        return;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     // 2026-05-03: IC data moved out of MAP_JIT into heap-side
     // icBuffer.  No W^X flip needed.
 
@@ -28888,7 +28915,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // (~14 KB at 256 entries × 56 B); lives for the duration of this
     // tryJITActivation call.  Sista's inline-self lowering pushes/
     // pops in lockstep, so the cursor never escapes the C frame.
-    jit::SistaSave sistaSavePool[jit::MaxSistaSavePoolSize];
+    //
+    // RAW storage, deliberately uninitialized.  As a SistaSave[] it was
+    // value-initialized -- Oop's constexpr default constructor zeroes
+    // `receiver` -- i.e. 256 stores at a 56-byte stride, ~14 KB of cache
+    // lines written on EVERY JIT activation whether or not Sista ran (it is
+    // off by default).  That was the second-hottest line of tryJITActivation
+    // on a send-bound profile.  Nothing reads past the cursor: the push at
+    // ~18421 writes an entry before advancing it, and forEachRoot visits
+    // only [poolBase, sistaSaveCursor).
+    alignas(jit::SistaSave) unsigned char
+        sistaSaveRaw[sizeof(jit::SistaSave) * jit::MaxSistaSavePoolSize];
+    jit::SistaSave* sistaSavePool = reinterpret_cast<jit::SistaSave*>(sistaSaveRaw);
     state.sistaSaveCursor = reinterpret_cast<uint8_t*>(&sistaSavePool[0]);
     state.sistaSaveLimit  = reinterpret_cast<uint8_t*>(
         &sistaSavePool[jit::MaxSistaSavePoolSize]);
