@@ -2693,15 +2693,27 @@ sender nil and pc nil.  Three instruments, all zero across storming runs:
     PHARO_LIVE_WIDOW_CHECK: widow of a Context still held
       by a saved frame or on activeContext_'s chain          3          0
 
+Two more, also zero in storming runs:
+
+    PHARO_WATCH_CTX_KILL=SUnitRunner, with terminate/singleRelease
+      kept interpreted: Smalltalk `pc := nil` into a runner Context   0
+    owner mismatch at the four JIT fd==0 context returns
+      (fd0-mismatch= in the [WIDOW] line)                             0/0/0/0
+
 So no VM return path widows a live Context in these runs.  The dead block
 context was killed some other way.  Its shape -- sender nil, pc nil, both VM
 unwind counters zero -- is also exactly what Pharo's `Context>>terminate`
-leaves.  The leading hypothesis is therefore an IMAGE-SIDE kill: a test
-process whose materialized chain includes runner contexts, terminated by the
-watchdog, unwinding into the runner.  Next instrument: watch stores of nil
-into slot 1 of a Context whose receiver is `SUnitRunner class`, and print the
-storing process and method.  The JIT dependence (0 of 8 with it off) still
-has to be explained by whatever that finds.
+leaves.  An image-side kill was the next hypothesis, and the
+`PHARO_WATCH_CTX_KILL` watch rules it out for interpreted stores.
+
+**What every check so far shares is a blind spot: they compare METHODS, not
+ACTIVATIONS.**  The dead context is the runner's loop-body block, which is
+re-activated once per test with the same CompiledBlock and the same receiver.
+A Context of iteration K-1 standing in for iteration K -- one activation's
+Context handed to the next, then widowed when the earlier one's return path
+runs -- passes every method-match check above.  The next instrument needs an
+activation stamp: a counter bumped on every frame push, carried in SavedFrame
+and recorded per materialized Context, compared at reuse and at widow.
 
 ### 24. Fourteen classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
 

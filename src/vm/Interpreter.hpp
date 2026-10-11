@@ -106,6 +106,7 @@ namespace pharo {
 extern uint64_t g_contextsWidowedOnReturn[5];
 extern uint64_t g_widowOwnerMismatch[2];
 extern uint64_t g_deadContextReuse;
+extern uint64_t g_fd0WidowMismatch[4];
 
 // Cascade-hunt ring (2026-07-05, temporary diagnostic): last 32 prim-111
 // (class-of) results so the DNU cascade dump can attribute a corpse class
@@ -1629,6 +1630,7 @@ public:
     void checkMatCtxOwner(int line, Oop methodOop);
     void noteDeadReuse(const char* site, Oop ctx, Oop frameMethod);
     void liveWidowCheck(const char* site, Oop ctx);
+    void noteFd0Widow(int site, Oop returningMethod);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

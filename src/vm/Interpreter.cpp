@@ -2621,6 +2621,23 @@ void Interpreter::liveWidowCheck(const char* site, Oop ctx) {
                 where, idx, memory_.selectorOf(method_).c_str(), frameDepth_);
 }
 
+// The JIT paths' fd==0 context returns widow activeContext_ and continue in
+// its sender.  That is only right when activeContext_ IS the returning
+// method's Context; a callee that ran natively (no C++ frame) returning here
+// would instead widow its live CALLER and skip it -- #23's dead sender.
+// Counted per site, named under PHARO_RESUME_WIDOW_TRACE.
+uint64_t g_fd0WidowMismatch[4] = {0, 0, 0, 0};
+void Interpreter::noteFd0Widow(int site, Oop returningMethod) {
+    Oop m = memory_.fetchPointer(3, activeContext_);
+    if (m.rawBits() == returningMethod.rawBits()) return;
+    uint64_t n = ++g_fd0WidowMismatch[site];
+    if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE) && n <= 10)
+        fprintf(stderr, "[FD0-WIDOW-MISMATCH site=%d] returning=#%s activeCtxOf=#%s "
+                "rcv=%s\n", site, memory_.selectorOf(returningMethod).c_str(),
+                memory_.selectorOf(m).c_str(),
+                memory_.classNameOf(memory_.fetchPointer(5, activeContext_)).c_str());
+}
+
 // PHARO_MATCTX_OWNER_CHECK: report, once per source line, a frame sync that
 // leaves currentFrameMaterializedCtx_ naming a Context of a DIFFERENT method
 // than the frame now current.  The field must belong to the current frame;
@@ -2768,7 +2785,7 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
         fprintf(stderr, "[SEND-CHAIN] contexts widowed on return: "
                 "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu "
                 "jit-resume=%llu jit-resume-mismatch=%llu owner-mismatch=%llu/%llu "
-                "dead-reuse=%llu\n",
+                "dead-reuse=%llu fd0-mismatch=%llu/%llu/%llu/%llu\n",
                 (unsigned long long)g_contextsWidowedOnReturn[0],
                 (unsigned long long)g_contextsWidowedOnReturn[1],
                 (unsigned long long)g_contextsWidowedOnReturn[2],
@@ -2776,7 +2793,11 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                 (unsigned long long)g_contextsWidowedOnReturn[4],
                 (unsigned long long)g_widowOwnerMismatch[0],
                 (unsigned long long)g_widowOwnerMismatch[1],
-                (unsigned long long)g_deadContextReuse);
+                (unsigned long long)g_deadContextReuse,
+                (unsigned long long)g_fd0WidowMismatch[0],
+                (unsigned long long)g_fd0WidowMismatch[1],
+                (unsigned long long)g_fd0WidowMismatch[2],
+                (unsigned long long)g_fd0WidowMismatch[3]);
         if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
             fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
                     "chain-loop=%llu (materialized first) resume-loop=%llu "
@@ -16217,6 +16238,31 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
+    // PHARO_WATCH_CTX_KILL=<receiver-class substring>: report every
+    // Smalltalk-side `pc := nil` into a Context whose receiver's class
+    // matches, with the storing process's send chain.  Defect #23's dead
+    // sender is a runner Context killed by something other than a VM return
+    // path; Context>>terminate makes exactly that store.  Interpreted stores
+    // only -- keep the killing methods out of the JIT with
+    // PHARO_JIT_SKIP_SELECTORS when using it.
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL) != nullptr, 0)
+            && index == 1 && value.isNil() && receiver_.isObject()
+            && receiver_.rawBits() > 0x10000
+            && memory_.classNameOf(receiver_) == "Context") {
+        Oop rcv = memory_.fetchPointer(5, receiver_);
+        std::string rc = memory_.classNameOf(rcv);
+        if (rc.find(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL)) != std::string::npos) {
+            static int nKill = 0;
+            if (++nKill <= 12) {
+                fprintf(stderr, "[CTX-KILL #%d] pc:=nil on ctx=0x%llx (rcv %s, ctxOf=#%s) "
+                        "by #%s\n", nKill, (unsigned long long)receiver_.rawBits(),
+                        rc.c_str(),
+                        memory_.selectorOf(memory_.fetchPointer(3, receiver_)).c_str(),
+                        memory_.selectorOf(method_).c_str());
+                dumpSendChain("ctx-kill", 24);
+            }
+        }
+    }
     // Check immutability - send attemptToAssign:withIndex: if receiver is immutable
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();
@@ -24538,6 +24584,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                     Oop sender = memory_.fetchPointer(0, activeContext_);
                     if (sender.isObject() && !sender.isNil()
                             && memory_.isValidPointer(sender)) {
+                        noteFd0Widow(0, sstate.method);
                         memory_.storePointer(0, activeContext_, memory_.nil());
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         stackPointer_ = stackBase_;
@@ -25855,6 +25902,7 @@ void Interpreter::tryJITResumeInCaller() {
                     Oop sender = memory_.fetchPointer(0, activeContext_);
                     if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
                         // Kill current context (it returned)
+                        noteFd0Widow(1, state.method);
                         memory_.storePointer(0, activeContext_, memory_.nil());
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         // Load sender context
@@ -30268,6 +30316,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
                     Oop sender = memory_.fetchPointer(0, activeContext_);
                     if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
+                        noteFd0Widow(2, state.method);
                         memory_.storePointer(0, activeContext_, memory_.nil());
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         stackPointer_ = stackBase_;
@@ -32771,6 +32820,7 @@ jit_loop_exit:
             if (activeContext_.isObject() && !activeContext_.isNil()) {
                 Oop sender = memory_.fetchPointer(0, activeContext_);
                 if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
+                    noteFd0Widow(3, state.method);
                     memory_.storePointer(0, activeContext_, memory_.nil());
                     memory_.storePointer(1, activeContext_, memory_.nil());
                     stackPointer_ = stackBase_;
