@@ -2007,6 +2007,9 @@ uint64_t g_lastAllocAddr = 0;      // corpse forensics: last allocateSlots resul
 uint64_t g_lastAllocScav = 0;      // g_scavengeCount at that allocation
 uint32_t g_lastAllocClassIdx = 0;  // its class index
 uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
+// Bumped by every scavenge and full GC: raw oops recorded before a change of
+// epoch may now name a different object (debug-only consumers).
+uint64_t g_gcEpoch = 0;
 GCResult ObjectMemory::scavenge() {
     // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young
     // exists anymore (allocation falls back to old space) — later scavenge
@@ -2014,6 +2017,7 @@ GCResult ObjectMemory::scavenge() {
     static bool scavQuarantineActive = false;
     if (scavQuarantineActive) return GCResult{0, 0, 0};
     g_scavengeCount++;
+    g_gcEpoch++;
     // Copying scavenge: tenure all reachable young objects to old
     // space, reset eden.  Unreachable young objects vanish when
     // eden is reset.
@@ -2878,6 +2882,8 @@ bool ObjectMemory::checkHeapIntegrity(const char* when) {
 }
 
 GCResult ObjectMemory::fullGC(bool skipEphemerons) {
+    extern uint64_t g_gcEpoch;
+    g_gcEpoch++;
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 

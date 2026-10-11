@@ -1632,6 +1632,9 @@ public:
     void liveWidowCheck(const char* site, Oop ctx);
     void noteFd0Widow(int site, Oop returningMethod);
     void checkActivation(int site, Oop ctx, const Oop* tempBase);
+    void crossKillCheck(const char* site, Oop ctx);
+    void crossResumeCheck(Oop sender, Oop returning);
+    bool otherProcessOwns(Oop ctx, uint64_t* proc, size_t* depth);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

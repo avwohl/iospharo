@@ -11366,6 +11366,56 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     const size_t SenderIndex = 0;
     const size_t PCIndex = 1;
 
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+            && aContextOrNil.isObject() && !aContextOrNil.isNil()
+            && memory_.selectorOf(memory_.fetchPointer(3, thisCtx)) == "resume:through:") {
+        static int nRT = 0;
+        uint64_t oP = 0; size_t oD = 0;
+        bool owned = otherProcessOwns(aContextOrNil, &oP, &oD);
+        if (memory_.selectorOf(memory_.fetchPointer(3, aContextOrNil)) == "ifTrue:ifFalse:"
+                && ++nRT <= 400)
+            fprintf(stderr, "[P196-RT] active=0x%llx target=0x%llx #%s owned=%d\n",
+                    (unsigned long long)getActiveProcess().rawBits(),
+                    (unsigned long long)aContextOrNil.rawBits(),
+                    memory_.selectorOf(memory_.fetchPointer(3, aContextOrNil)).c_str(), owned);
+    }
+    // PHARO_ACTIVATION_CHECK: unwinding to a target owned by ANOTHER
+    // (suspended) process.  Dump this process's chain from the receiver,
+    // marking foreign contexts, before anything is changed.
+    {
+        uint64_t ownerP; size_t ownerD;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+                && aContextOrNil.isObject() && !aContextOrNil.isNil()
+                && otherProcessOwns(aContextOrNil, &ownerP, &ownerD)) {
+            static int nXT = 0;
+            if (++nXT <= 3) {
+                fprintf(stderr, "[CROSS-PROCESS-TERMINATETO #%d] active 0x%llx: #%s terminateTo: "
+                        "ctx=0x%llx #%s = ctx[%zu] of SUSPENDED 0x%llx; chain from receiver:\n",
+                        nXT, (unsigned long long)getActiveProcess().rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, thisCtx)).c_str(),
+                        (unsigned long long)aContextOrNil.rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, aContextOrNil)).c_str(),
+                        ownerD, (unsigned long long)ownerP);
+                Oop c = thisCtx;
+                for (int i = 0; i < 80 && c.isObject() && !c.isNil(); i++) {
+                    uint64_t p2; size_t d2;
+                    bool foreign = otherProcessOwns(c, &p2, &d2);
+                    Oop m2 = memory_.fetchPointer(3, c);
+                    fprintf(stderr, "  [%2d] ctx=0x%llx %s#%s rcv=%s pc=%s%s\n", i,
+                            (unsigned long long)c.rawBits(),
+                            memory_.fetchPointer(4, c).isNil() ? "" : "[] in ",
+                            memory_.selectorOf(m2).c_str(),
+                            memory_.classNameOf(memory_.fetchPointer(5, c)).c_str(),
+                            memory_.fetchPointer(1, c).isNil() ? "nil" : "ok",
+                            foreign ? "   <== FOREIGN" : "");
+                    if (c.rawBits() == aContextOrNil.rawBits()) break;
+                    c = memory_.fetchPointer(0, c);
+                }
+                dumpSendChain("cross-process-terminateTo", 40);
+            }
+        }
+    }
+
     // Check if target is reachable from receiver via sender chain.
     // No depth cap (chains can legitimately exceed any constant — see the
     // prim 195/197 fix); a cyclic chain is guarded via Floyd tortoise-and-hare.
@@ -11414,6 +11464,37 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         while (current.isObject() && current.rawBits() != nilObj.rawBits() &&
                current.rawBits() != aContextOrNil.rawBits()) {
             Oop sender = memory_.fetchPointer(SenderIndex, current);
+            // PHARO_ACTIVATION_CHECK: a killed Context with the target's
+            // method, receiver and arguments is the SAME ACTIVATION as the
+            // target under a second Context object -- the identity split
+            // that would let this loop kill a live activation (#23).
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+                    && aContextOrNil.isObject() && !aContextOrNil.isNil()
+                    && memory_.fetchPointer(3, current).rawBits()
+                       == memory_.fetchPointer(3, aContextOrNil).rawBits()
+                    && memory_.fetchPointer(5, current).rawBits()
+                       == memory_.fetchPointer(5, aContextOrNil).rawBits()) {
+                Oop hdr = memory_.fetchPointer(0, memory_.fetchPointer(3, current));
+                int nA = hdr.isSmallInteger() ? (int)((hdr.asSmallInteger() >> 24) & 0x0F) : 0;
+                bool same = true;
+                for (int a = 0; a < nA; a++)
+                    if (memory_.fetchPointer(6 + a, current).rawBits()
+                            != memory_.fetchPointer(6 + a, aContextOrNil).rawBits()) {
+                        same = false; break;
+                    }
+                if (same) {
+                    static int nDup = 0;
+                    if (++nDup <= 10) {
+                        fprintf(stderr, "[DUP-ACTIVATION prim196 #%d] killing ctx=0x%llx #%s, "
+                                "same activation as target 0x%llx (nArgs=%d); receiver ctx #%s\n",
+                                nDup, (unsigned long long)current.rawBits(),
+                                memory_.selectorOf(memory_.fetchPointer(3, current)).c_str(),
+                                (unsigned long long)aContextOrNil.rawBits(), nA,
+                                memory_.selectorOf(memory_.fetchPointer(3, thisCtx)).c_str());
+                        dumpSendChain("dup-activation", 24);
+                    }
+                }
+            }
             if (__builtin_expect(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL) != nullptr, 0)) {
                 std::string rc = memory_.classNameOf(memory_.fetchPointer(5, current));
                 if (rc.find(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL)) != std::string::npos) {
@@ -11438,6 +11519,8 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
                     }
                 }
             }
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0))
+                crossKillCheck("prim196", current);
             memory_.storePointer(SenderIndex, current, nilObj);
             memory_.storePointer(PCIndex, current, nilObj);
             current = sender;
@@ -11794,6 +11877,36 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
             if (primIdx == 199) {
+                // PHARO_ACTIVATION_CHECK: a handler that belongs to ANOTHER
+                // (suspended) process's chain means this process's sender
+                // chain crosses into that process.  Name the first crossing.
+                uint64_t ownerP; size_t ownerD;
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+                        && otherProcessOwns(ctx, &ownerP, &ownerD)) {
+                    static int nXH = 0;
+                    if (++nXH <= 4) {
+                        fprintf(stderr, "[CROSS-PROCESS-HANDLER #%d] active 0x%llx finds handler "
+                                "ctx=0x%llx = ctx[%zu] of SUSPENDED 0x%llx; walk from signal:\n",
+                                nXH, (unsigned long long)getActiveProcess().rawBits(),
+                                (unsigned long long)ctx.rawBits(), ownerD,
+                                (unsigned long long)ownerP);
+                        Oop c = startContext;
+                        for (int i = 0; i < 60 && c.isObject() && !c.isNil(); i++) {
+                            uint64_t p2; size_t d2;
+                            bool foreign = otherProcessOwns(c, &p2, &d2);
+                            Oop m2 = memory_.fetchPointer(3, c);
+                            fprintf(stderr, "  [%2d] ctx=0x%llx %s#%s rcv=%s closure=%s%s\n", i,
+                                    (unsigned long long)c.rawBits(),
+                                    memory_.fetchPointer(4, c).isNil() ? "" : "[] in ",
+                                    memory_.selectorOf(m2).c_str(),
+                                    memory_.classNameOf(memory_.fetchPointer(5, c)).c_str(),
+                                    memory_.fetchPointer(4, c).isNil() ? "nil" : "yes",
+                                    foreign ? "   <== FOREIGN (other process)" : "");
+                            if (c.rawBits() == ctx.rawBits()) break;
+                            c = memory_.fetchPointer(0, c);
+                        }
+                    }
+                }
                 if (GET_DEBUG_BOOL(PHARO_T1_TRACE_HANDLER)) {
                     static int okCalls = 0;
                     if ((++okCalls % 4000) == 1)

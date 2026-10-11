@@ -2671,6 +2671,96 @@ void Interpreter::checkActivation(int site, Oop ctx, const Oop* tempBase) {
     }
 }
 
+// PHARO_ACTIVATION_CHECK: the last 16 executeFromContext calls (process,
+// context, its method, its sender, caller), dumped at a cross-process kill.
+struct ExecRec { uint64_t proc, ctx, method, sender; void* caller; uint64_t step; };
+static ExecRec g_execRing[16];
+static unsigned g_execRingN = 0;
+
+extern std::unordered_map<uint64_t, std::vector<uint64_t>> g_suspendedChains;
+extern std::unordered_map<uint64_t, uint64_t> g_suspendedChainEpoch;
+extern uint64_t g_gcEpoch;
+bool Interpreter::otherProcessOwns(Oop ctx, uint64_t* proc, size_t* depth) {
+    uint64_t active = getActiveProcess().rawBits();
+    for (auto& kv : g_suspendedChains) {
+        if (kv.first == active) continue;
+        if (g_suspendedChainEpoch[kv.first] != g_gcEpoch) continue;
+        for (size_t d = 0; d < kv.second.size(); d++)
+            if (kv.second[d] == ctx.rawBits()) { *proc = kv.first; *depth = d; return true; }
+    }
+    return false;
+}
+
+void Interpreter::crossResumeCheck(Oop sender, Oop returning) {
+    uint64_t active = getActiveProcess().rawBits();
+    for (auto& kv : g_suspendedChains) {
+        if (kv.first == active) continue;
+        if (g_suspendedChainEpoch[kv.first] != g_gcEpoch) continue;
+        for (size_t d = 0; d < kv.second.size(); d++) {
+            if (kv.second[d] != sender.rawBits()) continue;
+            static int nCR = 0;
+            if (++nCR <= 6) {
+                Oop rcl = memory_.fetchPointer(4, returning);
+                fprintf(stderr, "[CROSS-PROCESS-RESUME #%d] active 0x%llx returns from ctx=0x%llx "
+                        "#%s (rcv %s, closure %s) into ctx=0x%llx #%s = ctx[%zu] of SUSPENDED "
+                        "process 0x%llx\n", nCR, (unsigned long long)active,
+                        (unsigned long long)returning.rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, returning)).c_str(),
+                        memory_.classNameOf(memory_.fetchPointer(5, returning)).c_str(),
+                        rcl.isNil() ? "nil" : "block",
+                        (unsigned long long)sender.rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, sender)).c_str(), d,
+                        (unsigned long long)kv.first);
+                dumpSendChain("cross-process-resume", 30);
+            }
+            return;
+        }
+    }
+}
+
+// PHARO_ACTIVATION_CHECK: cross-process context kills.  Each suspend records
+// the suspended process's chain (g_suspendedChains, process -> contexts); a
+// switch INTO a process forgets its entry.  A kill (widow, primitive 196,
+// Smalltalk `pc := nil`) of a Context recorded for a process OTHER than the
+// active one is a cross-process kill: #23's runner block context dies while
+// the runner is switched out.
+std::unordered_map<uint64_t, std::vector<uint64_t>> g_suspendedChains;
+std::unordered_map<uint64_t, uint64_t> g_suspendedChainEpoch;
+extern uint64_t g_gcEpoch;
+void Interpreter::crossKillCheck(const char* site, Oop ctx) {
+    uint64_t active = getActiveProcess().rawBits();
+    for (auto& kv : g_suspendedChains) {
+        if (kv.first == active) continue;
+        if (g_suspendedChainEpoch[kv.first] != g_gcEpoch) continue;  // oops may be reused
+        for (size_t d = 0; d < kv.second.size(); d++) {
+            if (kv.second[d] != ctx.rawBits()) continue;
+            static int nCK = 0;
+            if (++nCK <= 6) {
+                for (unsigned k = 0; k < 16 && k < g_execRingN; k++) {
+                    const ExecRec& r = g_execRing[(g_execRingN - 1 - k) & 15];
+                    Dl_info di{};
+                    int got = dladdr(r.caller, &di);
+                    fprintf(stderr, "[EXEC-RING -%u] proc=0x%llx ctx=0x%llx #%s sender=0x%llx "
+                            "step=%llu caller=%s+%lld\n", k, (unsigned long long)r.proc,
+                            (unsigned long long)r.ctx,
+                            memory_.selectorOf(Oop::fromRawBits(r.method)).c_str(),
+                            (unsigned long long)r.sender, (unsigned long long)r.step,
+                            got && di.dli_sname ? di.dli_sname : "?",
+                            got ? (long long)((uint8_t*)r.caller - (uint8_t*)di.dli_saddr) : 0LL);
+                }
+                fprintf(stderr, "[CROSS-PROCESS-KILL #%d %s] ctx=0x%llx #%s is ctx[%zu] of "
+                        "SUSPENDED process 0x%llx; killed by active process 0x%llx in #%s\n",
+                        nCK, site, (unsigned long long)ctx.rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, ctx)).c_str(), d,
+                        (unsigned long long)kv.first, (unsigned long long)active,
+                        memory_.selectorOf(method_).c_str());
+                dumpSendChain("cross-process-kill", 30);
+            }
+            return;
+        }
+    }
+}
+
 // PHARO_MATCTX_OWNER_CHECK: report, once per source line, a frame sync that
 // leaves currentFrameMaterializedCtx_ naming a Context of a DIFFERENT method
 // than the frame now current.  The field must belong to the current frame;
@@ -8484,6 +8574,13 @@ void Interpreter::returnValue(Oop value) {
                                         3, activeContext_)).c_str());
                     }
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
+                        crossKillCheck("widow-1", activeContext_);
+                        // Resume side: the sender about to be resumed belongs to
+                        // another process's suspended chain -- name the context
+                        // that is returning into it.
+                        crossResumeCheck(sender, activeContext_);
+                    }
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
                     g_contextsWidowedOnReturn[2]++;
                     traceWidow("ctx-return", activeContext_);
@@ -8701,6 +8798,7 @@ terminate_process:
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
             liveWidowCheck("returnValue", currentFrameMaterializedCtx_);
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-2", currentFrameMaterializedCtx_);
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
         g_contextsWidowedOnReturn[0]++;
         traceWidow("popFrame", currentFrameMaterializedCtx_);
@@ -9926,6 +10024,39 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
 }
 
 bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
+    // PHARO_ACTIVATION_CHECK: is the home actually on startCtx's sender chain?
+    // Cog's non-local return requires it (else cannotReturn:).  A home that is
+    // not -- e.g. a context of ANOTHER process -- makes the walk below stop at
+    // this process's first ensure: and then deliver `home aboutToReturn:`.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
+        bool onChain = false;
+        Oop c = startCtx;
+        for (int d = 0; d < 70000 && c.isObject() && !c.isNil(); d++) {
+            if (c.rawBits() == homeCtx.rawBits()) { onChain = true; break; }
+            c = memory_.fetchPointer(0, c);
+        }
+        if (!onChain) {
+            static int nOff = 0;
+            if (++nOff <= 5) {
+                void* ra = __builtin_return_address(0);
+                Dl_info di{};
+                int got = dladdr(ra, &di);
+                Oop scl = memory_.fetchPointer(4, startCtx);
+                fprintf(stderr, "[NLR-HOME-OFF-CHAIN #%d] start=0x%llx %s#%s home=0x%llx #%s "
+                        "(home pc=%s) closure_=%s method_=#%s caller=%s+%lld\n", nOff,
+                        (unsigned long long)startCtx.rawBits(), scl.isNil() ? "" : "[] in ",
+                        memory_.selectorOf(memory_.fetchPointer(3, startCtx)).c_str(),
+                        (unsigned long long)homeCtx.rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, homeCtx)).c_str(),
+                        memory_.fetchPointer(1, homeCtx).isNil() ? "nil" : "ok",
+                        closure_.isNil() ? "nil" : "block",
+                        memory_.selectorOf(method_).c_str(),
+                        got && di.dli_sname ? di.dli_sname : "?",
+                        got ? (long long)((uint8_t*)ra - (uint8_t*)di.dli_saddr) : 0LL);
+                dumpSendChain("nlr-home-off-chain", 30);
+            }
+        }
+    }
     Oop ctx = startCtx;
     int depth = 0;
     Oop ensureCtx = Oop::nil();
@@ -16134,6 +16265,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
             liveWidowCheck("popFrameForJIT", currentFrameMaterializedCtx_);
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-3", currentFrameMaterializedCtx_);
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());
         g_contextsWidowedOnReturn[1]++;
         traceWidow("popFrameForJIT", currentFrameMaterializedCtx_);
@@ -16280,6 +16412,9 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
     // path; Context>>terminate makes exactly that store.  Interpreted stores
     // only -- keep the killing methods out of the JIT with
     // PHARO_JIT_SKIP_SELECTORS when using it.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+            && index == 1 && value.isNil() && receiver_.isObject())
+        crossKillCheck("smalltalk-pc-nil", receiver_);
     if (__builtin_expect(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL) != nullptr, 0)
             && index == 1 && value.isNil() && receiver_.isObject()
             && receiver_.rawBits() > 0x10000
@@ -20748,7 +20883,22 @@ Oop Interpreter::materializeFrameStack() {
                 // Blocks passed through other methods (e.g., RecursionStopper during:
                 // which calls ensure: which calls the block) have a sender that's a
                 // DIFFERENT method — updating outerContext would break homeMethod navigation.
-                if (closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
+                //
+                // KNOWN WRONG, KEPT ON (2026-10-11).  A method-oop match cannot
+                // tell two ACTIVATIONS of one method apart, so this re-homes a
+                // block created in one activation onto a recursive one:
+                //     m: n with: blk  n = 0 ifTrue: [^ blk value].
+                //         ^ self m: n - 1 with: [thisContext home arguments first]
+                // answers 0 here, 1 on Cog.  But turning it OFF
+                // (PHARO_NO_REHOME_CLOSURES) breaks the SUnit runner itself:
+                // batch 1151-1200 times out RSExamplesTest and a runner block
+                // sends the string '  TIMEOUT(prim-stuck): ' as a selector to
+                // Object class -- the block read its outer temps from a STALE
+                // duplicate Context.  So this rule is masking a duplicate-
+                // Context bug elsewhere (docs/vm-compat-bugs.md #23 / #30);
+                // remove it only once that duplicate is found.
+                if (!GET_DEBUG_BOOL(PHARO_NO_REHOME_CLOSURES)
+                        && closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
                     Oop oldOuterCtx = memory_.fetchPointer(0, closure_);
                     if (oldOuterCtx.isObject() && oldOuterCtx.rawBits() > 0x10000 &&
                         sender.isObject() && sender.rawBits() > 0x10000) {
@@ -20799,6 +20949,38 @@ void Interpreter::transferTo(Oop newProcess) {
     ObjectHeader* newProcHdr = newProcess.asObjectPtr();
     if (newProcHdr->slotCount() < 2) {
         return;
+    }
+
+    // PHARO_ACTIVATION_CHECK: a process resumed with a DEAD context below a
+    // live one in its suspended chain will later return into the dead one
+    // (#23).  Catch it at the switch that brings the chain in, naming the
+    // switch's caller and both processes.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
+        g_suspendedChains.erase(newProcess.rawBits());
+        Oop c = newProcHdr->slotAt(1);  // suspendedContext
+        for (int d = 0; d < 32 && c.isObject() && !c.isNil()
+                && c.rawBits() > 0x10000 && memory_.isValidPointer(c); d++) {
+            if (d > 0 && memory_.fetchPointer(1, c).isNil()) {
+                static int nXD = 0;
+                if (++nXD <= 10) {
+                    void* ra = __builtin_return_address(0);
+                    Dl_info di{};
+                    int got = dladdr(ra, &di);
+                    fprintf(stderr, "[XFER-DEAD-IN-CHAIN #%d] new=0x%llx pri=%d resumes a chain "
+                            "whose ctx[%d] #%s is dead (top #%s); old=0x%llx caller=%s+%lld "
+                            "lastPrim=%d\n", nXD, (unsigned long long)newProcess.rawBits(),
+                            safeProcessPriority(newProcess), d,
+                            memory_.selectorOf(memory_.fetchPointer(3, c)).c_str(),
+                            memory_.selectorOf(memory_.fetchPointer(3, newProcHdr->slotAt(1))).c_str(),
+                            (unsigned long long)oldProcess.rawBits(),
+                            got && di.dli_sname ? di.dli_sname : "?",
+                            got ? (long long)((uint8_t*)ra - (uint8_t*)di.dli_saddr) : 0LL,
+                            lastPrimitiveIndex_);
+                }
+                break;
+            }
+            c = memory_.fetchPointer(0, c);
+        }
     }
 
 
@@ -20867,6 +21049,57 @@ void Interpreter::transferTo(Oop newProcess) {
     // suspendedContext method == Process>>#endProcess, not via nil.
     if (!contextToSave.isNil() && contextToSave.isObject()) {
         memory_.storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave);
+    }
+    // PHARO_ACTIVATION_CHECK, outgoing side: was the chain already dead
+    // below a live context when this process was suspended?  Paired with
+    // [XFER-DEAD-IN-CHAIN] on the incoming side, this says whether #23's
+    // dead context died before the suspend or while the process was out.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
+        Oop c = contextToSave;
+        for (int d = 0; d < 32 && c.isObject() && !c.isNil()
+                && c.rawBits() > 0x10000 && memory_.isValidPointer(c); d++) {
+            if (d > 0 && memory_.fetchPointer(1, c).isNil()) {
+                static int nSD = 0;
+                if (++nSD <= 10)
+                    fprintf(stderr, "[SUSPEND-DEAD-IN-CHAIN #%d] old=0x%llx pri=%d suspends "
+                            "with ctx[%d] #%s dead (top #%s) fd-before=%zu\n", nSD,
+                            (unsigned long long)oldProcess.rawBits(),
+                            safeProcessPriority(oldProcess), d,
+                            memory_.selectorOf(memory_.fetchPointer(3, c)).c_str(),
+                            memory_.selectorOf(memory_.fetchPointer(3, contextToSave)).c_str(),
+                            frameDepth_);
+                break;
+            }
+            c = memory_.fetchPointer(0, c);
+        }
+        {
+            std::vector<uint64_t>& v = g_suspendedChains[oldProcess.rawBits()];
+            g_suspendedChainEpoch[oldProcess.rawBits()] = g_gcEpoch;
+            v.clear();
+            Oop c3 = contextToSave;
+            for (int d = 0; d < 64 && c3.isObject() && !c3.isNil()
+                    && c3.rawBits() > 0x10000 && memory_.isValidPointer(c3); d++) {
+                v.push_back(c3.rawBits());
+                c3 = memory_.fetchPointer(0, c3);
+            }
+        }
+        // Also record the runner-loop block context we saved, for the
+        // incoming check to compare: print the ctx[] of each suspend of a
+        // pri-79 process at depth <= 4 (bounded).
+        static int nSuspLog = 0;
+        if (safeProcessPriority(oldProcess) == 79 && ++nSuspLog <= 400) {
+            Oop c2 = contextToSave;
+            fprintf(stderr, "[SUSPEND-CHAIN #%d] old=0x%llx:", nSuspLog,
+                    (unsigned long long)oldProcess.rawBits());
+            for (int d = 0; d < 5 && c2.isObject() && !c2.isNil()
+                    && c2.rawBits() > 0x10000 && memory_.isValidPointer(c2); d++) {
+                fprintf(stderr, " [%d]0x%llx#%s%s", d, (unsigned long long)c2.rawBits(),
+                        memory_.selectorOf(memory_.fetchPointer(3, c2)).c_str(),
+                        memory_.fetchPointer(1, c2).isNil() ? "(DEAD)" : "");
+                c2 = memory_.fetchPointer(0, c2);
+            }
+            fprintf(stderr, "\n");
+        }
     }
 
     // Switch to new process
@@ -21943,6 +22176,18 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+            && context.isObject() && context.rawBits() > 0x10000
+            && memory_.isValidPointer(context)) {
+        extern uint64_t g_stepNum;
+        ExecRec& r = g_execRing[g_execRingN++ & 15];
+        r.proc = getActiveProcess().rawBits();
+        r.ctx = context.rawBits();
+        r.method = memory_.fetchPointer(3, context).rawBits();
+        r.sender = memory_.fetchPointer(0, context).rawBits();
+        r.caller = __builtin_return_address(0);
+        r.step = g_stepNum;
+    }
     // PHARO_ACTIVATION_CHECK: resuming a Context whose SENDER has already
     // returned (pc nil) means its next return lands in a dead sender --
     // #23's storm, caught at the resume that sets it up instead of at the
@@ -24650,6 +24895,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                         noteFd0Widow(0, sstate.method);
                         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(3, activeContext_, sstate.tempBase);
                         memory_.storePointer(0, activeContext_, memory_.nil());
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-4", activeContext_);
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         stackPointer_ = stackBase_;
                         Oop senderStackp = memory_.fetchPointer(2, sender);
@@ -25969,6 +26215,7 @@ void Interpreter::tryJITResumeInCaller() {
                         noteFd0Widow(1, state.method);
                         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(4, activeContext_, state.tempBase);
                         memory_.storePointer(0, activeContext_, memory_.nil());
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-5", activeContext_);
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         // Load sender context
                         stackPointer_ = stackBase_;
@@ -26073,6 +26320,7 @@ void Interpreter::tryJITResumeInCaller() {
                     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
                         liveWidowCheck("jit-resume", returningCtx);
                     memory_.storePointer(0, returningCtx, memory_.nil());
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-6", returningCtx);
                     memory_.storePointer(1, returningCtx, memory_.nil());
                     g_contextsWidowedOnReturn[3]++;
                     traceWidow("jit-resume", returningCtx);
@@ -30385,6 +30633,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         noteFd0Widow(2, state.method);
                         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(5, activeContext_, state.tempBase);
                         memory_.storePointer(0, activeContext_, memory_.nil());
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-7", activeContext_);
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         stackPointer_ = stackBase_;
                         Oop senderStackp = memory_.fetchPointer(2, sender);
@@ -32890,6 +33139,7 @@ jit_loop_exit:
                     noteFd0Widow(3, state.method);
                     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(6, activeContext_, state.tempBase);
                     memory_.storePointer(0, activeContext_, memory_.nil());
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-8", activeContext_);
                     memory_.storePointer(1, activeContext_, memory_.nil());
                     stackPointer_ = stackBase_;
                     Oop senderStackp = memory_.fetchPointer(2, sender);

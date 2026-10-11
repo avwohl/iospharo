@@ -2753,6 +2753,65 @@ target's AND the killed Context's method oops (stable across scavenge), and
 check whether the dead loop-body block is ever between a `resume:through:`
 and its target.
 
+#### 2026-10-11 (late): it is a CROSS-PROCESS kill, during test-process termination
+
+Two process-switch checks (`PHARO_ACTIVATION_CHECK`) split it.  The runner P79
+is SUSPENDED with a live chain (`[SUSPEND-DEAD-IN-CHAIN]` never fires for it)
+and RESUMED with its loop-body block context B dead (`[XFER-DEAD-IN-CHAIN]`,
+ctx[3]).  So B dies while P79 is switched out -- some other process kills it.
+
+A suspended-chain registry (each suspend records process -> its chain; a
+switch in forgets it; entries are dropped after any GC, since raw oops are
+reused) then names the killer at every kill site:
+
+    [CROSS-PROCESS-KILL widow-1] ctx=B = ctx[3] of SUSPENDED P79;
+        killed by active process <test process> in #ifTrue:ifFalse:
+    [CROSS-PROCESS-RESUME] active <test process> returns from #resume:through:
+        (rcv Context) into ctx=B = ctx[3] of SUSPENDED P79
+
+3 of 3 storming runs.  The forked TEST process executes `resume:through:`
+whose receiver is B -- the runner process's context -- runs B's code, and
+widows B when B returns (the interpreter's fd==0 context return, `widow-1`).
+`[CROSS-PROCESS-TERMINATETO]` caught the test process's chain at the
+`thisContext terminateTo: B` inside that `resume:through:`:
+
+    [0] #resume:through:                 rcv B (runner's)
+    [1] #ensure:                         the fork block's ensure: [testDone...]
+    [2] [] in runSingleTest's fork block rcv SUnitRunner class
+    [3] [] in #terminateRealActive       the newProcess wrapper
+    [4] [] in #jump                      rcv Process
+    [5] #on:do:
+    [6] [] in #terminateRealActive       rcv Process
+
+B is NOT on that chain.  The test process is TERMINATING (process-termination
+unwinding, frames [3]-[6]), and that unwinding resumes into another process's
+context.  Ruled out as the route: primitive 197 (no foreign handler found) and
+`handleContextNLRUnwind` (no off-chain home).  Next: instrument the image-side
+termination path -- `Process>>terminate` / `unwindForTermination` /
+`Context>>jump` -- for where B enters as a resume target.
+
+#### A real bug found on the way: closure RE-HOMING by method match -- see #30 (NOT fixed; turning it off regressed)
+
+The identity-split audit (four read-only finders plus adversarial verifiers)
+put this one forward, and it reproduces in three lines.  At the end of
+materializeFrameStack's current-frame branch, a block frame's closure had its
+`outerContext` re-pointed at the frame's sender whenever the two shared a
+METHOD -- which a recursive activation of the home method satisfies:
+
+    m: n with: blk
+        n = 0 ifTrue: [^ blk value].
+        ^ self m: n - 1 with: [thisContext home arguments first]
+
+    `(1 to: 5) collect: [:i | X new m: 1 with: nil]`
+        stock Cog                       #(1 1 1 1 1)
+        ours, interpreter               #(1 1 1 1 1)
+        ours, JIT, re-homing on         #(0 0 0 0 0)   <- wrong home
+        ours, JIT, re-homing off        #(1 1 1 1 1)
+
+It is NOT #23's cause -- the repro storms 6 of 6 without it.  Turning it off
+was tried and REVERTED the same day; details in #30.
+
+
 ### 24. Fourteen classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
 
 Carried through several sweeps as "the missing display" and therefore as a
@@ -3685,6 +3744,52 @@ TKTWorkerTest, arm64, interleaved A/B with fix 1, 4 reps each:
     PHARO_NO_RESUME_WIDOW=1     4-5 P / 1-2 E / 1 T (0/4)   89-92 s
 
 and 7 P / 0 E again after fix 2.  Full-suite validation: see `docs/WIP.md`.
+
+### 30. A block can be re-homed onto the WRONG activation, and the rule that does it masks a stale duplicate Context — 2026-10-11, OPEN
+
+**The wrong answer.**  At the end of materializeFrameStack's current-frame
+branch, a block frame's closure gets its `outerContext` re-pointed at the
+frame's sender whenever the two contexts share a METHOD.  A recursive
+activation of the home method satisfies that:
+
+    m: n with: blk
+        n = 0 ifTrue: [^ blk value].
+        ^ self m: n - 1 with: [thisContext home arguments first]
+
+    (1 to: 5) collect: [:i | X new m: 1 with: nil]
+        stock Cog                        #(1 1 1 1 1)
+        ours, interpreter                #(1 1 1 1 1)
+        ours, JIT (rule on, default)     #(0 0 0 0 0)   <- wrong home
+        ours, JIT, PHARO_NO_REHOME_CLOSURES  #(1 1 1 1 1)
+
+A `^` in such a block returns from the wrong activation too.  Found by the
+2026-10-11 identity-split audit workflow (four finders, adversarial verify).
+
+**Why it is still on.**  Turning it off regresses the SUnit runner.  Batch
+1151-1200, three arms, two interleaved reps each:
+
+    arm                                  time    tests  notes
+    rule off (+ prim 196 fix)            116 s   383    RSExamplesTest TIMEOUT, then
+                                                         runner MNU: Object class >>
+                                                         #'  TIMEOUT(prim-stuck): '
+    rule on  (+ prim 196 fix)             45 s   385    clean
+    #28-only build (rule on)              50 s   385    clean
+
+The MNU is decisive: a runner block sent the string literal meant for
+`s nextPutAll:` as a selector to `Object class`, i.e. it read its OUTER TEMPS
+from the wrong Context.  So the rule is compensating for a second bug: some
+closures' `outerContext` is a STALE DUPLICATE Context of a live activation
+(temps not synced), and the rule moves them onto the live copy.  The same
+sweep (rule off) also lost batch 1151-1200 once to a Context storm in
+`RSBoxPlotTest` and hung `RSChannelTest` on retry; neither reproduced in the
+A/B above, so those are recorded but not attributed.
+
+**To fix:** find where the duplicate Context of a live activation is made --
+the audit's other surviving candidates are the place to start
+(`PushThisContext` setting the cached Context to nil at ~7105; the sender
+re-derivation from the anchor in materializeFrameStack ~20494; the inline-
+activation fallback's no-else branch at the frame-depth limit ~32475).  Then
+remove the rule and re-run batch 1151-1200 plus the `m:with:` repro.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 

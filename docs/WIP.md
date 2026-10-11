@@ -15,6 +15,25 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-11, 17:30)
+
+**#23 is a CROSS-PROCESS kill during test-process termination.**  A forked
+SUnit test process, while being terminated, runs `resume:through:` on the
+runner P79's loop-body block context, executes it, and widows it; P79 later
+returns into the dead context and the storm guard kills the runner.  Caught
+with a suspended-chain registry (`PHARO_ACTIVATION_CHECK`, now committed).
+Ruled out as the route: every VM widow site, primitive 196's kill loop, the
+handler search (prim 197), and `handleContextNLRUnwind`.  Full trail in
+`docs/vm-compat-bugs.md` #23.
+
+**New defect #30, OPEN:** closure re-homing by method match gives a block the
+wrong home under recursion (`m:with:` answers 0, Cog 1).  Turning the rule off
+regressed the SUnit runner (a block read outer temps from a stale duplicate
+Context), so it is back ON with `PHARO_NO_REHOME_CLOSURES` as the opt-out.
+The real fix is finding where the duplicate Context is made.
+
+**Primitive 196** now kills nothing for a nil target, as Cog does (e7664731).
+
 ## Right now (2026-10-11, 13:00)
 
 **Defect #28 is FIXED, and TKTWorkerTest passes: there is no class left on
