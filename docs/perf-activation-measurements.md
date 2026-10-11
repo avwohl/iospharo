@@ -149,3 +149,53 @@ Phase bench after all four fixes, ms (before -> after):
 
 SUnit batches 1-200 and 1001-1100: same P/F/E as the full sweep, 8-20% less
 wall time.
+
+## 2026-10-11 (evening): why 69% of sends round-trip -- resumed methods have J2J off
+
+A read-only audit workflow over AsmjitT1.cpp (four readers, a verifier per
+claim) found the one exit condition that does not depend on the callee.
+`tryJITResumeInCaller` resumes a method in emitted code with
+`state.j2jSaveCursor = state.j2jSaveLimit = nullptr` unless
+`PHARO_T1_RESUME_INTERNAL_J2J` is set.  The send emitter's save-pool check
+(`cmp cursor, limit; b.hs j2jBailFull`, AsmjitT1.cpp ~7725) is taken when both
+are NULL, so EVERY J2J-marked send in a resumed method exits ExitSendCached.
+It is self-sustaining: the send round-trips, the callee returns, the caller is
+resumed again with a NULL slice, and its next send exits too.  That is the 69%
+-- and why opening the bail-mid and numIC gates changed nothing (the check sits
+after them).
+
+The comment at the resume site still says internal mode is "default ON" with
+`PHARO_T1_RESUME_EXTERNAL_J2J` as the opt-out; that knob is read nowhere.
+Internal mode was turned back to opt-in on 2026-06-12 (`e81e6f0e`): it then
+produced garbage-selector DNUs because the loop's handlers decoded the send
+bytecode at `state.ip`, a shape only external mode guaranteed.
+
+Measured today, printString loop (both arms with the send census on):
+
+    default (NULL slice)               3411, 3396 ms
+    PHARO_T1_RESUME_INTERNAL_J2J=1     1968, 1980 ms     -42%
+
+SUnit batches 1-200 (3185 P / 0 F / 0 E) and 1001-1100 (597 P / 0 F / 0 E)
+with the knob on: identical to the default, and 1-200 ran in 105 s against
+~165 s.  A full sweep with it on is the gate for flipping the default.
+
+**Full sweep with `PHARO_T1_RESUME_INTERNAL_J2J=1`** (arm64, same settings and
+image as the 2026-10-11 sweeps):
+
+    knob     wall      classes  PASS    FAIL  ERROR
+    off      1 h 53 m  2047     27872   13    1     (sweep-arm-2026-10-11)
+    on       59 m      2047     27877   12    1
+
+48% less wall time, no garbage-selector DNUs (interpreter `[DNU]` lines 2094
+against 2125).  New non-clean: `ProcessSpecificTest>>testLocalVariable` 1 F
+(two processes timed with 30 ms Delays) and `TraitPureBehaviorTest` 1 T --
+both still to be A/B'd.  **And one SIGSEGV**: batch 1-50 crashed (rc=139) in
+`AndreasSystemProfilerTest`, inside `Interpreter::interpret` at the
+PushReceiverVariable handler with `receiver_` holding a SmallFloat -- a
+receiver/frame desync, the shape the 2026-06-12 note warned about.  It did not
+recur in 8 repeats of batch 1-50 nor in 6 runs of the class alone (about 1 in
+10 batch runs).  `PHARO_ACTIVATION_CHECK` now also checks, on every way out of
+the resume loop, that `receiver_` matches the frame's receiver slot (block
+frames: the closure's receiver); it reads 0 mismatches on clean runs.
+
+**The default stays OFF** until that crash is explained.

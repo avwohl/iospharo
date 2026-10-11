@@ -25040,6 +25040,38 @@ void Interpreter::tryJITResumeInCaller() {
     if (GET_DEBUG_BOOL(PHARO_T1_NO_CALLER_RESUME)) return;
     inJITResume_ = true;
 
+    // PHARO_ACTIVATION_CHECK: on every way out of the resume loop, the
+    // interpreter's receiver_ must be the current frame's receiver slot
+    // (framePointer_[0]).  A mismatch is a frame-identity desync -- the
+    // PHARO_T1_RESUME_INTERNAL_J2J crash (PushReceiverVariable on a
+    // SmallFloat receiver_) is exactly that shape.
+    struct ResumeExitCheck {
+        Interpreter* self;
+        ~ResumeExitCheck() {
+            if (__builtin_expect(!GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 1)) return;
+            if (!self->running_ || !self->framePointer_) return;
+            Oop slot = self->framePointer_[0];
+            if (slot.rawBits() == self->receiver_.rawBits()) return;
+            // Block frame: fp[0] is the closure, whose slot 3 is the receiver.
+            if (slot.isObject() && slot.rawBits() > 0x10000
+                    && self->memory_.isValidPointer(slot)
+                    && slot.asObjectPtr()->classIndex() == self->fullBlockClosureClassIndex_
+                    && slot.asObjectPtr()->slotCount() > 3
+                    && slot.asObjectPtr()->slotAt(3).rawBits() == self->receiver_.rawBits())
+                return;
+            static int nRX = 0;
+            if (++nRX <= 12)
+                fprintf(stderr, "[RESUME-EXIT-RECEIVER #%d] receiver_=0x%llx (%s) but fp[0]=0x%llx "
+                        "(%s); method_=#%s fd=%zu\n", nRX,
+                        (unsigned long long)self->receiver_.rawBits(),
+                        self->receiver_.isObject() ? self->memory_.classNameOf(self->receiver_).c_str() : "imm",
+                        (unsigned long long)slot.rawBits(),
+                        slot.isObject() && slot.rawBits() > 0x10000
+                            ? self->memory_.classNameOf(slot).c_str() : "imm",
+                        self->memory_.selectorOf(self->method_).c_str(), self->frameDepth_);
+        }
+    } resumeExitCheck{this};
+
     // Bug-14 diagnostic: log each invocation with caller method, retVal
     // on stack top, and next bc.  Rate-limited.
     if (GET_DEBUG_BOOL(PHARO_B5_TRACE) && method_.isObject() && method_.rawBits() >= 0x10000) {
