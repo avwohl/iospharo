@@ -1,0 +1,19 @@
+LinkInstallerTest                          FAIL: testPropagateNewClassScopedLinks [Assertion failed]
+LinkInstallerTest                          FAIL: testPropagateNewClassScopedLinks [Leaked metalinks]
+NoUnusedVariablesLeftTest                  TIMEOUT: testNoUnusedTemporaryVariablesLeft (exceeded 80s)
+OCClassBuilderTest                         ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+ReleaseTest                                FAIL: testNoDeadSubscriptions [Got an Array(a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodAdded) a WeakAnnouncementSubscription (nil subscribes to MethodModified)) instead of #().]
+ReleaseTest                                FAIL: testUnknownProcesses [Found unknown processes: 'CommandLine handler process'':'a Process in SessionManager>>snapshot:andQuit:
+ReleaseTest                                TIMEOUT: testNoShadowedVariablesInMethods (exceeded 80s)
+StDebuggerActionModelTest                  FAIL: testEventAfterProceed [Denial failed]
+StDebuggerInspectorTest                    FAIL: testUpdateLayoutForContextsWithAssertionFailure [Got 4 instead of 2.]
+StDebuggerTest                             FAIL: testIsInSelectedContextPackage [Got #on:do: instead of #runTestCaseUnderWatchdog:.]
+StDebuggerTest                             FAIL: testUpdateLayoutForContextsIfAssertionFailure [Got 4 instead of 2.]
+StSpotterModelTest                         FAIL: testAnnounceQueryEndedIsSentOnce [Got 0 instead of 1.]
+StSpotterModelTest                         FAIL: testSpotterModelShouldWaitToPerformActualSearch [Assertion failed]
+StSpotterTest                              FAIL: testOpenSpotterRefreshesPreviewOnce [Got 3 instead of 1.]
+SystemDependenciesTest                     FAIL: testExternalUIDependencies [Given Collections do not match!
+WeakAnnouncerTest                          FAIL: testNoDeadWeakSubscriptions [an Array(a WeakAnnouncementSubscription (nil subscribes to ClassRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodModified) a WeakAnnouncementSubscription (nil subscribes to MethodRemoved) a WeakAnnouncementSubscription (nil subscribes to MethodAdded)) should have been empty]
+ZnClientTest                               FAIL: testQueryGoogle [Assertion failed]
+ZnHTTPSTest                                TIMEOUT: testTransfers (exceeded 80s)
+ZnHTTPSTest                                TIMEOUT: testTransfersSingleClient (exceeded 80s)

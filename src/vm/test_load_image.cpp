@@ -1502,12 +1502,15 @@ int main(int argc, char* argv[]) {
             // when something actually widowed, so it costs a branch at exit.
             using pharo::g_contextsWidowedOnReturn;
             if (g_contextsWidowedOnReturn[0] || g_contextsWidowedOnReturn[1]
-                    || g_contextsWidowedOnReturn[2])
+                    || g_contextsWidowedOnReturn[2] || g_contextsWidowedOnReturn[3])
                 fprintf(stderr, "[WIDOW] contexts widowed on return: "
-                        "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu\n",
+                        "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu "
+                        "jit-resume=%llu jit-resume-mismatch=%llu\n",
                         (unsigned long long)g_contextsWidowedOnReturn[0],
                         (unsigned long long)g_contextsWidowedOnReturn[1],
-                        (unsigned long long)g_contextsWidowedOnReturn[2]);
+                        (unsigned long long)g_contextsWidowedOnReturn[2],
+                        (unsigned long long)g_contextsWidowedOnReturn[3],
+                        (unsigned long long)g_contextsWidowedOnReturn[4]);
         }
 
         // In test mode, print results file if it exists

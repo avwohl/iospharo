@@ -476,6 +476,12 @@ extern "C" __attribute__((noinline)) void pharo_cascade_bp(
     asm volatile("" ::: "memory");
 }
 
+// Debug-only owner check at JIT-exit frame syncs (see checkMatCtxOwner);
+// one predicted-not-taken branch when the knob is off.
+#define MATCTX_OWNER_CHECK(m) \
+    do { if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MATCTX_OWNER_CHECK), 0)) \
+             checkMatCtxOwner(__LINE__, (m)); } while (0)
+
 namespace pharo {
 
 // See the definition next to dumpSendChain: per-site cannotReturn: tallies.
@@ -2288,11 +2294,13 @@ uint64_t g_contextsKilledByUnwind[2] = {0, 0};
 // loop is a duplicated activation rather than a lost context handover.
 uint64_t g_duplicateActivation[2] = {0, 0};
 // Widow sites: how many materialized Contexts each RETURN path marked dead.
-// [0] popFrame, [1] popFrameForJIT, [2] the fd==0 context-return path.  A
+// [0] returnValue, [1] popFrameForJIT, [2] the fd==0 context-return path,
+// [3] tryJITResumeInCaller's ExitReturn after popFrame() succeeded, and
+// [4] the times [3] declined because the Context was not the returning method's.  A
 // retained-receiver chain (docs/vm-compat-bugs.md #28) is a context that no
 // site widowed, so a zero here says which path never runs for the frames in
 // question rather than leaving it to be inferred from heap-watch output.
-uint64_t g_contextsWidowedOnReturn[3] = {0, 0, 0};
+uint64_t g_contextsWidowedOnReturn[5] = {0, 0, 0, 0, 0};
 
 // PHARO_WIDOW_TRACE_SEL=<substring>: name every RETURN of a matching
 // activation and whether it had a materialized Context to widow.  The widow
@@ -2319,6 +2327,25 @@ void Interpreter::traceReturnPath(const char* site, Oop methodOop, Oop ctx) {
     fprintf(stderr, "[RETURN-PATH %s] returning=#%s ctxOf=#%s %s\n", site,
             sel.c_str(), ctxSel.c_str(),
             haveCtx ? (ctxSel == sel ? "SAME" : "DIFFERENT") : "NONE");
+}
+
+// PHARO_MATCTX_OWNER_CHECK: report, once per source line, a frame sync that
+// leaves currentFrameMaterializedCtx_ naming a Context of a DIFFERENT method
+// than the frame now current.  The field must belong to the current frame;
+// a stale one is reused by the next materialization and widowed on return
+// (docs/vm-compat-bugs.md #28).
+void Interpreter::checkMatCtxOwner(int line, Oop methodOop) {
+    Oop c = currentFrameMaterializedCtx_;
+    if (!c.isObject() || c.isNil() || c.rawBits() <= 0x10000
+            || !memory_.isValidPointer(c)) return;
+    Oop cm = memory_.fetchPointer(3, c);
+    if (cm.rawBits() == methodOop.rawBits()) return;
+    static std::unordered_map<int, uint64_t> seen;
+    uint64_t n = ++seen[line];
+    if (n <= 3 || (n & (n - 1)) == 0)
+        fprintf(stderr, "[MATCTX-OWNER] line=%d n=%llu frame=#%s ctxOf=#%s fd=%zu\n",
+                line, (unsigned long long)n, memory_.selectorOf(methodOop).c_str(),
+                memory_.selectorOf(cm).c_str(), frameDepth_);
 }
 
 // PHARO_WIDOW_TRACE_SEL=<substring>: name every activation that IS widowed, so
@@ -2447,10 +2474,13 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                     (unsigned long long)g_contextsKilledByUnwind[0],
                     (unsigned long long)g_contextsKilledByUnwind[1]);
         fprintf(stderr, "[SEND-CHAIN] contexts widowed on return: "
-                "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu\n",
+                "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu "
+                "jit-resume=%llu jit-resume-mismatch=%llu\n",
                 (unsigned long long)g_contextsWidowedOnReturn[0],
                 (unsigned long long)g_contextsWidowedOnReturn[1],
-                (unsigned long long)g_contextsWidowedOnReturn[2]);
+                (unsigned long long)g_contextsWidowedOnReturn[2],
+                (unsigned long long)g_contextsWidowedOnReturn[3],
+                (unsigned long long)g_contextsWidowedOnReturn[4]);
         if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
             fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
                     "chain-loop=%llu (materialized first) resume-loop=%llu "
@@ -24691,7 +24721,7 @@ void Interpreter::tryJITResumeInCaller() {
             receiver_ = state.receiver;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
             instructionPointer_ = state.ip;
-            framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+            framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
             argCount_ = state.argCount;
             {
                 ObjectHeader* mObj = state.method.isObject()
@@ -25386,7 +25416,7 @@ void Interpreter::tryJITResumeInCaller() {
                 receiver_ = state.receiver;
                 stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                 instructionPointer_ = state.ip;
-                framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
                 argCount_ = state.argCount;
                 {
                     ObjectHeader* mObj = state.method.asObjectPtr();
@@ -25446,7 +25476,7 @@ void Interpreter::tryJITResumeInCaller() {
             receiver_ = state.receiver;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
             instructionPointer_ = state.ip;
-            framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+            framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
             argCount_ = state.argCount;
             ObjectHeader* mObj = state.method.isObject()
                 ? state.method.asObjectPtr() : nullptr;
@@ -25456,15 +25486,11 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitReturn:
             traceReturnPath("jit-resume-return", state.method,
                             currentFrameMaterializedCtx_);
-            // DO NOT widow currentFrameMaterializedCtx_ here.  This IS the
-            // path the leak takes -- 13 of the 19 returns of a block's home
-            // method arrive here with ctx=present, against 4 at the fd==0
-            // context return (docs/vm-compat-bugs.md #28) -- but widowing it
-            // HANGS the VM: TKTWorkerTest ran 890 s to the harness timeout
-            // with 6.6M steps and only ProcessorScheduler>>idleProcess left in
-            // the queue.  So the field here is not (always) the RETURNING
-            // frame's context; nil'ing its sender destroys a chain still in
-            // use.  Measured 2026-09-04, PHARO_NO_RESUME_WIDOW.
+            // DO NOT widow currentFrameMaterializedCtx_ HERE, before popFrame():
+            // when popFrame() fails (fd==0) the field IS activeContext_, and
+            // the branch below reads its sender to find the caller.  Widowing
+            // first stranded that return and hung TKTWorkerTest (890 s, only
+            // idleProcess left).  The widow is after the push instead.
             // Bug-14 diagnostic (tryResume path)
             if (GET_DEBUG_BOOL(PHARO_B5_TRACE)) {
                 static size_t c12791 = 0;
@@ -25493,7 +25519,11 @@ void Interpreter::tryJITResumeInCaller() {
             Oop* matRetSlot17325 = (frameDepth_ > 0)
                 ? savedFrames_[frameDepth_ - 1].materializedRetSlot
                 : nullptr;
-            if (!popFrame()) {
+            // The returning frame's own Context (docs/vm-compat-bugs.md #28),
+            // widowed only AFTER the return value has reached the caller.
+            Oop returningCtx = currentFrameMaterializedCtx_;
+            bool popped = popFrame();
+            if (!popped) {
                 // fd=0: no C++ frames left. Follow context sender chain.
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
                     Oop sender = memory_.fetchPointer(0, activeContext_);
@@ -25571,6 +25601,58 @@ void Interpreter::tryJITResumeInCaller() {
                     stackPointer_ = matRetSlot17325 + 1;
                 } else {
                     push(state.returnValue);
+                }
+            }
+            // Widow the returned frame's Context, as returnValue() does before
+            // its popFrame() -- this branch is the one the JIT resume loop
+            // takes for 15 of the 19 returns of TKTWorkerTest's process-body
+            // home method, and without it the home Context keeps a live sender
+            // chain that pins every receiver below it (docs/vm-compat-bugs.md
+            // #28).  It must come AFTER the return value has been delivered:
+            // the fd==0 branch above reads the returning Context's sender to
+            // find the caller (there returningCtx == activeContext_ every
+            // time), and an earlier attempt that widowed before popFrame()
+            // stranded that return and hung the VM.  Skip it if the caller
+            // somehow still names the same Context.
+            if (popped && returningCtx.isObject() && !returningCtx.isNil()
+                    && returningCtx.rawBits() > 0x10000
+                    && returningCtx.rawBits() != activeContext_.rawBits()
+                    && returningCtx.rawBits() != currentFrameMaterializedCtx_.rawBits()
+                    && !GET_DEBUG_BOOL(PHARO_NO_RESUME_WIDOW)
+                    && memory_.isValidPointer(returningCtx)) {
+                // Only a Context of the method that returned.  Widowing a live
+                // frame's Context is what a dead-sender storm looks like
+                // (#23), so a mismatch is counted, not acted on.  Before the
+                // chain-loop fallback push was fixed this declined ~17000
+                // times a TKTWorkerTest run (the callee had inherited its
+                // caller's Context); it reads 0 now, and a non-zero
+                // jit-resume-mismatch in the [WIDOW] line is a new owner bug
+                // -- find it with PHARO_MATCTX_OWNER_CHECK.
+                if (memory_.fetchPointer(3, returningCtx).rawBits()
+                        == state.method.rawBits()) {
+                    memory_.storePointer(0, returningCtx, memory_.nil());
+                    memory_.storePointer(1, returningCtx, memory_.nil());
+                    g_contextsWidowedOnReturn[3]++;
+                    traceWidow("jit-resume", returningCtx);
+                } else {
+                    g_contextsWidowedOnReturn[4]++;
+                    if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
+                            && g_contextsWidowedOnReturn[4] <= 40) {
+                        Oop cm = memory_.fetchPointer(3, returningCtx);
+                        Oop cl = memory_.fetchPointer(4, returningCtx);
+                        Oop pc = memory_.fetchPointer(1, returningCtx);
+                        fprintf(stderr, "[RESUME-WIDOW-MISMATCH] returned=#%s(%s) "
+                                "ctxMethod=#%s(%s) ctxClosure=%s ctxPc=%s "
+                                "newActive=%s\n",
+                                memory_.selectorOf(state.method).c_str(),
+                                memory_.classNameOf(state.method).c_str(),
+                                memory_.selectorOf(cm).c_str(),
+                                memory_.classNameOf(cm).c_str(),
+                                cl.isNil() ? "nil" : memory_.classNameOf(cl).c_str(),
+                                pc.isNil() ? "nil" : pc.isSmallInteger()
+                                    ? std::to_string(pc.asSmallInteger()).c_str() : "?",
+                                activeContext_.isNil() ? "nil" : "ctx");
+                    }
                 }
             }
             }  // end Step 7 scope
@@ -25735,7 +25817,7 @@ void Interpreter::tryJITResumeInCaller() {
             // (same class as the chain-loop handlers' fix).
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -25842,7 +25924,7 @@ void Interpreter::tryJITResumeInCaller() {
             // its depth==0 case.
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -25874,7 +25956,7 @@ void Interpreter::tryJITResumeInCaller() {
             // tional — same staleness analysis.
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -26431,7 +26513,7 @@ uint64_t Interpreter::jitInlineBlockCreate(jit::JITState& state, uint64_t packed
     instructionPointer_ = state.ip;
     stackPointer_ = state.sp;
     receiver_ = state.receiver;
-    framePointer_ = state.tempBase - 1;
+    framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
     method_ = state.method;
     homeMethod_ = state.method;
 
@@ -29294,7 +29376,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             receiver_ = state.receiver;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
             instructionPointer_ = state.ip;
-            framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+            framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
             argCount_ = state.argCount;
             // Set bytecodeEnd_ from the innermost frame's method.
             // Without this, fetchByte() sees stale bytecodeEnd_ from the
@@ -29487,7 +29569,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         receiver_ = state.receiver;
         stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
         instructionPointer_ = state.ip;
-        framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+        framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
         argCount_ = state.argCount;
         {
             ObjectHeader* mObj = state.method.asObjectPtr();
@@ -29780,7 +29862,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     receiver_ = state.receiver;
                     stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                     instructionPointer_ = state.ip;
-                    framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+                    framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
                     argCount_ = state.argCount;
                     {
                         ObjectHeader* mObj = state.method.asObjectPtr();
@@ -29963,7 +30045,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // gap for block frames.)
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -30258,7 +30340,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // gap for block frames.)
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -30396,7 +30478,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // 2026-06-11 fix.
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -30525,7 +30607,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // analysis as the BlockCreate handler above).
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -30746,7 +30828,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // gap for block frames.)
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -30803,7 +30885,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // an inline-J2J callee doesn't resume the OUTER method.
             {
                 receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method);
                 method_ = state.method;
                 homeMethod_ = state.method;
             }
@@ -30913,7 +30995,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 receiver_ = state.receiver;
                 stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                 instructionPointer_ = state.ip;
-                framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+                framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
                 argCount_ = state.argCount;
                 {
                     ObjectHeader* mObj = state.method.asObjectPtr();
@@ -31662,7 +31744,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     receiver_ = state.receiver;
                                     stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                                     instructionPointer_ = state.ip;
-                                    framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+                                    framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
                                     argCount_ = state.argCount;
                                     {
                                         ObjectHeader* mObj = state.method.asObjectPtr();
@@ -31774,7 +31856,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.savedReceiver = savedRecv;
                             frame.savedClosure = memory_.nil();
                             frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                            frame.materializedContext = memory_.nil();
+                            // The caller's materialized Context goes WITH the
+                            // caller's frame, and the callee starts with none,
+                            // as in pushFrame().  This stored nil and left the
+                            // field alone, so the caller lost its Context and
+                            // the callee inherited it: the next materialization
+                            // reused the CALLER's Context object as the callee's
+                            // activation, and the callee's return widowed the
+                            // still-live caller (docs/vm-compat-bugs.md #28;
+                            // seen as at: -> at:ifAbsent:, split:do: ->
+                            // split:indicesDo:).
+                            frame.materializedContext = currentFrameMaterializedCtx_;
+                            currentFrameMaterializedCtx_ = memory_.nil();
                             frame.ctxSynced = false;
                             frame.savedFP = savedTempBase - 1;
                             // Step 7: OUTER frame's send-receiver slot.
@@ -31926,7 +32019,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         receiver_ = state.receiver;
                         stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                         instructionPointer_ = state.ip;
-                        framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+                        framePointer_ = state.tempBase - 1; MATCTX_OWNER_CHECK(state.method); FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
                         argCount_ = (state.j2jDepth > 0) ? state.argCount : nArgs;
                         if (exitMethod.isObject() && exitMethod.rawBits() != 0) {
                             ObjectHeader* tMO = exitMethod.asObjectPtr();

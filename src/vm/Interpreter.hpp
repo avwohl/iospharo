@@ -103,7 +103,7 @@ namespace pharo {
 // Widow-site tallies for docs/vm-compat-bugs.md #28: how many materialized
 // Contexts each RETURN path marked dead.  [0] popFrame, [1] popFrameForJIT,
 // [2] the fd==0 context-return path.
-extern uint64_t g_contextsWidowedOnReturn[3];
+extern uint64_t g_contextsWidowedOnReturn[5];
 
 // Cascade-hunt ring (2026-07-05, temporary diagnostic): last 32 prim-111
 // (class-of) results so the DNU cascade dump can attribute a corpse class
@@ -1828,6 +1828,7 @@ public:
     void traceWidow(const char* site, Oop ctx);
     /// PHARO_WIDOW_TRACE_SEL diagnostic: name a RETURN and whether it had a context.
     void traceReturnPath(const char* site, Oop methodOop, Oop ctx);
+    void checkMatCtxOwner(int line, Oop methodOop);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

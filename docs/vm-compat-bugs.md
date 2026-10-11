@@ -3101,7 +3101,7 @@ grace.  Costs wall-clock only.
 marker -- is not reproduced by any of the four timed runs above and is left
 here unexplained rather than quietly dropped.)
 
-### 28. Two of the three "ours" classes are not ours, and the third is the JIT's — 2026-09-03
+### 28. ~~Two of the three "ours" classes are not ours, and the third is the JIT's~~ — 2026-09-03, FIXED 2026-10-11 (see the end of this section)
 
 The 2026-09-03 fake-GUI sweep's residual named three classes as ours:
 `TraitFileOutTest`, `TKTWorkerTest` and `StSpotterTest`.  All three were run
@@ -3554,6 +3554,51 @@ reifies every saved frame rather than only the one owning the closure, so the
 chain that then fails to be widowed is longer than it needs to be.  Narrowing
 the materialization would reduce the blast radius; widowing the home is what
 actually breaks the retention.)
+
+#### FIXED 2026-10-11 — two bugs, and the second one is why the first fix hung
+
+**1. The resume loop's `ExitReturn` never widowed.**  Splitting that case by
+branch settles where the 16 leaking returns go:
+
+    branch of tryJITResumeInCaller ExitReturn     returns of createProcessDoing:named:
+    popFrame() succeeds                            15   (nothing widows here)
+    popFrame() fails (fd==0, context return)        1   (widows activeContext_)
+
+and on the fd==0 branch the returning Context **is** `activeContext_` every
+time (33144 of 33144).  That explains the 2026-09-04 hang exactly: the attempt
+widowed BEFORE `popFrame()`, so on the fd==0 branch it nil'ed the sender that
+the very next line reads to find the caller, the process had nowhere to
+return, and it was terminated.  The fix captures the returning Context before
+`popFrame()` and widows it only on the success branch, after the return value
+has been pushed into the caller.  Opt-out `PHARO_NO_RESUME_WIDOW`.  The
+`[WIDOW]` tally gained `jit-resume=` for this site.
+
+**2. The chain loop's inline-activation fallback gave the callee its caller's
+Context.**  Fix 1 first shipped with a guard (widow only when the Context's
+method slot equals the returning method), and the guard declined ~17000 widows
+a run.  `PHARO_RESUME_WIDOW_TRACE` named them -- `split:indicesDo:` returning
+with `split:do:`'s Context, `at:ifAbsent:` with `at:`'s -- and the frame
+pointer matched in all of them, so the C++ frame really was the callee's and
+the field was stale.  `PHARO_MATCTX_OWNER_CHECK` (an owner check at all 19 JIT
+exit frame syncs) put the first sighting at the chain loop: when an
+inline-activated callee exits with anything but `ExitReturn`, the fallback
+pushes a SavedFrame for the caller with `materializedContext = nil` and leaves
+`currentFrameMaterializedCtx_` alone.  So the caller's frame lost its Context
+and the callee inherited it.  Without the guard, fix 1 would have widowed the
+LIVE caller -- the "return into a dead sender" shape of #23 -- and the next
+materialization in the callee would have reused the caller's Context object
+as the callee's activation.  Fixed the way `pushFrame()` does it: the Context
+goes with the caller's frame, the callee starts with none.  After it: 0 owner
+violations and `jit-resume-mismatch=0`.  The guard stays (it is one load on a
+rare branch) and a non-zero `jit-resume-mismatch` is now a new owner bug.
+
+TKTWorkerTest, arm64, interleaved A/B with fix 1, 4 reps each:
+
+    arm                         result                      time
+    fix on                      7 P / 0 F / 0 E  (4 of 4)   9-10 s
+    PHARO_NO_RESUME_WIDOW=1     4-5 P / 1-2 E / 1 T (0/4)   89-92 s
+
+and 7 P / 0 E again after fix 2.  Full-suite validation: see `docs/WIP.md`.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 

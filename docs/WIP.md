@@ -15,6 +15,36 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-11, 13:00)
+
+**Defect #28 is FIXED, and TKTWorkerTest passes: there is no class left on
+the "ours" list.**  Two bugs, both in `src/vm/Interpreter.cpp`:
+
+1. `tryJITResumeInCaller`'s `ExitReturn` never widowed the returning frame's
+   Context when `popFrame()` succeeded -- 15 of the 19 leaking returns.  The
+   2026-09-04 attempt hung because it widowed BEFORE `popFrame()`, and on the
+   fd==0 branch that Context is `activeContext_`, whose sender the next line
+   reads.  Now widowed after the return value is delivered.
+2. The chain loop's inline-activation fallback pushed the caller's SavedFrame
+   with `materializedContext = nil` and left `currentFrameMaterializedCtx_`
+   set, so the callee inherited its caller's Context.  With fix 1 alone that
+   would have widowed live callers (#23's dead-sender shape).  Found by a
+   method-match guard that declined ~17000 widows a run; 0 after the fix,
+   and 0 in all 41 batches of the full sweep.
+
+TKTWorkerTest A/B 4 reps: 7 P every time (9-10 s) against 4-5 P / 1-2 E / 1 T
+(~90 s).  Full arm64 sweep: 2047 classes, 27872 P / 13 F / 1 E / 4 T, 99.27%,
+every non-clean class shared with Cog or slow -- see
+`docs/results/sweep-arm-2026-10-11.md`.
+
+**New lead:** the macOS fake-GUI wedge batch (651-700) carries #23's
+dead-sender + storm-guard lines.  The wedge and #23 may be one bug.
+
+**Next:** the residual is speed (defect #6 TIMEOUTs; package TIMEOUT-only
+divergences).  `scripts/perf-activation/bench_ast_phases.st` splits the
+whole-image AST scan into phases to find where the 28x interpreter / 37x JIT
+gap to Cog sits.
+
 ## Right now (2026-09-04, 04:15)
 
 **The residual is one class, and the rest of the gap is speed.**  A
