@@ -1162,7 +1162,7 @@ A knob triage on the same workload (one rep each) puts a number on it:
 Only the caller-resume path has a measurable share.  The block-value
 specialisations are both within noise, so the block cost sits in the generic
 activation path rather than those emits.  Full table and method in
-`scripts/perf-activation/README.md`.
+`docs/perf-activation-measurements.md`.
 
 Checked and NOT the cause, so nobody re-checks it: `noteMethodEntry`'s
 `sistaRuntimeForGCHook_->hasSplice(m)` looked like the per-call
@@ -3483,7 +3483,7 @@ the returns back through C++ and 19 reappear, and the failure goes) agree.
 
 **A candidate worth validating, not yet proposed:**
 `PHARO_T1_NO_CALLER_RESUME` fixes this test AND is 14% FASTER on defect #6's
-reflective scan (187 s against 217 s, `scripts/perf-activation/README.md`).
+reflective scan (187 s against 217 s, `docs/perf-activation-measurements.md`).
 Two wins from one knob is unusual enough to be worth a proper look, but it is
 NOT proposed as a default here: it exists as an x86 sp-leak workaround, and
 disabling caller re-entry should cost send-bound code, which is where the JIT

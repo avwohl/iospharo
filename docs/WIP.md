@@ -86,7 +86,7 @@ whole-image scan is `allMethodsDo: [...]`.  A knob triage puts the only
 measurable share on the caller-resume path (`PHARO_T1_NO_CALLER_RESUME`
 -14%, matching `tryJITResumeInCaller` topping the sample); both block-value
 specialisation knobs are within noise.  Full table in
-`scripts/perf-activation/README.md`.
+`docs/perf-activation-measurements.md`.
 
 **A validation re-sweep of real x86 is running** with today's two functional
 changes (`RUN_FROM_IMAGE_DIR` default, the `popFrameForJIT` widow), at index
