@@ -11369,9 +11369,21 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
     // Check if target is reachable from receiver via sender chain.
     // No depth cap (chains can legitimately exceed any constant — see the
     // prim 195/197 fix); a cyclic chain is guarded via Floyd tortoise-and-hare.
+    //
+    // A NIL target is NOT reachable, so nothing is killed and the receiver's
+    // sender is simply set to nil.  That is Cog's context:hasSender: --
+    // findMethodWithPrimitive:FromContext:UpToContext: answers nil (not 0)
+    // when the walk reaches nil, so hasSender is false ("Always false if
+    // aContext is nil").  This used to treat nil as "terminate the entire
+    // chain" and killed every context below the receiver.  Every finishing
+    // process runs `thisContext terminateTo: nil` (Process>>endProcess, and
+    // Context>>unwindForTermination), so any context still reachable from
+    // another process died with sender=nil pc=nil: the SUnit runner's
+    // loop-body block context, then a return into it, then defect #23's
+    // cannotReturn: storm and the macOS batch 651-700 wedge.
     bool reachable = false;
     if (aContextOrNil.rawBits() == nilObj.rawBits() || aContextOrNil.isNil()) {
-        reachable = true;  // nil is always reachable (terminate entire chain)
+        reachable = false;
     } else {
         Oop check = thisCtx;
         Oop slowCheck = thisCtx;
@@ -11402,6 +11414,30 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
         while (current.isObject() && current.rawBits() != nilObj.rawBits() &&
                current.rawBits() != aContextOrNil.rawBits()) {
             Oop sender = memory_.fetchPointer(SenderIndex, current);
+            if (__builtin_expect(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL) != nullptr, 0)) {
+                std::string rc = memory_.classNameOf(memory_.fetchPointer(5, current));
+                if (rc.find(GET_DEBUG_STR(PHARO_WATCH_CTX_KILL)) != std::string::npos) {
+                    static int nK = 0;
+                    ++nK;
+                    if (nK > 8 && nK <= 4000)
+                        fprintf(stderr, "[CTX-KILL prim196 #%d] killing ctx=0x%llx #%s "
+                                "target=0x%llx\n", nK, (unsigned long long)current.rawBits(),
+                                memory_.selectorOf(memory_.fetchPointer(3, current)).c_str(),
+                                (unsigned long long)aContextOrNil.rawBits());
+                    if (nK <= 8) {
+                        fprintf(stderr, "[CTX-KILL prim196 #%d] killing ctx=0x%llx #%s "
+                                "(rcv %s); receiver ctx #%s, target %s #%s\n", nK,
+                                (unsigned long long)current.rawBits(),
+                                memory_.selectorOf(memory_.fetchPointer(3, current)).c_str(),
+                                rc.c_str(),
+                                memory_.selectorOf(memory_.fetchPointer(3, thisCtx)).c_str(),
+                                aContextOrNil.isNil() ? "nil" : "ctx",
+                                aContextOrNil.isNil() ? "-" : memory_.selectorOf(
+                                    memory_.fetchPointer(3, aContextOrNil)).c_str());
+                        dumpSendChain("prim196-kill", 24);
+                    }
+                }
+            }
             memory_.storePointer(SenderIndex, current, nilObj);
             memory_.storePointer(PCIndex, current, nilObj);
             current = sender;

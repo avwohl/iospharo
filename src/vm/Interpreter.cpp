@@ -2638,6 +2638,39 @@ void Interpreter::noteFd0Widow(int site, Oop returningMethod) {
                 memory_.classNameOf(memory_.fetchPointer(5, activeContext_)).c_str());
 }
 
+// PHARO_ACTIVATION_CHECK: compare a Context's ARGUMENT slots with the frame
+// it is about to be widowed for or reused as.  Arguments are read-only in
+// Smalltalk, so a mismatch means the Context belongs to a different
+// ACTIVATION of the same method -- the case every method-match check is
+// blind to (defect #23: the runner's loop-body block is re-activated once per
+// test with the same CompiledBlock and receiver, but a different argument).
+// Sites: 0 returnValue, 1 ctx-return, 2 jit-resume, 3-6 the JIT fd==0
+// returns, 7 current-frame reuse, 8 saved-frame reuse.
+uint64_t g_activationMismatch[9] = {0};
+void Interpreter::checkActivation(int site, Oop ctx, const Oop* tempBase) {
+    if (!tempBase || !ctx.isObject() || ctx.rawBits() <= 0x10000
+            || !memory_.isValidPointer(ctx)) return;
+    Oop m = memory_.fetchPointer(3, ctx);
+    if (!m.isObject() || m.rawBits() <= 0x10000) return;
+    Oop hdr = memory_.fetchPointer(0, m);
+    if (!hdr.isSmallInteger()) return;
+    int nArgs = (int)((hdr.asSmallInteger() >> 24) & 0x0F);
+    ObjectHeader* c = ctx.asObjectPtr();
+    for (int a = 0; a < nArgs && 6 + a < (int)c->slotCount(); a++) {
+        if (c->slotAt(6 + a).rawBits() != tempBase[a].rawBits()) {
+            uint64_t n = ++g_activationMismatch[site];
+            if (n <= 8)
+                fprintf(stderr, "[ACTIVATION-MISMATCH site=%d] ctx=0x%llx ctxOf=#%s "
+                        "arg%d ctx=0x%llx frame=0x%llx fd=%zu\n", site,
+                        (unsigned long long)ctx.rawBits(),
+                        memory_.selectorOf(m).c_str(), a,
+                        (unsigned long long)c->slotAt(6 + a).rawBits(),
+                        (unsigned long long)tempBase[a].rawBits(), frameDepth_);
+            return;
+        }
+    }
+}
+
 // PHARO_MATCTX_OWNER_CHECK: report, once per source line, a frame sync that
 // leaves currentFrameMaterializedCtx_ naming a Context of a DIFFERENT method
 // than the frame now current.  The field must belong to the current frame;
@@ -8439,6 +8472,7 @@ void Interpreter::returnValue(Oop value) {
                         traceReturnPath("ctx-return", method_, activeContext_);
                     // Mark the returning context as dead per Cog VM semantics:
                     // nil the sender and PC so isDead returns true and sender chain is broken.
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(1, activeContext_, framePointer_ + 1);
                     if (memory_.fetchPointer(3, activeContext_).rawBits()
                             != method_.rawBits()) {
                         g_widowOwnerMismatch[1]++;
@@ -8653,6 +8687,7 @@ terminate_process:
                         memory_.selectorOf(method_).c_str(),
                         (unsigned long long)currentFrameMaterializedCtx_.rawBits());
         }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(0, currentFrameMaterializedCtx_, framePointer_ + 1);
         if (memory_.fetchPointer(3, currentFrameMaterializedCtx_).rawBits()
                 != method_.rawBits()) {
             g_widowOwnerMismatch[0]++;
@@ -20357,6 +20392,7 @@ Oop Interpreter::materializeFrameStack() {
         Oop context = frame.materializedContext;
         if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
             noteDeadReuse("saved-frame", context, frame.savedMethod);
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(8, context, frame.savedFP ? frame.savedFP + 1 : nullptr);
             // FIX: If reusing a context that IS the sender (e.g. frame 0 was
             // activeContext_ on a prior materialization), do NOT update its sender
             // — that would create a self-referential chain. The context's existing
@@ -20599,6 +20635,7 @@ Oop Interpreter::materializeFrameStack() {
             bool reusingContext = false;
             if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
                 noteDeadReuse("current-frame", context, method_);
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(7, context, framePointer_ + 1);
                 // Reuse existing context — just update sender and state
                 if (context.rawBits() != sender.rawBits()) {
                     setSenderSafe(context, sender);
@@ -21906,6 +21943,32 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    // PHARO_ACTIVATION_CHECK: resuming a Context whose SENDER has already
+    // returned (pc nil) means its next return lands in a dead sender --
+    // #23's storm, caught at the resume that sets it up instead of at the
+    // return.  Names the caller of executeFromContext (which resume path).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+            && context.isObject() && context.rawBits() > 0x10000
+            && memory_.isValidPointer(context)) {
+        Oop sdr = memory_.fetchPointer(0, context);
+        if (sdr.isObject() && !sdr.isNil() && sdr.rawBits() > 0x10000
+                && memory_.isValidPointer(sdr)
+                && memory_.fetchPointer(1, sdr).isNil()) {
+            static int nEDS = 0;
+            if (++nEDS <= 10) {
+                void* ra = __builtin_return_address(0);
+                Dl_info di{};
+                int got = dladdr(ra, &di);
+                fprintf(stderr, "[EXEC-DEAD-SENDER #%d] resuming #%s whose sender #%s "
+                        "is dead; caller=%s+%lld lastPrim=%d fd=%zu\n", nEDS,
+                        memory_.selectorOf(memory_.fetchPointer(3, context)).c_str(),
+                        memory_.selectorOf(memory_.fetchPointer(3, sdr)).c_str(),
+                        got && di.dli_sname ? di.dli_sname : "?",
+                        got ? (long long)((uint8_t*)ra - (uint8_t*)di.dli_saddr) : 0LL,
+                        lastPrimitiveIndex_, frameDepth_);
+            }
+        }
+    }
     // PHARO_TRACE_FRAME_TEMPS: this is the classic path that re-establishes a
     // running activation at a DIFFERENT stack address.  Log it for the watched
     // selector so a moved frame can be correlated with a materializedContext
@@ -24585,6 +24648,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                     if (sender.isObject() && !sender.isNil()
                             && memory_.isValidPointer(sender)) {
                         noteFd0Widow(0, sstate.method);
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(3, activeContext_, sstate.tempBase);
                         memory_.storePointer(0, activeContext_, memory_.nil());
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         stackPointer_ = stackBase_;
@@ -25903,6 +25967,7 @@ void Interpreter::tryJITResumeInCaller() {
                     if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
                         // Kill current context (it returned)
                         noteFd0Widow(1, state.method);
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(4, activeContext_, state.tempBase);
                         memory_.storePointer(0, activeContext_, memory_.nil());
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         // Load sender context
@@ -26004,6 +26069,7 @@ void Interpreter::tryJITResumeInCaller() {
                 // -- find it with PHARO_MATCTX_OWNER_CHECK.
                 if (memory_.fetchPointer(3, returningCtx).rawBits()
                         == state.method.rawBits()) {
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(2, returningCtx, state.tempBase);
                     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
                         liveWidowCheck("jit-resume", returningCtx);
                     memory_.storePointer(0, returningCtx, memory_.nil());
@@ -30317,6 +30383,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     Oop sender = memory_.fetchPointer(0, activeContext_);
                     if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
                         noteFd0Widow(2, state.method);
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(5, activeContext_, state.tempBase);
                         memory_.storePointer(0, activeContext_, memory_.nil());
                         memory_.storePointer(1, activeContext_, memory_.nil());
                         stackPointer_ = stackBase_;
@@ -32821,6 +32888,7 @@ jit_loop_exit:
                 Oop sender = memory_.fetchPointer(0, activeContext_);
                 if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
                     noteFd0Widow(3, state.method);
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(6, activeContext_, state.tempBase);
                     memory_.storePointer(0, activeContext_, memory_.nil());
                     memory_.storePointer(1, activeContext_, memory_.nil());
                     stackPointer_ = stackBase_;

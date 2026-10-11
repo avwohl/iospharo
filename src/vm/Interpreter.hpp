@@ -1631,6 +1631,7 @@ public:
     void noteDeadReuse(const char* site, Oop ctx, Oop frameMethod);
     void liveWidowCheck(const char* site, Oop ctx);
     void noteFd0Widow(int site, Oop returningMethod);
+    void checkActivation(int site, Oop ctx, const Oop* tempBase);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

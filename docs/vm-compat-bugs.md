@@ -2715,6 +2715,44 @@ runs -- passes every method-match check above.  The next instrument needs an
 activation stamp: a counter bumped on every frame push, carried in SavedFrame
 and recorded per materialized Context, compared at reuse and at widow.
 
+**Activation check done, same day, also zero.**  Arguments are read-only, so
+`PHARO_ACTIVATION_CHECK` compares a Context's argument slots with the frame's
+at every widow and every reuse; the runner block gets a different argument
+per test.  Zero mismatches at all nine sites in storming runs.  So every VM
+widow is the right activation, and the runner block context really did
+return -- what is wrong is that something returns into it afterwards.
+
+**Caught at the resume: `[EXEC-DEAD-SENDER]`** (same knob).  In every
+storming run, `executeFromContext` is asked to resume
+`runSingleTest:...`'s Context while its sender is already dead, and the
+caller is always `returnValue`'s fd==0 context return: a callee of
+`runSingleTest:` returns into it after `runSingleTest:`'s caller has
+finished.  The last primitive before that resume was 196
+(`Context>>terminateTo:`) in 18 of 20 cases.
+
+**Primitive 196 diverged from Cog on a nil target -- FIXED, not the cause.**
+Cog's `context:hasSender:` answers false for a nil target (the walk reaches
+nil and answers nil, not 0), so `terminateTo: nil` kills nothing and only
+sets the receiver's sender to nil.  Ours treated nil as "terminate the entire
+chain" and killed every context below the receiver.  Every finishing process
+runs `thisContext terminateTo: nil` (`Process>>endProcess`,
+`Context>>unwindForTermination`).  Fixed to Cog's semantics; the repro still
+storms 5 of 6, so this was a real divergence but not #23.
+Validated: SUnit batches 1-200 (3185 P / 0 F / 0 E) and 1701-1800, the
+debugger family (802 P / 6 F / 0 E, the same Cog-shared failures as the full
+sweep).
+
+**`PHARO_WATCH_CTX_KILL` now also covers primitive 196's kill loop.**  It
+shows the runner process's own exception returns (`resume:through:`) killing
+runner block contexts up to a target that is itself a runner block -- the
+`isExpectedFailure` `on: Error do:` checks, whose `testClass >> sel` raises
+for inherited selectors.  The dead Context's address did not appear among
+the logged kills, but a scavenge can move a young Context between the kill
+and the dump, so that is not yet a negative.  Next: log the kills with the
+target's AND the killed Context's method oops (stable across scavenge), and
+check whether the dead loop-body block is ever between a `resume:through:`
+and its target.
+
 ### 24. Fourteen classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
 
 Carried through several sweeps as "the missing display" and therefore as a
