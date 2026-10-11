@@ -3784,6 +3784,18 @@ sweep (rule off) also lost batch 1151-1200 once to a Context storm in
 `RSBoxPlotTest` and hung `RSChannelTest` on retry; neither reproduced in the
 A/B above, so those are recorded but not attributed.
 
+**Classifier result (same day, `PHARO_ACTIVATION_CHECK`):** every re-home the
+rule performs in the #23 repro (batch 1901-1905) and in batch 1151-1200 is
+the RECURSION kind -- same method, different arguments -- all in
+`RBProgramNode>>nodesPostorderDo:` (14 per batch).  Zero same-arguments
+DUPLICATE re-homes.  So in real code the rule fires in exactly the
+wrong-answer case, and the outer-temp corruption seen with it off is not a
+plain same-activation duplicate.  The likelier shape: the block's REAL sender
+(`do:`) was elided by inline J2J / BV-inline, so the materialized "sender"
+is another activation of the home method, and code downstream has come to
+depend on the closure following it.  Next: with the rule off, trace the
+`TIMEOUT(prim-stuck)` MNU back to the block whose outer temps were wrong.
+
 **To fix:** find where the duplicate Context of a live activation is made --
 the audit's other surviving candidates are the place to start
 (`PushThisContext` setting the cached Context to nil at ~7105; the sender

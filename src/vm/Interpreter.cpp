@@ -2680,6 +2680,36 @@ static unsigned g_execRingN = 0;
 extern std::unordered_map<uint64_t, std::vector<uint64_t>> g_suspendedChains;
 extern std::unordered_map<uint64_t, uint64_t> g_suspendedChainEpoch;
 extern uint64_t g_gcEpoch;
+void Interpreter::classifyRehome(Oop oldCtx, Oop newCtx) {
+    static uint64_t nDup = 0, nRec = 0;
+    bool sameRcv = memory_.fetchPointer(5, oldCtx).rawBits()
+                   == memory_.fetchPointer(5, newCtx).rawBits();
+    Oop m = memory_.fetchPointer(3, oldCtx);
+    Oop hdr = memory_.fetchPointer(0, m);
+    int nA = hdr.isSmallInteger() ? (int)((hdr.asSmallInteger() >> 24) & 0x0F) : 0;
+    bool sameArgs = sameRcv;
+    for (int a = 0; sameArgs && a < nA; a++)
+        if (memory_.fetchPointer(6 + a, oldCtx).rawBits()
+                != memory_.fetchPointer(6 + a, newCtx).rawBits()) sameArgs = false;
+    uint64_t n = sameArgs ? ++nDup : ++nRec;
+    if (n <= 12 || (n & (n - 1)) == 0) {
+        uint64_t p1 = 0, p2 = 0; size_t d1 = 0, d2 = 0;
+        bool o1 = otherProcessOwns(oldCtx, &p1, &d1), o2 = otherProcessOwns(newCtx, &p2, &d2);
+        fprintf(stderr, "[REHOME %s #%llu] #%s old=0x%llx(pc=%s sender=0x%llx%s) -> "
+                "new=0x%llx(pc=%s sender=0x%llx%s) fd=%zu\n",
+                sameArgs ? "DUPLICATE" : "recursion", (unsigned long long)n,
+                memory_.selectorOf(m).c_str(),
+                (unsigned long long)oldCtx.rawBits(),
+                memory_.fetchPointer(1, oldCtx).isNil() ? "nil" : "ok",
+                (unsigned long long)memory_.fetchPointer(0, oldCtx).rawBits(),
+                o1 ? " FOREIGN" : "",
+                (unsigned long long)newCtx.rawBits(),
+                memory_.fetchPointer(1, newCtx).isNil() ? "nil" : "ok",
+                (unsigned long long)memory_.fetchPointer(0, newCtx).rawBits(),
+                o2 ? " FOREIGN" : "", frameDepth_);
+    }
+}
+
 bool Interpreter::otherProcessOwns(Oop ctx, uint64_t* proc, size_t* depth) {
     uint64_t active = getActiveProcess().rawBits();
     for (auto& kv : g_suspendedChains) {
@@ -20905,6 +20935,14 @@ Oop Interpreter::materializeFrameStack() {
                         Oop oldMethod = memory_.fetchPointer(3, oldOuterCtx);
                         Oop senderMethod = memory_.fetchPointer(3, sender);
                         if (oldMethod.rawBits() == senderMethod.rawBits()) {
+                            // PHARO_ACTIVATION_CHECK: classify the re-home.
+                            // Same receiver + same arguments = one activation
+                            // under TWO Context objects (the #30 duplicate);
+                            // different arguments = a genuine recursive
+                            // activation (the #30 wrong answer).
+                            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
+                                    && oldOuterCtx.rawBits() != sender.rawBits())
+                                classifyRehome(oldOuterCtx, sender);
                             memory_.storePointer(0, closure_, sender);
                         }
                     }
