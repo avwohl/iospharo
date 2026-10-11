@@ -2315,6 +2315,10 @@ uint64_t g_duplicateActivation[2] = {0, 0};
 // site widowed, so a zero here says which path never runs for the frames in
 // question rather than leaving it to be inferred from heap-watch output.
 uint64_t g_contextsWidowedOnReturn[5] = {0, 0, 0, 0, 0};
+// Widows whose Context belongs to a DIFFERENT method than the frame that is
+// returning: [0] returnValue, [1] the fd==0 context return.  A Context of a
+// live frame widowed this way is a dead sender waiting to happen (#23).
+uint64_t g_widowOwnerMismatch[2] = {0, 0};
 
 // PHARO_WIDOW_TRACE_SEL=<substring>: name every RETURN of a matching
 // activation and whether it had a materialized Context to widow.  The widow
@@ -2567,6 +2571,56 @@ void Interpreter::pushSlow(Oop value) {
         *stackPointer_++ = value;
 }
 
+// A frame about to REUSE its cached materialized Context must find it live.
+// A widowed one (pc=nil) means the frame inherited the Context of an earlier,
+// already-returned activation: the frame's sender chain would then run
+// through a dead context, which is #23's dead-sender storm.  Counted always,
+// named under PHARO_RESUME_WIDOW_TRACE.
+uint64_t g_deadContextReuse = 0;
+void Interpreter::noteDeadReuse(const char* site, Oop ctx, Oop frameMethod) {
+    if (!memory_.fetchPointer(1, ctx).isNil()) return;
+    ++g_deadContextReuse;
+    if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE) && g_deadContextReuse <= 20)
+        fprintf(stderr, "[REUSE-DEAD %s] frame=#%s ctxOf=#%s fd=%zu\n", site,
+                memory_.selectorOf(frameMethod).c_str(),
+                memory_.selectorOf(memory_.fetchPointer(3, ctx)).c_str(),
+                frameDepth_);
+}
+
+// PHARO_LIVE_WIDOW_CHECK: before a return path widows `ctx`, look for it
+// among the frames that are still live -- any remaining saved frame's
+// materialized Context, or the sender chain under activeContext_ (skipping
+// ctx itself when it IS activeContext_).  Widowing a live Context is the
+// precondition of #23's dead-sender storm, so this names the site that does
+// it at the moment it happens rather than when the dead sender is hit.
+uint64_t g_liveWidows = 0;
+void Interpreter::liveWidowCheck(const char* site, Oop ctx) {
+    const char* where = nullptr;
+    long idx = -1;
+    for (size_t i = 0; i < frameDepth_; i++) {
+        if (savedFrames_[i].materializedContext.rawBits() == ctx.rawBits()) {
+            where = "saved-frame"; idx = (long)i; break;
+        }
+    }
+    if (!where) {
+        Oop c = activeContext_;
+        for (int d = 0; d < 256 && c.isObject() && !c.isNil()
+                && c.rawBits() > 0x10000 && memory_.isValidPointer(c); d++) {
+            if (d > 0 && c.rawBits() == ctx.rawBits()) {
+                where = "active-chain"; idx = d; break;
+            }
+            c = memory_.fetchPointer(0, c);
+        }
+    }
+    if (!where) return;
+    ++g_liveWidows;
+    if (g_liveWidows <= 30)
+        fprintf(stderr, "[LIVE-WIDOW %s] ctx=0x%llx ctxOf=#%s found=%s[%ld] "
+                "returning=#%s fd=%zu\n", site, (unsigned long long)ctx.rawBits(),
+                memory_.selectorOf(memory_.fetchPointer(3, ctx)).c_str(),
+                where, idx, memory_.selectorOf(method_).c_str(), frameDepth_);
+}
+
 // PHARO_MATCTX_OWNER_CHECK: report, once per source line, a frame sync that
 // leaves currentFrameMaterializedCtx_ naming a Context of a DIFFERENT method
 // than the frame now current.  The field must belong to the current frame;
@@ -2713,12 +2767,16 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
                     (unsigned long long)g_contextsKilledByUnwind[1]);
         fprintf(stderr, "[SEND-CHAIN] contexts widowed on return: "
                 "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu "
-                "jit-resume=%llu jit-resume-mismatch=%llu\n",
+                "jit-resume=%llu jit-resume-mismatch=%llu owner-mismatch=%llu/%llu "
+                "dead-reuse=%llu\n",
                 (unsigned long long)g_contextsWidowedOnReturn[0],
                 (unsigned long long)g_contextsWidowedOnReturn[1],
                 (unsigned long long)g_contextsWidowedOnReturn[2],
                 (unsigned long long)g_contextsWidowedOnReturn[3],
-                (unsigned long long)g_contextsWidowedOnReturn[4]);
+                (unsigned long long)g_contextsWidowedOnReturn[4],
+                (unsigned long long)g_widowOwnerMismatch[0],
+                (unsigned long long)g_widowOwnerMismatch[1],
+                (unsigned long long)g_deadContextReuse);
         if (g_blockCreatePendingJ2J[0] || g_blockCreatePendingJ2J[1])
             fprintf(stderr, "[SEND-CHAIN] block-create with J2J saves pending: "
                     "chain-loop=%llu (materialized first) resume-loop=%llu "
@@ -8360,6 +8418,16 @@ void Interpreter::returnValue(Oop value) {
                         traceReturnPath("ctx-return", method_, activeContext_);
                     // Mark the returning context as dead per Cog VM semantics:
                     // nil the sender and PC so isDead returns true and sender chain is broken.
+                    if (memory_.fetchPointer(3, activeContext_).rawBits()
+                            != method_.rawBits()) {
+                        g_widowOwnerMismatch[1]++;
+                        if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
+                                && g_widowOwnerMismatch[1] <= 20)
+                            fprintf(stderr, "[WIDOW-OWNER ctx-return] returning=#%s "
+                                    "ctxOf=#%s\n", memory_.selectorOf(method_).c_str(),
+                                    memory_.selectorOf(memory_.fetchPointer(
+                                        3, activeContext_)).c_str());
+                    }
                     memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
                     memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
                     g_contextsWidowedOnReturn[2]++;
@@ -8564,6 +8632,18 @@ terminate_process:
                         memory_.selectorOf(method_).c_str(),
                         (unsigned long long)currentFrameMaterializedCtx_.rawBits());
         }
+        if (memory_.fetchPointer(3, currentFrameMaterializedCtx_).rawBits()
+                != method_.rawBits()) {
+            g_widowOwnerMismatch[0]++;
+            if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
+                    && g_widowOwnerMismatch[0] <= 20)
+                fprintf(stderr, "[WIDOW-OWNER returnValue] returning=#%s ctxOf=#%s "
+                        "fd=%zu\n", memory_.selectorOf(method_).c_str(),
+                        memory_.selectorOf(memory_.fetchPointer(
+                            3, currentFrameMaterializedCtx_)).c_str(), frameDepth_);
+        }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
+            liveWidowCheck("returnValue", currentFrameMaterializedCtx_);
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
         g_contextsWidowedOnReturn[0]++;
@@ -15995,6 +16075,8 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
                          && currentFrameMaterializedCtx_.rawBits() > 0x10000, 0)
             && !GET_DEBUG_BOOL(PHARO_NO_JIT_WIDOW_ON_POP)
             && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
+            liveWidowCheck("popFrameForJIT", currentFrameMaterializedCtx_);
         memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());
         memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());
         g_contextsWidowedOnReturn[1]++;
@@ -20228,6 +20310,7 @@ Oop Interpreter::materializeFrameStack() {
         // the same context object as thisContext returns for the same activation.
         Oop context = frame.materializedContext;
         if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
+            noteDeadReuse("saved-frame", context, frame.savedMethod);
             // FIX: If reusing a context that IS the sender (e.g. frame 0 was
             // activeContext_ on a prior materialization), do NOT update its sender
             // — that would create a self-referential chain. The context's existing
@@ -20469,6 +20552,7 @@ Oop Interpreter::materializeFrameStack() {
             Oop context = currentFrameMaterializedCtx_;
             bool reusingContext = false;
             if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
+                noteDeadReuse("current-frame", context, method_);
                 // Reuse existing context — just update sender and state
                 if (context.rawBits() != sender.rawBits()) {
                     setSenderSafe(context, sender);
@@ -25872,6 +25956,8 @@ void Interpreter::tryJITResumeInCaller() {
                 // -- find it with PHARO_MATCTX_OWNER_CHECK.
                 if (memory_.fetchPointer(3, returningCtx).rawBits()
                         == state.method.rawBits()) {
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
+                        liveWidowCheck("jit-resume", returningCtx);
                     memory_.storePointer(0, returningCtx, memory_.nil());
                     memory_.storePointer(1, returningCtx, memory_.nil());
                     g_contextsWidowedOnReturn[3]++;

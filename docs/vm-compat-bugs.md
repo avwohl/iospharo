@@ -2667,6 +2667,42 @@ Then `storm_repro_husk_freeze.st`, which must answer `NO-HUSK`.  Use
 FATAL at 12288 and should take about a twelfth of that at 1024, and the census
 ratios that identify it do not depend on the absolute counts.
 
+#### 2026-10-11: the macOS wedge IS #23, and three VM return sites are ruled out
+
+**The macOS fake-GUI wedge of batch 651-700 is this bug.**  In the
+2026-10-11 sweep that batch logged three `[DEAD-SENDER]` lines and two
+`[CANNOT-RETURN-STORM]` guard fires during `ManyTestResourceTestCase`, and the
+process the guard terminated was **P79, the SUnit runner's own main process**
+(`[TERM-P79] PROCESS TERMINATING via #runSingleTest:...`).  With the runner
+gone nothing finishes the batch, and it idles to the 1800 s timeout.  The same
+batch re-run on a later build completed in 107 s with no storm, so it is the
+same non-determinism as below; `ManyTestResourceTestCase` alone passes 6/6.
+
+**Repro still works at HEAD and is fast**: batch 1901-1905,
+`PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=64 PHARO_MAX_OLD_SPACE_MB=1024`,
+6 s, storm lines in 3 of 3 runs on the #28-fixed build and 2 of 3 on the
+build before it.  The #28 fixes did not change it.
+
+The dead sender is always the runner's loop-body block context (printed as
+`SUnitRunner class>>ifTrue:ifFalse:`, which is the block's last literal),
+sender nil and pc nil.  Three instruments, all zero across storming runs:
+
+    check                                               storming runs  count
+    owner mismatch at returnValue / ctx-return widow         3          0 / 0
+    a frame REUSING an already-dead cached Context           3          0
+    PHARO_LIVE_WIDOW_CHECK: widow of a Context still held
+      by a saved frame or on activeContext_'s chain          3          0
+
+So no VM return path widows a live Context in these runs.  The dead block
+context was killed some other way.  Its shape -- sender nil, pc nil, both VM
+unwind counters zero -- is also exactly what Pharo's `Context>>terminate`
+leaves.  The leading hypothesis is therefore an IMAGE-SIDE kill: a test
+process whose materialized chain includes runner contexts, terminated by the
+watchdog, unwinding into the runner.  Next instrument: watch stores of nil
+into slot 1 of a Context whose receiver is `SUnitRunner class`, and print the
+storing process and method.  The JIT dependence (0 of 8 with it off) still
+has to be explained by whatever that finds.
+
 ### 24. Fourteen classes fail because the runner must suspend the UI process — ROOT-CAUSED 2026-09-02, MEDIUM
 
 Carried through several sweeps as "the missing display" and therefore as a

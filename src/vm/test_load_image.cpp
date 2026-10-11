@@ -1505,12 +1505,16 @@ int main(int argc, char* argv[]) {
                     || g_contextsWidowedOnReturn[2] || g_contextsWidowedOnReturn[3])
                 fprintf(stderr, "[WIDOW] contexts widowed on return: "
                         "returnValue=%llu popFrameForJIT=%llu ctx-return=%llu "
-                        "jit-resume=%llu jit-resume-mismatch=%llu\n",
+                        "jit-resume=%llu jit-resume-mismatch=%llu "
+                        "owner-mismatch=%llu/%llu dead-reuse=%llu\n",
                         (unsigned long long)g_contextsWidowedOnReturn[0],
                         (unsigned long long)g_contextsWidowedOnReturn[1],
                         (unsigned long long)g_contextsWidowedOnReturn[2],
                         (unsigned long long)g_contextsWidowedOnReturn[3],
-                        (unsigned long long)g_contextsWidowedOnReturn[4]);
+                        (unsigned long long)g_contextsWidowedOnReturn[4],
+                        (unsigned long long)pharo::g_widowOwnerMismatch[0],
+                        (unsigned long long)pharo::g_widowOwnerMismatch[1],
+                        (unsigned long long)pharo::g_deadContextReuse);
         }
 
         // In test mode, print results file if it exists
