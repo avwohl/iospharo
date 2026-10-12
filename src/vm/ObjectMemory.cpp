@@ -588,6 +588,7 @@ uint32_t ObjectMemory::registerClass(Oop classOop) {
                 }
             }
             classTable_[hash] = classOop;
+            noteClassTableWrite(hash);
             assignedIdx = hash;
         } else {
             // No hash yet — assign new index and set the hash to match
@@ -603,6 +604,7 @@ uint32_t ObjectMemory::registerClass(Oop classOop) {
                     }
                 }
                 classTable_[index] = classOop;
+                noteClassTableWrite(index);
                 hdr->setIdentityHash(index);
             }
             assignedIdx = index;
@@ -619,6 +621,7 @@ uint32_t ObjectMemory::registerClass(Oop classOop) {
         uint32_t index = nextClassIndex_++;
         if (index < classTable_.size()) {
             classTable_[index] = classOop;
+            noteClassTableWrite(index);
         }
         assignedIdx = index;
     }
@@ -641,7 +644,7 @@ uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
         }
     }
     // Fallback: linear scan for classes without a hash or with stale hash
-    for (uint32_t i = 0; i < classTable_.size(); ++i) {
+    for (uint32_t i = 0; i < classTableUsedEnd(); ++i) {
         if (classTable_[i] == classOop) {
             return i;
         }
@@ -714,6 +717,7 @@ void ObjectMemory::cacheGCClassIndices() {
         if (contextClassIndex_ != 0 && contextClassIndex_ < classTable_.size() &&
             !classTable_[contextClassIndex_].isObject()) {
             classTable_[contextClassIndex_] = contextClass;
+            noteClassTableWrite(contextClassIndex_);
         }
     }
 }
@@ -1702,7 +1706,7 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
     // classTable_ — a C++ vector the heap scan above cannot see.  Swap any
     // table entries so instances whose headers carry those class indices
     // dispatch through the exchanged objects (Spur parity).
-    for (size_t i = 0; i < classTable_.size(); ++i) {
+    for (size_t i = 0; i < classTableUsedEnd(); ++i) {
         if (classTable_[i] == obj1) classTable_[i] = obj2;
         else if (classTable_[i] == obj2) classTable_[i] = obj1;
     }
@@ -1786,7 +1790,7 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     // keeps dispatching into the empty helper and stubs silently never
     // intercept (gitlab/bitbucket API suites, 90 tests, jitpkg 2026-07-06).
     size_t classTableHits = 0;
-    for (size_t i = 0; i < classTable_.size(); ++i) {
+    for (size_t i = 0; i < classTableUsedEnd(); ++i) {
         if (classTable_[i] == obj1) { classTable_[i] = obj2; classTableHits++; }
     }
 
@@ -1828,6 +1832,7 @@ void ObjectMemory::noteClassHashCopy(Oop cls, uint32_t newHash) {
     if (oldHash == 0 || oldHash == newHash || oldHash >= classTable_.size()) return;
     if (classTable_[oldHash] != cls) return;   // not registered at its own index
     classTable_[newHash] = cls;                // the class's index from now on
+    noteClassTableWrite(newHash);
     pendingClassIndexRemap_[oldHash] = newHash;
 }
 
@@ -1850,6 +1855,33 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
     size_t becomeReplacedCount = 0;
     const bool becomeTrace =
         GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0 && g_scavengeCount >= 10;
+
+    // Cheap pre-filter for the per-slot test.  Nearly every pointer slot in
+    // the heap misses, and hashing each one into the unordered_map made one
+    // become cost ~165 ms on an 85 MB image (StSpotter new does one per
+    // instantiation; Cog: ~2 ms warm) -- 6x StSpotterModelTest's budget.
+    // A key-range check rejects most slots outright, and a small batch (the
+    // usual becomeForward: of one or a few objects) is compared linearly.
+    std::vector<std::pair<uint64_t, Oop>> smallMap;
+    uint64_t keyLo = UINT64_MAX, keyHi = 0;
+    for (const auto& e : map) {
+        keyLo = std::min(keyLo, e.first);
+        keyHi = std::max(keyHi, e.first);
+        if (smallMap.size() <= 8) smallMap.emplace_back(e.first, e.second);
+    }
+    const bool useSmall = map.size() <= 8;
+    auto lookup = [&](uint64_t bits, Oop& out) -> bool {
+        if (bits < keyLo || bits > keyHi) return false;
+        if (useSmall) {
+            for (const auto& p : smallMap)
+                if (p.first == bits) { out = p.second; return true; }
+            return false;
+        }
+        auto it = map.find(bits);
+        if (it == map.end()) return false;
+        out = it->second;
+        return true;
+    };
 
     // ONE heap scan covering every pair. Same traversal and the same format
     // guards as becomeForward above; only the test changes, from a comparison
@@ -1884,9 +1916,9 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
         for (size_t i = 0; i < slots; ++i) {
             Oop slot = header->slotAt(i);
             if (!slot.isObject()) continue;
-            auto it = map.find(slot.rawBits());
-            if (it == map.end()) continue;
-            header->slotAtPut(i, it->second);
+            Oop target;
+            if (!lookup(slot.rawBits(), target)) continue;
+            header->slotAtPut(i, target);
             becomeReplacedCount++;
         }
     });
@@ -1895,11 +1927,15 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
     // the same reason — instance dispatch resolves header classIndex through
     // classTable_, a C++ vector the heap scan cannot see. One pass over the
     // table serves the whole batch.
+    // Only the used prefix (see classTableUsedEnd_): nil counts as an
+    // object, and a hash lookup for each of 4M entries was most of a
+    // become's cost.
     size_t classTableHits = 0;
-    for (size_t i = 0; i < classTable_.size(); ++i) {
+    const size_t ctEnd = classTableUsedEnd();
+    for (size_t i = 0; i < ctEnd; ++i) {
         if (!classTable_[i].isObject()) continue;
-        auto it = map.find(classTable_[i].rawBits());
-        if (it != map.end()) { classTable_[i] = it->second; classTableHits++; }
+        Oop target;
+        if (lookup(classTable_[i].rawBits(), target)) { classTable_[i] = target; classTableHits++; }
     }
 
     // SAFETY NET (PHARO_BECOME_FORWARDER): the same forwarder becomeForward

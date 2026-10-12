@@ -15559,6 +15559,25 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // Nothing else ready — sleep the requested time so we idle instead
     // of busy-spinning.  relinquishSlept_ tells step() that this was idle
     // time (enables test_load_image's idle-detection kill switch).
+    // Never sleep past the armed timer's deadline.  The idle process asks
+    // for 50 ms and this capped it at 10 ms -- but a Delay due sooner then
+    // waited for the whole nap: `1 milliSecond wait` took 12.6 ms (Cog
+    // 2.8 ms), and every TaskIt `stepDelay: 0` service loop paid it, which
+    // timed out MyPrecious's nested remote messages (2026-10-12).
+    if (sleepUs > 0 && nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil()) {
+        static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
+        int64_t nowUsec = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::system_clock::now().time_since_epoch()).count()
+                        + kSmalltalkEpochOffset;
+        int64_t remaining = nextWakeupUsec_ - nowUsec;
+        if (remaining <= 0) {
+            sleepUs = 0;
+            checkTimerSemaphore();
+        } else if (remaining < sleepUs) {
+            sleepUs = remaining;
+        }
+    }
+
     if (sleepUs > 0) {
         relinquishSlept_ = true;
         if (relinquishCallback_) {

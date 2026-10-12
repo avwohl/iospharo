@@ -789,6 +789,42 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: arm64 catalog re-run, batch 5 (41 packages, the last of the
+re-run list).**  38 identical to Cog (chatpharo 1326 P, glorp 262 P, the six
+pharo-llm packages, neojson/neocsv, geoview, ...).  The other three:
+
+- pharo-spec-spec: ours 767 P / 16 E against Cog 786 P -- a HARNESS defect,
+  FIXED.  In eval mode `test_load_image` wrote a startup.st that suspended
+  every Morphic process before the eval (a 2026-05-08 workaround); Cog's eval
+  suspends nothing.  With the "Morphic UI Process" suspended, `World defer:`
+  never runs, so every Spec test that waits for a UI cycle
+  (`SpMorphicBackendForTest>>waitUntilUIRedrawed`) failed -- with
+  PHARO_NO_JIT too.  Now opt-in (`PHARO_EVAL_SUSPEND_MORPHIC`); rerun 786 P /
+  1 F / 1 E.
+- smalltalkweb-myprecious: `testArgPassByReference` x3 TIMEOUT.  A nested
+  remote `=` needs several round trips within a 100 ms reply timeout; one
+  round trip is ~20 ms of CPU on ours, ~2 ms on Cog (100 round trips: 2.3 s
+  against 0.21 s).  The native profile is plain interpretation (sends, block
+  activation, frame push/pop, JIT entry bookkeeping) -- the activation wall,
+  #6, i.e. speed.  On the way, a real timer bug, FIXED: the idle process's
+  relinquish slept min(request, 10 ms) without looking at the armed timer, so
+  `1 milliSecond wait` took 12.6 ms (Cog 2.8 ms) and a zero-ms Delay 397 us
+  (Cog 73 us); now 1.5 ms and 76 us.
+- pharo-spec-newtools: our run hit the 900 s limit; rerun with 2400 s, both
+  VMs 934 P / 9 F / 3 E / 2 T.  `StDebuggerTest>>testDynamicVariableEvaluation`
+  is order-dependent (fails on Cog too when run alone: it asserts before its
+  forked process has run).  `StSpotterModelTest` (2 tests, also in our SUnit
+  residual) is SPEED: the test forks `processSearch: on: StSpotter new` and
+  checks the worker 550 ms later; `StSpotter new` takes 28 ms cold on Cog and
+  165 ms on ours, so our search starts after the check.  The cost is BECOME:
+  each `StSpotter new` does 12 one-way becomes, and ours is a full heap scan
+  (Cog's is lazy -- forwarders followed on access).  Two fixes, both in
+  `becomeForwardAll`: a key-range / small-batch pre-filter instead of a hash
+  lookup per pointer slot, and a class-table high-water mark
+  (`classTableUsedEnd_`) instead of walking all 4M entries per become.
+  165 ms -> 84 ms; the scan is now at memory bandwidth (~7 ms per become on
+  an 85 MB heap), so passing needs lazy become.  OPEN, speed.
+
 **2026-10-12: arm64 catalog re-run, batch 4 (25 packages).**  18 identical
 to Cog.  pharo-graphics-roassal: 733 P on both; `RSExamplesTest>>testExamples`
 FAILs on Cog and TIMEOUTs on ours (it fails on both, ours is slower).

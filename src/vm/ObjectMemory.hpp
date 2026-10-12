@@ -278,6 +278,7 @@ public:
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {
             classTable_[index] = classOop;
+            noteClassTableWrite(index);
             if (index >= nextClassIndex_) {
                 nextClassIndex_ = index + 1;
             }
@@ -952,6 +953,19 @@ private:
     // `docs/class-table-container-analysis.md`.
     std::vector<Oop> classTable_;
     uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
+    // One past the highest class-table index EVER written (never lowered).
+    // The table is 4M entries (22-bit index space); loops that look for a
+    // class by identity (become's redirect, indexOfClass's fallback) stop
+    // here instead of walking millions of nil entries -- 12 becomes per
+    // `StSpotter new` each walked all 4M.  Every write site calls
+    // noteClassTableWrite; nextClassIndex_ is not maintained by all of them.
+    size_t classTableUsedEnd_ = 0;
+    void noteClassTableWrite(size_t index) {
+        if (index + 1 > classTableUsedEnd_) classTableUsedEnd_ = index + 1;
+    }
+    size_t classTableUsedEnd() const {
+        return std::min(classTableUsedEnd_, classTable_.size());
+    }
 
     // Set of class table indices known to be metaclasses (i.e., classes
     // whose instances are themselves classes).  Populated as classes

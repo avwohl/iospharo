@@ -1045,6 +1045,15 @@ int main(int argc, char* argv[]) {
               // the loader has read and compiled us, so unlinking is safe.
               << "[ 'startup.st' asFileReference ensureDelete ]\n"
               << "  on: Error do: [:e | ].\n"
+              ;
+            // Suspending the Morphic processes before the eval is OPT-IN
+            // (PHARO_EVAL_SUSPEND_MORPHIC).  Cog's `eval` suspends nothing,
+            // and a suspended "Morphic UI Process" never runs `World defer:`
+            // -- so every test that waits for a UI cycle (Spec's
+            // SpMorphicBackendForTest>>waitUntilUIRedrawed) failed under
+            // our package runner only: pharo-spec-spec 767 P / 16 E against
+            // Cog's 786 P / 0 E (2026-10-12).
+            if (GET_DEBUG_BOOL(PHARO_EVAL_SUSPEND_MORPHIC)) f
               << "[| active |\n"
               << "  active := Processor activeProcess.\n"
               << "  Process allInstances do: [:p | | ctx walk depth morphic |\n"
@@ -1065,6 +1074,8 @@ int main(int argc, char* argv[]) {
               << "    (morphic and: [p ~~ active])\n"
               << "      ifTrue: [[p suspend] on: Error do: [:e |]]]]\n"
               << "  on: Error do: [:e | Stdio stderr nextPutAll: '[PREAMBLE-ERR] ', e printString; lf; flush].\n"
+              ;
+            f
               << "[\n"
               << "  result := OpalCompiler new evaluate: '" << escaped << "'.\n"
               << "  Stdio stdout nextPutAll: result printString; lf; flush.\n"
