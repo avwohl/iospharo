@@ -15,6 +15,24 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-11, 23:00)
+
+**Speed: resumed methods run with J2J OFF, and the knob that turns it on is
+-48% sweep wall time -- but crashes 1 in 40 batch runs.**  A read-only audit
+workflow found why 69% of sends round-trip through C++: `tryJITResumeInCaller`
+gives a resumed method a NULL J2J save slice unless
+`PHARO_T1_RESUME_INTERNAL_J2J` is set.  With it set, a full sweep takes 59 m
+instead of 1 h 53 m with the same results, but `AndreasSystemProfilerTest`
+crashes (SIGSEGV, `method_` = `Float>>absPrintExactlyOn:base:` with an ip past
+its end) about 1 run in 40; never without the knob.  Default stays OFF.  The
+hunt is in `docs/perf-activation-measurements.md`: ~15 O(1) coherence checks
+(`PHARO_RESUME_EXIT_CHECK`) all stay silent before the crash; next step is an
+lldb hardware watchpoint on `instructionPointer_`.
+
+**Default-on today and validated on both arches:** `push()` fast path, raw
+Sista save pool, `upgradeICToJ2J` fast exit (-25% on send-bound code), the
+primitive 196 nil-target fix, and the #28 widow fix.
+
 ## Right now (2026-10-11, 17:30)
 
 **#23 is a CROSS-PROCESS kill during test-process termination.**  A forked
