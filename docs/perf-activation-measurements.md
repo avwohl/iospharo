@@ -234,3 +234,30 @@ the callee's `method_` with the caller's ip.  That is the 2026-06-12 note's
 "handlers assume external-mode shapes", now pinned to one handler: the
 `case jit::ExitReturn` of `tryJITResumeInCaller` when the resume slice had
 pending J2J saves.  Fix there, then re-run the 40-rep A/B.
+
+**Further narrowing (same evening).**  Five more hunts, each crashing within
+5-33 runs with the identical signature (`absPrintExactlyOn:base:`, ip off 826,
+last resume exit ExitReturn `#indexOf:ifAbsent:`, `fd=0`).  None of the checks
+fired before any of them:
+
+    check                                            result before the crash
+    (method_, ip) O(1) at resume/activation exits,
+      executeFromContext, popFrame, popFrameForJIT,
+      sendSelector, returnValue, jitSistaCallSend     silent
+    the exit's own (state.method, state.ip)           silent
+    J2J save ip at materialization                    silent
+    every saved frame and the current pair at GC     silent
+    full instruction-boundary walk at the four
+      install sites, and at activation exits for
+      absPrintExactlyOn:base: specifically            silent
+
+So no checked path INSTALLS an incoherent pair for this method.  The ip goes
+bad while `interpret()` is already executing it, by a write to
+`instructionPointer_` (or a jump) that leaves `method_` alone.  The
+partial-identity audit workflow (three readers + verifiers over
+tryJITResumeInCaller) confirmed no candidate for the crash; it did confirm two
+latent defects there: the materialize-failure bail
+(`[RESUME-MAT-FAIL]`) writes only ip/sp and drops the rolled-back frame's
+materialized Context, and `closure_` is never synced by either identity sync.
+Next instrument: log every write to `instructionPointer_` that is not paired
+with a `method_` write, while `method_` is `absPrintExactlyOn:base:`.

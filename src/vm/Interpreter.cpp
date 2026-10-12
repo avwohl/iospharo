@@ -2828,7 +2828,7 @@ void Interpreter::dumpCrashState() {
 // PAST that method's end -- an ip from another method.  Called from each
 // place that installs a frame's (method_, ip) pair; names the first site that
 // installs an incoherent one.
-void Interpreter::checkIpCoherence(const char* site) {
+void Interpreter::checkIpCoherence(const char* site, bool walk) {
     if (!method_.isObject() || method_.rawBits() <= 0x10000 || !instructionPointer_) return;
     if (!memory_.isValidPointer(method_)) return;
     ObjectHeader* mo = method_.asObjectPtr();
@@ -2840,7 +2840,7 @@ void Interpreter::checkIpCoherence(const char* site) {
     const uint8_t* ip = instructionPointer_;
     const char* what = nullptr;
     if (ip < bc || ip > end) what = "OUTSIDE";
-    else if (ip < end && GET_DEBUG_BOOL(PHARO_IP_BOUNDARY_WALK)) {
+    else if (ip < end && (walk || GET_DEBUG_BOOL(PHARO_IP_BOUNDARY_WALK))) {
         // O(method size): off by default, it slows every exit enough to hide
         // the timing-dependent crash it was written for.
         const uint8_t* p = bc;
@@ -16243,7 +16243,7 @@ bool Interpreter::popFrame() {
         static char lbl[96];
         snprintf(lbl, sizeof lbl, "popFrame(pushed by %s)",
                  frame.pushSite ? frame.pushSite : "?");
-        checkIpCoherence(lbl);
+        checkIpCoherence(lbl, true);
     }
 
     if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
@@ -16394,6 +16394,12 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     currentFrameMaterializedCtx_ = frame.materializedContext;
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
+        static char lbl[96];
+        snprintf(lbl, sizeof lbl, "popFrameForJIT(pushed by %s)",
+                 frame.pushSite ? frame.pushSite : "?");
+        checkIpCoherence(lbl, true);
+    }
 
     driftCheck("popFrameForJIT@10286", method_.rawBits(), instructionPointer_, savedFrames_.size(), -1);
 }
@@ -18718,6 +18724,7 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
             relinquishSlept_ = relinquishSlept_ || savedRelinquishSlept;
             stackPointer_ = savedSP;
             instructionPointer_ = savedIP;
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) checkIpCoherence("jitSistaCallSend");
             method_ = savedMethod;
             receiver_ = savedReceiver;
             framePointer_ = savedFP;
@@ -18740,6 +18747,7 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
         state->sp = stackPointer_;
         stackPointer_ = savedSP;
         instructionPointer_ = savedIP;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) checkIpCoherence("jitSistaCallSend");
         method_ = savedMethod;
         receiver_ = savedReceiver;
         framePointer_ = savedFP;
@@ -18762,6 +18770,7 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
 
     stackPointer_ = savedSP;
     instructionPointer_ = savedIP;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) checkIpCoherence("jitSistaCallSend");
     method_ = savedMethod;
     receiver_ = savedReceiver;
     framePointer_ = savedFP;
@@ -22300,7 +22309,7 @@ bool Interpreter::executeFromContext(Oop context) {
         Interpreter* self;
         ~ExecFromCtxCheck() {
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0) && self->running_)
-                self->checkIpCoherence("executeFromContext");
+                self->checkIpCoherence("executeFromContext", true);
         }
     } execFromCtxCheck{this};
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
@@ -23515,6 +23524,24 @@ void Interpreter::storeContextStackp(Oop context, int stackp) {
 }
 
 void Interpreter::prepareForGC() {
+    // PHARO_RESUME_EXIT_CHECK: a GC taken while (method_, ip) disagree turns
+    // the ip into garbage -- the offset below is computed against the wrong
+    // object and re-applied to its new address.  Same for each saved frame.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
+        checkIpCoherence("prepareForGC");
+        for (size_t i = 0; i < frameDepth_; ++i) {
+            SavedFrame& f = savedFrames_[i];
+            if (!f.savedMethod.isObject() || !f.savedIP || f.savedMethod.rawBits() <= 0x10000) continue;
+            ObjectHeader* mo = f.savedMethod.asObjectPtr();
+            if (f.savedIP < mo->bytes() || f.savedIP > mo->bytes() + mo->byteSize()) {
+                static int nGF = 0;
+                if (++nGF <= 8)
+                    fprintf(stderr, "[GC-SAVED-IP-OUTSIDE #%d] frame %zu #%s pushed by %s fd=%zu\n",
+                            nGF, i, memory_.selectorOf(f.savedMethod).c_str(),
+                            f.pushSite ? f.pushSite : "?", frameDepth_);
+            }
+        }
+    }
     // Convert current frame's raw IP pointers to offsets from method bytes start.
     // This is needed because method objects may move during GC.
     if (method_.isObject() && instructionPointer_) {
@@ -25140,7 +25167,7 @@ void Interpreter::tryJITResumeInCaller() {
             if (__builtin_expect(!GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK)
                                  && !GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 1)) return;
             if (!self->running_ || !self->framePointer_) return;
-            self->checkIpCoherence("resume-exit");
+            self->checkIpCoherence("resume-exit", true);
             Oop slot = self->framePointer_[0];
             if (slot.rawBits() == self->receiver_.rawBits()) return;
             // Block frame: fp[0] is the closure, whose slot 3 is the receiver.
@@ -25515,6 +25542,7 @@ void Interpreter::tryJITResumeInCaller() {
         }
         // Internal J2J: materialize any pending saves NOW so every
         // handler below keeps its external-mode depth==0 assumption.
+        int rsPendingThisIter = state.j2jDepth;
         if (resumeInternalJ2J && state.j2jDepth > 0) {
             J2JSave* rsSaves = &j2jPool_[resumeSliceBase];
             // Failure policy mirrors the rj2j twin: FULL rollback +
@@ -26330,6 +26358,31 @@ void Interpreter::tryJITResumeInCaller() {
         };
         g_lastResumeExit = (int)state.exitReason;
         g_lastResumeMethod = state.method.rawBits();
+        // PHARO_RESUME_EXIT_CHECK: is the exit's (state.method, state.ip)
+        // pair itself coherent?  Checked before any handler pops or syncs.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)
+                && state.method.isObject() && state.method.rawBits() > 0x10000
+                && state.ip) {
+            ObjectHeader* smo = state.method.asObjectPtr();
+            Oop sh = smo->slots()[0];
+            if (sh.isSmallInteger()) {
+                const uint8_t* sbc = smo->bytes() + (1 + (sh.asSmallInteger() & 0x7FFF)) * 8;
+                const uint8_t* send = smo->bytes() + smo->byteSize();
+                if (state.ip < sbc || state.ip > send) {
+                    static int nSX = 0;
+                    if (++nSX <= 8) {
+                        auto* sjm = reinterpret_cast<jit::JITMethod*>(
+                            reinterpret_cast<uintptr_t>(state.jitMethod) & ~uintptr_t(1));
+                        fprintf(stderr, "[STATE-IP-OUTSIDE #%d] exit=%d state.method=#%s "
+                                "state.jitMethod->#%s pendingSaves=%d internal=%d fd=%zu\n",
+                                nSX, (int)state.exitReason,
+                                memory_.selectorOf(state.method).c_str(),
+                                sjm ? memory_.selectorOf(Oop::fromRawBits(sjm->compiledMethodOop)).c_str() : "-",
+                                rsPendingThisIter, (int)resumeInternalJ2J, frameDepth_);
+                    }
+                }
+            }
+        }
         switch (state.exitReason) {
         case jit::ExitReturn:
             if (__builtin_expect(GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL) != nullptr, 0))
@@ -29202,8 +29255,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     struct ActivationExitCheck {
         Interpreter* self;
         ~ActivationExitCheck() {
-            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0) && self->running_)
-                self->checkIpCoherence("activation-exit");
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0) && self->running_) {
+                // Walk only for the method the internal-J2J crash runs in
+                // (Float>>absPrintExactlyOn:base:, 40 literals): walking on
+                // every exit slows things enough to hide the crash.
+                bool walk = false;
+                if (self->method_.isObject() && self->method_.rawBits() > 0x10000) {
+                    Oop h = self->method_.asObjectPtr()->slots()[0];
+                    if (h.isSmallInteger() && (h.asSmallInteger() & 0x7FFF) == 40
+                            && self->memory_.selectorOf(self->method_) == "absPrintExactlyOn:base:")
+                        walk = true;
+                }
+                self->checkIpCoherence("activation-exit", walk);
+            }
         }
     } activationExitCheck{this};
     // PHARO_T1_INLINE_J2J=1 debug: log first 10 fib-related activations.

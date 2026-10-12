@@ -1640,7 +1640,7 @@ public:
     bool otherProcessOwns(Oop ctx, uint64_t* proc, size_t* depth);
     void classifyRehome(Oop oldCtx, Oop newCtx);
     void dumpCrashState();
-    void checkIpCoherence(const char* site);
+    void checkIpCoherence(const char* site, bool walk = false);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:
