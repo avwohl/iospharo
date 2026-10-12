@@ -2812,6 +2812,16 @@ void Interpreter::dumpCrashState() {
             g_lastResumeExit,
             g_lastResumeMethod ? memory_.selectorOf(Oop::fromRawBits(g_lastResumeMethod)).c_str() : "-",
             (int)inJITResume_);
+    fprintf(stderr, "[CRASH-STATE] extA_=%d extB_=%d\n", extA_, extB_);
+    if (method_.isObject() && instructionPointer_) {
+        ObjectHeader* mo = method_.asObjectPtr();
+        long long off = (long long)(instructionPointer_ - mo->bytes());
+        fprintf(stderr, "[CRASH-STATE] byteSize=%zu ip-off=%lld bytes before ip:", mo->byteSize(), off);
+        for (int k = 8; k >= 1; k--)
+            if (off - k >= 0 && off - k < (long long)mo->byteSize())
+                fprintf(stderr, " %02x", (unsigned)instructionPointer_[-k]);
+        fprintf(stderr, "\n");
+    }
     if (framePointer_)
         fprintf(stderr, "[CRASH-STATE] fp[0]=0x%llx fp[1]=0x%llx\n",
                 (unsigned long long)framePointer_[0].rawBits(),
@@ -13064,6 +13074,13 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    struct ActivateMethodCheck {
+        Interpreter* self;
+        ~ActivateMethodCheck() {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0) && self->running_)
+                self->checkIpCoherence("activateMethod");
+        }
+    } activateMethodCheck{this};
     // Activation-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): every real
     // activation, uniform regardless of send-path caching — diffable across
     // runs to find the first semantic divergence.
@@ -24961,6 +24978,8 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // have advanced sp/ip and changed temps in-place.
         stackPointer_ = sstate.sp;
         instructionPointer_ = sstate.ip;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
+            checkIpCoherence("perBcSista-out", true);
 
         if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
             doRec("SISTA-OUT", activeContext_.rawBits(),

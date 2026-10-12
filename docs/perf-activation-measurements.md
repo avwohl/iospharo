@@ -261,3 +261,24 @@ latent defects there: the materialize-failure bail
 materialized Context, and `closure_` is never synced by either identity sync.
 Next instrument: log every write to `instructionPointer_` that is not paired
 with a `method_` write, while `method_` is `absPrintExactlyOn:base:`.
+
+**Two more ruled out, and the recurring shape.**  `extA_`/`extB_` are 0 at the
+crash (no stale extension byte widening a jump), and an O(1) check on every
+`activateMethod` return stays silent.  What DOES recur is the earlier-caught
+pair, now seen twice (runs 8 and 23 of two hunts):
+
+    [IP-INCOHERENT returnValue] OUTSIDE: ip off 306 vs #indexOf:startingAt:ifAbsent:
+        last resume exit: ExitReturn, state.method = #indexOf:ifAbsent:
+
+`method_` is the J2J CALLEE (`indexOf:startingAt:ifAbsent:`) while the ip
+belongs elsewhere, apparently to the resumed CALLER `indexOf:ifAbsent:`, whose
+ExitReturn the resume loop just handled.  So under internal J2J the exit's
+"which method returned" (`state.method` / `state.jitMethod`) and "where to
+continue" (`state.ip`) can describe different frames -- callee vs resumed
+caller -- and the loop's ExitReturn handling (or the materialize sync just
+before it, which sets `method_` from `state.jitMethod` and the ip from
+`state.ip`) installs that mixed pair.  `state.ip` is not published by a return
+exit, so after a J2J callee's ExitReturn it can still hold the caller's resume
+ip.  That is the place to fix; the crash in `absPrintExactlyOn:base:` is the
+same mix landing in a Float method, where it executes a neighbouring object's
+bytes as code.  Knob stays OFF.
