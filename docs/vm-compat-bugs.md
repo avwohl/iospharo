@@ -514,6 +514,22 @@ identically, so this is not the JIT. Cog runs every one of them.
     tomooda-viennatalk                1430 P in 86 s           hangs, killed at 1800 s
     moosetechnology-gitprojecthealth     6 P in  0 s           hangs, killed at 1800 s
 
+**2026-10-12 re-run, freshly loaded, both VMs -- three of these now run at
+exact parity:**
+
+    moosetechnology-gitprojecthealth   Cog 9 P            ours 9 P
+    pillar-markup-pillar               Cog 18 P / 9 E     ours 18 P / 9 E
+    fedeloch-ume                       Cog 11 P           ours 11 P
+
+    tomooda-viennatalk                 Cog 1430 P         ours 1430 P
+
+(famix and acp were already fixed below.)  evref-bl-mcp could not be
+re-checked on this Mac: its Metacello load needs libpcre2 through FFI, and
+the x86_64 stock Cog under Rosetta cannot load Homebrew's arm64
+`/opt/homebrew/lib/libpcre2-8.dylib` (`SymbolNotFoundError: #pcre2_config_8`),
+so the image saves without the package.  That is a harness limit, not a
+result.  The history below is from 2026-08-12.
+
 Two sub-modes. The first four exit 0 within seconds having done nothing; the
 VM's own guard fires — *"eval never ran — startup.st was still on disk at exit,
 so StartupPreferencesLoader did not execute it"*. The last three hang instead,
@@ -538,6 +554,13 @@ each produces a normal RESULT.
     juliendelplanque-jrpc          cog  81 P    ours exits 0 after CLASSES
     punt-labs-anthropic-sdk-pharo  cog 901 P    ours exits 0 after CLASSES
     j-brant-smacc                  cog 557 P in 30 s   FIXED — see below
+
+**2026-10-12: jrpc and anthropic-sdk both run at parity now.**  jrpc: see the
+jrpc paragraph under 2c (socket close + block replay after a process switch).
+anthropic-sdk, freshly loaded: Cog and ours both `RESULT pass=895 fail=3
+err=36 classes=117`.  The one name in the parity diff,
+`ClaudeMCPIntegrationTest>>testMCPConnectorRoundTripsAgainstAnthropic`, calls
+the live Anthropic API.
 
 **`j-brant-smacc` is FIXED 2026-08-12, and it was never JIT-dependent.**  Its
 image is MULTI-SEGMENT (97.8 MB, firstSegmentBytes 74.7 MB, 4 segments), so it
