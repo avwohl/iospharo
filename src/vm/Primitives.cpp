@@ -13,6 +13,10 @@
  * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
+#ifndef _WIN32
+#include <poll.h>
+#include <sys/stat.h>
+#endif
 #include <csignal>
 #include "Interpreter.hpp"
 #include "jit/SistaV1.hpp"   // bytecodeLength for primitiveScanForByte
@@ -13681,24 +13685,59 @@ PrimitiveResult Interpreter::primitiveFileAtEnd(int argCount) {
 
     // stdout/stderr are output-only — atEnd is meaningless, never block on them
     if (file == stdout || file == stderr) {
-        pop();
+        popN(argCount + 1);
         push(memory_.falseObject());
         return PrimitiveResult::Success;
     }
 
     bool atEnd = (feof(file) != 0);
 
+#ifndef _WIN32
+    // Pipes, sockets and devices: the peek below would BLOCK on an empty
+    // blocking pipe, and on an empty non-blocking one fgetc's EOF is
+    // EAGAIN, not end of file -- we answered true for a pipe whose writer
+    // is still open (OSSubprocess OSSPipeTest testBlocking /
+    // testBlockingPeek / testNonBlockingPeek / testIsAtEndOfFile; Cog
+    // answers false there, and true once the writer has closed).  Ask
+    // poll() first; only a readable descriptor is peeked, and a read
+    // ERROR is not the end.
+    if (!atEnd) {
+        int fd = fileno(file);
+        struct stat st;
+        if (fd >= 0 && fstat(fd, &st) == 0 && !S_ISREG(st.st_mode)) {
+            struct pollfd pfd;
+            pfd.fd = fd; pfd.events = POLLIN; pfd.revents = 0;
+            if (poll(&pfd, 1, 0) > 0 && (pfd.revents & (POLLIN | POLLHUP))) {
+                // Cog's sqFileAtEnd test: EOF AND the eof flag.  An EOF
+                // that is only a read error (EAGAIN) is not the end.  Do
+                // not clearerr(): a stale error flag from an earlier EAGAIN
+                // read is set together with the eof flag once the writer
+                // closes, and clearing it would clear the eof flag too.
+                int c = fgetc(file);
+                if (c != EOF) {
+                    ungetc(c, file);
+                } else {
+                    atEnd = (feof(file) != 0);
+                }
+            }
+            popN(argCount + 1);
+            push(atEnd ? memory_.trueObject() : memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
+    }
+#endif
+
     // If not at EOF, check if next read would hit EOF
     if (!atEnd) {
         int c = fgetc(file);
         if (c == EOF) {
-            atEnd = true;
+            atEnd = (feof(file) != 0);  // as Cog: a read error is not the end
         } else {
             ungetc(c, file);
         }
     }
 
-    pop();
+    popN(argCount + 1);  // Named-primitive contract (Cog): the result replaces receiver + args.
     push(atEnd ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
@@ -13717,7 +13756,8 @@ PrimitiveResult Interpreter::primitiveFileClose(int argCount) {
     fclose(file);
     openFiles_.erase(fileId);
 
-    // Return receiver (leave stack as-is, receiver is below arg)
+    // Answer the receiver: drop the handle argument.
+    popN(argCount);  // answer the receiver (Cog: pop: 1)
     return PrimitiveResult::Success;
 }
 
@@ -13736,7 +13776,7 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    pop();
+    popN(argCount + 1);  // Named-primitive contract (Cog): the result replaces receiver + args.
     push(int64ToOop(memory_, static_cast<int64_t>(pos)));
     return PrimitiveResult::Success;
 }
@@ -14069,8 +14109,7 @@ PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    popN(argCount + 1);
-    push(fileIdOop);  // Return the file handle
+    popN(argCount);  // answer the receiver, as Cog does
     return PrimitiveResult::Success;
 }
 
@@ -14086,8 +14125,10 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
 
     int result = remove(winLongPath(filename).c_str());
 
-    pop();
-    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    // Cog: fail when the delete fails (File class>>primDeleteFile: answers
+    // nil then), answer the receiver when it succeeds.
+    if (result != 0) return PrimitiveResult::Failure;
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 
@@ -14104,6 +14145,19 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     // Save current position
     long currentPos = ftell(file);
     if (currentPos < 0) {
+        // Not seekable (a pipe): Cog's sqFileSize answers its -1 as an
+        // unsigned 64-bit value, 18446744073709551615, rather than failing,
+        // and OldStandardFileStream>>closed treats a FAILED size as "closed"
+        // -- OSSubprocess OSSPipe>>atEnd (`writer closed and: [...]`) then
+        // reported an open pipe as finished.
+        if (errno == ESPIPE) {
+            // Allocate BEFORE touching the stack: the LargePositiveInteger
+            // allocation can GC.
+            Oop all = uint64ToOop(memory_, ~static_cast<uint64_t>(0));
+            popN(argCount + 1);
+            push(all);
+            return PrimitiveResult::Success;
+        }
         return PrimitiveResult::Failure;
     }
 
@@ -14121,7 +14175,7 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    pop();
+    popN(argCount + 1);  // Named-primitive contract (Cog): the result replaces receiver + args.
     push(int64ToOop(memory_, static_cast<int64_t>(size)));
     return PrimitiveResult::Success;
 }
@@ -14260,8 +14314,7 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    popN(argCount + 1);
-    push(memory_.trueObject());
+    popN(argCount);  // answer the receiver, as Cog does (image: ^nil on failure)
     return PrimitiveResult::Success;
 }
 
@@ -14293,8 +14346,7 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    pop();
-    push(memory_.trueObject());
+    popN(argCount);  // answer the receiver, as Cog does (image: ^nil on failure)
     return PrimitiveResult::Success;
 }
 
@@ -14471,57 +14523,31 @@ PrimitiveResult Interpreter::primitiveDirectoryDelete(int argCount) {
     // rmdir only works on empty directories
     int result = rmdir(winLongPath(path).c_str());
 
-    pop();
-    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    // Cog: fail when rmdir fails (File class>>deleteDirectory: then sends
+    // primitiveFailed), answer the receiver when it succeeds.
+    if (result != 0) return PrimitiveResult::Failure;
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 
-// Primitive 127: Get Mac file type and creator (legacy, returns empty on non-Mac or modern systems)
-// pathString primitiveDirectoryGetMacTypeAndCreator -> Array of (type, creator) or nil
+// FilePlugin primitiveDirectoryGetMacTypeAndCreator
+// File class>>getMacFile: fileName type: typeString creator: creatorString
+//   -> receiver
+// Upstream FilePlugin fills typeString/creatorString in place and pops the
+// three arguments; on Unix dir_GetMacFileTypeAndCreator fills nothing and
+// succeeds.  Do the same.  (This used to read the TOP slot -- creatorString
+// -- as the path and answer an Array, leaving three extra stack slots.)
 PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount) {
-    // On modern systems, Mac type/creator codes are not commonly used
-    // Return an array with empty strings for compatibility
-    Oop pathOop = stackTop();
-
-    std::string path = extractString(memory_, pathOop);
+    if (argCount != 3) return PrimitiveResult::Failure;
+    std::string path = extractString(memory_, stackValue(2));
     if (path.empty()) {
         return PrimitiveResult::Failure;
     }
-
-    // Check if path exists
     struct stat statBuf;
     if (stat(winLongPath(path).c_str(), &statBuf) != 0) {
-        pop();
-        push(memory_.nil());
-        return PrimitiveResult::Success;
-    }
-
-    // Create result array with 2 empty strings (type, creator)
-    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-    if (arrayClass.isNil()) {
         return PrimitiveResult::Failure;
     }
-
-    uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
-    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
-    if (resultArray.isNil()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // GC SAFETY: push resultArray before createStringObject (which allocates)
-    push(resultArray);
-    Oop emptyType = createStringObject(memory_, "");
-    // Push emptyType too before second createStringObject
-    push(emptyType);
-    Oop emptyCreator = createStringObject(memory_, "");
-    emptyType = pop();
-    resultArray = pop();
-
-    memory_.storePointer(0, resultArray, emptyType);
-    memory_.storePointer(1, resultArray, emptyCreator);
-
-    pop();
-    push(resultArray);
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 
@@ -14601,7 +14627,7 @@ PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
 
     struct stat statBuf;
     if (fstat(fd, &statBuf) != 0) {
-        pop();
+        popN(argCount + 1);
         push(Oop::fromSmallInteger(-1));
         return PrimitiveResult::Success;
     }
@@ -14622,13 +14648,13 @@ PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
 #endif
     else if (S_ISREG(statBuf.st_mode)) type = 3;     // Regular file
 
-    pop();
+    popN(argCount + 1);  // Named-primitive contract (Cog): the result replaces receiver + args.
     push(Oop::fromSmallInteger(type));
     return PrimitiveResult::Success;
 }
 
 // Primitive 163: Flush file buffer
-// fileHandle primitiveFileFlush -> fileHandle
+// fileHandle primitiveFileFlush -> receiver
 PrimitiveResult Interpreter::primitiveFileFlush(int argCount) {
     Oop fileIdOop = stackTop();
 
@@ -14639,7 +14665,8 @@ PrimitiveResult Interpreter::primitiveFileFlush(int argCount) {
 
     fflush(file);
 
-    // Return the file handle (leave stack unchanged)
+    // Answer the receiver: drop the handle argument.
+    popN(argCount);  // answer the receiver (Cog: pop: 1)
     return PrimitiveResult::Success;
 }
 
@@ -14681,8 +14708,7 @@ PrimitiveResult Interpreter::primitiveFileTruncate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    popN(argCount + 1);
-    push(fileIdOop);  // Return the file handle
+    popN(argCount);  // answer the receiver, as Cog does
     return PrimitiveResult::Success;
 }
 
@@ -19116,22 +19142,9 @@ PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
     }
 
     if (!semIndexOop.isSmallInteger()) {
-        if (semIndexOop.isObject()) {
-            ObjectHeader* hdr = semIndexOop.asObjectPtr();
-            // Try to get semaphore index from object's slots
-            for (size_t i = 0; i < std::min(hdr->slotCount(), (size_t)4); i++) {
-                Oop slot = hdr->slotAt(i);
-                if (slot.isSmallInteger()) {
-                    int64_t val = slot.asSmallInteger();
-                    if (val > 0 && val < 100) {
-                        gEventQueue.setInputSemaphoreIndex(static_cast<int>(val));
-                        return PrimitiveResult::Success;
-                    }
-                }
-            }
-        }
-        // Don't use fallback - wrong semaphore is worse than no semaphore
-        // Let the primitive fail so Smalltalk can handle it
+        // Cog reads a SmallInteger index and fails otherwise.  (This used to
+        // scan the object's first slots for any small integer and install it
+        // -- a guess, and it also returned without dropping the argument.)
         return PrimitiveResult::Failure;
     }
 
@@ -29029,10 +29042,13 @@ PrimitiveResult Interpreter::primitiveFFIAllocate(int argCount) {
     if (!sizeOop.isSmallInteger()) return PrimitiveResult::Failure;
 
     int64_t size = sizeOop.asSmallInteger();
-    if (size <= 0) return PrimitiveResult::Failure;
+    if (size < 0) return PrimitiveResult::Failure;
 
-    // Allocate external memory
-    void* ptr = calloc(1, static_cast<size_t>(size));
+    // Allocate external memory.  Upstream is `ffiAlloc: byteSize` (malloc)
+    // and fails only on a NULL answer, so `allocate: 0` SUCCEEDS on Cog --
+    // malloc(0) answers a unique, freeable pointer.  calloc(1, 0) may answer
+    // NULL, so ask for one byte then.
+    void* ptr = calloc(1, size > 0 ? static_cast<size_t>(size) : 1);
     if (!ptr) return PrimitiveResult::Failure;
 
     // Create ExternalAddress object
@@ -30857,7 +30873,14 @@ PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
     rewinddir(dir);
 #endif
 
-    pop();  // pop arg, leave receiver
+    // This VM speaks the FileAttributesPlugin <= 1.4 protocol (primOpendir:
+    // answers the bare handle; DiskStore>>directoryAt:nodesDo: supports
+    // both), where rewinddir answers the handle -- File
+    // class>>primRewinddir: "Answer anExternalAddress".  It used to answer
+    // the receiver.  (The > 1.4 plugin answers the first entry instead, to
+    // match its opendir.)
+    popN(argCount + 1);
+    push(dirOop);
     return PrimitiveResult::Success;
 }
 

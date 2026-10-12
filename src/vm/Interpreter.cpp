@@ -23661,6 +23661,21 @@ PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCo
                             memory_.selectorOf(method_).c_str());
                 }
             }
+            // ... and a FAILING primitive must leave the stack untouched: the
+            // fallback code runs on it (a plugin that popped and then failed
+            // ran the image's fallback one slot short).
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SP_AUDIT), 0)
+                    && result == PrimitiveResult::Failure
+                    && (uint64_t)stackPointer_ != spBefore) {
+                static int failN = 0;
+                if (++failN <= 60)
+                    fprintf(stderr,
+                        "[PRIM-SP-AUDIT-FAIL] prim=%d argc=%d moved %lld slots "
+                        "then failed method=#%s\n",
+                        primitiveIndex, argCount,
+                        (long long)(((int64_t)spBefore - (int64_t)(uint64_t)stackPointer_) / 8),
+                        memory_.selectorOf(method_).c_str());
+            }
             if (__builtin_expect(traceSpCorrupt_, 0)) {
                 uint64_t spAfter = (uint64_t)stackPointer_;
                 if ((spAfter & 7) == 1 && (spBefore & 7) != 1) {

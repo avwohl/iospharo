@@ -759,8 +759,13 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
 extern "C" sqInt sp_primitiveSocketConnectionStatus(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
+    // A stale-session or malformed handle has already failed the primitive
+    // (socketFromOop -> primitiveFailFor).  Leave the stack alone: popping
+    // here and then reporting the failure ran the image's fallback code on
+    // a stack one slot short.  Cog fails these the same way.
+    if (vm->failed()) return 0;
     if (!ps) {
-        // Invalid/destroyed socket — return Invalid status instead of failing
+        // Destroyed socket (no private part) — answer Invalid status
         vm->popthenPush(2, vm->integerObjectOf(SOCK_INVALID));
         return 0;
     }
@@ -920,6 +925,11 @@ extern "C" sqInt sp_primitiveSocketSendDone(void) {
 extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
+    // A stale-session or malformed handle has already failed the primitive
+    // (socketFromOop -> primitiveFailFor).  Leave the stack alone: popping
+    // here and then reporting the failure ran the image's fallback code on
+    // a stack one slot short.  Cog fails these the same way.
+    if (vm->failed()) return 0;
     if (!ps || ps->fd == INVALID_SOCKET) {
         vm->popthenPush(2, vm->falseObject());
         return 0;
@@ -1073,6 +1083,11 @@ extern "C" sqInt sp_primitiveSocketError(void) {
 extern "C" sqInt sp_primitiveSocketLocalPort(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
+    // A stale-session or malformed handle has already failed the primitive
+    // (socketFromOop -> primitiveFailFor).  Leave the stack alone: popping
+    // here and then reporting the failure ran the image's fallback code on
+    // a stack one slot short.  Cog fails these the same way.
+    if (vm->failed()) return 0;
     if (!ps || ps->fd == INVALID_SOCKET) {
         vm->popthenPush(2, vm->integerObjectOf(0));
         return 0;
@@ -1137,6 +1152,11 @@ extern "C" sqInt sp_primitiveSocketRemoteAddress(void) {
 extern "C" sqInt sp_primitiveSocketRemotePort(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
+    // A stale-session or malformed handle has already failed the primitive
+    // (socketFromOop -> primitiveFailFor).  Leave the stack alone: popping
+    // here and then reporting the failure ran the image's fallback code on
+    // a stack one slot short.  Cog fails these the same way.
+    if (vm->failed()) return 0;
     if (!ps || ps->fd == INVALID_SOCKET) {
         vm->popthenPush(2, vm->integerObjectOf(0));
         return 0;

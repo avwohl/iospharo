@@ -789,6 +789,54 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: arm64 catalog re-run, batch 4 (25 packages).**  18 identical
+to Cog.  pharo-graphics-roassal: 733 P on both; `RSExamplesTest>>testExamples`
+FAILs on Cog and TIMEOUTs on ours (it fails on both, ours is slower).
+pavel-krivanek-turbo: `TbBoundsTest>>testAtRandom` (random input).
+alexandrie and pharo-cig: ours better (cig: Cog has 63 failing tests, ours 17;
+one test, `CigCTemplateCollectorTest>>testCollectionOfSpecializedType`, is a
+FAIL on ours and an ERR on Cog).  pharo-sdl-experiments: SDL2 stubs.
+opensmock-pyramid: Cog dies in the run (exit 1, in
+`BlParallelUniverse>>pulse`), so it has no baseline; ours has 9 ERRs, all
+`PrimitiveFailed: primitive #allocate: in TFFIBackend` -- see below.
+
+pharo-contributions-ossubprocess found VM bugs, FIXED.  `OSSPipeTest` was
+5 P / 4 F, now 9/9 as on Cog:
+
+- `primitiveFileAtEnd` peeked with `fgetc` and called any EOF the end.  On an
+  empty non-blocking pipe whose writer is still open, that EOF is EAGAIN, so
+  `atEnd` answered true; on an empty BLOCKING pipe the peek would block the
+  whole VM.  It now asks `poll()` first for a non-regular file, and uses
+  Cog's test `EOF && feof()`.  It does not `clearerr()`: a stale error flag
+  from an earlier EAGAIN read is set together with the eof flag once the
+  writer closes, and clearing it cleared the eof flag too.
+- `primitiveFileSize` failed on a pipe (`ftell` gives ESPIPE).
+  `OldStandardFileStream>>closed` treats a failed size as "closed", so
+  `OSSPipe>>atEnd` (`writer closed and: [...]`) called an open pipe finished.
+  Cog answers its -1 as unsigned, 18446744073709551615; ours now does too.
+- While checking those, a stack-contract bug in the FilePlugin primitives.  A
+  named primitive must replace the receiver and its arguments with ONE
+  result.  `primitiveFileSize`, `primitiveFileAtEnd`,
+  `primitiveFileGetPosition`, `primitiveFileDescriptorType`,
+  `primitiveFileClose`, `primitiveFileFlush`, `primitiveFileDelete`,
+  `primitiveDirectoryCreate` and `primitiveDirectoryDelete` left one slot too
+  many; `primitiveDirectoryGetMacTypeAndCreator` left three.  Image code
+  rarely shows it, because `^ self primSize: id` returns and the frame goes
+  away; used as an argument (`c value: 'x' value: (f primSizeNoError: id)`)
+  the next send goes to the wrong object.  `primitiveFileSetPosition`,
+  `primitiveFileTruncate` and `primitiveFileRename` answered the handle or
+  true instead of the receiver; `primitiveFileDelete` and
+  `primitiveDirectoryDelete` answered false where Cog fails the primitive;
+  `primitiveRewinddir` answered the receiver instead of the handle.  An
+  audit of all 177 named primitives (four auditors, two refuting verifiers
+  for each finding) also found `primitiveInputSemaphore` guessing an index
+  from any object's first slots (removed: Cog fails a non-SmallInteger), and
+  four SocketPlugin primitives (`ConnectionStatus`, `ReceiveDataAvailable`,
+  `LocalPort`, `RemotePort`) that popped AND failed on a stale-session
+  handle, so the image's fallback code ran on a stack one slot short.  A
+  probe of each FilePlugin primitive through the image's own `File class`
+  methods now answers exactly what Cog answers.
+
 **2026-10-12: arm64 catalog re-run, batch 3 (25 packages).**  23 identical to
 Cog, including opensmock 1059 P, fast-java 617 P / 1 F / 7 E, molecule 314 P,
 pharo-agentic-browser 542 P, acp 240 P / 2 E, spec-components 163 P.
