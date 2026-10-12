@@ -789,6 +789,16 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: arm64 re-run of the catalog, batch 1 (25 packages that passed
+on x86 in June).**  All identical to Cog except one speed result:
+geosphere, druid, canopy, fluxbase, pharodevs, boardwalk, buoy, kepler, mole,
+sagan, stardust, stargate, superluminal, willow, willow-spinkit, chrysal,
+comix2, myg, avr-pharo (1705 P), codeparadise, ai4pharo -- same RESULT on both
+VMs.  hyperspace, launchpad and pharomisc select 0 classes on both (prefix /
+load limit, not a result).  cormas: `CMSensitivityAnalysisTest>>testRunIsAsynchronous`
+waits 1 s for a background analysis that takes 1.6 s on ours (1.4 s NO_JIT)
+and 0.14 s on Cog -- speed.
+
 **2026-10-12: ten more of the June list, re-run on arm64.**  At parity:
 driolar-soccertheory 78 P / 13 E, tinchodias-sauco 17 P / 2 E,
 koendehondt-hera 582 P / 4 F / 86 E, nathanfrund-blenny 35 P, svenvc-ztimestamp
