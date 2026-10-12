@@ -12465,11 +12465,48 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
 
     // Pop the perform arguments (lookupClass, argsArray, selector)
     popN(3);
+    // Mirror form (argCount 4, e.g. Ghost's GHMetaMessages class >>
+    // withReceiver:perform:withArguments:inClass:): the stack is now
+    // [mirror, target].  Drop the mirror so the target sits where the
+    // send's receiver was; otherwise it stays under the result and the
+    // caller's next send goes to the mirror class.  Measured: Cog answers
+    // `an OrderedCollection(7 99)` for `r add: (GHMetaMessages withReceiver:
+    // 3 perform: #+ ...)`, we DNU'd #add: on GHMetaMessages class.
+    if (argCount == 4) {
+        Oop target = stackValue(0);
+        pop();
+        stackValuePut(0, target);
+    }
 
     // Now stack has: receiver
     // Push arguments from array
     for (size_t i = 0; i < numArgs; ++i) {
         push(argsHeader->slotAt(i));
+    }
+
+    // Run the looked-up method's own primitive first, as a send would (and
+    // as primitiveExecuteMethodArgsArray does): activating its fallback
+    // bytecode directly ran `self primitiveFailed` for every primitive
+    // method reached this way.  Ghost's GHVictimMetaMessages forwards
+    // messages to infected objects through here, so every primitive method
+    // (class, ==, instVarAt:, ...) "failed" -- moosetechnology-mooseide's
+    // Mi*BrowserTest>>testFollowBusTriggersSelectEntity (Cog passes).
+    int primIndex = primitiveIndexOf(method);
+    if (primIndex > 0) {
+        Oop savedMethod = method_;
+        Oop savedNewMethod = newMethod_;
+        size_t savedFrameDepth = frameDepth_;
+        method_ = method;
+        newMethod_ = method;
+        primitiveFailed_ = false;
+        primFailCode_ = 0;
+        auto result = executePrimitive(primIndex, static_cast<int>(numArgs));
+        if (result == PrimitiveResult::Success) {
+            if (frameDepth_ == savedFrameDepth) method_ = savedMethod;
+            return PrimitiveResult::Success;
+        }
+        method_ = savedMethod;
+        newMethod_ = savedNewMethod;
     }
 
     // Activate the method (receiver is on stack, followed by args)

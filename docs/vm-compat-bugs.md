@@ -789,6 +789,23 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: arm64 catalog re-run, batch 3 (25 packages).**  23 identical to
+Cog, including opensmock 1059 P, fast-java 617 P / 1 F / 7 E, molecule 314 P,
+pharo-agentic-browser 542 P, acp 240 P / 2 E, spec-components 163 P.
+opensmock-iconography: one FAIL, `AntDesignIconsLibraryTest>>testSerializeAsFormMaxWidthMaxHeight`
+(same-size Bitmaps, different pixels: the icon is rasterised from SVG through
+Cairo, ours links Homebrew's arm64 Cairo and the Rosetta Cog bundles its own
+-- a library difference).  moosetechnology-mooseide found a VM bug, FIXED:
+primitive 100 (`perform:withArguments:inSuperclass:`), which Ghost's
+`GHMetaMessages class >> withReceiver:perform:withArguments:inClass:` and the
+debugger's `Context>>object:perform:withArguments:inClass:` reach in its
+4-argument mirror form, (1) left the mirror receiver on the stack under the
+result, so the caller's next send went to the mirror class, and (2) activated
+the looked-up method's fallback bytecode without running its primitive, so
+every primitive method forwarded this way "failed".  Ghost-based
+`Mi*BrowserTest>>testFollowBusTriggersSelectEntity` now passes (Cog passes;
+Cog itself does not finish the whole mooseide run, exit 1).
+
 **2026-10-12: arm64 catalog re-run, batch 2 (25 packages).**  21 identical
 to Cog, including jrpc 81 P, smacc 557 P / 8 E, chanel 369 P, fame 261 P,
 iris 117 P (ten of them select 0 classes or only error on both VMs).
