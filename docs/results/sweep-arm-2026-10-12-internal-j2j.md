@@ -5,6 +5,11 @@ process-switch guard and `PHARO_T1_RESUME_INTERNAL_J2J=1` (now the arm64
 default).  Same prepped image and sweep settings as
 `sweep-arm-2026-10-11.md`.
 
+What this mode really ran: T1 refused every compile that would emit an
+inline-J2J closure push (every batch log shows `IC: 0/N (0% hit)` and
+`J2J-r: 0/0`), so send-bearing methods stayed out of T1.  See
+`docs/perf-activation-measurements.md`, "Correction".
+
     run                        pass    fail  error  wall
     2026-10-11 baseline        27872   13    1      1 h 53 m
     this run                   27876   12    1      56 m

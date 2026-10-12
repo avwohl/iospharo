@@ -48,12 +48,16 @@ void initDebugVars();
 #define GET_DEBUG_INT(name)  (::pharo::g_debug_ints [::pharo::DBI_##name])
 #define GET_DEBUG_STR(name)  (::pharo::g_debug_strs [::pharo::DBS_##name])
 
-// Resumed methods get an internal J2J slice (sends from a tryResume-resumed
-// method go JIT-to-JIT instead of one C++ round trip each).  Default ON on
-// arm64 since 2026-10-12 -- the crash that kept it off was a process switch
-// inside an extended instruction, fixed in interpret()'s periodic_checks.
-// Opt-out PHARO_T1_RESUME_EXTERNAL_J2J.  x86_64 stays opt-in
-// (PHARO_T1_RESUME_INTERNAL_J2J) until validated there.
+// "Resume-internal J2J" mode.  Default ON on arm64 since 2026-10-12, but
+// read what it actually does there: T1 REFUSES every compile that would emit
+// an inline-J2J closure push (emitClosurePush, AsmjitT1.cpp), so send-bearing
+// methods that would use inline J2J stay out of T1.  Real resume-internal J2J
+// (the push made encodable) corrupts (jrpc: STON parse errors), so the push is
+// never emitted.  The refusal is the measured win: full SUnit sweep 56 min
+// instead of 1 h 53 min, same results (docs/perf-activation-measurements.md,
+// "Correction").  It also reserves the resume J2J slice in
+// tryJITResumeInCaller.  Opt-out PHARO_T1_RESUME_EXTERNAL_J2J.  x86_64 stays
+// opt-in (PHARO_T1_RESUME_INTERNAL_J2J), where the push IS encodable.
 inline bool resumeInternalJ2JEnabled() {
 #if defined(__aarch64__) || defined(__arm64__)
     return !GET_DEBUG_BOOL(PHARO_T1_RESUME_EXTERNAL_J2J);

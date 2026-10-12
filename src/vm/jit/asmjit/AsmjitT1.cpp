@@ -1087,10 +1087,22 @@ static inline void emitClosurePush(asmjit::a64::Assembler& a,
                                    const asmjit::a64::Gp& cursor, int off,
                                    const asmjit::a64::Gp& scratch) {
     if (!::pharo::resumeInternalJ2JEnabled()) return;
-    a.ldr(scratch, asmjit::a64::ptr(asmjit::a64::x0, OFF_INTERP));
-    a.ldr(scratch, asmjit::a64::ptr(scratch,
-        (int)pharo::Interpreter::closureFieldOffset()));
-    a.str(scratch, asmjit::a64::ptr(cursor, off));
+    // POLICY, not an accident (2026-10-12): with resume-internal J2J on, a
+    // T1 compile that reaches an inline-J2J closure push is REFUSED and the
+    // method stays out of T1.  This used to happen by accident -- the push's
+    // LDR displacement (offsetof(Interpreter, closure_), ~25 MB since stack_
+    // became a 16 MB member) is unencodable and the encoding-error handler
+    // failed the compile.  Measured with the push made encodable, real
+    // resume-internal J2J CORRUPTS (juliendelplanque-jrpc: STON parse errors,
+    // DNU #variable:value:position: on OCParseErrorNode), while refusing these
+    // compiles gave a clean full SUnit sweep in 56 min instead of 1 h 53 min.
+    // So the refusal is kept, made explicit, and immune to an asmjit that
+    // learns to materialise large displacements.  Do NOT "fix" it into a
+    // working push until resume-internal J2J itself is sound.
+    (void)cursor; (void)off; (void)scratch;
+    a.report_error(asmjit::Error::kInvalidState,
+        "policy: inline-J2J closure push refused (resume-internal J2J is "
+        "unsound); method stays out of T1");
 }
 #endif  // arm64-only emitClosurePush
 // x86 twin (STEP 0 of the V2 save port, docs/x86-v2-save-port.md).  Mirrors the
@@ -1340,7 +1352,7 @@ struct T1EncodingErrorHandler : public asmjit::ErrorHandler {
         static int logged = 0;
         if (++logged <= 20)
             fprintf(stderr,
-                "[asmjit-t1] ENCODING ERROR (compile will bail): %s\n",
+                "[asmjit-t1] compile refused (bail): %s\n",
                 message ? message : "?");
     }
 };

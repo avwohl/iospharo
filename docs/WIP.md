@@ -17,8 +17,12 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 
 ## Right now (2026-10-12, 04:40)
 
-**Resumed-method internal J2J is now the arm64 default: full sweep 56 min
-instead of 1 h 53 min, 27876 P / 12 F / 1 E (baseline 27872 / 13 / 1).**
+**The arm64 default now keeps send-bearing (inline-J2J) methods OUT of T1:
+full sweep 56 min instead of 1 h 53 min, 27876 P / 12 F / 1 E (baseline
+27872 / 13 / 1).**  It is labelled "resume-internal J2J" but that is not what
+runs -- the closure push it needs never encodes, so those compiles are
+refused (now on purpose); real resume-internal J2J corrupts.  See
+`docs/perf-activation-measurements.md`, "Correction".
 The 1-in-22 crash that kept it off was an interpreter bug: `periodic_checks`
 ran the profiler tick and the low-space signal before its `inExtension_`
 early-out, so a profiler sample could switch process between `E1 FF` and the

@@ -363,3 +363,41 @@ more live path, now fixed: the FFI callback-return cooldown runs exactly 500
 bad pc.  The cooldown now finishes the extended instruction first.  The three
 remaining paths are knob-only or unreachable for standard methods; see
 `docs/deferred.md`.
+
+## Correction: the "internal J2J" speed lever was T1 refusing compiles (2026-10-12)
+
+Every "internal J2J" speed figure in this file -- printString -42%, the 59-min
+and 56-min sweeps -- measured something else.  With
+`PHARO_T1_RESUME_INTERNAL_J2J` on, `emitClosurePush` emits
+`ldr x, [x, offsetof(Interpreter, closure_)]`.  That offset is ~25.7 MB
+(`stack_` is a 16 MB member declared before it; `Interpreter.hpp` says so
+next to `MaxStackDepth`), far outside AArch64 LDR's 32760.  asmjit rejects it,
+`T1EncodingErrorHandler` fails the compile, and the method stays out of T1.
+So the knob kept every method with an inline-J2J send push out of T1.
+
+The giveaway was the stats line, which nobody read: with the knob on, a
+batch shows `IC: 0/N (0% hit)` and `J2J-r: 0/0`; with it off, `IC: 67% hit`,
+`J2J-r: 300k`.
+
+Made the push encodable (ADD-immediates to reach the offset) to measure the
+real thing: T1 compiles everything again (IC 76% hit, J2J 400k) and
+juliendelplanque-jrpc breaks (STON parse errors, DNU
+`#variable:value:position:` on `OCParseErrorNode`).  So real resume-internal
+J2J is unsound, as the knob's old "still corrupts" note said.
+
+What the evidence supports: on this suite, keeping those send-bearing methods
+OUT of T1 is twice as fast as compiling them, with the same results.  That is
+the same finding as memory `perfdb-jit-slower-than-interp` (T1 loses to our
+interpreter except on sends).  `5e2780e0` made the mode the arm64 default for
+the wrong stated reason.  The behaviour is kept, now as an explicit refusal
+in `emitClosurePush` (`a.report_error(...)`, "policy: inline-J2J closure push
+refused") so an asmjit that learns to materialise large displacements cannot
+silently switch on the corrupting path.
+
+The extension-prefix crash fix in the same commit is real and independent.
+The crash showed up in this mode because more code ran in the interpreter.
+
+Open questions this raises: why T1-compiled send-bearing methods are slower
+than the interpreter (the activation wall, again), and whether a deliberate
+policy -- for example "T1 compiles only methods with no inline-J2J send" --
+should replace this indirect one.
