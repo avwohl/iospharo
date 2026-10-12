@@ -15,6 +15,15 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-12, 08:00)
+
+**Packages re-checked against Cog, all freshly loaded: seven more at parity.**
+anthropic-sdk (895 P / 3 F / 36 E), gitprojecthealth, pillar, ume, viennatalk
+(1430 P), mutalk (336 P / 1 E, was SIGSEGV) and soil (after a become fix:
+class reshaped twice lost its instances -- `noteClassHashCopy`,
+`scripts/repro/class-reshape-twice.st`).  Full sweep with that fix:
+27879 P / 11 F / 1 E.  Details: `docs/vm-compat-bugs.md` #2.
+
 ## Right now (2026-10-12, 04:40)
 
 **The arm64 default now keeps send-bearing (inline-J2J) methods OUT of T1:

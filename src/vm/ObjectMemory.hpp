@@ -580,6 +580,16 @@ public:
     size_t fullGCCount() const { return fullGCCount_; }
     bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map);
 
+    // Hash-copying become onto a CLASS (Spur prim 72/249, copyHash: true).
+    // A class's identity hash IS its class-table index, so copying obj1's
+    // hash onto a class obj2 that is already registered at its own index
+    // leaves obj2's existing instances under the OLD index while every
+    // lookup (allInstances, someInstance, basicNew) uses the new one.  Cog
+    // resolves that lazily (allInstancesOf's ambiguous-class scan rewrites
+    // each instance's index); we do it eagerly: call this before the hash
+    // copy, and the next becomeForwardAll heap scan rewrites the instances.
+    void noteClassHashCopy(Oop cls, uint32_t newHash);
+
     // ===== IDENTITY HASH =====
 
     /// Get the identity hash of an object, generating one if needed
@@ -1062,6 +1072,7 @@ public:
     size_t scavCount_ = 0;
     size_t scavTime_ = 0;
     size_t fullGCCount_ = 0;
+    std::unordered_map<uint32_t, uint32_t> pendingClassIndexRemap_;  // noteClassHashCopy -> becomeForwardAll
     size_t fullGCTime_ = 0;
     size_t sweepCount_ = 0;
     size_t sweepTime_ = 0;

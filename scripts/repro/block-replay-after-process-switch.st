@@ -8,7 +8,7 @@
  suspended block, mid-body -- from its START, replaying `count := count + 1`.
 
  Run:  ./build-rel/test_load_image Pharo.image eval \
-         \"'scripts/repro/block-replay-after-process-switch.st' asFileReference fileIn\"
+         ""'scripts/repro/block-replay-after-process-switch.st' asFileReference fileIn""
  Pass: replays=0.  Before the fix: replays=39322 (count=40001 after=678)."
 | sema count after p arr |
 sema := Semaphore new. count := 0. after := 0.

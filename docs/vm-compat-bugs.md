@@ -789,6 +789,25 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: `apptivegrid-soil` and `pharo-contributions-mutalk` re-run,
+freshly loaded.**  mutalk: Cog and ours both `336 P / 1 E` (it used to
+SIGSEGV, #3).  soil: ours 686 P / 5 F / 2 E / 2 T against Cog 687 P / 6 F /
+1 E / 1 T; the timeouts are SoilCleanCodeTest (#6, speed).  The one real
+difference, `SoilMigrationTest>>testSerializingObjectWithChangedShapeAfterReading`
+(`PrimitiveFailed: instVarAt:`), was a VM-core become bug, now fixed:
+
+ShiftClassInstaller copies each instance into `newClass basicNew` (the new
+class registers at its own class-table index X2), then forwards the old class
+to the new one with a hash-copying become, so the class's hash -- which IS its
+class-table index -- becomes the old X1.  The migrated instances still carry
+X2.  Cog's `allInstancesOf` handles a class sitting at two indices (its
+ambiguous-class scan rewrites each instance to the canonical index); ours
+scanned X1 only.  So a SECOND reshape (`removeSlot:` then `addSlot:`) found no
+instances and left them one slot short.  Fix: the copyHash become primitives
+(72, 249) call `ObjectMemory::noteClassHashCopy`, and `becomeForwardAll`'s
+heap scan rewrites X2 instances to X1 eagerly.  Repro (10 lines, no package):
+`scripts/repro/class-reshape-twice.st`.
+
 **2026-08-13: `smalltalkweb-myprecious` is no longer "exits 0 after CLASSES"
 — it runs, and its failures are defect #20.**  Freshly loaded, single-segment:
 ours `pass=90 fail=2 err=16 timeout=1` vs Cog `pass=107 fail=0 err=2`, and 13

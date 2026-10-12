@@ -1822,8 +1822,22 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     return true;
 }
 
+void ObjectMemory::noteClassHashCopy(Oop cls, uint32_t newHash) {
+    if (!cls.isObject() || newHash == 0 || newHash >= classTable_.size()) return;
+    uint32_t oldHash = cls.asObjectPtr()->identityHash();
+    if (oldHash == 0 || oldHash == newHash || oldHash >= classTable_.size()) return;
+    if (classTable_[oldHash] != cls) return;   // not registered at its own index
+    classTable_[newHash] = cls;                // the class's index from now on
+    pendingClassIndexRemap_[oldHash] = newHash;
+}
+
 bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map) {
     if (map.empty()) return true;
+    // Instances of a class whose hash a copyHash become just moved (see
+    // noteClassHashCopy): rewritten in the same heap scan, before any format
+    // filtering -- the class index is in every object's header.
+    std::unordered_map<uint32_t, uint32_t> classRemap;
+    classRemap.swap(pendingClassIndexRemap_);
 
     // Shadow-slot detector: identities are about to change arbitrarily — the
     // (object, slot) keys cannot be remapped, so drop the table. Once for the
@@ -1843,6 +1857,10 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
     allObjectsDo([&](Oop obj) {
         if (!obj.isObject()) return;
         ObjectHeader* header = obj.asObjectPtr();
+        if (__builtin_expect(!classRemap.empty(), 0)) {
+            auto r = classRemap.find(header->classIndex());
+            if (r != classRemap.end()) header->setClassIndex(r->second);
+        }
         ObjectFormat format = header->format();
 
         // Skip non-pointer objects (byte/word/short arrays) - their slots are raw data, not Oops

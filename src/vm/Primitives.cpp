@@ -14917,6 +14917,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         ObjectHeader* fromObjHdr = fromObj.asObjectPtr();
         ObjectHeader* toObjHdr = toObj.asObjectPtr();
         if (fromObjHdr->hasIdentityHash()) {
+            memory_.noteClassHashCopy(toObj, fromObjHdr->identityHash());
             toObjHdr->setIdentityHash(fromObjHdr->identityHash());
         }
 
@@ -14996,6 +14997,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
         if (copyHash) {
             memory_.ensureIdentityHash(fromObj);
             uint32_t hash = fromObj.asObjectPtr()->identityHash();
+            memory_.noteClassHashCopy(toObj, hash);
             toObj.asObjectPtr()->setIdentityHash(hash);
         }
 
