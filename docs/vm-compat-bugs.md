@@ -789,6 +789,13 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: arm64 catalog re-run, batch 2 (25 packages).**  21 identical
+to Cog, including jrpc 81 P, smacc 557 P / 8 E, chanel 369 P, fame 261 P,
+iris 117 P (ten of them select 0 classes or only error on both VMs).
+moosetechnology-famix: 1315 P against 1316, one TIMEOUT (speed, as before).
+escapeanalysis, jadeite and pharoaiactions lose the run on Cog too (exit 1:
+a `Halt`, broken TestMessageBox helpers, a missing file) -- no baseline.
+
 **2026-10-12: arm64 re-run of the catalog, batch 1 (25 packages that passed
 on x86 in June).**  All identical to Cog except one speed result:
 geosphere, druid, canopy, fluxbase, pharodevs, boardwalk, buoy, kepler, mole,
