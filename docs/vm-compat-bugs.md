@@ -789,6 +789,34 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
 
+**2026-10-12: ten more of the June list, re-run on arm64.**  At parity:
+driolar-soccertheory 78 P / 13 E, tinchodias-sauco 17 P / 2 E,
+koendehondt-hera 582 P / 4 F / 86 E, nathanfrund-blenny 35 P, svenvc-ztimestamp
+77 P, ducasse-osc 16 P / 1 F.  One timeout each, speed only:
+pharo-contributions-deeptraverser, omarabedelkader-pharo-lexicon, and
+moosetechnology-famixreplication (`FamixRepDetectorBenchmarkTest`, a
+benchmark).  pharo-contributions-methodproxies differs in one test,
+`MpMethodProxyTest>>testCanWrapValueWithException` (counts 2 #value instead of
+3, JIT and NO_JIT alike).  NOT a VM bug to fix the obvious way: Cog's
+INTERPRETER short-circuits an optimised special-selector `#value` (no lookup),
+and only Cog's JIT sends it normally.  The test expects 3 because in Cog
+`BlockClosure>>on:do:` is hot, hence JIT-compiled, so its `self value` is a
+real send that the proxy sees; ours runs `on:do:` in the interpreter.  Making
+our interpreter look `#value` up was tried 2026-10-12 and broke
+`OCSpecialSelectorTest>>testOptimisedValueSpecialSendsMessageDoesNotCaptureSend`,
+which pins the interpreter behaviour ("send a message to go through the
+interpreter and have an optimised execution that does not invoke the proxy"),
+so it was reverted.  Matching Cog here means our JIT compiling `on:do:` and
+treating special `#value` as a real send.
+
+
+**2026-10-12: four of the June x86 sweep's divergent packages, re-run on arm64
+(freshly loaded, both VMs):** pharo-contributions-xml-xmlparser
+6020 P / 5 F / 2 E, pillar-markup-microdown 1062 P / 2 F, jordanmontt-illimani
+27 P -- all identical to Cog.  polymathorg-polymath: 775 P against Cog's 776 P;
+the one difference is `PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate`
+TIMEOUT (97% `Smalltalk compiler evaluate:`, the block-invocation speed gap).
+
 **2026-10-12: `apptivegrid-soil` and `pharo-contributions-mutalk` re-run,
 freshly loaded.**  mutalk: Cog and ours both `336 P / 1 E` (it used to
 SIGSEGV, #3).  soil: ours 686 P / 5 F / 2 E / 2 T against Cog 687 P / 6 F /
