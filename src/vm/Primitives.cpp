@@ -15999,6 +15999,20 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    const uint64_t extKey = method.rawBits();
+    ExtCallCacheEntry& extEntry = extCallCache_[(extKey >> 3) & (kExtCallCacheSize - 1)];
+    if (extEntry.method == extKey && extEntry.gcEpoch == memory_.fullGCCount()) {
+        return extEntry.named ? (this->*(extEntry.named))(argCount)
+                              : callExternalPrimitive(extEntry.ext);
+    }
+    auto cacheExtCall = [&](PrimitiveFunc named, ExternalPrimFunc ext) {
+        if (!memory_.isOld(method)) return;
+        extEntry.method = extKey;
+        extEntry.gcEpoch = memory_.fullGCCount();
+        extEntry.named = named;
+        extEntry.ext = ext;
+    };
+
     // The primitive spec is typically in the method's literal frame
     // In Spur, the format is usually:
     // - Literal at index 0 or 1 contains an Array: #(moduleName primitiveName flags)
@@ -16068,11 +16082,13 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         // Try as direct name with empty module
         auto it = namedPrimitives_.find(":" + literalStrings[a]);
         if (it != namedPrimitives_.end()) {
+            cacheExtCall(it->second, nullptr);
             return (this->*(it->second))(argCount);
         }
         // Try external plugin primitives
         auto xit = externalPrimitives_.find(":" + literalStrings[a]);
         if (xit != externalPrimitives_.end()) {
+            cacheExtCall(nullptr, xit->second);
             return callExternalPrimitive(xit->second);
         }
         // Try as module:name with other literals as names
@@ -16081,11 +16097,13 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             std::string key = literalStrings[a] + ":" + literalStrings[b];
             auto it2 = namedPrimitives_.find(key);
             if (it2 != namedPrimitives_.end()) {
+                cacheExtCall(it2->second, nullptr);
                 return (this->*(it2->second))(argCount);
             }
             // Try external plugin primitives
             auto xit2 = externalPrimitives_.find(key);
             if (xit2 != externalPrimitives_.end()) {
+                cacheExtCall(nullptr, xit2->second);
                 return callExternalPrimitive(xit2->second);
             }
         }

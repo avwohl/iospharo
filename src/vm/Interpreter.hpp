@@ -1471,12 +1471,29 @@ private:
     // External plugin primitive registry (free C functions, not member functions)
     std::map<std::string, ExternalPrimFunc> externalPrimitives_;
 
+    // primitiveExternalCall resolution cache.  Resolving a named primitive
+    // scans the method's literals, builds std::strings and tries every
+    // module:name pair -- per CALL.  Cog resolves once and caches the index in
+    // the spec literal; this caches the resolved target per method instead.
+    // Old-space methods only (a young method moves on every scavenge); keyed
+    // by the method oop and the full-GC count (compaction moves old objects),
+    // and cleared by flushMethodCache (become, method changes).
+    struct ExtCallCacheEntry {
+        uint64_t method = 0;
+        size_t gcEpoch = 0;
+        PrimitiveFunc named = nullptr;
+        ExternalPrimFunc ext = nullptr;
+    };
+    static constexpr size_t kExtCallCacheSize = 256;
+    std::array<ExtCallCacheEntry, kExtCallCacheSize> extCallCache_{};
+
     // Bytecode history for debugging
     std::array<uint8_t, 256> recentBytecodes_;
     size_t recentBytecodeIdx_ = 0;
 
     /// Clear the method cache (used when methods are modified or GC runs)
     void flushMethodCache() {
+        extCallCache_.fill(ExtCallCacheEntry{});
         for (auto& entry : methodCache_) {
             entry.selector = Oop::nil();
             entry.classOop = Oop::nil();

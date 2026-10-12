@@ -290,3 +290,32 @@ measured and negative.  Next step is an lldb session on a crashing run: a
 hardware watchpoint on `instructionPointer_` armed when `method_` becomes
 `Float>>absPrintExactlyOn:base:` (`PHARO_DET_SCHED` will not help -- the
 profiler test's sampling is driven by a real timer).
+
+## Two per-call costs outside the JIT (2026-10-12)
+
+Found by profiling smalltalkweb-myprecious, whose last 3 errors are a 100 ms
+reply timeout that our VM misses (Fuel serialize is 17x slower than Cog).
+
+1. `executeFromContext` called `sigsetjmp(g_sigsegvRecovery, 1)`.  On Darwin
+   the mask-saving form makes two syscalls (`sigprocmask`, `sigaltstack`) per
+   call, and `executeFromContext` runs on every context resume and process
+   switch.  Now `sigsetjmp(..., 0)`; the recovery path unblocks SIGSEGV and
+   SIGBUS itself, the one mask that matters there.
+2. `primitiveExternalCall` re-resolved the named primitive on every call:
+   it copied every short literal into a `std::string` and tried every
+   module:name pair in the maps.  It now caches the resolved target per
+   method (old-space methods only, keyed by oop + full-GC count, cleared by
+   `flushMethodCache`).
+
+Interleaved A/B, arm64 release, 3 rounds each, same result every round:
+
+    zero-ms Delay wait loop (200000 iters)     4.7 us -> 3.5 us per iter  (-25%)
+    'the quick brown fox' findString: 'fox'    780 ns -> 537 ns per call  (-31%)
+    myprecious Fuel serialize                  10.6 ms -> 10.7 ms          (none)
+
+The serialize loop did not move: a second profile of the same loop is
+dominated by the activation wall (`returnValue -> tryJITResumeInCaller`,
+`activateMethod -> tryJITActivation`), and the first profile's syscall
+samples came from the three zero-delay reception services switching process
+around it.  So myprecious's `testArgPassByReference` stays a speed failure
+until the resumed-method J2J lever (above) is safe.

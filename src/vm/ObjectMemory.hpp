@@ -577,6 +577,7 @@ public:
     /// batch. The forwarders go in after the scan, so every pair sees the
     /// pre-become heap — Spur defines become as simultaneous, not sequential.
     /// @param map old oop raw bits -> replacement oop
+    size_t fullGCCount() const { return fullGCCount_; }
     bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map);
 
     // ===== IDENTITY HASH =====

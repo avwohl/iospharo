@@ -22422,8 +22422,23 @@ bool Interpreter::executeFromContext(Oop context) {
     }
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
     // we'll longjmp back here and return false instead of terminating the VM
-    if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
-        // Returned from SIGSEGV recovery
+    // savemask 0: on Darwin a mask-saving sigsetjmp makes two syscalls
+    // (sigprocmask + sigaltstack) EVERY time, and executeFromContext runs on
+    // every context return and process switch.  Measured: 890 of ~2400
+    // main-thread samples in a Fuel-serialize loop (smalltalkweb-myprecious,
+    // 17x slower than Cog).  The only mask that matters is the one the
+    // SIGSEGV handler leaves blocked when it siglongjmps here; it is unblocked
+    // below on that (rare) path instead.
+    if (sigsetjmp(g_sigsegvRecovery, 0) != 0) {
+        // Returned from SIGSEGV recovery: the handler's signal is still
+        // blocked because we left it by longjmp, not by returning.
+#ifndef _WIN32
+        sigset_t unblock;
+        sigemptyset(&unblock);
+        sigaddset(&unblock, SIGSEGV);
+        sigaddset(&unblock, SIGBUS);
+        pthread_sigmask(SIG_UNBLOCK, &unblock, nullptr);
+#endif
         g_sigsegvRecoveryEnabled = 0;
         stackPointer_ = stackBase_;
         frameDepth_ = 0;

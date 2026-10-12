@@ -15,6 +15,33 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-11, 23:50)
+
+**Packages: jrpc fixed, stargate at parity, myprecious down to 3 speed errors.**
+
+    juliendelplanque-jrpc     Cog 81 P     ours 81 P / 0 F / 0 E (was: no RESULT)
+    ba-st-stargate            Cog 473 P    ours 473 P (parity)
+    smalltalkweb-myprecious   Cog 109 P    ours 106 P / 3 E (was 90 P / 16 E)
+
+jrpc had two defects, one behind the other (details: `docs/vm-compat-bugs.md`,
+jrpc paragraph under #2): a listening socket's close did not free the port
+(`07dfc643`), and a JIT chain-loop fast path ran a block from its first
+bytecode after a process switch, replaying `self schedule` in
+`DelayWaitTimeout>>wait` (repro `scripts/repro/block-replay-after-process-switch.st`,
+39322 replays in 40000 signals before the fix, 0 after).
+
+myprecious's 3 errors are all `testArgPassByReference`: a nested proxy round
+trip with a 100 ms reply timeout.  Ours needs ~110 ms, Cog ~12 ms.  The cost
+is Fuel serialization, 17x slower than Cog, and it is the activation wall --
+two side fixes (`sigsetjmp` savemask, named-primitive cache: -25% / -31% on
+their microbenchmarks) did not move it.  See
+`docs/perf-activation-measurements.md`, "Two per-call costs outside the JIT".
+Full sweep with both: 27869 P / 14 F / 3 E (baseline 27872 / 13 / 1).  The
+new names are intermittent and pre-existing: RSLinesTest>>testMarkersIncludesPoint
+(#22's BlockCannotReturn, 2 in 10 runs on the build from before tonight),
+StDebuggerTest>>testDynamicVariableEvaluation (Cog-shared), and two classes
+that pass in isolation on every build.
+
 ## Right now (2026-10-11, 23:00)
 
 **Speed: resumed methods run with J2J OFF, and the knob that turns it on is
