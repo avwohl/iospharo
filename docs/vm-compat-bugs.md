@@ -797,8 +797,11 @@ alexandrie and pharo-cig: ours better (cig: Cog has 63 failing tests, ours 17;
 one test, `CigCTemplateCollectorTest>>testCollectionOfSpecializedType`, is a
 FAIL on ours and an ERR on Cog).  pharo-sdl-experiments: SDL2 stubs.
 opensmock-pyramid: Cog dies in the run (exit 1, in
-`BlParallelUniverse>>pulse`), so it has no baseline; ours has 9 ERRs, all
-`PrimitiveFailed: primitive #allocate: in TFFIBackend` -- see below.
+`BlParallelUniverse>>pulse`), so it has no baseline.  Ours had 9 more ERRs,
+all `PrimitiveFailed: primitive #allocate: in TFFIBackend`: our
+`primitiveFFIAllocate` failed `allocate: 0`, where upstream calls
+`malloc(0)` and succeeds.  FIXED (`d9f8888f`); ours now fails only
+`PyramidCopyPastePluginTest>>testCopyAsStonMenu`, which Cog fails too.
 
 pharo-contributions-ossubprocess found VM bugs, FIXED.  `OSSPipeTest` was
 5 P / 4 F, now 9/9 as on Cog:
@@ -4958,3 +4961,76 @@ confirmations of defect #27.
 **The four MISDISPATCH lines in the 2026-09-03 fake-GUI sweep are those false
 positives**, not sightings.  The corrected detector is in `build-rel` and was
 not in the binary that sweep runs.
+
+### 31. Primitive audit, 2026-10-12: stack contract and Cog semantics — mostly FIXED, residue OPEN (LOW)
+
+Two code audits (all 177 named primitives, then all 322 numbered-primitive
+functions; each finding checked by two verifiers told to refute it) plus a
+full SUnit sweep with `PHARO_PRIM_SP_AUDIT=1` (which now also flags a FAILING
+primitive that moved the stack).  The contract is Cog's: on success the
+receiver and its arguments are replaced by ONE result; on failure the stack is
+untouched.  The probe `prims2.st` pattern -- each expression in argument
+position, `Array with: (expr) with: #end` -- shows a leaked or missing slot as
+a wrong array instead of hiding it behind a return.
+
+FIXED (all compared against Cog on the same expressions):
+
+- Named FilePlugin / SocketPlugin / input-semaphore primitives -- see the
+  batch 4 paragraph under #2.
+- `primitiveGrowMemoryByAtLeast` (180) left its argument.
+- `adoptInstance:` (160) answered the instance; its `MirrorPrimitives
+  setClass:to:` form left a slot.  160 and 115 now answer the receiver.
+- Nested primitives run by `withArgs:executeMethod:` / `perform:withArguments:`
+  (188/84 path) and primitive 100 did not get their own `argCount_` (so
+  `primitiveSuccess` popped the OUTER count: `3 perform: #+ withArguments:
+  #(4)` popped three slots) nor `newMethod_` (a named primitive resolved the
+  outer method's literal).
+- Perform family: no arity check (`3 perform: #+ with: 4 with: 5` answered 9;
+  Cog fails `PrimErrBadNumArgs`), the `withReceiver:perform:withArguments:`
+  mirror form left the mirror under the result, and primitive 100 accepted a
+  non-Array argument list.  `tryPrimitive:withArgs:` (118) mirror form, too.
+- `SmallInteger minVal / -1` and `// -1` wrapped to minVal (no range check;
+  `fromSmallInteger` only asserts).  `INT64_MIN quo: -1`, `// -1`, `\\ -1`
+  were undefined behaviour (SIGFPE on x86_64).
+- `Float nan truncated` answered 0 (arm64 saturating conversion).
+- `extractFloat` took ANY 64-bit indexable or 8-byte word object as a Float:
+  `1.5 + (Float64Array new: 1)` answered 1.5 instead of failing into the
+  coercion code.
+- `primDigitBitShiftMagnitude` was the arithmetic shift of primitive 37;
+  `Integer>>bitShift:` corrects for negative receivers itself, so
+  `((2 raisedTo: 100) + 1) negated bitShift: -1` was off by one.
+- The `[x := x + 1] value` fast path in `primitiveFullClosureValue` read the
+  captured temp vector from closure slot 3 -- the RECEIVER -- instead of 4, so
+  it incremented the receiver's instance variable N and left the temp alone
+  whenever that ivar held a SmallInteger (`(3@4) zzBump` gave `#(0 4)`, Cog
+  `#(1 3)`).
+- Context `size` (212), `basicSize` (62), `at:` (210), `at:put:` (211):
+  measured the whole process stack or the allocated capacity, and read the
+  stale heap copy of a live context.  Now bounded by the stack pointer and read
+  from the live frame, including a caller frame (`[c at: 3] on: Error do:`).
+- FFI stores accepted values Cog rejects: `pointerAtOffset:put:` stored NULL
+  for nil / a raw address for a SmallInteger (Cog itself SEGFAULTs there),
+  `boolean8AtOffset:put: 3` stored 0, int32/uint32/char32 stores truncated,
+  `uint64AtOffset:put:` stored a negative LargeInteger's magnitude.
+- `primitiveCompareBytes` (156) compared bytes across element widths
+  (`#[1 2 3 4] = (WordArray with: 16r04030201)` was true).
+- `bytesLeft:` (112, argc 1) left its argument; `primitiveQuit`'s deferred
+  paths left the exit code; a failed snapshot answered false ("saved") --
+  it now sends the image's own `handleSnapshotError:`.
+
+Also fixed although latent (no caller in the Pharo 13 image): 91, 92, 93,
+182, 215 and 231 assumed argc 0 (231 also answered 0 for an immediate, Cog
+fails); 88 self-suspend wrote the stack before a failure exit; 136 rejected
+argc 2, the form `DelayMillisecondTicker>>primSignal:atMilliseconds:` uses;
+573 answered nil for an index <= 0; 161's set forms answered the receiver
+(Cog: the old hash) and its class form did not enter the class table.
+
+OPEN, all latent or harmless:
+
+- 137 / 241 clocks answer Unix-epoch / UTC values where Cog answers local time.
+- 149 attribute 1004 (vm version) answers 1, not a String.
+- 75 `basicIdentityHash` succeeds for immediates; Cog fails.
+- 70 `basicNew` on a variable class succeeds with size 0 (Cog fails into
+  `basicNew: 0` -- same result).
+- 132 `instVarsInclude:` on a Context scans slots above its stack pointer.
+- 213 `primitiveContextXray` always answers 0.

@@ -820,6 +820,7 @@ private:
     // member named after one would break every translation unit that ever does
     // see both, so the whole family carries the underscore.
     static constexpr int PrimErrBadArgument_    = 3;  // Argument is not what the primitive needs
+    static constexpr int PrimErrBadNumArgs_     = 5;  // Wrong number of arguments
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
     static constexpr int PrimErrNoMemory_       = 9;  // Insufficient object memory
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
@@ -2336,6 +2337,16 @@ private:
 
     /// Look up a method in the class hierarchy
     Oop lookupMethod(Oop selector, Oop classOop);
+    // Cog's perform-family check: the method `selector` finds for
+    // `receiver` takes `numArgs` arguments.  True when it does, or when the
+    // lookup finds no CompiledMethod (DNU, objects-as-methods), which the send
+    // itself handles.  Read-only: no stack change, so a caller can fail after.
+    bool performArityMatches(Oop receiver, Oop selector, int numArgs);
+    // A Context's stack pointer as Cog's primitives see it (stackPointerOf:
+    // on a married context reads the frame).  For the active context the
+    // frame is live: items are framePointer_[1..stackp] and *frameBase is set
+    // to framePointer_; otherwise slot 2 (nil -> 0) and *frameBase is null.
+    int64_t contextStackp(Oop ctx, Oop** frameBase);
 
     /// Check method cache
     MethodCacheEntry* probeCache(Oop selector, Oop classOop);
@@ -3144,6 +3155,7 @@ private:
     PrimitiveResult primitiveBitOrLargeIntegers(int argCount);     // 35
     PrimitiveResult primitiveBitXorLargeIntegers(int argCount);    // 36
     PrimitiveResult primitiveBitShiftLargeIntegers(int argCount);  // 37
+    PrimitiveResult primDigitBitShiftMagnitude(int argCount);  // LargeIntegers plugin: sign-preserving magnitude shift
 
     // GC primitives
     PrimitiveResult primitiveFullGC(int argCount);

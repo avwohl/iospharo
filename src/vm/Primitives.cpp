@@ -662,9 +662,9 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
             result = memory_.fetchPointer(instVarIndex, receiver);
         }
 
-        // Pop args (argsArray, primIndex) and replace receiver with result
-        popN(2);
-        pop();  // pop receiver
+        // Replace [mirror] receiver primIndex argsArray with the result
+        // (the 3-argument MirrorPrimitives form used to keep the mirror).
+        popN(argCount + 1);
         push(result);
         return PrimitiveResult::Success;
     }
@@ -695,12 +695,12 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
     }
     size_t numArgs = argsHdr->slotCount();
 
-    // Pop the doPrimitive arguments (argsArray, primIndex), leave receiver
-    popN(2);
-
-    // receiver is now at stackTop(), save it
-    Oop receiver = stackTop();
-    pop();  // Remove receiver temporarily
+    // Replace [mirror] receiver primIndex argsArray with receiver arg1..argN.
+    // MirrorPrimitives class>>withReceiver:tryPrimitive:withArgs: (argc 3)
+    // used to leave the mirror under the nested primitive's result.
+    Oop receiver = stackValue(2);
+    Oop mirror = (argCount == 3) ? stackValue(3) : memory_.nil();
+    popN(argCount + 1);
 
     // Push the new arguments from the array
     push(receiver);  // Push receiver back as first "argument"
@@ -720,6 +720,7 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
         // Pop the pushed arguments
         popN(numArgs + 1);  // +1 for receiver
         // Push back original arguments
+        if (argCount == 3) push(mirror);
         push(receiver);
         push(primIndexOop);
         push(argsArrayOop);
@@ -1000,7 +1001,18 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     if (primIndex > 0) {
         Oop savedMethod = method_;
         size_t savedFrameDepth = frameDepth_;
+        int savedArgCount = argCount_;
+        Oop savedNewMethod = newMethod_;
         method_ = method;
+        // primitiveExternalCall (117) reads its plugin spec from newMethod_:
+        // without this, `withArgs:executeMethod:` on a named-primitive method
+        // resolved the OUTER method's literal.
+        newMethod_ = method;
+        // primitiveSuccess() pops argCount_ + 1, so the nested primitive must
+        // see ITS argument count, not this primitive's: `3 perform: #+
+        // withArguments: #(4)` popped 3 slots for a 1-argument add (found by
+        // PHARO_PRIM_SP_AUDIT in the EFFormatter tests).
+        argCount_ = methodNumArgs;
         auto result = executePrimitive(primIndex, methodNumArgs);
         if (result == PrimitiveResult::Success) {
             // If the nested primitive activated a new frame (e.g. prim 207
@@ -1011,10 +1023,14 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
             // that leave the frame depth unchanged.
             if (frameDepth_ == savedFrameDepth) {
                 method_ = savedMethod;
+                newMethod_ = savedNewMethod;
+                argCount_ = savedArgCount;
             }
             return PrimitiveResult::Success;
         }
         method_ = savedMethod;
+        newMethod_ = savedNewMethod;
+        argCount_ = savedArgCount;
         // Primitive failed — fall through to activate the method normally
     }
 
@@ -1398,6 +1414,10 @@ PrimitiveResult Interpreter::primitiveDivide(int argCount) {
         }
 
         int64_t result = a / b;
+        // SmallInteger minVal / -1 = 2^60 does not fit; Cog fails and the
+        // image answers the LargePositiveInteger.  fromSmallInteger() only
+        // asserts, so a release build wrapped it to minVal.
+        if (!Oop::canBeSmallInteger(result)) return PrimitiveResult::Failure;
         primitiveSuccess(Oop::fromSmallInteger(result));
         return PrimitiveResult::Success;
     }
@@ -1417,7 +1437,8 @@ PrimitiveResult Interpreter::primitiveMod(int argCount) {
         }
 
         // Smalltalk mod (\\) returns result with same sign as divisor
-        int64_t rem = a % b;
+        // INT64_MIN % -1 is undefined (SIGFPE on x86_64); the result is 0.
+        int64_t rem = (b == -1) ? 0 : a % b;
         // Adjust sign: C remainder has sign of dividend, Smalltalk mod has sign of divisor
         if (rem != 0 && ((a < 0) != (b < 0))) {
             rem += b;
@@ -1468,6 +1489,8 @@ PrimitiveResult Interpreter::primitiveDiv(int argCount) {
         if (rem != 0 && ((a < 0) != (b < 0))) {
             q -= 1;
         }
+        // SmallInteger minVal // -1 = 2^60 does not fit (see primitiveDivide).
+        if (!Oop::canBeSmallInteger(q)) return PrimitiveResult::Failure;
         primitiveSuccess(Oop::fromSmallInteger(q));
         return PrimitiveResult::Success;
     }
@@ -1477,6 +1500,8 @@ PrimitiveResult Interpreter::primitiveDiv(int argCount) {
     if (trySigned64BitValueOf(memory_, rcvr, aVal) &&
         trySigned64BitValueOf(memory_, arg, bVal)) {
         if (bVal == 0) return PrimitiveResult::Failure;
+        // INT64_MIN / -1 overflows int64 (undefined; SIGFPE on x86_64).
+        if (bVal == -1 && aVal == INT64_MIN) return PrimitiveResult::Failure;
         int64_t q = aVal / bVal;
         int64_t rem = aVal % bVal;
         if (rem != 0 && ((aVal < 0) != (bVal < 0))) {
@@ -1515,6 +1540,8 @@ PrimitiveResult Interpreter::primitiveQuo(int argCount) {
             return PrimitiveResult::Failure;
         }
 
+        // INT64_MIN / -1 overflows int64 (undefined; SIGFPE on x86_64).
+        if (b == -1 && a == INT64_MIN) return PrimitiveResult::Failure;
         // Truncated division (quo:)
         Oop result = int64ToOop(memory_, a / b);
         if (result.isNil()) return PrimitiveResult::Failure;
@@ -2606,8 +2633,14 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
     } else if (header->isCompiledMethod()) {
         // CompiledMethods: return byte size (literal frame + bytecodes)
         size = header->byteSize();
+    } else if (fmt == ObjectFormat::IndexableWithFixed
+               && memory_.classOf(rcvr).rawBits() ==
+                  memory_.specialObject(SpecialObjectIndex::ClassMethodContext).rawBits()) {
+        // A Context's indexable size is its stack pointer, as on Cog (which
+        // special-cases ClassMethodContextCompactIndex), not its capacity.
+        size = static_cast<size_t>(contextStackp(rcvr, nullptr));
     } else if (fmt == ObjectFormat::IndexableWithFixed) {
-        // Objects with both fixed and indexable fields (e.g., Context)
+        // Objects with both fixed and indexable fields
         size_t fixedFields = memory_.fixedFieldCountOf(rcvr);
         size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
     } else if (fmt == ObjectFormat::Indexable) {
@@ -3715,6 +3748,49 @@ PrimitiveResult Interpreter::primitiveAtEnd(int argCount) {
 
 // ===== BEHAVIOR PRIMITIVES =====
 
+bool Interpreter::performArityMatches(Oop receiver, Oop selector, int numArgs) {
+    Oop method = lookupMethodForSend(selector, memory_.classOf(receiver));
+    if (!method.isObject() || method.rawBits() < 0x10000) return true;
+    ObjectHeader* mh = method.asObjectPtr();
+    if (!mh->isCompiledMethod()) return true;
+    Oop header = memory_.fetchPointer(0, method);
+    if (!header.isSmallInteger()) return true;
+    return static_cast<int>((header.asSmallInteger() >> 24) & 0x0F) == numArgs;
+}
+
+int64_t Interpreter::contextStackp(Oop ctx, Oop** frameBase) {
+    if (frameBase) *frameBase = nullptr;
+    if (frameDepth_ == 0 && ctx.rawBits() == activeContext_.rawBits()
+            && framePointer_ != nullptr) {
+        int64_t n = static_cast<int64_t>(stackPointer_ - framePointer_) - 1;
+        if (n < 0) n = 0;
+        if (frameBase) *frameBase = framePointer_;
+        return n;
+    }
+    // A context married to a SAVED frame (a caller of the running code):
+    // its items run from that frame's receiver slot up to the next frame's
+    // receiver slot, which is where its pending send's receiver sits -- Cog
+    // likewise counts a married caller's stack below the send in progress.
+    // The owner is the LOWEST frame carrying the context and running its
+    // method: frames pushed after it inherit the same savedActiveContext
+    // until something materializes (measured: `[c at: 3] on: Error do: ...`
+    // has both the method's frame and on:do:'s frame carrying c).
+    Oop ctxMethod = memory_.fetchPointer(3, ctx);
+    for (size_t i = 0; i < frameDepth_; i++) {
+        const SavedFrame& f = savedFrames_[i];
+        bool carries = (f.materializedContext.isObject() && f.materializedContext.rawBits() == ctx.rawBits())
+                    || (f.savedActiveContext.isObject() && f.savedActiveContext.rawBits() == ctx.rawBits());
+        if (!carries || f.savedMethod.rawBits() != ctxMethod.rawBits()) continue;
+        if (!f.savedFP) break;
+        Oop* calleeFP = (i + 1 < frameDepth_) ? savedFrames_[i + 1].savedFP : framePointer_;
+        if (!calleeFP || calleeFP <= f.savedFP) break;
+        if (frameBase) *frameBase = f.savedFP;
+        return static_cast<int64_t>(calleeFP - f.savedFP) - 1;
+    }
+    Oop sp = memory_.fetchPointer(2, ctx);
+    return sp.isSmallInteger() && sp.asSmallInteger() > 0 ? sp.asSmallInteger() : 0;
+}
+
 PrimitiveResult Interpreter::primitivePerform(int argCount) {
     // perform: selector
     // perform:with: selector arg1
@@ -3735,6 +3811,13 @@ PrimitiveResult Interpreter::primitivePerform(int argCount) {
 
     // Validate selector is a Symbol
     if (!selector.isObject() || selector.rawBits() < 0x10000) {
+        return PrimitiveResult::Failure;
+    }
+    // Cog: a method with a different arity fails PrimErrBadNumArgs and the
+    // image reports "wrong number of arguments".  Sending anyway activated
+    // the method on a stack of the wrong depth.
+    if (!performArityMatches(stackValue(argCount), selector, additionalArgs)) {
+        primFailCode_ = PrimErrBadNumArgs_;
         return PrimitiveResult::Failure;
     }
 
@@ -3780,38 +3863,38 @@ PrimitiveResult Interpreter::primitivePerform(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
-    // perform:withArguments:
-    // Stack: receiver, selector, arguments array
+    // perform:withArguments:                  receiver selector args  (argc 2)
+    // MirrorPrimitives class>>withReceiver:perform:withArguments:
+    //                                  mirror receiver selector args  (argc 3)
+    if (argCount != 2 && argCount != 3) return PrimitiveResult::Failure;
 
-    Oop argsArray = stackValue(0);
+    Oop argsArray = memory_.followForwarded(stackValue(0));
     Oop selector = stackValue(1);
+    Oop target = stackValue(2);
 
     if (!selector.isObject() || selector.rawBits() < 0x10000) {
         return PrimitiveResult::Failure;
     }
-
     if (!argsArray.isObject()) {
         return PrimitiveResult::Failure;
     }
-
     ObjectHeader* argsHeader = argsArray.asObjectPtr();
-
-    // Follow forwarding pointers (created by become:)
-    argsArray = memory_.followForwarded(argsArray);
-    argsHeader = argsArray.asObjectPtr();
-
     // Validate argsArray is an indexable pointer object (Array)
-    ObjectFormat fmt = argsHeader->format();
-    if (fmt != ObjectFormat::Indexable) {
-        // Not a proper array - could be fixed-size object, byte array, etc.
+    if (argsHeader->format() != ObjectFormat::Indexable) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
+    size_t numArgs = argsHeader->slotCount();
+    // Cog: a method of a different arity fails PrimErrBadNumArgs.
+    if (!performArityMatches(target, selector, static_cast<int>(numArgs))) {
+        primFailCode_ = PrimErrBadNumArgs_;
         return PrimitiveResult::Failure;
     }
 
-    size_t numArgs = argsHeader->slotCount();
-
-    // Pop selector and args array, push args from array
-    popN(2);
-
+    // Replace [mirror] receiver selector args with receiver arg1..argN.  The
+    // mirror form used to leave the mirror under the send's result.
+    popN(argCount + 1);
+    push(target);
     for (size_t i = 0; i < numArgs; ++i) {
         push(argsHeader->slotAt(i));
     }
@@ -4267,9 +4350,9 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     // workload.  Saves the closure activation + frame setup +
     // remote-temp dispatch — ~50 ns per call.
     //
-    // For closures, frame temps map to copied values: temp M ==
-    // closure->slot (3 + M).  We read/write the captured tempVec
-    // directly.
+    // For full-block closures, frame temps of a 0-arg block map to copied
+    // values: temp M == closure->slot (4 + M).  We read/write the captured
+    // tempVec directly.
     if (argCount == 0) {
         Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
         if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
@@ -4294,10 +4377,19 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                                  // must NOT be inlined here)
                         int slotN = bc[1];
                         int tempM = bc[2];
-                        // Closure slot 3+ holds copied values; tempM=0
-                        // is the first copied value.
-                        Oop tempVec = memory_.fetchPointerUnchecked(
-                            3 + tempM, closure);
+                        // A FullBlockClosure (slot 1 is the CompiledBlock,
+                        // checked above) holds outerContext, compiledBlock,
+                        // numArgs, RECEIVER, then the copied values: temp M
+                        // of a 0-arg block is closure slot 4 + M (as
+                        // activateBlock reads it).  This used to read slot
+                        // 3 + M -- the receiver for M = 0 -- and so bumped
+                        // the receiver's instance variable N instead of the
+                        // captured temp whenever that ivar held a
+                        // SmallInteger.
+                        const size_t tempSlot = 4 + static_cast<size_t>(tempM);
+                        Oop tempVec = tempSlot < closure.asObjectPtr()->slotCount()
+                            ? memory_.fetchPointerUnchecked(tempSlot, closure)
+                            : memory_.nil();
                         if (tempVec.isObject() && tempVec.rawBits() > 0x10000) {
                             ObjectHeader* vecObj = tempVec.asObjectPtr();
                             if (slotN >= 0
@@ -4988,16 +5080,16 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
     Oop nilObj = memory_.nil();
 
     if (process.rawBits() == activeProcess.rawBits()) {
-        // Suspending ourselves - return nil (we weren't on any list, we were running)
-        pop();  // Remove receiver
-        push(nilObj);  // Push result (nil)
-
-        // Find next runnable process and switch to it
+        // Suspending ourselves - answer nil (we weren't on any list, we were
+        // running).  Find the next runnable process FIRST: failing after the
+        // receiver was replaced left the fallback a corrupted stack.
         Oop nextProcess = wakeHighestPriority();
         if (nextProcess.isNil() || nextProcess.rawBits() == nilObj.rawBits()) {
             // No other process to run - this shouldn't happen
             return PrimitiveResult::Failure;
         }
+        popN(argCount + 1);
+        push(nilObj);
         transferTo(nextProcess);
         return PrimitiveResult::Success;
     }
@@ -5283,6 +5375,10 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
                         "C frames must unwind first\n", (int)callbackDepth_);
         fflush(stderr);
         pendingQuit_ = true;
+        // Execution continues in this process until the quit is honoured:
+        // answer the receiver, as a primitive must (the exit code stayed on
+        // the stack).
+        popN(argCount);
         return PrimitiveResult::Success;
     }
 
@@ -5356,6 +5452,7 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] running_ = false\n");
     }
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 
@@ -5792,6 +5889,20 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
         char buf[512];
         snprintf(buf, sizeof(buf), "[SNAPSHOT] Save failed: %s", result.error.c_str());
         log(buf);
+        // Cog FAILS the primitive here, and the image's fallback
+        // `self handleSnapshotError: ec` raises an Error.  Answering false
+        // told the image the save had worked.  The caller's frame
+        // (SnapshotOperation>>doSnapshot, whose receiver is the
+        // SnapshotOperation) is already rebuilt, so run that fallback from
+        // here: replace the result with the receiver and send
+        // handleSnapshotError: nil ("Unknown Error while executing snapshot
+        // primitive").
+        Oop handler = memory_.lookupSymbol("handleSnapshotError:");
+        if (handler.isObject()) {
+            stackValuePut(0, receiver_);
+            push(memory_.nil());
+            sendSelector(handler, 1);
+        }
     }
 
     {
@@ -6313,12 +6424,16 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     // The milliseconds value comes from Smalltalk as `ioMSecs + delayMs`,
     // which is a 30-bit wrapping value. Timer comparison uses wrap-around handling.
 
-    if (argCount != 1) {
+    // argc 2 is the form the image uses: DelayMillisecondTicker>>primSignal:
+    // aSemaphore atMilliseconds: msecs (receiver = the ticker); this used to
+    // accept only argc 1, so that ticker could never arm a timer.  Either
+    // way the answer is the receiver.
+    if (argCount != 1 && argCount != 2) {
         return PrimitiveResult::Failure;
     }
 
     Oop msOop = stackValue(0);      // milliseconds (SmallInteger, in ioMSecs units)
-    Oop semaphore = stackValue(1);  // receiver (the semaphore)
+    Oop semaphore = stackValue(1);  // the semaphore (the receiver when argc 1)
 
     if (!msOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
@@ -6341,7 +6456,7 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
         timerWasArmed_ = false;
         lastTimerSignalTime_ = std::chrono::steady_clock::time_point{};
         schedulerDeathLogged_ = false;
-        primitiveSuccess(semaphore);  // Return receiver
+        popN(argCount);  // answer the receiver
         return PrimitiveResult::Success;
     }
 
@@ -6353,7 +6468,7 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     schedulerDeathLogged_ = false;
     schedulerRecoveryAttempts_ = 0;
 
-    primitiveSuccess(semaphore);  // Return receiver
+    popN(argCount);  // answer the receiver
     return PrimitiveResult::Success;
 }
 
@@ -6700,6 +6815,14 @@ static bool extractFloat(ObjectMemory& memory, Oop oop, double& result) {
         return true;
     }
     if (oop.isObject()) {
+        // Only a BoxedFloat64 (an instance of the special-objects Float
+        // class), as Cog's loadFloatOrIntFrom: -- this used to take ANY
+        // 64-bit indexable object or 8-byte word object, so `1.5 +
+        // (Float64Array new: 1)` answered a Float instead of failing into
+        // the image's coercion code.
+        if (memory.classOf(oop).rawBits() !=
+                memory.specialObject(SpecialObjectIndex::ClassFloat).rawBits())
+            return false;
         ObjectHeader* header = oop.asObjectPtr();
         auto fmt = header->format();
         if (fmt == ObjectFormat::Indexable64) {
@@ -6707,7 +6830,7 @@ static bool extractFloat(ObjectMemory& memory, Oop oop, double& result) {
             std::memcpy(&result, &bits, sizeof(double));
             return true;
         }
-        // BoxedFloat64 might use byte format (10-15) with 8 bytes of data
+        // BoxedFloat64 is two 32-bit words (format 10-11) with 8 bytes of data
         uint8_t fmtVal = static_cast<uint8_t>(fmt);
         if (fmtVal >= 10 && fmtVal <= 15) {
             size_t byteSize = header->byteSize();
@@ -6934,6 +7057,14 @@ PrimitiveResult Interpreter::primitiveTruncated(int argCount) {
 
     // Truncate toward zero
     double truncated = std::trunc(value);
+
+    // NaN, infinities and anything outside the SmallInteger range fail
+    // BEFORE the conversion: double -> int64 out of range is undefined, and
+    // arm64 saturates it (NaN -> 0), so `Float nan truncated` answered 0.
+    if (!(truncated >= static_cast<double>(Oop::smallIntegerMin())
+          && truncated <= static_cast<double>(Oop::smallIntegerMax()))) {
+        return PrimitiveResult::Failure;
+    }
 
     // Try to create SmallInteger from truncated value
     int64_t intValue = static_cast<int64_t>(truncated);
@@ -8563,6 +8694,47 @@ PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
 
 // ===== LARGE INTEGERS PLUGIN NAMED PRIMITIVES =====
 
+// LargeIntegers primDigitBitShiftMagnitude: Integer>>bitShiftMagnitude:.
+// Shifts the MAGNITUDE and keeps the sign (upstream digit:Lshift: /
+// digit:Rshift:lookfirst:).  It was registered to the arithmetic shift of
+// primitive 37, and Integer>>bitShift: subtracts 1 itself for a negative
+// receiver that loses set bits -- so an odd negative LargeInteger shifted
+// right came out one too small (`((2 raisedTo: 100) + 1) negated bitShift: -1`).
+PrimitiveResult Interpreter::primDigitBitShiftMagnitude(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+    if (!arg.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t shift = arg.asSmallInteger();
+
+    std::vector<uint8_t> aMag;
+    bool aNeg;
+    if (!extractInteger(memory_, rcvr, aMag, aNeg)) return PrimitiveResult::Failure;
+
+    std::vector<uint8_t> resultMag;
+    if (shift >= 0) {
+        resultMag = magnitudeLeftShift(aMag, shift);
+        if (resultMag.empty()) return PrimitiveResult::Failure;  // overflow
+    } else {
+        resultMag = magnitudeRightShift(aMag, -shift);
+    }
+    bool resultNeg = aNeg;
+    if (resultMag.empty() || (resultMag.size() == 1 && resultMag[0] == 0)) {
+        resultMag.assign(1, 0);
+        resultNeg = false;
+    }
+
+    Oop resultOop;
+    if (tryConvertToSmallInteger(resultMag, resultNeg, resultOop)) {
+        primitiveSuccess(resultOop);
+        return PrimitiveResult::Success;
+    }
+    resultOop = makeLargeInteger(memory_, resultMag, resultNeg);
+    if (resultOop.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(resultOop);
+    return PrimitiveResult::Success;
+}
+
 // primDigitMultiplyNegative: receiver * arg, with explicit neg flag
 // receiver: Integer, args: (Integer, Boolean)
 PrimitiveResult Interpreter::primDigitMultiplyNegative(int argCount) {
@@ -9277,10 +9449,10 @@ PrimitiveResult Interpreter::primitiveBytesLeft(int argCount) {
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
-        pop();
+        popN(argCount + 1);  // also SmalltalkImage>>bytesLeft: aBool (argc 1)
         push(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
-        pop();
+        popN(argCount + 1);
         push(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
@@ -9309,28 +9481,29 @@ PrimitiveResult Interpreter::primitiveMoveToPermSpace(int argCount) {
 
 // Primitive 91: Move objects to permanent space in bulk (no-op, return receiver)
 PrimitiveResult Interpreter::primitiveMoveToPermSpaceInBulk(int argCount) {
-    // No permanent space implementation - just return receiver unchanged
-    (void)argCount;
-    // Stack: receiver -> receiver (no change needed)
+    // No permanent space implementation.  Cog answers the array argument
+    // (pop: argumentCount+1 then push it); with no argument, the receiver.
+    if (argCount >= 1) {
+        Oop array = stackTop();
+        popN(argCount + 1);
+        push(array);
+    }
     return PrimitiveResult::Success;
 }
 
 // Primitive 92: Check if object is in permanent space (always false)
 PrimitiveResult Interpreter::primitiveIsInPermSpace(int argCount) {
-    // No permanent space implementation - nothing is in perm space
-    (void)argCount;
-    pop();
+    // No permanent space implementation - nothing is in perm space.
+    popN(argCount + 1);  // also the 1-argument form
     push(memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
 // Primitive 93: Move all old objects to permanent space (no-op)
 PrimitiveResult Interpreter::primitiveMoveToPermSpaceAllOldObjects(int argCount) {
-    // No permanent space implementation - just return success
-    (void)argCount;
-    // Returns number moved (0)
-    pop();
-    push(Oop::fromSmallInteger(0));
+    // No permanent space implementation.  Cog leaves the stack alone and so
+    // answers the receiver (this used to answer 0).
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 
@@ -9523,6 +9696,16 @@ PrimitiveResult Interpreter::primitiveCompareBytes(int argCount) {
 
     if (!(rcvrIsBytes || rcvrIsWords) || !(argIsBytes || argIsWords)) {
         return PrimitiveResult::Failure;
+    }
+    // Different element widths are never equal (Cog: `#[1 2 3 4] = (WordArray
+    // with: 16r04030201)` is false, `(DoubleWordArray with: 5) = (WordArray
+    // with: 5 with: 0)` is false); comparing the raw bytes said true.
+    bool rcvrIs64 = (rcvrFormat == ObjectFormat::Indexable64);
+    bool argIs64 = (argFormat == ObjectFormat::Indexable64);
+    if (rcvrIsBytes != argIsBytes || rcvrIs64 != argIs64) {
+        popN(2);
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
     }
 
     size_t rcvrSize = memory_.byteSizeOf(rcvr);
@@ -10549,7 +10732,11 @@ PrimitiveResult Interpreter::primitiveChangeClass(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    return changeClassOf(rcvr, newClass);
+    PrimitiveResult r = changeClassOf(rcvr, newClass);
+    // Cog: `self pop: argumentCount` -- answer the receiver (the object whose
+    // class changed; the mirror receiver in the 2-argument mirror form).
+    if (r == PrimitiveResult::Success) popN(argCount);
+    return r;
 }
 
 PrimitiveResult Interpreter::changeClassOf(Oop rcvr, Oop newClass) {
@@ -10632,8 +10819,8 @@ PrimitiveResult Interpreter::changeClassOf(Oop rcvr, Oop newClass) {
     flushMethodCache();
     flushJITCaches();
 
-    popN(2);
-    push(rcvr);  // Return receiver
+    // The caller pops its arguments (the stack shape depends on the primitive
+    // and on its mirror form).
     return PrimitiveResult::Success;
 }
 
@@ -11144,7 +11331,13 @@ PrimitiveResult Interpreter::primitiveAdoptInstance(int argCount) {
     }
 
     // Use shared validation with primitiveChangeClass
-    return changeClassOf(instanceOop, newClassOop);
+    PrimitiveResult r = changeClassOf(instanceOop, newClassOop);
+    // Cog: `self pop: argumentCount` -- answer the receiver (the class, or
+    // MirrorPrimitives in `MirrorPrimitives setClass: aClass to: anObject`).
+    // This used to answer the instance and leave the mirror form one slot
+    // deep (MirrorPrimitivesTest>>testChangingClassOfObject).
+    if (r == PrimitiveResult::Success) popN(argCount);
+    return r;
 }
 
 // ===== OBJECT PINNING PRIMITIVES =====
@@ -11291,7 +11484,7 @@ PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
     // Heap is pre-allocated; dynamic growth not yet supported.
     // Return 0 to indicate no growth occurred.
 
-    pop();
+    popN(argCount + 1);  // receiver + amount -> result
     push(Oop::fromSmallInteger(0));  // No growth occurred
     return PrimitiveResult::Success;
 }
@@ -12077,11 +12270,17 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     size_t zeroIndex = static_cast<size_t>(index - 1);
     size_t actualSlot = ContextFixedSlots + zeroIndex;
 
-    if (actualSlot >= slotCount) {
+    // Bounded by the stack pointer, as on Cog (SubscriptOutOfBounds above
+    // it), not by the allocated capacity; and the ACTIVE context is read
+    // from its live frame -- its heap copy holds stale stack items.
+    Oop* frameBase = nullptr;
+    int64_t stackp = contextStackp(context, &frameBase);
+    if (index > stackp || actualSlot >= slotCount) {
         return PrimitiveResult::Failure;  // Index out of bounds
     }
 
-    Oop value = memory_.fetchPointer(actualSlot, context);
+    Oop value = frameBase ? frameBase[index]
+                          : memory_.fetchPointer(actualSlot, context);
 
     // PHARO_CTX_TEMPAT_DBG=1: log Context>>tempAt: calls.  Goal: find why
     // `context exception` (tempAt: 1 on a signaling Context) returns
@@ -12160,7 +12359,8 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
     size_t zeroIndex = static_cast<size_t>(index - 1);
     size_t actualSlot = ContextFixedSlots + zeroIndex;
 
-    if (actualSlot >= slotCount) {
+    // Bounded by the stack pointer, as on Cog.
+    if (index > contextStackp(context, nullptr) || actualSlot >= slotCount) {
         return PrimitiveResult::Failure;  // Index out of bounds
     }
 
@@ -12276,6 +12476,7 @@ PrimitiveResult Interpreter::primitiveVoidVMStateForMethod(int argCount) {
     // In a full implementation, iterate through cache and clear
     // entries where entry.method == methodObj
 
+    popN(argCount);  // answer the receiver (the 1-argument form left its Boolean)
     return PrimitiveResult::Success;
 }
 
@@ -12456,8 +12657,13 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Get arguments from the array
+    // Get arguments from the array.  Cog requires a real Array (format 2).
+    argsArray = memory_.followForwarded(argsArray);
     ObjectHeader* argsHeader = argsArray.asObjectPtr();
+    if (argsHeader->format() != ObjectFormat::Indexable) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
     size_t numArgs = argsHeader->slotCount();
 
     // Look up the method starting from lookupClass
@@ -12465,6 +12671,17 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
     if (method.isNil()) {
         // DNU - fail and let Smalltalk handle it
         return PrimitiveResult::Failure;
+    }
+    // Cog: a method of a different arity fails PrimErrBadNumArgs ("wrong
+    // number of arguments"); activating it put a stack of the wrong depth
+    // under the method.
+    if (method.isObject() && method.asObjectPtr()->isCompiledMethod()) {
+        Oop mhdr = memory_.fetchPointer(0, method);
+        if (mhdr.isSmallInteger()
+                && static_cast<size_t>((mhdr.asSmallInteger() >> 24) & 0x0F) != numArgs) {
+            primFailCode_ = PrimErrBadNumArgs_;
+            return PrimitiveResult::Failure;
+        }
     }
 
     // Pop the perform arguments (lookupClass, argsArray, selector)
@@ -12500,17 +12717,23 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
         Oop savedMethod = method_;
         Oop savedNewMethod = newMethod_;
         size_t savedFrameDepth = frameDepth_;
+        int savedArgCount = argCount_;
         method_ = method;
         newMethod_ = method;
         primitiveFailed_ = false;
         primFailCode_ = 0;
+        argCount_ = static_cast<int>(numArgs);  // primitiveSuccess() pops argCount_ + 1
         auto result = executePrimitive(primIndex, static_cast<int>(numArgs));
         if (result == PrimitiveResult::Success) {
-            if (frameDepth_ == savedFrameDepth) method_ = savedMethod;
+            if (frameDepth_ == savedFrameDepth) {
+                method_ = savedMethod;
+                argCount_ = savedArgCount;
+            }
             return PrimitiveResult::Success;
         }
         method_ = savedMethod;
         newMethod_ = savedNewMethod;
+        argCount_ = savedArgCount;
     }
 
     // Activate the method (receiver is on stack, followed by args)
@@ -12597,25 +12820,13 @@ PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Context>>size returns the current stackp value (number of temps+stack in use),
-    // NOT the allocated capacity. The stackp is stored in slot 2 of the context.
-    // For the active context, we use the C++ stack pointer.
-    Oop stackpOop;
-    if (context.rawBits() == activeContext_.rawBits()) {
-        // Active context: derive from C++ stack pointer
-        int64_t sp = static_cast<int64_t>(stackPointer_ - stackBase_) + 1;
-        stackpOop = Oop::fromSmallInteger(sp);
-    } else {
-        // Inactive/materialized context: read stackp from slot 2
-        stackpOop = memory_.fetchPointer(2, context);
-    }
-
-    if (!stackpOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    pop();
-    push(stackpOop);
+    // Context>>size is the stack pointer (temps + stack in use), NOT the
+    // allocated capacity.  For the active context it is the live frame's
+    // depth -- this used to measure from the bottom of the WHOLE process
+    // stack (`thisContext size` answered 11 where Cog answers 4).
+    int64_t stackp = contextStackp(context, nullptr);
+    popN(argCount + 1);
+    push(Oop::fromSmallInteger(stackp));
     return PrimitiveResult::Success;
 }
 
@@ -12726,10 +12937,9 @@ PrimitiveResult Interpreter::primitiveSizeInBytes(int argCount) {
     Oop obj = stackTop();
 
     if (obj.isImmediate()) {
-        // Immediates don't have a memory size in the traditional sense
-        // Return 0 or fail - we'll return 8 (the size of the Oop itself)
-        pop();
-        push(Oop::fromSmallInteger(8));
+        // Cog's totalByteSizeOf: answers 0 for an immediate.
+        popN(argCount + 1);
+        push(Oop::fromSmallInteger(0));
         return PrimitiveResult::Success;
     }
 
@@ -12740,7 +12950,7 @@ PrimitiveResult Interpreter::primitiveSizeInBytes(int argCount) {
     // Get the total size from the object memory
     size_t totalSize = memory_.totalSizeOf(obj);
 
-    pop();
+    popN(argCount + 1);  // also a mirror-style call
     push(Oop::fromSmallInteger(static_cast<int64_t>(totalSize)));
     return PrimitiveResult::Success;
 }
@@ -15384,20 +15594,16 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
 // Primitive 231: Return the object format from header
 // Used for object introspection
 PrimitiveResult Interpreter::primitiveFormat(int argCount) {
-    (void)argCount;
     Oop rcvr = stackTop();
 
     if (!rcvr.isObject()) {
-        // Immediates have no object header, return 0 for SmallInteger
-        pop();
-        push(Oop::fromSmallInteger(0));
-        return PrimitiveResult::Success;
+        return PrimitiveResult::Failure;  // Cog fails for an immediate
     }
 
     ObjectHeader* hdr = rcvr.asObjectPtr();
     int format = static_cast<int>(hdr->format());
 
-    pop();
+    popN(argCount + 1);  // also a mirror-style call
     push(Oop::fromSmallInteger(format));
     return PrimitiveResult::Success;
 }
@@ -15667,8 +15873,8 @@ PrimitiveResult Interpreter::primitiveListExternalModule(int argCount) {
     }
 
     Oop indexOop = stackTop();
-    if (!indexOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
+    if (!indexOop.isSmallInteger() || indexOop.asSmallInteger() <= 0) {
+        return PrimitiveResult::Failure;  // Cog fails an index <= 0
     }
 
     // We don't have any external modules loaded
@@ -18091,11 +18297,13 @@ PrimitiveResult Interpreter::primitiveSetOrHasIdentityHash(int argCount) {
             return PrimitiveResult::Failure;
         }
 
+        // Cog answers the OLD hash (generating one first if there was none).
+        uint32_t oldHash = memory_.identityHashOf(receiver);
         ObjectHeader* header = receiver.asObjectPtr();
         header->setIdentityHash(static_cast<uint32_t>(hash));
 
         popN(2);
-        push(receiver);
+        push(Oop::fromSmallInteger(static_cast<int64_t>(oldHash)));
         return PrimitiveResult::Success;
     }
 
@@ -18121,11 +18329,17 @@ PrimitiveResult Interpreter::primitiveSetOrHasIdentityHash(int argCount) {
             return PrimitiveResult::Failure;
         }
 
+        // Cog answers the OLD hash, and for a class enters the receiver into
+        // the class table at its new hash (a class's hash IS its index).
+        uint32_t oldHash = memory_.identityHashOf(receiver);
         ObjectHeader* header = receiver.asObjectPtr();
         header->setIdentityHash(static_cast<uint32_t>(hash));
+        if (boolOop.rawBits() == memory_.trueObject().rawBits() && hash > 0) {
+            memory_.setClassAtIndex(static_cast<uint32_t>(hash), receiver);
+        }
 
         popN(3);
-        push(receiver);
+        push(Oop::fromSmallInteger(static_cast<int64_t>(oldHash)));
         return PrimitiveResult::Success;
     }
 
@@ -29323,7 +29537,11 @@ PrimitiveResult Interpreter::primitiveBytesBoolean8Write(int argCount) {
         return PrimitiveResult::Failure;
     if (hdr->isImmutable()) { return PrimitiveResult::Failure; }
     if (static_cast<size_t>(offset) + 1 > hdr->byteSize()) return PrimitiveResult::Failure;
-    uint8_t val = (valueOop.rawBits() == memory_.trueObject().rawBits()) ? 1 : 0;
+    // Only true or false; the fallback sends ifTrue:ifFalse: (mustBeBoolean).
+    uint8_t val;
+    if (valueOop.rawBits() == memory_.trueObject().rawBits()) val = 1;
+    else if (valueOop.rawBits() == memory_.falseObject().rawBits()) val = 0;
+    else return PrimitiveResult::Failure;
     hdr->bytes()[offset] = val;
     popN(3); push(valueOop);
     return PrimitiveResult::Success;
@@ -29464,7 +29682,7 @@ PrimitiveResult Interpreter::primitiveBytesPointerWrite(int argCount) {
     // Value must be an ExternalAddress (byte object containing a pointer)
     if (!valueOop.isObject()) return PrimitiveResult::Failure;
     ObjectHeader* valHdr = valueOop.asObjectPtr();
-    if (!valHdr->isBytesObject() || valHdr->byteSize() < sizeof(void*)) return PrimitiveResult::Failure;
+    if (!valHdr->isBytesObject() || valHdr->byteSize() != sizeof(void*)) return PrimitiveResult::Failure;
     void* ptr;
     memcpy(&ptr, valHdr->bytes(), sizeof(void*));
     memcpy(hdr->bytes() + offset, &ptr, sizeof(void*));
@@ -29516,7 +29734,12 @@ PrimitiveResult Interpreter::primitiveBytesChar32Write(int argCount) {
     if (static_cast<size_t>(offset) + 4 > hdr->byteSize()) return PrimitiveResult::Failure;
     uint32_t charVal;
     if (valueOop.isCharacter()) charVal = valueOop.asCharacter();
-    else if (valueOop.isSmallInteger()) charVal = static_cast<uint32_t>(valueOop.asSmallInteger());
+    else if (valueOop.isSmallInteger()) {
+        // Fallback stores `value asInteger` as an unsigned 32-bit field.
+        int64_t v = valueOop.asSmallInteger();
+        if (v < 0 || v > static_cast<int64_t>(UINT32_MAX)) return PrimitiveResult::Failure;
+        charVal = static_cast<uint32_t>(v);
+    }
     else return PrimitiveResult::Failure;
     memcpy(hdr->bytes() + offset, &charVal, sizeof(uint32_t));
     popN(3); push(valueOop);
@@ -29804,7 +30027,7 @@ PrimitiveResult Interpreter::primitiveExternalUint32Write(int argCount) {
     Oop valueOop = stackTop();
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t v = valueOop.asSmallInteger();
-    if (v < 0) return PrimitiveResult::Failure;
+    if (v < 0 || v > static_cast<int64_t>(UINT32_MAX)) return PrimitiveResult::Failure;
     uint32_t val32 = static_cast<uint32_t>(v);
     memcpy(static_cast<uint8_t*>(basePtr) + offset, &val32, 4);
     Oop result = valueOop;
@@ -29821,7 +30044,11 @@ PrimitiveResult Interpreter::primitiveExternalInt32Write(int argCount) {
         return PrimitiveResult::Failure;
     Oop valueOop = stackTop();
     if (!valueOop.isSmallInteger()) return PrimitiveResult::Failure;
-    int32_t val32 = static_cast<int32_t>(valueOop.asSmallInteger());
+    // Out of int32 range fails (the fallback's integerAt:put:size:signed:
+    // raises); it used to be truncated and stored.
+    int64_t v = valueOop.asSmallInteger();
+    if (v < INT32_MIN || v > INT32_MAX) return PrimitiveResult::Failure;
+    int32_t val32 = static_cast<int32_t>(v);
     memcpy(static_cast<uint8_t*>(basePtr) + offset, &val32, 4);
     Oop result = valueOop;
     popN(argCount + 1);
@@ -29844,6 +30071,11 @@ PrimitiveResult Interpreter::primitiveExternalUint64Write(int argCount) {
     } else if (valueOop.isObject()) {
         ObjectHeader* vhdr = valueOop.asObjectPtr();
         if (!vhdr->isBytesObject()) return PrimitiveResult::Failure;
+        // Only a LargePositiveInteger: a LargeNegativeInteger's magnitude
+        // bytes were stored as if positive.
+        if (memory_.classOf(valueOop).rawBits() !=
+                memory_.specialObject(SpecialObjectIndex::ClassLargePositiveInteger).rawBits())
+            return PrimitiveResult::Failure;
         size_t bsz = vhdr->byteSize();
         if (bsz > 8) return PrimitiveResult::Failure;
         memcpy(&val64, vhdr->bytes(), bsz);
@@ -29864,17 +30096,17 @@ PrimitiveResult Interpreter::primitiveExternalPointerWrite(int argCount) {
     if (!externalAddressWriteSetup(*this, memory_, argCount, basePtr, offset))
         return PrimitiveResult::Failure;
     Oop valueOop = stackTop();
+    // Only an ExternalAddress (a pointer-sized byte object) can be stored;
+    // anything else fails, and ExternalAddress>>pointerAtOffset:put: then
+    // raises 'Only external addresses can be stored', as on Cog.  This used
+    // to store NULL for nil, pointer objects and short byte objects, and a
+    // raw address for a SmallInteger.
+    if (!valueOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* vhdr = valueOop.asObjectPtr();
+    if (!vhdr->isBytesObject() || vhdr->byteSize() != sizeof(void*))
+        return PrimitiveResult::Failure;
     void* ptrVal = nullptr;
-    if (valueOop.isNil() || valueOop.rawBits() == memory_.nil().rawBits()) {
-        ptrVal = nullptr;
-    } else if (valueOop.isObject()) {
-        ObjectHeader* vhdr = valueOop.asObjectPtr();
-        if (vhdr->isBytesObject() && vhdr->byteSize() >= sizeof(void*)) {
-            memcpy(&ptrVal, vhdr->bytes(), sizeof(void*));
-        }
-    } else if (valueOop.isSmallInteger()) {
-        ptrVal = reinterpret_cast<void*>(static_cast<uintptr_t>(valueOop.asSmallInteger()));
-    }
+    memcpy(&ptrVal, vhdr->bytes(), sizeof(void*));
     memcpy(static_cast<uint8_t*>(basePtr) + offset, &ptrVal, sizeof(void*));
 
     Oop result = valueOop;

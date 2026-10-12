@@ -23430,7 +23430,7 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("LargeIntegers", "primDigitBitAnd", &Interpreter::primitiveBitAndLargeIntegers);
     registerNamedPrimitive("LargeIntegers", "primDigitBitOr", &Interpreter::primitiveBitOrLargeIntegers);
     registerNamedPrimitive("LargeIntegers", "primDigitBitXor", &Interpreter::primitiveBitXorLargeIntegers);
-    registerNamedPrimitive("LargeIntegers", "primDigitBitShiftMagnitude", &Interpreter::primitiveBitShiftLargeIntegers);
+    registerNamedPrimitive("LargeIntegers", "primDigitBitShiftMagnitude", &Interpreter::primDigitBitShiftMagnitude);
     registerNamedPrimitive("LargeIntegers", "primDigitCompare", &Interpreter::primDigitCompare);
     registerNamedPrimitive("LargeIntegers", "primAnyBitFromTo", &Interpreter::primAnyBitFromTo);
     registerNamedPrimitive("LargeIntegers", "primMontgomeryDigitLength", &Interpreter::primMontgomeryDigitLength);
@@ -23638,6 +23638,7 @@ PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCo
             }
             uint64_t spBefore = (uint64_t)stackPointer_;
             void* fpBefore = framePointer_;
+            auto switchesBefore = processSwitchCount_;
             PrimitiveResult result = (this->*prim)(argCount);
             // PRIM-SP-AUDIT (PHARO_PRIM_SP_AUDIT): a Success primitive that does
             // NOT switch frames must leave sp decreased by exactly argCount*8
@@ -23647,7 +23648,11 @@ PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCo
             // legitimately leave sp in a different frame.
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SP_AUDIT), 0)
                     && result == PrimitiveResult::Success
-                    && framePointer_ == fpBefore) {
+                    && framePointer_ == fpBefore
+                    // A process switch can rebuild the next process's frame
+                    // at the SAME address (prim 167 in terminateRealActive
+                    // was flagged that way), so fp alone does not show it.
+                    && processSwitchCount_ == switchesBefore) {
                 int64_t delta = (int64_t)spBefore - (int64_t)(uint64_t)stackPointer_;
                 int64_t expected = (int64_t)argCount * 8;
                 if (delta != expected) {
@@ -23666,6 +23671,7 @@ PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCo
             // ran the image's fallback one slot short).
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SP_AUDIT), 0)
                     && result == PrimitiveResult::Failure
+                    && processSwitchCount_ == switchesBefore
                     && (uint64_t)stackPointer_ != spBefore) {
                 static int failN = 0;
                 if (++failN <= 60)
