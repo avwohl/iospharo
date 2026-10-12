@@ -533,6 +533,8 @@ void testOopTagging() {
 }
 
 #ifndef _WIN32
+extern "C" void pharo_dumpCrashState();  // Interpreter.cpp
+
 static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
     if (g_sigsegvRecoveryEnabled) {
         // Recoverable SIGSEGV during executeFromContext - jump back
@@ -642,6 +644,7 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
                         "[CRASH] This is not a JIT-eviction crash — a C function "
                         "is dereferencing a bad pointer (check fault addr vs "
                         "register values above).\n");
+                pharo_dumpCrashState();
             } else {
                 fprintf(stderr, "[CRASH] PC not in any active JIT method and "
                         "not in a named C symbol%s\n",

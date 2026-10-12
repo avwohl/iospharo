@@ -660,6 +660,9 @@ private:
         // GC verify (PHARO_GC_FRAME_VERIFY): byte at savedIP stashed by
         // prepareForGC, checked after afterGC rebuilds savedIP.
         uint8_t gcVerifyByte;
+        // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
+        // it when a popped frame's method and ip disagree).
+        const char* pushSite;
     };
     static constexpr size_t MaxFrameDepth = 65536;
     // Soft recursion limit.  Raised 4096 -> 56000 (2026-06-19): the
@@ -1636,6 +1639,8 @@ public:
     void crossResumeCheck(Oop sender, Oop returning);
     bool otherProcessOwns(Oop ctx, uint64_t* proc, size_t* depth);
     void classifyRehome(Oop oldCtx, Oop newCtx);
+    void dumpCrashState();
+    void checkIpCoherence(const char* site);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

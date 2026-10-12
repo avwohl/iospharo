@@ -2791,6 +2791,75 @@ void Interpreter::crossKillCheck(const char* site, Oop ctx) {
     }
 }
 
+// Crash-state dump for the SIGSEGV handler (test_load_image.cpp): what the
+// interpreter thought the current frame was, and the last exit the JIT resume
+// loop handled.  Called only on the crash path.
+static Interpreter* g_crashInterp = nullptr;
+int g_lastResumeExit = -1;
+uint64_t g_lastResumeMethod = 0;
+extern "C" void pharo_dumpCrashState() {
+    Interpreter* in = g_crashInterp;
+    if (!in) return;
+    in->dumpCrashState();
+}
+void Interpreter::dumpCrashState() {
+    fprintf(stderr, "[CRASH-STATE] method_=#%s receiver_=0x%llx closure_=%s fd=%zu "
+            "fp=%p ip-off=%lld lastResumeExit=%d lastResumeMethod=#%s inJITResume=%d\n",
+            memory_.selectorOf(method_).c_str(), (unsigned long long)receiver_.rawBits(),
+            closure_.isNil() ? "nil" : "block", frameDepth_, (void*)framePointer_,
+            (method_.isObject() && instructionPointer_)
+                ? (long long)(instructionPointer_ - method_.asObjectPtr()->bytes()) : -1LL,
+            g_lastResumeExit,
+            g_lastResumeMethod ? memory_.selectorOf(Oop::fromRawBits(g_lastResumeMethod)).c_str() : "-",
+            (int)inJITResume_);
+    if (framePointer_)
+        fprintf(stderr, "[CRASH-STATE] fp[0]=0x%llx fp[1]=0x%llx\n",
+                (unsigned long long)framePointer_[0].rawBits(),
+                (unsigned long long)framePointer_[1].rawBits());
+    for (size_t i = frameDepth_; i > 0 && i + 6 > frameDepth_; i--)
+        fprintf(stderr, "[CRASH-STATE] saved[%zu] #%s rcv=0x%llx\n", i - 1,
+                memory_.selectorOf(savedFrames_[i - 1].savedMethod).c_str(),
+                (unsigned long long)savedFrames_[i - 1].savedReceiver.rawBits());
+}
+
+// PHARO_RESUME_EXIT_CHECK: instructionPointer_ must lie inside method_'s
+// bytecodes and on an instruction boundary.  The PHARO_T1_RESUME_INTERNAL_J2J
+// crash ran with method_ = Float>>absPrintExactlyOn:base: and an ip 68 bytes
+// PAST that method's end -- an ip from another method.  Called from each
+// place that installs a frame's (method_, ip) pair; names the first site that
+// installs an incoherent one.
+void Interpreter::checkIpCoherence(const char* site) {
+    if (!method_.isObject() || method_.rawBits() <= 0x10000 || !instructionPointer_) return;
+    if (!memory_.isValidPointer(method_)) return;
+    ObjectHeader* mo = method_.asObjectPtr();
+    Oop hdr = mo->slots()[0];
+    if (!hdr.isSmallInteger()) return;
+    int nLit = (int)(hdr.asSmallInteger() & 0x7FFF);
+    const uint8_t* bc = mo->bytes() + (1 + nLit) * 8;
+    const uint8_t* end = mo->bytes() + mo->byteSize();
+    const uint8_t* ip = instructionPointer_;
+    const char* what = nullptr;
+    if (ip < bc || ip > end) what = "OUTSIDE";
+    else if (ip < end && GET_DEBUG_BOOL(PHARO_IP_BOUNDARY_WALK)) {
+        // O(method size): off by default, it slows every exit enough to hide
+        // the timing-dependent crash it was written for.
+        const uint8_t* p = bc;
+        while (p < ip) p += jit::SistaV1::bytecodeLength(*p);
+        if (p != ip) what = "MID-INSTRUCTION";
+    }
+    if (!what) return;
+    static int nIC = 0;
+    if (++nIC <= 12) {
+        fprintf(stderr, "[IP-INCOHERENT #%d %s] %s: ip off %lld vs #%s bc [%lld,%lld) "
+                "fd=%zu lastResumeExit=%d lastResumeMethod=#%s\n", nIC, site, what,
+                (long long)(ip - mo->bytes()), memory_.selectorOf(method_).c_str(),
+                (long long)(bc - mo->bytes()), (long long)(end - mo->bytes()), frameDepth_,
+                g_lastResumeExit,
+                g_lastResumeMethod ? memory_.selectorOf(Oop::fromRawBits(g_lastResumeMethod)).c_str() : "-");
+        if (nIC <= 3) dumpSendChain("ip-incoherent", 16);
+    }
+}
+
 // PHARO_MATCTX_OWNER_CHECK: report, once per source line, a frame sync that
 // leaves currentFrameMaterializedCtx_ naming a Context of a DIFFERENT method
 // than the frame now current.  The field must belong to the current frame;
@@ -3599,6 +3668,7 @@ void Interpreter::checkLowSpaceSignal() {
 }
 
 void Interpreter::interpret() {
+    g_crashInterp = this;
     // The thread running interpret() IS the VM thread — the external-
     // signal ring's single consumer (see signalExternalSemaphore's
     // VM-thread overflow path).
@@ -8159,6 +8229,8 @@ void Interpreter::pushSpecial(int which) {
 bool g_retValArmed = true;
 int  g_retValN = 0;
 void Interpreter::returnValue(Oop value) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
+        checkIpCoherence("returnValue");
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LITVAR_PROBE), 0)
             && method_.isObject() && method_.rawBits() > 0x10000) {
         std::string ms = memory_.selectorOf(method_);
@@ -10810,6 +10882,8 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
+        checkIpCoherence("sendSelector");
     // Send-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): address-independent
     // "selector<TAB>receiverClass" stream; diff failing vs passing runs.
     if (__builtin_expect(g_traceSendsActive, 0)) {
@@ -15659,6 +15733,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     Oop cachedCtx = currentFrameMaterializedCtx_;
 
     SavedFrame& frame = savedFrames_[frameDepth_++];
+    frame.pushSite = "push@L15731";
     if (false) {
         g_fpushN++;
         fprintf(stderr, "[FPUSH-A fd=%zu] #%s\n", frameDepth_ - 1,
@@ -16164,6 +16239,12 @@ bool Interpreter::popFrame() {
     currentFrameMaterializedCtx_ = frame.materializedContext;  // Restore cached context for this frame
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
+        static char lbl[96];
+        snprintf(lbl, sizeof lbl, "popFrame(pushed by %s)",
+                 frame.pushSite ? frame.pushSite : "?");
+        checkIpCoherence(lbl);
+    }
 
     if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
         doRec("POP", activeContext_.rawBits(),
@@ -18869,6 +18950,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     if (frameDepth_ >= MaxFrameDepth) return 0;
     stackPointer_ = callerState->sp;
     SavedFrame& frame = savedFrames_[frameDepth_++];
+    frame.pushSite = "push@L18943";
     if (false) {
         g_fpushN++;
         fprintf(stderr, "[FPUSH-B fd=%zu] #%s\n", frameDepth_ - 1,
@@ -22214,6 +22296,13 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    struct ExecFromCtxCheck {
+        Interpreter* self;
+        ~ExecFromCtxCheck() {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0) && self->running_)
+                self->checkIpCoherence("executeFromContext");
+        }
+    } execFromCtxCheck{this};
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)
             && context.isObject() && context.rawBits() > 0x10000
             && memory_.isValidPointer(context)) {
@@ -25048,14 +25137,17 @@ void Interpreter::tryJITResumeInCaller() {
     struct ResumeExitCheck {
         Interpreter* self;
         ~ResumeExitCheck() {
-            if (__builtin_expect(!GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 1)) return;
+            if (__builtin_expect(!GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK)
+                                 && !GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 1)) return;
             if (!self->running_ || !self->framePointer_) return;
+            self->checkIpCoherence("resume-exit");
             Oop slot = self->framePointer_[0];
             if (slot.rawBits() == self->receiver_.rawBits()) return;
             // Block frame: fp[0] is the closure, whose slot 3 is the receiver.
             if (slot.isObject() && slot.rawBits() > 0x10000
                     && self->memory_.isValidPointer(slot)
-                    && slot.asObjectPtr()->classIndex() == self->fullBlockClosureClassIndex_
+                    && (slot.asObjectPtr()->classIndex() == self->fullBlockClosureClassIndex_
+                        || self->memory_.classNameOf(slot) == "CleanBlockClosure")
                     && slot.asObjectPtr()->slotCount() > 3
                     && slot.asObjectPtr()->slotAt(3).rawBits() == self->receiver_.rawBits())
                 return;
@@ -25434,6 +25526,7 @@ void Interpreter::tryJITResumeInCaller() {
             for (int rsI = 0; rsI < state.j2jDepth; rsI++) {
                 if (frameDepth_ >= effectiveStackOverflowLimit()) { rsFailed = true; break; }
                 SavedFrame& rsF = savedFrames_[frameDepth_++];
+                rsF.pushSite = "push@L25518";
                 if (!materializeJ2JSaveIntoFrame(rsF, rsSaves[rsI],
                         state.jitMethod, "resume-internal")) {
                     if (frameDepth_ > 0) frameDepth_--;
@@ -26149,6 +26242,7 @@ void Interpreter::tryJITResumeInCaller() {
                     // it's the only path where state.jitMethod isn't a reliable
                     // surrogate for inline-J2J self-rec.
                     SavedFrame& frame = savedFrames_[frameDepth_++];
+                    frame.pushSite = "push@L26233";
                     if (!materializeJ2JSaveIntoFrame(frame, save, nullptr, "rj2j materialize")) {
                         // Roll back: the helper failed (both nil), but we
                         // incremented frameDepth_ for THIS iteration plus
@@ -26234,6 +26328,8 @@ void Interpreter::tryJITResumeInCaller() {
                 ? state.method.asObjectPtr() : nullptr;
             if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
         };
+        g_lastResumeExit = (int)state.exitReason;
+        g_lastResumeMethod = state.method.rawBits();
         switch (state.exitReason) {
         case jit::ExitReturn:
             if (__builtin_expect(GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL) != nullptr, 0))
@@ -28797,6 +28893,30 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
         ? saveJM->bcStart() + save.bcOff()
         : saveJM->bcStart();
     int saveNArgs = save.resumeAddr ? (int)save.nArgs() : 0;
+    // PHARO_RESUME_EXIT_CHECK: the save's ip must lie inside the method
+    // findMethodByPC attributed its resume address to.  An ip outside it is
+    // the (savedMethod, savedIP) mismatch the PHARO_T1_RESUME_INTERNAL_J2J
+    // crash pops back into.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)
+            && saveMethod.isObject() && saveMethod.rawBits() > 0x10000) {
+        ObjectHeader* smo = saveMethod.asObjectPtr();
+        uint8_t* smEnd = smo->bytes() + smo->byteSize();
+        if (saveIp < saveJM->bcStart() || saveIp > smEnd) {
+            static int nSV = 0;
+            if (++nSV <= 8) {
+                uint64_t ra = reinterpret_cast<uint64_t>(save.addr());
+                fprintf(stderr, "[SAVE-IP-OUTSIDE #%d %s] save -> #%s (jm=%p code [%p,+%u)) "
+                        "bcOff=%u > bc size %lld; resumeAddr=%p (code off %lld) nArgs=%d "
+                        "fallbackJM=%p isBlock=%d\n", nSV, siteTag,
+                        memory_.selectorOf(saveMethod).c_str(), (void*)saveJM,
+                        (void*)saveJM->codeStart(), saveJM->codeSize, (unsigned)save.bcOff(),
+                        (long long)(smEnd - saveJM->bcStart()), (void*)ra,
+                        (long long)(ra - reinterpret_cast<uint64_t>(saveJM->codeStart())),
+                        saveNArgs, (void*)fallbackJM, (int)saveJM->isBlock);
+                if (nSV <= 2) dumpSendChain("save-ip-outside", 16);
+            }
+        }
+    }
 #else
     uint8_t* saveIp = save.ip;
     int saveNArgs = save.sendArgCount;
@@ -28911,6 +29031,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
         }
     }
     frame.savedIP = saveIp;
+    frame.pushSite = siteTag;
     // Use CompiledMethod's actual byteSize.  saveJM->numBytecodes is 0
     // for AsmjitT1 methods with send sites (advertiseResume gate at
     // AsmjitT1.cpp:6415), which would set bytecodeEnd_ = bcStart and
@@ -29078,6 +29199,13 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
+    struct ActivationExitCheck {
+        Interpreter* self;
+        ~ActivationExitCheck() {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0) && self->running_)
+                self->checkIpCoherence("activation-exit");
+        }
+    } activationExitCheck{this};
     // PHARO_T1_INLINE_J2J=1 debug: log first 10 fib-related activations.
     {
         if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J) && method.isObject() && method.rawBits() > 0x10000) {
@@ -30352,6 +30480,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
             J2JSave& save = stateSaves[i];
             SavedFrame& frame = savedFrames_[frameDepth_++];
+            frame.pushSite = "push@L30469";
             if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "materializeJ2J lambda")) {
                 // Roll back: this iteration's increment + i prior.
                 if (frameDepth_ > 0) frameDepth_--;
@@ -30660,6 +30789,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                         J2JSave& save = _stateSaves[i];
                         SavedFrame& frame = savedFrames_[frameDepth_++];
+                        frame.pushSite = "push@L30777";
                         if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site4")) {
                             if (frameDepth_ > 0) frameDepth_--;
                             break;
@@ -32548,6 +32678,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                                         J2JSave& save = _stateSaves3[i];
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
+                                        frame.pushSite = "push@L32665";
                                         if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site6")) {
                                             if (frameDepth_ > 0) frameDepth_--;
                                             break;
@@ -32669,6 +32800,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             : nullptr;
                         if (sMO && frameDepth_ < effectiveStackOverflowLimit()) {
                             SavedFrame& frame = savedFrames_[frameDepth_++];
+                            frame.pushSite = "push@L32786";
                             frame.savedIP = instructionPointer_;  // past-send
                             frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
                             frame.savedMethod = savedMethod;
@@ -32813,6 +32945,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                                 J2JSave& save = _stateSaves4[i];
                                 SavedFrame& frame = savedFrames_[frameDepth_++];
+                                frame.pushSite = "push@L32930";
                                 if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site7")) {
                                     if (frameDepth_ > 0) frameDepth_--;
                                     break;

@@ -199,3 +199,38 @@ the resume loop, that `receiver_` matches the frame's receiver slot (block
 frames: the closure's receiver); it reads 0 mismatches on clean runs.
 
 **The default stays OFF** until that crash is explained.
+
+### The internal-J2J crash, localized (2026-10-11, late)
+
+Crash rate with the knob, batch 1-50, interleaved: **on 1 of 40, off 0 of 40**
+(2 of ~52 knob-on runs overall, always the same place).  Both crashes:
+`receiver_` = SmallFloat `0x7f3ae147ae147ae5`, `method_` =
+`Float>>absPrintExactlyOn:base:`, ip offset 826 -- **68 bytes past that
+method's last bytecode**.  So the frame ran with another method's ip, and the
+"PushReceiverVariable" it crashed in was a byte of that other method.
+
+`PHARO_RESUME_EXIT_CHECK=1` (new) checks, O(1), that `instructionPointer_` lies
+inside `method_`'s bytecodes at every place a (method_, ip) pair is installed:
+the resume-loop and activation exits, `executeFromContext`, `popFrame`,
+`sendSelector`, `returnValue`; plus the J2J-save ip in
+`materializeJ2JSaveIntoFrame`.  Every SavedFrame now records its push site.
+(The O(method size) instruction-boundary walk, `PHARO_IP_BOUNDARY_WALK`,
+slowed things enough to hide the crash in 120 runs -- keep it off.)  Zero
+reports on clean runs, knob on or off.
+
+Hunt results (knob on), first incoherent pair each time, never a SAVE-IP report:
+
+    run  site                     method_ with a foreign ip     last resume exit
+     5   popFrame (pushFrame)     #isOctetString                ExitReturn #indexOf:ifAbsent:
+    44   popFrame                 #to:do:                       ExitReturn #to:
+     5   popFrame (pushFrame L15731) #from:                     ExitReturn #isCreateFullBlock:code:at:
+     8   returnValue              #indexOf:startingAt:ifAbsent: ExitReturn #indexOf:ifAbsent:
+
+Every one follows an `ExitReturn` in the resume loop, and in the last one the
+frame left running is the CALLEE of the method whose ExitReturn was handled.
+So with internal J2J, a J2J callee's native return and the loop's ExitReturn
+handling disagree about which frame is current: the interpreter is left on
+the callee's `method_` with the caller's ip.  That is the 2026-06-12 note's
+"handlers assume external-mode shapes", now pinned to one handler: the
+`case jit::ExitReturn` of `tryJITResumeInCaller` when the resume slice had
+pending J2J saves.  Fix there, then re-run the 40-rep A/B.
