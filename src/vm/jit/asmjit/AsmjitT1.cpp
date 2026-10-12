@@ -11403,7 +11403,20 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
             bool clsMatch = !(noJitCls && *noJitCls);  // no class filter => match
             if (selMatch && noJitCls && *noJitCls) {
-                clsMatch = (interp.classNameOfMethod(compiledMethod) == noJitCls);
+                // A CompiledBlock's last literal is its outer code, not a
+                // class binding: walk out to the home CompiledMethod so the
+                // class filter covers the class's blocks too.
+                pharo::Oop home = compiledMethod;
+                for (int hops = 0; hops < 64 && home.isObject()
+                        && home.asObjectPtr()->classIndex()
+                               == interp.compiledBlockClassIndex(); hops++) {
+                    pharo::Oop hdr = memory.fetchPointer(0, home);
+                    if (!hdr.isSmallInteger()) break;
+                    size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (nLits < 1) break;
+                    home = memory.fetchPointer(nLits, home);
+                }
+                clsMatch = (interp.classNameOfMethod(home) == noJitCls);
             }
             if (selMatch && clsMatch) {
                 if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS))

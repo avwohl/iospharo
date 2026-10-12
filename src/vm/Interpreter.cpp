@@ -172,6 +172,7 @@ uint8_t* g_atBcBase = nullptr; // asTuple's bytecode[0] address (for cheap ipOff
 const char* g_traceExtentSel = nullptr;  // target selector (knob), cached at interpret() entry
 bool        g_traceExtentActive = false; // currently inside the matched method's extent
 size_t      g_traceExtentDepth = 0;      // frameDepth_ at extent entry (for relative depth)
+int         g_traceJitBcHits = 0;        // PHARO_TRACE_JIT_BC matches so far
 size_t      g_traceExtentLines = 0;      // per-extent line counter (reset on entry, capped)
 
 // PHARO_DEPTH_ORACLE=<exact selector>: self-calibrating operand-stack-depth
@@ -2838,6 +2839,40 @@ void Interpreter::dumpCrashState() {
 // PAST that method's end -- an ip from another method.  Called from each
 // place that installs a frame's (method_, ip) pair; names the first site that
 // installs an incoherent one.
+void Interpreter::traceJitBc(const char* site, Oop method, long bcOff) {
+    static std::vector<uint8_t> prefix = [] {
+        std::vector<uint8_t> v;
+        const char* h = GET_DEBUG_STR(PHARO_TRACE_JIT_BC);
+        for (size_t i = 0; h && h[i] && h[i + 1]; i += 2) {
+            char b[3] = {h[i], h[i + 1], 0};
+            v.push_back((uint8_t)strtoul(b, nullptr, 16));
+        }
+        return v;
+    }();
+    if (prefix.empty() || !method.isObject() || !memory_.isValidPointer(method)) return;
+    ObjectHeader* m = method.asObjectPtr();
+    Oop hdr = memory_.fetchPointer(0, method);
+    if (!hdr.isSmallInteger()) return;
+    size_t start = (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    if (start + prefix.size() > m->byteSize()) return;
+    if (memcmp(m->bytes() + start, prefix.data(), prefix.size()) != 0) return;
+    static int n = 0;
+    if (++n > 400) return;
+    g_traceJitBcHits++;
+    Oop proc = getActiveProcess();
+    fprintf(stderr, "[TRACE-JIT-BC #%d] %s method=0x%llx bc=%ld proc=0x%llx "
+            "fd=%zu activeCtx=0x%llx sp-fp=%lld\n", n, site,
+            (unsigned long long)method.rawBits(), bcOff,
+            (unsigned long long)proc.rawBits(), frameDepth_,
+            (unsigned long long)activeContext_.rawBits(),
+            (long long)(stackPointer_ - framePointer_));
+    if (bcOff > 0 && strcmp(site, "executeFromContext") == 0) {
+        void* frames[24];
+        int nf = backtrace(frames, 24);
+        backtrace_symbols_fd(frames, nf, 2);
+    }
+}
+
 void Interpreter::checkIpCoherence(const char* site, bool walk) {
     if (!method_.isObject() || method_.rawBits() <= 0x10000 || !instructionPointer_) return;
     if (!memory_.isValidPointer(method_)) return;
@@ -3582,6 +3617,7 @@ void Interpreter::traceExtentBytecode(uint8_t bc) {
     if (++g_traceExtentLines > 250000) {
         if (g_traceExtentLines == 250001)
             fprintf(stderr, "[ORGTRACE] line cap hit (extent too large)\n");
+        if (GET_DEBUG_STR(PHARO_TRACE_JIT_BC)) g_traceExtentActive = false;
         return;
     }
     Oop t = stackValue(0);
@@ -22682,13 +22718,25 @@ bool Interpreter::executeFromContext(Oop context) {
             if (absOffset >= bytecodeStart && absOffset < totalBytes) {
                 instructionPointer_ = methodBytes + absOffset;
             } else {
-                // Invalid PC - reset to start of bytecodes
+                // Invalid PC - reset to start of bytecodes.  This silently
+                // re-runs the method from the top; report every occurrence.
+                static int s_badPcReports = 0;
+                if (s_badPcReports++ < 20)
+                    fprintf(stderr, "[CTX-PC-RESET] executeFromContext: pc %lld "
+                            "outside [%zu,%zu) of #%s -- re-running it from the "
+                            "start\n", (long long)pcOffset, bytecodeStart + 1,
+                            totalBytes + 1, memory_.selectorOf(method_).c_str());
                 instructionPointer_ = methodBytes + bytecodeStart;
                 if (instructionPointer_[0] == 0xF8) {
                     instructionPointer_ += 3;
                 }
             }
         } else {
+            static int s_nonPosPcReports = 0;
+            if (s_nonPosPcReports++ < 20)
+                fprintf(stderr, "[CTX-PC-RESET] executeFromContext: pc %lld <= 0 "
+                        "in #%s -- running it from the start\n",
+                        (long long)pcOffset, memory_.selectorOf(method_).c_str());
             instructionPointer_ = methodBytes + bytecodeStart;
             // Skip past callPrimitive if at start
             if (instructionPointer_[0] == 0xF8) {
@@ -22696,10 +22744,28 @@ bool Interpreter::executeFromContext(Oop context) {
             }
         }
     } else {
+        static int s_nonIntPcReports = 0;
+        if (s_nonIntPcReports++ < 20)
+            fprintf(stderr, "[CTX-PC-RESET] executeFromContext: pc 0x%llx is not "
+                    "a SmallInteger in #%s -- running it from the start\n",
+                    (unsigned long long)savedPC.rawBits(),
+                    memory_.selectorOf(method_).c_str());
         instructionPointer_ = methodBytes + bytecodeStart;
         // Skip past callPrimitive if at start
         if (instructionPointer_[0] == 0xF8) {
             instructionPointer_ += 3;
+        }
+    }
+
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_JIT_BC) != nullptr, 0)) {
+        int before = g_traceJitBcHits;
+        traceJitBc("executeFromContext", method_,
+                   (long)(instructionPointer_ - (methodBytes + bytecodeStart)));
+        if (g_traceJitBcHits != before && !g_traceExtentActive) {
+            // Follow the next ~300 interpreted bytecodes (extent trace, capped).
+            g_traceExtentActive = true;
+            g_traceExtentDepth = 0;
+            g_traceExtentLines = 250000 - 300;
         }
     }
 
@@ -29285,6 +29351,8 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_JIT_BC) != nullptr, 0))
+        traceJitBc("tryJITActivation", method, -1);
     struct ActivationExitCheck {
         Interpreter* self;
         ~ActivationExitCheck() {
@@ -33163,7 +33231,29 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // the whole fast path) also fixes it with no aigraph
                             // regression; gating on hasNLR keeps the fast path for
                             // the common NLR-free blocks.
-                            if (blockJM && !blockJM->isStubOnEntry
+                            // tryExecute below runs the block from its FIRST
+                            // bytecode, which is right only for the activation
+                            // this primitive just pushed.  A closure-value prim
+                            // can switch process: the 1-arg `[:x | x sel]` fast
+                            // path in primitiveFullClosureValue synthesizes a
+                            // send, and `[:s | s signal]` runs primitiveSignal,
+                            // which resumes a higher-priority process.  Then the
+                            // frame on top is THAT process's suspended block,
+                            // mid-body, and running it from the start replays
+                            // its sends.  Measured: juliendelplanque-jrpc's
+                            // server process re-ran DelayWaitTimeout>>wait's
+                            // `self schedule` -> "This Delay has already been
+                            // scheduled", killing the headless run (Cog 81/81).
+                            bool freshBlockFrame = false;
+                            if (blockJM) {
+                                ObjectHeader* bmo = method_.asObjectPtr();
+                                Oop bhdr = bmo->slots()[0];
+                                int bnl = bhdr.isSmallInteger()
+                                    ? (int)(bhdr.asSmallInteger() & 0x7FFF) : 0;
+                                freshBlockFrame = instructionPointer_
+                                    == bmo->bytes() + (1 + bnl) * 8;
+                            }
+                            if (blockJM && freshBlockFrame && !blockJM->isStubOnEntry
                                     && !blockJM->hasNLR
                                     && !g_debug.t1NoBlockResume
                                     && (primIdx == 207 || primIdx == 209)) {

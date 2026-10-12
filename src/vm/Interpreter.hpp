@@ -1641,6 +1641,9 @@ public:
     void classifyRehome(Oop oldCtx, Oop newCtx);
     void dumpCrashState();
     void checkIpCoherence(const char* site, bool walk = false);
+    // PHARO_TRACE_JIT_BC: log JIT entries/resumes of one method chosen by
+    // its bytecode prefix.  bcOff < 0 means a fresh activation.
+    void traceJitBc(const char* site, Oop method, long bcOff);
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:

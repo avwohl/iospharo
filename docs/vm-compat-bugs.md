@@ -626,6 +626,35 @@ alone accounted for smacc + famix (~1850 tests), and the OSProcess pipe gap
 for acp.  What is left is `soil`'s SIGABRT, `mutalk` (#3), and the packages
 that still need a retest on a freshly loaded image.
 
+**2026-10-11: jrpc is FIXED -- 81 P / 0 F / 0 E, the same as Cog, 4 of 4 runs.**
+There were two defects, one behind the other:
+
+1. `EADDRINUSE` (`07dfc643`).  `primitiveSocketCloseConnection` only did a
+   `shutdown()`.  On a LISTENING socket, `shutdown()` fails with `ENOTCONN` and
+   the port stays bound.  Cog's close calls `close()` on the fd.  JRPC restarts
+   its server on one fixed port, so the second start failed.
+2. "This Delay has already been scheduled" (the Linux signature below too).
+   A JIT chain-loop fast path ran a block from its first bytecode after a
+   process switch.  `do:` sends `value:` to `[:s | s signal]`.  The 1-arg
+   fast path in `primitiveFullClosureValue` sends `#signal` directly, and
+   `primitiveSignal` resumes the higher-priority JRPC server process.  Then
+   `tryJITActivation` saw "prim 207 pushed a frame" and called `tryExecute`
+   on the frame on top.  That frame was the server's suspended
+   `DelayWaitTimeout>>wait` block, at pc 48 (after `delaySemaphore wait`).
+   `tryExecute` starts at the first bytecode, so `self schedule` ran a second
+   time.  The fast path now requires `instructionPointer_` to be at the
+   block's first bytecode.  Repro: `scripts/repro/block-replay-after-process-switch.st`
+   (before the fix 39322 replays in 40000 signals, after the fix 0).
+   Found with `PHARO_T1_NOJIT_CLASS` (it now covers a class's blocks) and
+   `PHARO_TRACE_JIT_BC` (new: logs the JIT entries of one block, selected by
+   its bytecode prefix, with a C++ backtrace at each mid-block
+   `executeFromContext`).
+
+The Linux "cyclic sender chain" below was not re-measured.  It can be a
+result of the same replay, but that is not verified.
+
+The history below is kept for the record.
+
 `jrpc` reproduces on macOS too (`CLASSES 11` then no RESULT, exit 0, ~7 s) but
 via a DIFFERENT proximate cause — an unhandled error out of JRPC's
 `ZnMultiThreadedServer` listen loop:

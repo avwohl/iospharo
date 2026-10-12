@@ -4594,6 +4594,8 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
 
 bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state) {
     if (!initialized_) return false;
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_JIT_BC) != nullptr, 0) && interp_)
+        interp_->traceJitBc("tryResume", compiledMethod, (long)bcOffset);
     static bool noResume = GET_DEBUG_BOOL(PHARO_NO_RESUME);
     if (noResume) return false;
 
