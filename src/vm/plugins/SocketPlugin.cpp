@@ -776,7 +776,23 @@ extern "C" sqInt sp_primitiveSocketCloseConnection(void) {
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
 
-    if (ps->fd != INVALID_SOCKET) {
+    if (ps->fd != INVALID_SOCKET && ps->listening) {
+        // A LISTENING socket: shutdown() fails with ENOTCONN and the socket
+        // keeps listening, so the port stayed bound until destroy -- or until
+        // finalization when the image never destroys it.  Cog's
+        // sqSocketCloseConnection close()s the fd outright, which frees the
+        // port at once.  Measured: juliendelplanque-jrpc's server tests
+        // restart a server on one fixed port, and the second start failed with
+        // "SocketError: Address already in use" (Cog: 81/81 pass).
+        sockClose(ps->fd);
+        ps->fd = INVALID_SOCKET;
+        ps->sockState = SOCK_UNCONNECTED;
+        if (vm) {
+            if (ps->connSema > 0) vm->signalSemaphoreWithIndex(ps->connSema);
+            if (ps->readSema > 0) vm->signalSemaphoreWithIndex(ps->readSema);
+            if (ps->writeSema > 0) vm->signalSemaphoreWithIndex(ps->writeSema);
+        }
+    } else if (ps->fd != INVALID_SOCKET) {
         // Stock parity (probed vs the reference VM): close is fire-and-forget.
         // shutdown() sends our FIN, the kernel completes the handshake in the
         // background, and the state reports UNCONNECTED immediately. We used
