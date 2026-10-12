@@ -1,0 +1,17 @@
+LinkInstallerTest FAIL: testPropagateNewClassScopedLinks
+MCSmalltalkhubRepositoryTest TIMEOUT: testVersionFromFileNamed
+NoUnusedVariablesLeftTest TIMEOUT: testNoUnusedTemporaryVariablesLeft
+OCClassBuilderTest ERROR: testCreateNormalClassWithTraitComposition
+ReleaseTest FAIL: testNoDeadSubscriptions
+ReleaseTest FAIL: testUnknownProcesses
+ReleaseTest TIMEOUT: testNoShadowedVariablesInMethods
+StDebuggerInspectorTest FAIL: testUpdateLayoutForContextsWithAssertionFailure
+StDebuggerTest FAIL: testIsInSelectedContextPackage
+StDebuggerTest FAIL: testUpdateLayoutForContextsIfAssertionFailure
+StObjectTranscriptPresenterTest FAIL: testSmoke
+StSpotterModelTest FAIL: testAnnounceQueryEndedIsSentOnce
+StSpotterTest FAIL: testOpenSpotterRefreshesPreviewOnce
+SystemDependenciesTest FAIL: testExternalUIDependencies
+WeakAnnouncerTest FAIL: testNoDeadWeakSubscriptions
+ZnClientTest FAIL: testQueryGoogle
+ZnHTTPSTest TIMEOUT: testTransfers

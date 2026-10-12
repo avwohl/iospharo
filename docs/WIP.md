@@ -15,6 +15,19 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-12, 04:40)
+
+**Resumed-method internal J2J is now the arm64 default: full sweep 56 min
+instead of 1 h 53 min, 27876 P / 12 F / 1 E (baseline 27872 / 13 / 1).**
+The 1-in-22 crash that kept it off was an interpreter bug: `periodic_checks`
+ran the profiler tick and the low-space signal before its `inExtension_`
+early-out, so a profiler sample could switch process between `E1 FF` and the
+jump it extends.  Fixed, plus the same shape in the FFI callback cooldown
+(found by an audit workflow).  Write-up: `docs/perf-activation-measurements.md`
+("The internal-J2J crash"); sweep: `docs/results/sweep-arm-2026-10-12-internal-j2j.md`.
+Opt-out `PHARO_T1_RESUME_EXTERNAL_J2J`; x86_64 stays opt-in
+(`PHARO_T1_RESUME_INTERNAL_J2J`) until a Rosetta run validates it there.
+
 ## Right now (2026-10-11, 23:50)
 
 **Packages: jrpc fixed, stargate at parity, myprecious down to 3 speed errors.**

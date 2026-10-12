@@ -1086,7 +1086,7 @@ constexpr int OFF_INTERP = 40;  // JITState.interp (static_asserted in JITState.
 static inline void emitClosurePush(asmjit::a64::Assembler& a,
                                    const asmjit::a64::Gp& cursor, int off,
                                    const asmjit::a64::Gp& scratch) {
-    if (!GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) return;
+    if (!::pharo::resumeInternalJ2JEnabled()) return;
     a.ldr(scratch, asmjit::a64::ptr(asmjit::a64::x0, OFF_INTERP));
     a.ldr(scratch, asmjit::a64::ptr(scratch,
         (int)pharo::Interpreter::closureFieldOffset()));
@@ -1103,7 +1103,7 @@ static inline void emitClosurePush(asmjit::x86::Assembler& a,
                                    const asmjit::x86::Gp& cursor, int off,
                                    const asmjit::x86::Gp& scratch) {
     using namespace asmjit::x86;
-    if (!GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) return;
+    if (!::pharo::resumeInternalJ2JEnabled()) return;
     a.mov(scratch, ptr(rdi, OFF_INTERP));
     a.mov(scratch, ptr(scratch, (int)pharo::Interpreter::closureFieldOffset()));
     a.mov(ptr(cursor, off), scratch);

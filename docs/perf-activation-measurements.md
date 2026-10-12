@@ -319,3 +319,47 @@ dominated by the activation wall (`returnValue -> tryJITResumeInCaller`,
 samples came from the three zero-delay reception services switching process
 around it.  So myprecious's `testArgPassByReference` stays a speed failure
 until the resumed-method J2J lever (above) is safe.
+
+## The internal-J2J crash: a process switch inside an extended instruction (2026-10-12)
+
+**Root cause found; it is an interpreter bug, not a JIT bug.**
+`PHARO_T1_RESUME_INTERNAL_J2J` only made it more likely to show.
+
+Sista V1 extends a bytecode with a prefix: `E1 FF ED A8` is ExtendB(-1)
+followed by ExtJump, i.e. `jumpTo: 570` backward.  The prefix and its consumer
+are one instruction.  If the process switches between them, the saved Context
+pc points at `ED`, `executeFromContext` zeroes `extB_`, and on resume the jump
+runs with extB 0 -- 168 bytes FORWARD, off the end of the method.  That is the
+whole crash: `Float>>absPrintExactlyOn:base:` with ip 63 bytes past its end.
+
+`interpret()`'s `periodic_checks` ran two checks that can switch process BEFORE
+its `if (inExtension_)` early-out: `checkProfileSampleTick()` (signals the
+profiler's semaphore; the profiler runs at a higher priority and takes the CPU
+at once) and `checkLowSpaceSignal()`.  `AndreasSystemProfilerTest` profiles
+code full of `E1 FF ED xx` loop back edges, so a sample tick that landed on a
+prefix switched mid-instruction.  Both checks now wait while `inExtension_` is
+set; the early-out sets `checkCountdown_ = 1`, so they run one bytecode later.
+
+    batch 1-50, PHARO_T1_RESUME_INTERNAL_J2J=1     before: 1 crash in 22 runs
+                                                   after:  0 crashes in 150 runs
+                                                   (chance of 0/150 at 1-in-22: ~0.1%)
+
+How it was found, for the next hunt of this shape:
+- `PHARO_IP_RING` (debug_vars.h): ring of the last 256 interpreted bytecodes
+  and a bounds check on every fetch.  It showed the profiler process at fd=0
+  switching straight into `absPrintExactlyOn:base:` at offset 655.
+- `PHARO_PC_BOUNDARY_SEL=<selector>`: reports a pc of that method that is not
+  an instruction start, where it is produced (J2J save decode,
+  `materializeFrameStack`, `pushFrame`, `executeFromContext`).  It has to treat
+  prefix + consumer as one instruction.  The first version walked ExtendB as a
+  separate 2-byte instruction and stayed silent through four hunts.
+- Every earlier check (ip coherence at each install site, before and after GC)
+  was correct and silent, because the ip WAS coherent: it only ever pointed
+  at a real byte of the right method, just not an instruction start.
+
+An audit workflow then searched the whole VM for the same shape.  It found one
+more live path, now fixed: the FFI callback-return cooldown runs exactly 500
+`step()`s and then forces a switch, so a 500th step on a prefix saved the same
+bad pc.  The cooldown now finishes the extended instruction first.  The three
+remaining paths are knob-only or unreachable for standard methods; see
+`docs/deferred.md`.

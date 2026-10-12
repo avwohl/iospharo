@@ -1661,6 +1661,18 @@ public:
     // PHARO_TRACE_JIT_BC: log JIT entries/resumes of one method chosen by
     // its bytecode prefix.  bcOff < 0 means a fresh activation.
     void traceJitBc(const char* site, Oop method, long bcOff);
+    void ipRingStep(uint8_t bc);   // PHARO_IP_RING
+    void checkPcBoundary(const char* site, Oop method, const uint8_t* ip, const char* detail);
+
+    // Incremented by every transferTo().  The JIT chain loops compare it
+    // around a primitive or activation: if it moved, the frame on top
+    // belongs to another process and only the interpreter may continue it.
+    // PHARO_NO_SWITCH_BAIL restores the old frameDepth_-only test (A/B).
+    uint64_t processSwitchCount_ = 0;
+    bool processSwitchedSince(uint64_t before) const {
+        return processSwitchCount_ != before
+            && !GET_DEBUG_BOOL(PHARO_NO_SWITCH_BAIL);
+    }
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
     // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:
@@ -4144,7 +4156,7 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         // 2026-06-13).  Hoisted: one read per GC.
 #if PHARO_J2J_SAVE_V2
         const bool walkClosure =
-            GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
+            ::pharo::resumeInternalJ2JEnabled()
             && g_debug.useAsmjitT1
             && !GET_DEBUG_BOOL(PHARO_RESUME_J2J)
             && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH);

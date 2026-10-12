@@ -184,6 +184,7 @@ size_t      g_traceExtentLines = 0;      // per-extent line counter (reset on en
 const char* g_doSel = nullptr;      // knob value, cached at interpret() entry
 bool        g_doOn = false;         // knob present at all (the DISPATCH_NEXT gate)
 uint64_t    g_doMethod = 0;         // CompiledMethod oop currently armed
+bool        g_ipRingOn = false;  // PHARO_IP_RING, set in interpret()
 uint8_t*    g_doBase = nullptr;     //   its bytes() at arm time
 size_t      g_doSize = 0;           //   its byteSize() at arm time
 int16_t*    g_doTable = nullptr;    // first-seen depth per byte offset (-1 = unseen)
@@ -2822,6 +2823,29 @@ void Interpreter::dumpCrashState() {
             if (off - k >= 0 && off - k < (long long)mo->byteSize())
                 fprintf(stderr, " %02x", (unsigned)instructionPointer_[-k]);
         fprintf(stderr, "\n");
+        // An ip past method_'s end lies in a LATER object: name it, so the
+        // dump says whose ip this is (the frame's real method?).
+        if (off >= (long long)mo->byteSize()) {
+            ObjectScanner scan(reinterpret_cast<uint8_t*>(mo),
+                               instructionPointer_ + 1);
+            ObjectHeader* holder = nullptr;
+            while (ObjectHeader* o = scan.next()) {
+                if (reinterpret_cast<uint8_t*>(o) <= instructionPointer_) holder = o;
+                else break;
+            }
+            if (holder && holder != mo) {
+                Oop h = Oop::fromObject(holder);
+                bool isCode = holder->classIndex() == compiledMethodClassIndex_
+                           || holder->classIndex() == compiledBlockClassIndex_;
+                fprintf(stderr, "[CRASH-STATE] ip lies in %s 0x%llx #%s at byte %lld "
+                        "(byteSize %zu)\n",
+                        isCode ? "code" : memory_.classNameOf(h).c_str(),
+                        (unsigned long long)h.rawBits(),
+                        isCode ? memory_.selectorOf(h).c_str() : "-",
+                        (long long)(instructionPointer_ - holder->bytes()),
+                        holder->byteSize());
+            }
+        }
     }
     if (framePointer_)
         fprintf(stderr, "[CRASH-STATE] fp[0]=0x%llx fp[1]=0x%llx\n",
@@ -2870,6 +2894,53 @@ void Interpreter::traceJitBc(const char* site, Oop method, long bcOff) {
         void* frames[24];
         int nf = backtrace(frames, 24);
         backtrace_symbols_fd(frames, nf, 2);
+    }
+}
+
+namespace {
+struct IpRingEntry { uint64_t method; int32_t off; uint8_t op; uint8_t fd; uint64_t step; };
+IpRingEntry g_ipRing[256];
+uint32_t g_ipRingIdx = 0;
+}
+// PHARO_PC_BOUNDARY_SEL: report a saved pc that is not on an instruction
+// boundary of its method, for methods whose selector equals the knob value
+// (the walk is O(method) so it is filtered).  The internal-J2J crash resumes
+// Float>>absPrintExactlyOn:base: at offset 655, mid-instruction.
+void Interpreter::checkPcBoundary(const char* site, Oop method, const uint8_t* ip,
+                                  const char* detail) {
+    const char* want = GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL);
+    if (!want || !method.isObject() || method.rawBits() <= 0x10000 || !ip) return;
+    if (memory_.selectorOf(method) != want) return;
+    ObjectHeader* mo = method.asObjectPtr();
+    Oop hdr = memory_.fetchPointer(0, method);
+    if (!hdr.isSmallInteger()) return;
+    const uint8_t* p = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    const uint8_t* end = mo->bytes() + mo->byteSize();
+    // An ExtendA/ExtendB prefix and the bytecode it extends are ONE
+    // instruction: a pc between them loses the extension on resume.
+    bool afterPrefix = false;
+    while (p < ip && p < end) {
+        afterPrefix = (*p == jit::SistaV1::ExtendA || *p == jit::SistaV1::ExtendB);
+        p += jit::SistaV1::bytecodeLength(*p);
+    }
+    if (p == ip && !afterPrefix) return;
+    static int n = 0;
+    if (++n > 12) return;
+    fprintf(stderr, "[PC-BOUNDARY #%d %s] #%s off=%lld is mid-instruction (%s) fd=%zu "
+            "inExt=%d extB=%d lastResumeExit=%d checkCountdown=%d\n",
+            n, site, want, (long long)(ip - mo->bytes()), detail ? detail : "-", frameDepth_,
+            (int)inExtension_, extB_, g_lastResumeExit, (int)checkCountdown_);
+    void* frames[20];
+    int nf = backtrace(frames, 20);
+    backtrace_symbols_fd(frames, nf, 2);
+    if (g_ipRingOn || true) {
+        for (uint32_t k = 244; k < 256; k++) {
+            IpRingEntry& r = g_ipRing[(g_ipRingIdx + k) & 255];
+            if (!r.method) continue;
+            fprintf(stderr, "[PC-BOUNDARY]   ring %s off=%d op=0x%02x fd=%u step=%llu\n",
+                    memory_.selectorOf(Oop::fromRawBits(r.method)).c_str(), r.off, r.op, r.fd,
+                    (unsigned long long)r.step);
+        }
     }
 }
 
@@ -3607,6 +3678,32 @@ void Interpreter::checkArrayCanaries(const char* where) {
 // extent of the matched method (relative depth, current method selector, opcode,
 // top-of-stack class). Disarms when frameDepth_ falls below the entry depth.
 // Used to diff a passing vs failing execution of the same method (blocker #4).
+// PHARO_IP_RING: remember the last 256 interpreted bytecodes and check each
+// fetch against method_'s bytes.  The first fetch outside them dumps the ring:
+// was the ip installed bad (no in-method history) or did it walk off the end?
+void Interpreter::ipRingStep(uint8_t bc) {
+    if (!method_.isObject() || method_.rawBits() <= 0x10000) return;
+    ObjectHeader* mo = method_.asObjectPtr();
+    long long off = (long long)((instructionPointer_ - 1) - mo->bytes());
+    IpRingEntry& e = g_ipRing[g_ipRingIdx++ & 255];
+    e.method = method_.rawBits(); e.off = (int32_t)off; e.op = bc;
+    e.fd = (uint8_t)(frameDepth_ > 255 ? 255 : frameDepth_); e.step = g_stepNum;
+    if (off >= 0 && off < (long long)mo->byteSize()) return;
+    g_ipRingOn = false;
+    fprintf(stderr, "[IP-RING] fetch outside #%s: off=%lld size=%zu op=0x%02x -- last bytecodes, oldest first:\n",
+            memory_.selectorOf(method_).c_str(), off, mo->byteSize(), bc);
+    uint64_t prevM = 0;
+    for (uint32_t k = 0; k < 256; k++) {
+        IpRingEntry& r = g_ipRing[(g_ipRingIdx + k) & 255];
+        if (!r.method) continue;
+        if (k < 256 - 80) continue;  // last 80
+        fprintf(stderr, "[IP-RING]   %s off=%d op=0x%02x fd=%u step=%llu\n",
+                r.method == prevM ? "        ..." : memory_.selectorOf(Oop::fromRawBits(r.method)).c_str(),
+                r.off, r.op, r.fd, (unsigned long long)r.step);
+        prevM = r.method;
+    }
+}
+
 void Interpreter::traceExtentBytecode(uint8_t bc) {
     if (frameDepth_ < g_traceExtentDepth) {
         fprintf(stderr, "[ORGTRACE] <<< LEAVE extent at fd=%zu (lines=%zu)\n",
@@ -3725,6 +3822,7 @@ void Interpreter::interpret() {
 #endif
     g_atRecOn = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH);
     g_traceExtentSel = GET_DEBUG_STR(PHARO_TRACE_EXTENT_SEL);
+    g_ipRingOn = GET_DEBUG_BOOL(PHARO_IP_RING);
     g_doSel = GET_DEBUG_STR(PHARO_DEPTH_ORACLE);
     g_doOn = (g_doSel != nullptr);
 
@@ -3917,6 +4015,7 @@ void Interpreter::interpret() {
                   framePointer_ ? framePointer_[2].rawBits() : 0); \
         if (__builtin_expect(g_traceExtentActive, 0)) traceExtentBytecode(bytecode); \
         if (__builtin_expect(g_doOn, 0)) depthOracleCheck(); \
+        if (__builtin_expect(g_ipRingOn, 0)) ipRingStep(bytecode); \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
             recentBytecodeIdx_++; \
@@ -4663,7 +4762,17 @@ void Interpreter::interpret() {
         // so runaway allocation storms (catalog #9's 200k-iteration
         // debugger-recursion pinning 4M contexts) had no image-side circuit
         // breaker and ran to old-space exhaustion.
-        checkLowSpaceSignal();
+        // Both signal checks below can switch process (the signalled
+        // watcher / profiler outranks us), so they wait while an
+        // extension prefix is pending: a switch here saves a pc BETWEEN
+        // the prefix and the bytecode it extends, executeFromContext
+        // resets extB_, and the resumed `E1 FF ED A8` (jumpTo: back)
+        // runs as a forward jump off the end of the method.  Measured:
+        // AndreasSystemProfilerTest crashed 1 run in 22 with
+        // PHARO_T1_RESUME_INTERNAL_J2J (Float>>absPrintExactlyOn:base:
+        // resumed at the ED of `E1 FF ED A8`).  The inExtension_ early-out
+        // below sets checkCountdown_ = 1, so they run one bytecode later.
+        if (!inExtension_) checkLowSpaceSignal();
 
         // Sampling profiler tick (armed by primitiveProfileStart).  Cog
         // semantics: the deadline is highResClock + delta, ONE-SHOT — the
@@ -4676,7 +4785,7 @@ void Interpreter::interpret() {
         // via its interval-timer interrupt check; an ASP profile of
         // `100 milliSeconds wait` collects ~12 samples there, and got 1
         // here before the relinquish-path check existed).
-        if (__builtin_expect(profileDeadlineNs_ > 0, 0)) {
+        if (__builtin_expect(profileDeadlineNs_ > 0, 0) && !inExtension_) {
             checkProfileSampleTick();
         }
 
@@ -6657,6 +6766,17 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 step();
                 nestedStepCount++;
             }
+            // The switch below saves the active process's pc and requeues
+            // it.  If the last step() ran an ExtendA/ExtendB prefix, that pc
+            // sits BETWEEN the prefix and the bytecode it extends, and every
+            // executeFromContext zeroes extA_/extB_: on resume a backward
+            // `E1 FF ED xx` runs as a forward jump off the end of the method.
+            // Finish the extended instruction first (each step consumes a
+            // prefix or its consumer, so this terminates).
+            while (inExtension_ && running_) {
+                step();
+                nestedStepCount++;
+            }
 
             // Save the current process's execution state and re-queue it,
             // but ONLY if the active process is still the callback handler.
@@ -6772,7 +6892,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // below: the main interpret() checkpoint never runs while this loop
         // hosts execution, so a storm inside a callback would otherwise
         // exhaust the heap with the breaker armed and latched.
-        checkLowSpaceSignal();
+        if (!inExtension_) checkLowSpaceSignal();
         // And the deferred quit, for the same reason and then some: the quit
         // was deferred BECAUSE a callback is outstanding, and the only loop
         // running while one is outstanding is this one.  Without this the
@@ -12969,6 +13089,7 @@ void Interpreter::terminateAndSwitchProcess() {
         stopVM("No runnable process available after termination");
         return;
     }
+    processSwitchCount_++;
     setActiveProcess(nextProcess);
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
     memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
@@ -15838,6 +15959,9 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         uint8_t* mBytes = mObj->bytes();
         if (frame.savedIP >= mBytes && frame.savedIP < mBytes + mObj->byteSize()) {
             int64_t pc = static_cast<int64_t>(frame.savedIP - mBytes) + 1;
+            if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
+                checkPcBoundary("pushFrame-fd1", frame.savedMethod, frame.savedIP,
+                                frame.pushSite);
             memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
         }
     }
@@ -20401,6 +20525,12 @@ Oop Interpreter::materializeFrameStack() {
 
             // Save current IP as 1-based byte offset into method bytes
             int64_t pc = (instructionPointer_ - methodBytes) + 1;
+            if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0)) {
+                char why[96];
+                snprintf(why, sizeof why, "fd0 sync; lastResumeExit=%d inExt=%d extB=%d",
+                         g_lastResumeExit, (int)inExtension_, extB_);
+                checkPcBoundary("mat-fd0", method_, instructionPointer_, why);
+            }
             memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
 
 
@@ -20774,6 +20904,10 @@ Oop Interpreter::materializeFrameStack() {
         // Calculate PC using the pre-computed IP offset (GC safe).
         // ipOffset was computed before any allocation that could trigger GC.
         int pc = ipOffset + 1;  // 1-based PC from 0-based offset
+        if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
+            checkPcBoundary("mat-saved", frame.savedMethod,
+                            frame.savedMethod.asObjectPtr()->bytes() + ipOffset,
+                            frame.pushSite);
 
         // Initialize context (sender via cycle guard)
         setSenderSafe(context, sender);
@@ -20977,6 +21111,9 @@ Oop Interpreter::materializeFrameStack() {
             }
             if (!context.isNil()) {
                 int pc = ipOffset + 1;  // 1-based PC from 0-based offset
+                if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
+                    checkPcBoundary("mat-current", method_,
+                                    method_.asObjectPtr()->bytes() + ipOffset, "current frame");
 
                 // Only set sender for new contexts; reused contexts had sender
                 // handled above (with self-reference guard)
@@ -21101,6 +21238,7 @@ Oop Interpreter::materializeFrameStack() {
 }
 
 void Interpreter::transferTo(Oop newProcess) {
+    processSwitchCount_++;
     if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
         doRec("XFER", activeContext_.rawBits(), (int)frameDepth_,
               framePointer_ ? (int)(stackPointer_ - framePointer_ - 1) : -1,
@@ -21433,6 +21571,7 @@ bool Interpreter::tryReschedule() {
         // Reset stack for new process
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
+        processSwitchCount_++;
 
         // Execute from the new process's context
         if (executeFromContext(context)) {
@@ -22472,6 +22611,9 @@ bool Interpreter::executeFromContext(Oop context) {
     // argument counts and selector indices.
     extA_ = 0;
     extB_ = 0;
+    // and the prefix-pending flag they belong to: a stale true would make
+    // the new process's first checkpoint skip its switch checks.
+    inExtension_ = false;
 
     if (context.isNil()) {
         return false;
@@ -22772,6 +22914,16 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0)
+            && memory_.selectorOf(method_) == GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL)) {
+        static int nEx = 0;
+        if (++nEx <= 40)
+            fprintf(stderr, "[PCB-EXEC #%d] resume #%s at off=%lld byte=0x%02x step=%llu\n",
+                    nEx, GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL),
+                    (long long)(instructionPointer_ - methodBytes),
+                    (unsigned)*instructionPointer_, (unsigned long long)g_stepNum);
+        checkPcBoundary("executeFromContext", method_, instructionPointer_, "context pc");
+    }
     if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_JIT_BC) != nullptr, 0)) {
         int before = g_traceJitBcHits;
         traceJitBc("executeFromContext", method_,
@@ -24129,6 +24281,41 @@ void Interpreter::afterGC(bool fullGC) {
     }
 #endif
     gcPrepared_ = false;
+    // PHARO_RESUME_EXIT_CHECK: the same (method, ip) coherence as
+    // prepareForGC, AFTER the rebase -- a holder the rebase misses or
+    // rebases against the wrong object shows up here and nowhere earlier.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
+        checkIpCoherence(fullGC ? "afterFullGC" : "afterScavenge");
+        for (size_t i = 0; i < frameDepth_; ++i) {
+            SavedFrame& f = savedFrames_[i];
+            if (!f.savedMethod.isObject() || !f.savedIP || f.savedMethod.rawBits() <= 0x10000) continue;
+            ObjectHeader* mo = f.savedMethod.asObjectPtr();
+            if (f.savedIP < mo->bytes() || f.savedIP > mo->bytes() + mo->byteSize()) {
+                static int nAF = 0;
+                if (++nAF <= 8)
+                    fprintf(stderr, "[AFTERGC-SAVED-IP-OUTSIDE #%d] full=%d frame %zu #%s "
+                            "off=%lld size=%zu pushed by %s fd=%zu\n", nAF, (int)fullGC, i,
+                            memory_.selectorOf(f.savedMethod).c_str(),
+                            (long long)(f.savedIP - mo->bytes()), mo->byteSize(),
+                            f.pushSite ? f.pushSite : "?", frameDepth_);
+            }
+        }
+#if PHARO_JIT_ENABLED
+        for (jit::JITState* st = currentJITState_; st; st = st->prevState) {
+            if (!st->method.isObject() || st->method.rawBits() <= 0x10000 || !st->ip) continue;
+            ObjectHeader* mo = st->method.asObjectPtr();
+            if (st->ip < mo->bytes() || st->ip > mo->bytes() + mo->byteSize()) {
+                static int nAS = 0;
+                if (++nAS <= 8)
+                    fprintf(stderr, "[AFTERGC-STATE-IP-OUTSIDE #%d] full=%d #%s off=%lld "
+                            "size=%zu %s\n", nAS, (int)fullGC,
+                            memory_.selectorOf(st->method).c_str(),
+                            (long long)(st->ip - mo->bytes()), mo->byteSize(),
+                            st == currentJITState_ ? "current" : "parked");
+            }
+        }
+#endif
+    }
 }
 
 void Interpreter::logCurrentMethod(FILE* out) {
@@ -25344,7 +25531,7 @@ void Interpreter::tryJITResumeInCaller() {
     // the rj2j chain loop walks only its own slice, and FSR_NODEPTH
     // stops maintaining state.j2jDepth which gates the materialize.
     const bool resumeInternalJ2J =
-        GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
+        ::pharo::resumeInternalJ2JEnabled()
         && g_debug.useAsmjitT1
         && !GET_DEBUG_BOOL(PHARO_RESUME_J2J)
         && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH)
@@ -26865,6 +27052,7 @@ void Interpreter::tryJITResumeInCaller() {
 
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
+                    const uint64_t switchesBefore = processSwitchCount_;
                     argCount_ = state.sendArgCount;
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
@@ -26880,7 +27068,11 @@ void Interpreter::tryJITResumeInCaller() {
                         // pushFrame inside executePrimitive. The new frame must run
                         // before the caller resumes — bail to interpreter so the
                         // dispatch loop drives the activated frame to completion.
-                        if (frameDepth_ != primCallerDepth) {
+                        // So must a primitive that switched process (signal,
+                        // wait, resume, yield): the frame on top now belongs
+                        // to another process, whatever frameDepth_ says.
+                        if (frameDepth_ != primCallerDepth
+                                || processSwitchedSince(switchesBefore)) {
                             jitJ2JFallbacks_++;
                             inJITResume_ = false;
                             return;
@@ -26893,6 +27085,7 @@ void Interpreter::tryJITResumeInCaller() {
             }
 
             size_t callerDepth = frameDepth_;
+            const uint64_t actSwitchesBefore = processSwitchCount_;
             // 2026-05-07 A1: trace sp delta around J2J→activate transition.
             // This call site is the leak source per origin tracking.
             Oop* spBeforeActivate = stackPointer_;
@@ -26921,7 +27114,8 @@ void Interpreter::tryJITResumeInCaller() {
                     }
                 }
             }
-            if (frameDepth_ == callerDepth) {
+            if (frameDepth_ == callerDepth
+                    && !processSwitchedSince(actSwitchesBefore)) {
                 // Target completed (JIT handled it end-to-end).
                 // We're back in the caller's frame — resume JIT.
                 jitJ2JChains_++;
@@ -27222,6 +27416,7 @@ void Interpreter::tryJITResumeInCaller() {
                 int primIdx = primitiveIndexOf(cached);
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
+                    const uint64_t switchesBefore = processSwitchCount_;
                     argCount_ = state.sendArgCount;
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
@@ -27232,7 +27427,8 @@ void Interpreter::tryJITResumeInCaller() {
                                    result == PrimitiveResult::Success, primCallerDepth,
                                    state.method.rawBits(), cached.rawBits(), "J2JCached");
                     if (result == PrimitiveResult::Success) {
-                        if (frameDepth_ != primCallerDepth) {
+                        if (frameDepth_ != primCallerDepth
+                                || processSwitchedSince(switchesBefore)) {
                             jitJ2JFallbacks_++;
                             inJITResume_ = false;
                             return;
@@ -27244,8 +27440,10 @@ void Interpreter::tryJITResumeInCaller() {
             }
 
             size_t callerDepth = frameDepth_;
+            const uint64_t actSwitchesBefore = processSwitchCount_;
             activateMethod(cached, state.sendArgCount);
-            if (frameDepth_ == callerDepth) {
+            if (frameDepth_ == callerDepth
+                    && !processSwitchedSince(actSwitchesBefore)) {
                 jitJ2JChains_++;
                 continue;
             }
@@ -29088,6 +29286,8 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     uint8_t* saveIp = save.ip;
     int saveNArgs = save.sendArgCount;
 #endif
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
+        checkPcBoundary("j2j-save", saveMethod, saveIp, siteTag);
 
     // PHARO_BLOCK_SAVE_PROBE: for block saves, dump what's actually in
     // the frame's slots so we can find where the FullBlockClosure lives
@@ -29225,7 +29425,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     // Only the resume-internal path writes save.closure (knob-gated push);
     // when the knob is off the slot is unused garbage — don't read it.
     // V1 (x86 stencil path) has no save.closure field — tb[-1] only.
-    if (saveJM->isBlock && GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) {
+    if (saveJM->isBlock && ::pharo::resumeInternalJ2JEnabled()) {
 #if PHARO_J2J_SAVE_V2
         Oop cand = save.closure;
         bool ok = cand.isObject() && cand.rawBits() >= 0x10000
@@ -33188,6 +33388,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
+                    const uint64_t switchesBefore = processSwitchCount_;
                     argCount_ = nArgs;
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
@@ -33200,6 +33401,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     chainTarget = newMethod_;  // Refresh: GC during prim may have moved it
 
                     if (result == PrimitiveResult::Success) {
+                        // A primitive that switched process (signal, wait,
+                        // resume, yield) leaves another process's frame on
+                        // top: hand it to the interpreter, never to the chain
+                        // loop's bookkeeping for the caller that sent it.
+                        if (processSwitchedSince(switchesBefore)) {
+                            jitJ2JActFalls_++;
+                            return true;
+                        }
                         // Frame-pushing primitives (closure activation prims 81/82/
                         // 201-209, perform: prims 83/84, etc.) call activateBlock/
                         // pushFrame inside executePrimitive. The new frame must run
@@ -33380,6 +33589,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             {
                 // Fallback: non-JIT target or unsafe prim — use activateMethod
                 size_t callerDepth = frameDepth_;
+                const uint64_t actSwitchesBefore = processSwitchCount_;
                 if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
                     state.method.rawBits() == g_atOop)
                     atRec(14, (uint8_t)nArgs, primitiveIndexOf(chainTarget),
@@ -33405,8 +33615,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             (unsigned long long)stackPointer_[-3].rawBits());
                 }
 
-                if (frameDepth_ != callerDepth) {
-                    // Target pushed a frame — interpreter dispatch loop handles it
+                if (frameDepth_ != callerDepth
+                        || processSwitchedSince(actSwitchesBefore)) {
+                    // Target pushed a frame (or switched process) —
+                    // interpreter dispatch loop handles it
                     jitJ2JActFalls_++;
                     jitChainActivateFalls_++;
                     return true;

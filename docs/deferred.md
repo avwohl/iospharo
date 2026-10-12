@@ -49,6 +49,22 @@ The history lives in `docs/history/`; nothing was deleted.
 - **Windows old-space commit policy** — see open defect #10. Reserving the
   whole space up front is deliberate; committing it unconditionally is the bug.
 
+- **Three remaining "pc between an extension prefix and its bytecode" paths**
+  (from the 2026-10-12 audit workflow; the two live ones are fixed, see
+  `docs/perf-activation-measurements.md`, "The internal-J2J crash").  None of
+  these runs in the default configuration with standard Pharo methods:
+  - x86 `PHARO_T1_EXTBAIL_SEND=1` (bisect knob, default off) turns the
+    prefix bail into an ExitSend.  The send handlers then dispatch a stale
+    selector and advance ip by 1 into the prefix.
+  - `materializeFrameStack`'s fd==0 PushThisContext rewind tests the raw byte
+    before ip.  Inside a prefix window that byte is the operand, so `E0 52` /
+    `E1 52` with thisContext on top of stack would rewind into the prefix.
+    It should key off the recorded last opcode.
+  - `SistaBuilder` marks "inside a prefix" by a non-zero pending value and
+    OVERWRITES chained prefixes (`pendingExtA_ = byte`; the interpreter
+    shifts).  Only methods with 8193+ literals or very long jumps emit
+    chained prefixes.
+
 ## Tooling limitations worth knowing
 
 - **`PHARO_DET_SCHED` starves cross-thread wakes**, so it is unusable on FFI /
