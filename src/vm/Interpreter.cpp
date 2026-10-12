@@ -26377,6 +26377,20 @@ void Interpreter::tryJITResumeInCaller() {
         };
         g_lastResumeExit = (int)state.exitReason;
         g_lastResumeMethod = state.method.rawBits();
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)
+                && state.exitReason == jit::ExitReturn && state.jitMethod) {
+            auto* rjm = reinterpret_cast<jit::JITMethod*>(
+                reinterpret_cast<uintptr_t>(state.jitMethod) & ~uintptr_t(1));
+            if (rjm && rjm->compiledMethodOop != state.method.rawBits()) {
+                static int nRM = 0;
+                if (++nRM <= 12)
+                    fprintf(stderr, "[RETURN-METHOD-SPLIT #%d] ExitReturn handled as #%s but "
+                            "state.jitMethod is #%s; pendingSaves=%d internal=%d fd=%zu\n", nRM,
+                            memory_.selectorOf(state.method).c_str(),
+                            memory_.selectorOf(Oop::fromRawBits(rjm->compiledMethodOop)).c_str(),
+                            rsPendingThisIter, (int)resumeInternalJ2J, frameDepth_);
+            }
+        }
         // PHARO_RESUME_EXIT_CHECK: is the exit's (state.method, state.ip)
         // pair itself coherent?  Checked before any handler pops or syncs.
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)

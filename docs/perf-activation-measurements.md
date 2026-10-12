@@ -282,3 +282,11 @@ exit, so after a J2J callee's ExitReturn it can still hold the caller's resume
 ip.  That is the place to fix; the crash in `absPrintExactlyOn:base:` is the
 same mix landing in a Float method, where it executes a neighbouring object's
 bytes as code.  Knob stays OFF.
+
+**Return-method split ruled out too.**  A check that the resume loop's
+ExitReturn is handled as the same method `state.jitMethod` names stayed silent
+in the next crashing run (run 14).  Every cheap install-site hypothesis is now
+measured and negative.  Next step is an lldb session on a crashing run: a
+hardware watchpoint on `instructionPointer_` armed when `method_` becomes
+`Float>>absPrintExactlyOn:base:` (`PHARO_DET_SCHED` will not help -- the
+profiler test's sampling is driven by a real timer).
