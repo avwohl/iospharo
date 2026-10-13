@@ -2600,6 +2600,11 @@ void Interpreter::pushSlow(Oop value) {
 // through a dead context, which is #23's dead-sender storm.  Counted always,
 // named under PHARO_RESUME_WIDOW_TRACE.
 uint64_t g_deadContextReuse = 0;
+// Bytecode checkpoints (every ~1024 bytecodes) taken while the running method
+// sat at frame depth 0 ("context mode": temp stores write through to the
+// Context, sends store the pc).  Printed at exit by test_load_image.
+uint64_t g_checkpoints = 0;
+uint64_t g_checkpointsAtDepth0 = 0;
 void Interpreter::noteDeadReuse(const char* site, Oop ctx, Oop frameMethod) {
     if (!memory_.fetchPointer(1, ctx).isNil()) return;
     ++g_deadContextReuse;
@@ -3915,6 +3920,14 @@ void Interpreter::interpret() {
         dispatchTable[0x51] = &&op_push1;
         dispatchTable[0x53] = &&op_dup;
         for (int i = 0x60; i <= 0x6F; i++) dispatchTable[i] = &&op_arith;
+        dispatchTable[jit::SistaV1::ArithBase + 0] = &&op_arith_add;
+        dispatchTable[jit::SistaV1::ArithBase + 1] = &&op_arith_sub;
+        dispatchTable[jit::SistaV1::ArithBase + 2] = &&op_arith_lt;
+        dispatchTable[jit::SistaV1::ArithBase + 3] = &&op_arith_gt;
+        dispatchTable[jit::SistaV1::ArithBase + 4] = &&op_arith_le;
+        dispatchTable[jit::SistaV1::ArithBase + 5] = &&op_arith_ge;
+        dispatchTable[jit::SistaV1::ArithBase + 6] = &&op_arith_eq;
+        dispatchTable[jit::SistaV1::ArithBase + 7] = &&op_arith_ne;
         dispatchTable[0x79] = &&op_value;
         dispatchTable[0x7A] = &&op_value1;
         for (int i = 0x80; i <= 0x8F; i++) dispatchTable[i] = &&op_send0;
@@ -4593,6 +4606,76 @@ void Interpreter::interpret() {
         DISPATCH_NEXT();
     }
 
+    // --- Arithmetic sends: one label per hot selector ---
+    // +, - and the six comparisons each get their own dispatch-table entry,
+    // so the SmallInteger case costs one indirect jump instead of two (the
+    // shared op_arith below re-dispatches on `bytecode & 15` through a
+    // switch).  Anything else -- a non-SmallInteger operand, overflow --
+    // goes to op_arith, which handles it exactly as before.
+#define ARITH_CMP_LABEL(label, OP)                                            \
+    label: {                                                                  \
+        Oop rcvr = stackValue(1);                                             \
+        Oop arg = stackValue(0);                                              \
+        if (__builtin_expect(!(rcvr.isSmallInteger() && arg.isSmallInteger()), 0)) \
+            goto op_arith;                                                    \
+        const bool cmp = rcvr.asSmallInteger() OP arg.asSmallInteger();       \
+        const uint8_t nextBC = *instructionPointer_;                          \
+        if (nextBC >= jit::SistaV1::ShortJumpFalseBase                        \
+                && nextBC <= jit::SistaV1::ShortJumpFalseLast) {              \
+            instructionPointer_++;                                            \
+            popN(2);                                                          \
+            if (!cmp) instructionPointer_ += (nextBC - jit::SistaV1::ShortJumpFalseBase) + 1; \
+            DISPATCH_NEXT();                                                  \
+        }                                                                     \
+        if (nextBC >= jit::SistaV1::ShortJumpTrueBase                         \
+                && nextBC <= jit::SistaV1::ShortJumpTrueLast) {               \
+            instructionPointer_++;                                            \
+            popN(2);                                                          \
+            if (cmp) instructionPointer_ += (nextBC - jit::SistaV1::ShortJumpTrueBase) + 1; \
+            DISPATCH_NEXT();                                                  \
+        }                                                                     \
+        if (nextBC == jit::SistaV1::ExtJumpFalse || nextBC == jit::SistaV1::ExtJumpTrue) { \
+            instructionPointer_++;                                            \
+            const uint8_t offset = *instructionPointer_++;                    \
+            popN(2);                                                          \
+            if (cmp == (nextBC == jit::SistaV1::ExtJumpTrue)) instructionPointer_ += offset; \
+            DISPATCH_NEXT();                                                  \
+        }                                                                     \
+        popN(2);                                                              \
+        push(cmp ? memory_.trueObject() : memory_.falseObject());             \
+        DISPATCH_NEXT();                                                      \
+    }
+    ARITH_CMP_LABEL(op_arith_lt, <)
+    ARITH_CMP_LABEL(op_arith_gt, >)
+    ARITH_CMP_LABEL(op_arith_le, <=)
+    ARITH_CMP_LABEL(op_arith_ge, >=)
+    ARITH_CMP_LABEL(op_arith_eq, ==)
+    ARITH_CMP_LABEL(op_arith_ne, !=)
+#undef ARITH_CMP_LABEL
+
+    op_arith_add: {
+        Oop rcvr = stackValue(1);
+        Oop arg = stackValue(0);
+        if (__builtin_expect(rcvr.isSmallInteger() && arg.isSmallInteger(), 1)) {
+            const int64_t r = rcvr.asSmallInteger() + arg.asSmallInteger();
+            if (__builtin_expect(r >= Oop::smallIntegerMin() && r <= Oop::smallIntegerMax(), 1)) {
+                popN(2); push(Oop::fromSmallInteger(r)); DISPATCH_NEXT();
+            }
+        }
+        goto op_arith;
+    }
+    op_arith_sub: {
+        Oop rcvr = stackValue(1);
+        Oop arg = stackValue(0);
+        if (__builtin_expect(rcvr.isSmallInteger() && arg.isSmallInteger(), 1)) {
+            const int64_t r = rcvr.asSmallInteger() - arg.asSmallInteger();
+            if (__builtin_expect(r >= Oop::smallIntegerMin() && r <= Oop::smallIntegerMax(), 1)) {
+                popN(2); push(Oop::fromSmallInteger(r)); DISPATCH_NEXT();
+            }
+        }
+        goto op_arith;
+    }
+
     // --- Arithmetic sends: inline SmallInteger fast paths ---
     op_arith: {
         int which = bytecode & 0x0F;
@@ -4989,6 +5072,8 @@ void Interpreter::interpret() {
         // PHARO_T1_RESUME_INTERNAL_J2J (Float>>absPrintExactlyOn:base:
         // resumed at the ED of `E1 FF ED A8`).  The inExtension_ early-out
         // below sets checkCountdown_ = 1, so they run one bytecode later.
+        ++g_checkpoints;
+        if (frameDepth_ == 0) ++g_checkpointsAtDepth0;
         if (!inExtension_) checkLowSpaceSignal();
 
         // Sampling profiler tick (armed by primitiveProfileStart).  Cog
@@ -12175,6 +12260,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
 
+        // Trivial-method shortcuts (getter, setter, ^self, even/odd,
+        // ^literal): one flag test for the common case where none applies.
+        if (__builtin_expect(cached->trivialShape, 0)) {
         // Getter fast path: pushRecvVar N + returnTop
         // Skip method activation — replace receiver with inst var value
         // Guard: byte objects have no named inst vars — reading their
@@ -12292,6 +12380,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
             *(stackPointer_ - 1) = lit;
             return;
+        }
+
         }
 
         int primIdx = cached->primitiveIndex;
@@ -12689,30 +12779,6 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     return Oop::nil();
 }
 
-MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
-    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_METHOD_CACHE), 0)) {
-        return nullptr;  // bisect knob: force full lookup every send
-    }
-    uint64_t selBits = selector.rawBits();
-    uint64_t clsBits = classOop.rawBits();
-    size_t mask = MethodCacheSize - 1;
-
-    // Primary probe
-    size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
-    MethodCacheEntry& e1 = methodCache_[h1];
-    if (e1.selector == selector && e1.classOop == classOop) {
-        return &e1;
-    }
-
-    // Secondary probe (rotated hash reduces collision aliasing)
-    size_t h2 = static_cast<size_t>((selBits >> 2) ^ (clsBits << 1) ^ clsBits) & mask;
-    MethodCacheEntry& e2 = methodCache_[h2];
-    if (e2.selector == selector && e2.classOop == classOop) {
-        return &e2;
-    }
-
-    return nullptr;
-}
 
 // Detect trivial getter/setter methods from their bytecodes.
 // Getter: pushRecvVar N + returnTop → returns inst var index
@@ -13321,6 +13387,8 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.evenOddKind = trivial.evenOddKind;
         e1.returnsLiteralKind = static_cast<int8_t>(trivial.returnsLiteral);
         e1.megaEpoch = 0;
+        e1.trivialShape = e1.accessorIndex >= 0 || e1.setterIndex >= 0 || e1.returnsSelf
+            || e1.evenOddKind >= 0 || e1.returnsLiteralKind != 0;
         return;
     }
 
@@ -13338,6 +13406,8 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.evenOddKind = trivial.evenOddKind;
     e2.returnsLiteralKind = static_cast<int8_t>(trivial.returnsLiteral);
     e2.megaEpoch = 0;
+    e2.trivialShape = e2.accessorIndex >= 0 || e2.setterIndex >= 0 || e2.returnsSelf
+        || e2.evenOddKind >= 0 || e2.returnsLiteralKind != 0;
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
@@ -20795,6 +20865,12 @@ Oop Interpreter::materializeFrameStack() {
     // exit when no cycle exists, so the typical case is cheap.
     const bool helperSends = !g_debug.noSistaHelperSends;
     auto setSenderSafe = [this, helperSends](Oop ctx, Oop sender) {
+        // Unchanged link: nothing to store and no new cycle possible.  The
+        // common case on a re-materialization (every closure creation at
+        // depth > 0): without this every already-synced frame walked up to
+        // 200 senders, O(depth^2) per block creation.
+        if (memory_.fetchPointerUnchecked(0, ctx).rawBits() == sender.rawBits())
+            return;
         if (helperSends && sender.isObject() && !sender.isNil()
             && sender.rawBits() != ctx.rawBits()) {
             Oop walk = sender;
@@ -21111,8 +21187,28 @@ Oop Interpreter::materializeFrameStack() {
         }
     }
 
+    const bool trustSynced = !GET_DEBUG_BOOL(PHARO_MAT_FULL_RESYNC)
+        && !GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK);
     for (size_t i = startFrame; i < frameDepth_; i++) {
         auto& frame = savedFrames_[i];  // non-const: may update materializedContext
+
+        // Synced frame (nothing wrote it since its context was last synced;
+        // every savedFrames_ writer clears ctxSynced): only the sender link
+        // can need repair.  Tested first, ahead of the method-header and pc
+        // work the full path below throws away for such a frame -- every
+        // closure created at depth > 0 walks ALL saved frames, so on a deep
+        // stack this loop was most of materializeFrameStack's cost.
+        if (trustSynced && frame.ctxSynced) {
+            Oop context = frame.materializedContext;
+            if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000
+                    && frame.savedMethod.isObject()) {
+                if (__builtin_expect(memory_.fetchPointerUnchecked(1, context).isNil(), 0))
+                    noteDeadReuse("saved-frame", context, frame.savedMethod);
+                if (context.rawBits() != sender.rawBits()) setSenderSafe(context, sender);
+                sender = context;
+                continue;
+            }
+        }
 
         // Get method info
         if (!frame.savedMethod.isObject()) {
@@ -21143,6 +21239,7 @@ Oop Interpreter::materializeFrameStack() {
         // This ensures context identity: block closures created in a frame get
         // the same context object as thisContext returns for the same activation.
         Oop context = frame.materializedContext;
+        bool freshContext = false;   // just allocated: every slot nil
         if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
             noteDeadReuse("saved-frame", context, frame.savedMethod);
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(8, context, frame.savedFP ? frame.savedFP + 1 : nullptr);
@@ -21200,6 +21297,7 @@ Oop Interpreter::materializeFrameStack() {
             }
             // Cache this context for future materializations of the same frame
             frame.materializedContext = context;
+            freshContext = true;
 
             // GC SAFETY: allocateSlots may trigger fullGC, which compacts the heap
             // and moves objects. All C++ locals holding Oops or raw pointers into
@@ -21350,7 +21448,7 @@ Oop Interpreter::materializeFrameStack() {
 
         // Set stackp to actual number of items saved, clearing anything a
         // deeper earlier sync of this same (reused) context left above it.
-        storeContextStackp(context, savedCount);
+        storeContextStackp(context, savedCount, freshContext);
         if (DIAG_FLAG(g_doOn) && frame.savedMethod.rawBits() == g_doMethod)
             doRec("SAVE-FRM", context.rawBits(), savedCount, numTemps, ipOffset,
                   g_stepNum);
@@ -21473,7 +21571,7 @@ Oop Interpreter::materializeFrameStack() {
 
                 // Set stackp to actual number of items saved, clearing anything
                 // a deeper earlier sync of this reused context left above it.
-                storeContextStackp(context, savedCount);
+                storeContextStackp(context, savedCount, !reusingContext);
                 if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
                     doRec("SAVE-CUR", context.rawBits(), savedCount, numTemps,
                           ipOffset, g_stepNum);
@@ -24084,7 +24182,7 @@ void Interpreter::raiseContextStackpTo(Oop context, int slots) {
         h->slotAtPut(2, Oop::fromSmallInteger(slots));
 }
 
-void Interpreter::storeContextStackp(Oop context, int stackp) {
+void Interpreter::storeContextStackp(Oop context, int stackp, bool tailKnownNil) {
     if (stackp < 0) {
         memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
         return;
@@ -24105,6 +24203,7 @@ void Interpreter::storeContextStackp(Oop context, int stackp) {
     // marked nor relocated, so a stale oop can survive a compaction.  Reading
     // before writing keeps the common case (an already-nil tail) to loads.
     memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
+    if (tailKnownNil) return;   // freshly allocated context: nothing to clear
     const Oop nilOop = memory_.nil();
     for (size_t s = 6 + (size_t)stackp; s < cap; ++s) {
         if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, nilOop);

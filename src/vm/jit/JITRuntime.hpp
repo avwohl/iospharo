@@ -60,6 +60,7 @@ extern volatile uint64_t g_resolverSetAtStep;
 void noteLitVarStore(uint64_t assocBits, ObjectMemory& memory);
 
 static constexpr size_t CountMapSize = 16384;
+static constexpr int kCountProbes = 8;   // linear-probe length, both paths
 // Home slot of a CompiledMethod oop in the count map.  Fibonacci hashing:
 // `(oop >> 3) & mask` put methods allocated next to each other in adjacent
 // slots, the linear probe then ran past its 8-slot limit inside those
@@ -203,9 +204,13 @@ public:
         if (__builtin_expect(countThresholdCache_ != 0
                 && !g_sistaAnySplice
                 && (n & 0xFFFF) != 0, 1)) {
-            // Same linear probe as the slow path, first 4 slots.
+            // The slow path's whole linear probe (kCountProbes slots).  It
+            // used to stop at 4, so a method whose entry sat at probe 5-8
+            // took the ~150-instruction slow path on EVERY call -- 12% of
+            // the instructions of a block-calling loop, measured 2026-10-13.
             size_t idx = countMapIndex(key);
-            for (int probe = 0; probe < 4; probe++) {
+            int probe = 0;
+            for (; probe < kCountProbes; probe++) {
                 CountEntry& ce = countMap_[(idx + probe) & (CountMapSize - 1)];
                 if (ce.key == key) {
                     if (__builtin_expect(ce.count > countThresholdCache_, 1)) {
@@ -216,6 +221,9 @@ public:
                 }
                 if (ce.key == 0) break;
             }
+            // Bucket full of other methods: the slow path would record
+            // nothing either ("Count map full for this bucket -- skip").
+            if (probe == kCountProbes) return;
         }
         noteMethodEntrySlow(compiledMethod);
     }

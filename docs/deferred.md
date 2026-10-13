@@ -218,6 +218,30 @@ The history lives in `docs/history/`; nothing was deleted.
   VM fix battery; the full-sweep verify run decides the default.
   cormas analysis: 23.84 -> 22.30 billion instructions.
 
+- **A preempted method finishes in "context mode" (found 2026-10-13).**  A
+  process switch materializes the outgoing process's whole frame stack
+  (`transferTo` -> `materializeFrameStack`), and the process resumes with
+  `executeFromContext` at frame depth 0.  The method that was running keeps
+  executing at depth 0 until it returns: every temp store is mirrored into
+  its Context (`setTemporary` -> `storePointerUnchecked` +
+  `raiseContextStackpTo`) and every send stores the pc into it (`pushFrame`,
+  depth 0 -> 1).  For a long loop that is ever preempted -- any loop longer
+  than one Delay tick in a process below timing priority -- that is the rest
+  of its run.  The lldb step trace of `zzOuter:` (a 2e9-iteration loop
+  method called from an eval) showed it at depth 0 within seconds.  Block
+  creation does the same (`materializeFrameStack` on every closure push at
+  depth > 0).  Cog avoids both with married contexts: the frame stays the
+  truth and the Context is a proxy, divorced only when image code needs it.
+  The port needs every Context field access (instVarAt:, the receiver-
+  variable bytecodes in Context methods, the debugger's primitives) to go
+  through a "sync from frame" check.  Multi-day.  **Measured the same day
+  (`[DEPTH0]` exit line, bytecode checkpoints at frame depth 0): myprecious
+  round trips 2.5%, lexicon CodeAnalysisRunnerTest 1.3%, deeptraverser 0.1%.**
+  So it matters for one long loop that gets preempted (the micro-benchmarks),
+  not for the slow packages; their cost is ordinary interpretation, chiefly
+  block calls (~700 instructions each; Fuel's `isBehaviorAnonymous:` scans
+  all of `Smalltalk globals` with a block per element on every myprecious
+  message).
 - **Smalltalk that runs inside an FFI callback executes through
   `Interpreter::step()`, one bytecode per call**, not through the
   computed-goto dispatch loop: `enterInterpreterFromCallback` is

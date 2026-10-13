@@ -4047,8 +4047,9 @@ void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
         return compiledCodeHasLoop(compiledMethod);
     };
 
-    // Simple linear probe
-    for (size_t probe = 0; probe < 8; probe++) {
+    // Simple linear probe (the inline noteMethodEntry gate probes the same
+    // kCountProbes slots).
+    for (size_t probe = 0; probe < (size_t)kCountProbes; probe++) {
         size_t i = (idx + probe) % CountMapSize;
         if (countMap_[i].key == key) {
             countMap_[i].count++;

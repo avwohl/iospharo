@@ -1198,7 +1198,7 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
     return header->slotAt(index);
 }
 
-void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
+void ObjectMemory::storePointerSlow(size_t index, Oop obj, Oop value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
     if (index >= header->slotCount()) {
@@ -1887,7 +1887,7 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
     // ONE heap scan covering every pair. Same traversal and the same format
     // guards as becomeForward above; only the test changes, from a comparison
     // against a single oop to a lookup in the map.
-    allObjectsDo([&](Oop obj) {
+    auto visit = [&](Oop obj) {
         if (!obj.isObject()) return;
         ObjectHeader* header = obj.asObjectPtr();
         if (__builtin_expect(!classRemap.empty(), 0)) {
@@ -1922,7 +1922,56 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
             slotAtPutBarriered(header, i, target);
             becomeReplacedCount++;
         }
-    });
+    };
+
+    // Young-only become (default; opt-out PHARO_BECOME_FULL_SCAN).  When
+    // every forwarded object is in eden and the remembered set is trusted,
+    // a reference to one of them can only sit in eden, in a remembered old
+    // holder, in old space allocated since the last scavenge, or in perm
+    // space -- the same set a trusted scavenge scans (every survivor of a
+    // scavenge is tenured, so all young objects are newer than it).  This
+    // replaces the whole-heap scan for the common becomeForward: of a
+    // freshly built object: ~100 MB walked per call before, e.g. StSpotter
+    // new and the lexicon CodeAnalysisRunner tests.
+    bool youngOnly = classRemap.empty()
+        && rememberedBitsExact_ && emittedStoresBarriered()
+        && g_jitRememberBuf.overflow == 0
+        && !GET_DEBUG_BOOL(PHARO_SCAV_FULL_SCAN)
+        && !GET_DEBUG_BOOL(PHARO_SCAV_BIT_AUDIT)
+        && !GET_DEBUG_BOOL(PHARO_BECOME_FULL_SCAN);
+    if (youngOnly) {
+        for (const auto& e : map) {
+            uint8_t* kp = reinterpret_cast<uint8_t*>(Oop::fromRawBits(e.first).asObjectPtr());
+            if (!(kp >= edenAllocBase_ && kp < edenFree_)) { youngOnly = false; break; }
+        }
+    }
+    if (youngOnly) {
+        drainJitRememberBuffer();   // overflow ruled out above
+        auto visitRegion = [&](uint8_t* start, uint8_t* end) {
+            ObjectScanner scan(start, end);
+            while (ObjectHeader* h = scan.next())
+                if (h->classIndex() != 0) visit(oopFromPointer(h));
+        };
+        visitRegion(edenAllocBase_, edenFree_);
+        // By index: a barriered replacement may append to rememberedSet_.
+        for (size_t k = 0, n = rememberedSet_.size(); k < n; ++k)
+            visit(oopFromPointer(rememberedSet_[k]));
+        uint8_t* recentStart = (oldFreeAtLastScavenge_ && oldFreeAtLastScavenge_ > oldSpaceStart_)
+            ? oldFreeAtLastScavenge_ : oldSpaceStart_;
+        if (recentStart < oldSpaceFree_) visitRegion(recentStart, oldSpaceFree_);
+        if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_)
+            visitRegion(permSpaceStart_, permSpaceEnd_);
+        if (GET_DEBUG_BOOL(PHARO_BECOME_YOUNG_VERIFY)) {
+            // Any reference left behind is one the young-only scan missed.
+            size_t before = becomeReplacedCount;
+            allObjectsDo(visit);
+            if (becomeReplacedCount != before)
+                fprintf(stderr, "[BECOME-YOUNG-MISS] %zu refs the young-only scan missed\n",
+                        becomeReplacedCount - before);
+        }
+    } else {
+        allObjectsDo(visit);
+    }
 
     // CLASSES: the same classTable_ redirect becomeForward performs, and for
     // the same reason — instance dispatch resolves header classIndex through
@@ -1963,10 +2012,13 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
         extern uint64_t g_stepNum;
         int youngKeys = 0;
         for (const auto& e : map) if (isYoung(Oop::fromRawBits(e.first))) youngKeys++;
+        Oop k0 = Oop::fromRawBits(map.begin()->first);
         fprintf(stderr,
-                "[BECOME-FWD-ALL] step=%llu pairs=%zu heapRefs=%zu ctHits=%zu youngKeys=%d\n",
+                "[BECOME-FWD-ALL] step=%llu pairs=%zu heapRefs=%zu ctHits=%zu youngKeys=%d "
+                "first=%s -> %s\n",
                 (unsigned long long)g_stepNum, map.size(),
-                becomeReplacedCount, classTableHits, youngKeys);
+                becomeReplacedCount, classTableHits, youngKeys,
+                classNameOf(k0).c_str(), classNameOf(map.begin()->second).c_str());
     }
 
     return true;
@@ -2132,6 +2184,80 @@ void ObjectMemory::discardRememberedSet() {
     rememberedSet_.clear();
 }
 
+// Scavenge forwarding table: young header -> tenured header.  Open
+// addressing over a power-of-two index table, entries kept in insertion order
+// (iteration and O(n) clearing), storage reused across scavenges.  Replaces a
+// std::unordered_map whose per-insert node allocation and probe made the
+// table most of tenureIfYoung's cost.  The subset of the map API the
+// scavenger uses: find/end, operator[], size/empty, range-for.
+namespace {
+class ScavForwardMap {
+public:
+    using Entry = std::pair<ObjectHeader*, ObjectHeader*>;
+    using const_iterator = std::vector<Entry>::const_iterator;
+
+    // Newest first: an entry's probe chain only crosses slots of entries
+    // inserted before it (grow() re-inserts in order), so those are still
+    // occupied when slotOf walks it.
+    void clear() {
+        for (size_t n = list_.size(); n-- > 0;) table_[slotOf(list_[n].first)] = 0;
+        list_.clear();
+    }
+    const_iterator find(ObjectHeader* k) const {
+        if (table_.empty()) return list_.end();
+        for (size_t i = hash(k);; i = (i + 1) & mask_) {
+            uint32_t v = table_[i];
+            if (v == 0) return list_.end();
+            if (list_[v - 1].first == k) return list_.begin() + (v - 1);
+        }
+    }
+    ObjectHeader*& operator[](ObjectHeader* k) {
+        if ((list_.size() + 1) * 2 > table_.size()) grow();
+        size_t i = hash(k);
+        for (;; i = (i + 1) & mask_) {
+            uint32_t v = table_[i];
+            if (v == 0) break;
+            if (list_[v - 1].first == k) return list_[v - 1].second;
+        }
+        list_.emplace_back(k, nullptr);
+        table_[i] = static_cast<uint32_t>(list_.size());
+        return list_.back().second;
+    }
+    const_iterator begin() const { return list_.begin(); }
+    const_iterator end() const { return list_.end(); }
+    size_t size() const { return list_.size(); }
+    bool empty() const { return list_.empty(); }
+
+private:
+    size_t hash(ObjectHeader* k) const {
+        return static_cast<size_t>(
+            (reinterpret_cast<uintptr_t>(k) >> 3) * 0x9E3779B97F4A7C15ull >> shift_);
+    }
+    // The table slot holding k (k must be present).
+    size_t slotOf(ObjectHeader* k) const {
+        size_t i = hash(k);
+        while (list_[table_[i] - 1].first != k) i = (i + 1) & mask_;
+        return i;
+    }
+    void grow() {
+        size_t cap = table_.empty() ? (size_t(1) << 16) : table_.size() * 2;
+        table_.assign(cap, 0);
+        mask_ = cap - 1;
+        shift_ = 64 - static_cast<unsigned>(__builtin_ctzll(cap));
+        for (size_t n = 0; n < list_.size(); ++n) {
+            size_t i = hash(list_[n].first);
+            while (table_[i] != 0) i = (i + 1) & mask_;
+            table_[i] = static_cast<uint32_t>(n + 1);
+        }
+    }
+    std::vector<Entry> list_;
+    std::vector<uint32_t> table_;
+    size_t mask_ = 0;
+    unsigned shift_ = 64;
+};
+ScavForwardMap g_scavForward;
+}  // namespace
+
 GCResult ObjectMemory::scavenge() {
     // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young
     // exists anymore (allocation falls back to old space) — later scavenge
@@ -2190,8 +2316,8 @@ GCResult ObjectMemory::scavenge() {
     }
 
     // Forwarding map: young header address → new (old-space) header address.
-    std::unordered_map<ObjectHeader*, ObjectHeader*> forward;
-    forward.reserve(1024);
+    ScavForwardMap& forward = g_scavForward;
+    forward.clear();
 
     // Helper: if oop points to a young object, copy to old space and
     // return the new Oop.  Otherwise, return unchanged.

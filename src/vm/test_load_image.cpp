@@ -1512,6 +1512,10 @@ int main(int argc, char* argv[]) {
         if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
             fprintf(stderr, "[EXIT-TRACE] dumpJITStats done\n");
         }
+        if (pharo::g_checkpoints)
+            fprintf(stderr, "[DEPTH0] bytecode checkpoints at frame depth 0: %llu of %llu\n",
+                    (unsigned long long)pharo::g_checkpointsAtDepth0,
+                    (unsigned long long)pharo::g_checkpoints);
         {
             // Widow-site tallies (docs/vm-compat-bugs.md #28).  One line, only
             // when something actually widowed, so it costs a branch at exit.

@@ -106,6 +106,8 @@ namespace pharo {
 extern uint64_t g_contextsWidowedOnReturn[5];
 extern uint64_t g_widowOwnerMismatch[2];
 extern uint64_t g_deadContextReuse;
+extern uint64_t g_checkpoints;           // bytecode checkpoints taken (interpret())
+extern uint64_t g_checkpointsAtDepth0;   // ... of which at frame depth 0 (context mode)
 extern uint64_t g_fd0WidowMismatch[4];
 
 // Cascade-hunt ring (2026-07-05, temporary diagnostic): last 32 prim-111
@@ -232,6 +234,7 @@ struct MethodCacheEntry {
     int8_t  evenOddKind;      // 0=even, 1=odd, -1=not trivial-evenOdd
     int8_t  returnsLiteralKind; // 1=nil, 2=true, 3=false, 4=SmI 0,
                               // 5=SmI 1, 6=SmI -1, 7=SmI 2; 0=not literal
+    bool trivialShape;        // any of the five shortcuts above applies (cacheMethod)
     uint32_t megaEpoch;       // jit::g_jitStateEpoch when this entry last filled
                               // the JIT mega cache; 0 = not yet (sendSelector)
 };
@@ -392,7 +395,7 @@ public:
     /// materializations of one frame, so a re-sync at a shallower depth leaves
     /// the deeper run's operands behind and they keep dead objects alive for a
     /// collection.  Clearing them here restores the invariant our scan assumes.
-    void storeContextStackp(Oop context, int stackp);
+    void storeContextStackp(Oop context, int stackp, bool tailKnownNil = false);
 
     /// Raise a Context's stackp so it covers `slots` temps/operands, if it
     /// does not already.  Companion to storeContextStackp for the paths that
@@ -2412,7 +2415,32 @@ private:
     int64_t contextStackp(Oop ctx, Oop** frameBase);
 
     /// Check method cache
-    MethodCacheEntry* probeCache(Oop selector, Oop classOop);
+    /// Two-way set-associative method-cache probe.  Inline: every send.
+    MethodCacheEntry* probeCache(Oop selector, Oop classOop) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_METHOD_CACHE), 0)) {
+            return nullptr;  // bisect knob: force full lookup every send
+        }
+        uint64_t selBits = selector.rawBits();
+        uint64_t clsBits = classOop.rawBits();
+        size_t mask = MethodCacheSize - 1;
+
+        // Primary probe
+        size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
+        MethodCacheEntry& e1 = methodCache_[h1];
+        if (e1.selector == selector && e1.classOop == classOop) {
+            return &e1;
+        }
+
+        // Secondary probe (rotated hash reduces collision aliasing)
+        size_t h2 = static_cast<size_t>((selBits >> 2) ^ (clsBits << 1) ^ clsBits) & mask;
+        MethodCacheEntry& e2 = methodCache_[h2];
+        if (e2.selector == selector && e2.classOop == classOop) {
+            return &e2;
+        }
+
+        return nullptr;
+    }
+
 
     /// Add entry to method cache
     void cacheMethod(Oop selector, Oop classOop, Oop method);

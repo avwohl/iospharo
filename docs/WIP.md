@@ -15,6 +15,70 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 07:00) -- sweeps E/G/H clean; deeptraverser at parity; lexicon -23%
+
+Sweep E (exact `064e1de6` tree, nothing alongside): 27875 P / 12 F / 3 E,
+39 min, no killed batch.  The three non-passes not seen before are all
+intermittent: ZnHTTPSTest (external network), MCSmalltalkhubRepositoryTest
+(passes alone), StSpotterModelTest>>testSpotterModelShouldWaitToPerformActualSearch
+(a 250-550 ms Delay window; fails on the older vm-D binary too when run after
+StSpotterTest, passes alone 4/4).
+
+Uncommitted, measured by instructions retired:
+- `primitiveFullClosureValue` remembers per CompiledBlock (per
+  `g_objectMotionEpoch`) that no shape shortcut fired and skips the matchers:
+  one block call ~820 -> 722 instructions; NoUnusedVariablesLeftTest -3.4%.
+- One `trivialShape` flag on the method-cache entry gates the five
+  trivial-method shortcuts; `probeCache` inline.
+- File primitives: `primitiveFileRead` freads straight into the buffer (was a
+  temporary vector + one `storeByte` per byte, 18% of lexicon's
+  CodeAnalysisRunnerTest); `primitiveFileWrite` gathers with one copy.
+- `storePointer` common path inline (out-of-bounds and diagnostics go to
+  `storePointerSlow`).
+- Young-only `becomeForward:` (opt-out `PHARO_BECOME_FULL_SCAN`, check
+  `PHARO_BECOME_YOUNG_VERIFY`): eden + remembered set + recent old space +
+  perm instead of the whole heap.  Lexicon's becomes are old ByteStrings
+  (`ByteString>>replaceFrom:to:with:startingAt:` -> WideString) so it does
+  not help there; old keys need lazy forwarders (Cog's read barrier).
+- `materializeFrameStack`: synced frames take a short path (sender link
+  only); fresh contexts skip the tail-clearing scan; `setSenderSafe` returns
+  early when the link is unchanged.
+- Scavenge forwarding table: flat open-addressing table reused across
+  scavenges instead of `std::unordered_map`.
+
+Lexicon CodeAnalysisRunnerTest>>testLatexTableForPackagesTest: 2736 -> 2097
+billion instructions, 124.6 -> ~100 s (Cog 11 s).  Its profile is now the
+interpreter itself (send/return/activate ~55%), scavenge ~9%, become of old
+keys ~4%, frame materialization ~6%.
+
+Sweep F was spoiled: I ran targeted class runs beside it and they share
+`/tmp/sunit_*` with the sweep (memory note sunit-runner-shares-tmp-state).  The
+scratch wrappers now refuse to run while a sweep is in flight.
+
+Also in this commit: `+ - < > <= >= = ~=` each get their own dispatch label
+(one indirect jump instead of two); the inline `noteMethodEntry` gate probes
+the count map's full 8 slots (it stopped at 4, so a method whose entry sat at
+probe 5-8 took the ~150-instruction slow path on every call -- 12% of a
+block-calling loop); a `[DEPTH0]` exit line counts bytecode checkpoints taken
+in context mode.
+
+Validation: sweep G (through young become) 27876 P / 13 F / 1 E; sweep H
+(through the arithmetic labels, with `PHARO_BECOME_YOUNG_VERIFY`) 27875 P /
+12 F / 2 E, zero young-become misses.  Its two new non-passes
+(SpDropListPresenterTest>>testExample, ZnClientTest>>testTimeout) pass alone
+3/3 on both binaries.  VM battery passes on the final tree.
+
+Package A/B on the sweep-H binary: deeptraverser now at PARITY (53/53, its
+50 s test passes).  lexicon: 1 TIMEOUT left (~100 s vs Cog 11 s).
+myprecious: 3 errors left, `MpRemoteMessageResultTimeout` -- a round trip is
+~11 ms of CPU (Cog 2.4 ms) and nested proxy equality needs several inside one
+short reception timeout; the round trip's time is Fuel's
+`isBehaviorAnonymous:` scanning all of `Smalltalk globals` with a block per
+element.  The JIT is net neutral on these workloads (printString 91.3 vs
+93.2 billion with/without; deeptraverser 1147 vs 1138; myprecious 49.1 vs
+49.4) and a T1-compiled loop calling a block is ~50% slower per call than
+the interpreter (1002 vs 698 instructions).
+
 ## Right now (2026-10-13, 04:40) -- trusted remembered set ON; cormas at parity
 
 **`c0f09c26` pushed (sweep C: 27876 P / 12 F / 1 E, 45 min).  The next

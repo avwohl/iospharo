@@ -4310,6 +4310,11 @@ PrimitiveResult Interpreter::primitiveWSNextPut(int argCount) {
 
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
+// primitiveFullClosureValue: blocks for which no shape shortcut fired.
+extern uint64_t g_objectMotionEpoch;
+namespace { struct BlockShapeMemo { uint64_t block; uint64_t epoch; };
+BlockShapeMemo g_blockShapeMemo[4096]; }
+
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_PRIM207)) {
         static uint64_t n = 0;
@@ -4379,6 +4384,17 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     // For full-block closures, frame temps of a 0-arg block map to copied
     // values: temp M == closure->slot (4 + M).  We read/write the captured
     // tempVec directly.
+    // The shape shortcuts below are pure optimizations: a real activation
+    // computes the same result.  So remember, per CompiledBlock and for one
+    // g_objectMotionEpoch, that none of them fired for it, and go straight
+    // to activateBlock next time -- the matchers re-read the block's header
+    // and bytecodes on every call (~10% of a whole-image AST scan).
+    Oop shapeKeyBlock = memory_.fetchPointerUnchecked(1, closure);
+    BlockShapeMemo& shapeMemo =
+        g_blockShapeMemo[(shapeKeyBlock.rawBits() >> 3) & 4095];
+    const bool tryShapes = !(shapeMemo.block == shapeKeyBlock.rawBits()
+                             && shapeMemo.epoch == g_objectMotionEpoch);
+    if (tryShapes) {
     if (argCount == 0) {
         Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
         if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
@@ -4968,6 +4984,10 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                 }
             }
         }
+    }
+
+    // No shortcut fired: remember that for this block.
+    shapeMemo = {shapeKeyBlock.rawBits(), g_objectMotionEpoch};
     }
 
     activateBlock(closure, argCount);
@@ -14306,14 +14326,12 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Read into a temporary buffer
-    std::vector<uint8_t> tempBuffer(byteCount);
-    size_t bytesRead = fread(tempBuffer.data(), 1, byteCount, file);
-
-    // Copy to the Smalltalk buffer
-    for (size_t i = 0; i < bytesRead; i++) {
-        memory_.storeByte(byteStart + i, bufferOop, tempBuffer[i]);
-    }
+    // Read straight into the buffer's bytes: the range is checked above and
+    // fread cannot run a GC.  The old path zero-filled a temporary vector and
+    // stored byte by byte through storeByte, which recomputes byteSize() per
+    // byte -- 18% of a source-reading workload (lexicon's
+    // CodeAnalysisRunnerTest).
+    size_t bytesRead = fread(bufHdr->bytes() + byteStart, 1, byteCount, file);
 
     popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(bytesRead / elemSize)));
@@ -14469,10 +14487,9 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     }
 
     // Copy from Smalltalk buffer to temp buffer
-    std::vector<uint8_t> tempBuffer(byteCount);
-    for (size_t i = 0; i < byteCount; i++) {
-        tempBuffer[i] = memory_.fetchByte(byteStart + i, bufferOop);
-    }
+    // One copy, not a fetchByte (and its byteSize()) per byte.
+    std::vector<uint8_t> tempBuffer(bufHdr->bytes() + byteStart,
+                                    bufHdr->bytes() + byteStart + byteCount);
 
     // For stdout/stderr, buffer line output with [IMAGE] prefix
     if (fileId == 1 || fileId == 2) {

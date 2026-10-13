@@ -478,8 +478,27 @@ public:
         return header->slotAt(index);
     }
 
-    /// Store a pointer field in an object (0-based index)
-    void storePointer(size_t index, Oop obj, Oop value);
+    /// Store a pointer field in an object (0-based index).  Inline common
+    /// case (in bounds, no diagnostics armed); everything else, including
+    /// the loud out-of-bounds drop, goes to storePointerSlow.
+    void storePointer(size_t index, Oop obj, Oop value) {
+        if (__builtin_expect(!obj.isObject()
+                || GET_DEBUG_BOOL(PHARO_SENDER_TRIPWIRE)
+                || GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0
+                || GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+            storePointerSlow(index, obj, value);
+            return;
+        }
+        ObjectHeader* header = obj.asObjectPtr();
+        if (__builtin_expect(index >= header->slotCount(), 0)) {
+            storePointerSlow(index, obj, value);
+            return;
+        }
+        if (isOld(obj) && value.isObject() && isYoung(value))
+            rememberObject(obj);
+        header->slotAtPut(index, value);
+    }
+    void storePointerSlow(size_t index, Oop obj, Oop value);
 
     /// Fast store — caller guarantees obj is a valid heap object.
     /// Skips isObject check. Still does bounds + remembered set.
