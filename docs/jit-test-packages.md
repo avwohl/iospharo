@@ -60,6 +60,20 @@ It prints both VMs' RESULT lines and the JIT-only / Cog-only failure sets.
 Always use the `-O2` `build-rel/test_load_image` for fair timing (the default
 `build/` is -O0, ~9x slower).
 
+Native libraries must match what Cog finds, or the two VMs run different
+code.  On macOS, the bundle of Cog includes `libcrypto.1.1.dylib` (OpenSSL
+1.1) in `Pharo.app/Contents/MacOS/Plugins`.  Copy the arm64 copy of that file
+into the directory of `test_load_image`, because our VM searches that
+directory first.  If you do not, the crypto tests of google-cloud give errors
+and on Cog they pass (vm-compat-bugs.md #32).  Also copy every `*.dylib` from
+the build directory with the binary.
+
+When an absolute library path is missing, our loader tries the basename of
+that path again.  Cog does not do this.  Thus pharo-cig finds the libclang of
+the Command Line Tools on our VM, and on Cog it reports SymbolNotFoundError
+(`/Applications/Xcode.app` is not on this host).  Its results are different
+for this reason, not because of a VM defect.
+
 ## CORRECTNESS RESULTS (custom JIT vs stock Cog, same saved image)
 
 ```

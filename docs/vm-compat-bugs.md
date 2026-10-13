@@ -2197,6 +2197,13 @@ classes.
 
 ### 23. The Context storm — Cog runs the block clean, we exhaust the heap — HIGH, arm64-only, non-deterministic
 
+**2026-10-13: not seen in eleven full arm64 sweeps (C through O)** -- batch
+1901-1950 completed every time, and `TraitTest` is 54 P / 0 F (its
+`testTraitsUsersSanity` invariant holds).  Standalone runs of that batch give
+one env-watchdog TIMEOUT in a trait test on old and new binaries alike.  Not
+closed: the storm was non-deterministic, and #30's stale duplicate Context
+(gone since the same day) is a candidate for its cause, unproven.
+
 Reproduces in **18 s** at `PHARO_MAX_OLD_SPACE_MB=1024`.  It is NOT the trait
 tests — the accumulation is already running in the Tonel block, and the 27
 trait classes are clean in isolation on our VM.  The bisect below is
