@@ -3974,6 +3974,15 @@ and 7 P / 0 E again after fix 2.  Full-suite validation: see `docs/WIP.md`.
 
 ### 30. A block can be re-homed onto the WRONG activation, and the rule that does it masks a stale duplicate Context — 2026-10-11, OPEN
 
+**2026-10-13: wrong answer FIXED, duplicate-Context root still OPEN.**  The rule
+now skips a closure whose old outerContext is still on the live sender chain
+-- a recursive activation, never a stale duplicate (the chain holds the fresh
+copy of a duplicated activation).  The `m:with:` repro answers `#(1 1 1 1 1)`
+in interpreter, default JIT and compile-all; SUnit batch 1151-1200 (which broke
+with the rule fully off) is clean 2/2 and the full sweep shows nothing new.
+The rule still repairs genuine stale duplicates, so finding where those are
+made is still the real fix.
+
 **The wrong answer.**  At the end of materializeFrameStack's current-frame
 branch, a block frame's closure gets its `outerContext` re-pointed at the
 frame's sender whenever the two contexts share a METHOD.  A recursive
@@ -4029,6 +4038,35 @@ the audit's other surviving candidates are the place to start
 re-derivation from the anchor in materializeFrameStack ~20494; the inline-
 activation fallback's no-else branch at the frame-depth limit ~32475).  Then
 remove the rule and re-run batch 1151-1200 plus the `m:with:` repro.
+
+### 32. A versioned FFI module that is missing borrowed symbols from another version — SIGSEGV — FIXED 2026-10-13
+
+`newapplesho-google-cloud-smalltalk` (parity in the 2026-08-11 Linux
+catalog) died with SIGSEGV on macOS arm64 in
+`GoogleAuthClientTest>>testGetCredentialsForServiceAccount`:
+
+    PC in C symbol: EVP_DigestSignFinal + 56 (fname=/usr/lib/libcrypto.46.dylib)
+    Fault addr=0x0
+
+The image binds its crypto calls to `libcrypto.1.1.dylib` (OpenSSL 1.1).
+Cog's macOS bundle ships that file in `Pharo.app/Contents/MacOS/Plugins`; this
+Mac has none (Homebrew has 3.x only).  Our `primitiveLoadSymbolFromModule`
+then fell back to `RTLD_DEFAULT`, and `lookupFunction` resolved `EVP_*` in the
+whole process -- where a system framework had loaded LibreSSL
+(`libcrypto.46`).  Same names, different `EVP_MD_CTX` layout: the
+`EVP_DigestSignInit` result was garbage to OpenSSL-1.1 code and
+`EVP_DigestSignFinal` dereferenced NULL.
+
+**Fix:** a module name that pins a version (`libfoo.1.2.dylib`,
+`libfoo.so.1`, `ffi::isVersionedLibraryName`) and could not be opened is
+resolved only from that module's own search paths and the missing-library
+stubs (`ffi::lookupSymbolInModuleOnly`); otherwise the lookup fails, as Cog's
+does.  Unversioned and bare names keep the lenient process-wide fallback.
+Now the test ERRORs (library missing) instead of crashing the VM, and with
+Cog's arm64 `libcrypto.1.1.dylib` copied beside `test_load_image` (the
+executable's directory is first on our search path) all six
+Google-Auth-Tests pass, as on Cog.  Package parity therefore needs that file
+staged next to the VM, like Cog ships it.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
@@ -4088,7 +4126,7 @@ LEAD 21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
 LEAD 22. SoundPlugin waveOut backend implemented, never runtime-verified.
 LEAD 23. Inline NLR path still uses native ensure-hopping instead of
     `aboutToReturn:through:`; the context path uses the stock protocol.
-LEAD 24. **`PHARO_NO_ASMJIT_T1=1` SEGFAULTS**, so the coarsest JIT bisect arm
+LEAD 24. ~~**`PHARO_NO_ASMJIT_T1=1` SEGFAULTS**~~ (now means "no JIT", 2026-10-13), so the coarsest JIT bisect arm
     is unusable.  Deterministic, 2 of 2, on a workload with nothing exotic in
     it — `./build-rel/test_load_image <image> eval "(1 to: 200000) inject: 0
     into: [:a :b | a + b]"` returns `rc=139` with
@@ -4106,6 +4144,11 @@ LEAD 24. **`PHARO_NO_ASMJIT_T1=1` SEGFAULTS**, so the coarsest JIT bisect arm
     the JIT with `PHARO_NO_JIT` (works) or the finer per-emit knobs, and do
     not read a missing results file under this knob as a property of the
     workload.
+    **2026-10-13:** the same command no longer segfaults but loops forever in
+    `primitiveFindHandlerContext` (an exception storm).  The knob now turns
+    the JIT off with a `[JIT] PHARO_NO_ASMJIT_T1: ...` line instead of
+    switching to the legacy stencil T1 compiler (`initializeJIT`), so the
+    bisect arm works again: the command answers 20000100000.
 
 ## Corrections to earlier verdicts in this repo
 
@@ -5075,5 +5118,6 @@ OPEN, all latent or harmless:
 - 75 `basicIdentityHash` succeeds for immediates; Cog fails.
 - 70 `basicNew` on a variable class succeeds with size 0 (Cog fails into
   `basicNew: 0` -- same result).
-- 132 `instVarsInclude:` on a Context scans slots above its stack pointer.
+- ~~132 `instVarsInclude:` on a Context scans slots above its stack pointer.~~
+  FIXED 2026-10-13: it uses the GC's `pointerSlotsOf` (Cog's `lastPointerOf:`).
 - 213 `primitiveContextXray` always answers 0.

@@ -10474,11 +10474,12 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
             slotsToCheck = 0;
         }
     } else {
-        // Regular pointer object - check all slots
-        slotsToCheck = header->slotCount();
+        // Cog's lastPointerOf: -- a Context only up to its stack pointer:
+        // residue above it is dead and must not answer true.  Other pointer
+        // objects: every slot (pointerSlotsOf answers slotCount for them).
+        slotsToCheck = memory_.livePointerSlotsOf(rcvr);
     }
 
-    // Check each pointer slot
     bool found = false;
     for (size_t i = 0; i < slotsToCheck; i++) {
         Oop slot = memory_.fetchPointer(i, rcvr);
@@ -29014,6 +29015,7 @@ static void* const kBuiltinModuleHandle = reinterpret_cast<void*>(1);
 // Stack: receiver, symbolString, moduleStringOrNil
 // Returns: ExternalAddress containing the symbol address, or fails
 PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
+    bool namedModuleMissing = false;   // a named module no dlopen variant found
     if (argCount != 2) {
         return PrimitiveResult::Failure;
     }
@@ -29130,6 +29132,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                         // Fall back to RTLD_DEFAULT — lookupFunction will
                         // try search paths and stubs as a last resort.
                         moduleHandle = RTLD_DEFAULT;
+                        namedModuleMissing = true;
                     }
                 }
             }
@@ -29163,6 +29166,19 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     // dlopen-able, yet every FT_* resolved to the error stub).
     if (!symbolAddr) {
         symbolAddr = ffi::lookupRegisteredFunction(symbolName);
+    }
+
+    // A versioned module name pins an ABI.  When no file of that name could
+    // be opened, the process-wide namespace may still hold the same symbols
+    // from another version of the library, and calling those crashes:
+    // google-cloud asks for libcrypto.1.1.dylib, and the system's LibreSSL
+    // (libcrypto.46, loaded by a framework) answered EVP_DigestSignFinal with
+    // a different EVP_MD_CTX layout -> SIGSEGV.  Cog's loader fails the
+    // lookup instead, and so does this: own search paths and the missing-
+    // library stubs only.
+    if (!symbolAddr && namedModuleMissing && ffi::isVersionedLibraryName(moduleName)) {
+        symbolAddr = ffi::lookupSymbolInModuleOnly(moduleName, symbolName);
+        if (!symbolAddr) return PrimitiveResult::Failure;
     }
 
     if (!symbolAddr && moduleHandle && moduleHandle != RTLD_DEFAULT) {

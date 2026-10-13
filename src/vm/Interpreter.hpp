@@ -2391,6 +2391,9 @@ private:
     void sendLiteralOneArg(int literalIndex);
     void sendLiteralTwoArgs(int literalIndex);
     void sendSelector(Oop selector, int argCount);
+#if PHARO_JIT_ENABLED
+    [[gnu::noinline]] void refillMegaCache(MethodCacheEntry* cached, Oop rcvr, Oop selector);
+#endif
     void sendSelectorMiss(Oop selector, int argCount, Oop rcvr, Oop rcvrClass);
 
     // Special operations

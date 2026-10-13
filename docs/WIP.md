@@ -15,6 +15,41 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 11:00) -- #30 wrong home fixed in the repro; #32 FFI crash fixed
+
+`8ed7f35a` pushed (sweep M 27880 P / 9 F / 1 E).  The next commit (sweep N:
+27879 P / 10 F / 2 E, its new LinkInstallerTest error a missing-fixture
+KeyNotFound that passes alone 5/5 on both binaries; SUnit batches 1151-1200
+and 1901-1950 as on the old binary):
+- **#30**: the closure re-home rule in materializeFrameStack now skips a
+  closure whose old outerContext is still on the live sender chain (a
+  recursive activation, not a stale duplicate).  The `m:with:` repro answers
+  `#(1 1 1 1 1)` like Cog in interpreter, default JIT and compile-all (was
+  `#(0 0 0 0 0)` in all three).  The rule's documented load-bearing case
+  (SUnit batch 1151-1200 broke with the rule off) passes: 2/2 clean.
+- **#32** (vm-compat-bugs.md): a versioned FFI module name that cannot be
+  opened no longer borrows same-named symbols from the process-wide
+  namespace; google-cloud's SIGSEGV in LibreSSL is gone, and with Cog's
+  arm64 `libcrypto.1.1.dylib` beside the binary its auth tests pass.
+  `build-rel/` now has that file staged (untracked build dir).
+- `sendSelector`'s megamorphic-cache refill moved out of line.
+
+Package regression batches against Cog on this Mac (packages at parity in
+the August Linux catalog): batch 1 (26, `8ed7f35a` binary) all identical
+except google-cloud (#32; identical once OpenSSL 1.1 is beside the VM).
+Batch 2 (27, this tree): identical except
+- methodproxies `MpMethodProxyTest>>testCanWrapValueWithException`: the
+  attributed Cog interpreter-vs-JIT special-`#value` split (memory note
+  cog-interpreter-and-jit-differ; OCSpecialSelectorTest pins the other side);
+- pharo-cig: Cog looks for libclang in `/Applications/Xcode.app` (absent on
+  this CLT-only host) and fails cleanly; our basename retry finds the CLT
+  libclang, the tests run deeper, an image DNU (`CXFile class
+  #newValueHolder`) raises inside a TFFI callback, which runs in its own
+  process, so it is unhandled and headless Pharo quits -- environment, not
+  a VM defect.
+- `PHARO_NO_ASMJIT_T1` now means "no JIT" (LEAD 24: the legacy stencil T1
+  looped forever); prim 132 on a Context stops at its stack pointer (#31).
+
 ## Right now (2026-10-13, 09:30) -- famix, polymath, soil at parity; parallel become
 
 `329924b6` pushed.  Package A/B since then (Cog vs ours, same image):

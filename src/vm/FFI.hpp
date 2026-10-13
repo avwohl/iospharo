@@ -68,6 +68,14 @@ const std::string& getAppFrameworksPath();
 // Check if a module/function is available
 bool isModuleLoaded(const std::string& moduleName);
 void* lookupFunction(const std::string& moduleName, const std::string& funcName);
+/// Error-returning stand-ins for libraries absent on this platform (FT_,
+/// git_, and on real iOS cairo_); nullptr when there is none.
+void* missingLibraryStub(const std::string& funcName);
+/// True for a module name that pins a version (libfoo.1.2.dylib, libfoo.so.1).
+bool isVersionedLibraryName(const std::string& moduleName);
+/// The symbol from that module's own search paths, else a stub, else nullptr
+/// -- never from the process-wide namespace.
+void* lookupSymbolInModuleOnly(const std::string& moduleName, const std::string& funcName);
 
 // Register a stub function (for iOS SDL2 replacement)
 void registerFunction(const std::string& funcName, void* funcPtr);

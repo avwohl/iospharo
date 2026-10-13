@@ -3857,6 +3857,9 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
 // arena, which carves objects out of already-reserved space.
 void ObjectMemory::ensureScanCuts() {
     constexpr size_t kScanCutBytes = 1u << 20;
+    // Old space shrank (a sweep or compaction that did not come through
+    // fullGC): the table may point past its end.  Rebuild.
+    if (scanCutsEnd_ && scanCutsEnd_ > oldSpaceFree_) scanCutsEnd_ = nullptr;
     if (!scanCutsEnd_) {
         scanCuts_.assign(1, oldSpaceStart_);
         scanCutsEnd_ = oldSpaceStart_;

@@ -473,6 +473,11 @@ public:
     /// Fetch a pointer field from an object (0-based index)
     Oop fetchPointer(size_t index, Oop obj) const;
 
+    /// How many leading slots of obj hold live pointers: a Context up to its
+    /// stack pointer, a CompiledMethod its header and literals (Cog's
+    /// lastPointerOf:).  The same answer the GC traces with.
+    size_t livePointerSlotsOf(Oop obj) const { return pointerSlotsOf(obj.asObjectPtr()); }
+
     /// Fast fetch — caller guarantees obj is a valid heap object.
     /// Skips isObject/isValidPointer checks. Still bounds-checks.
     inline Oop fetchPointerUnchecked(size_t index, Oop obj) const {

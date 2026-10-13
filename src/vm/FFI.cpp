@@ -11,6 +11,7 @@
  * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
+#include <cctype>
 #include "FFI.hpp"
 #include "../platform/EventQueue.hpp"
 #include "../platform/DisplaySurface.hpp"
@@ -572,8 +573,13 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         }
     }
 
-    // Fallback stubs for when real libraries are not available (e.g., iOS).
-    // These return error codes so the image handles failure gracefully.
+    return missingLibraryStub(funcName);
+}
+
+// Fallback stubs for when real libraries are not available (e.g., iOS).
+// These return error codes so the image handles failure gracefully.
+void* missingLibraryStub(const std::string& funcName) {
+    void* func = nullptr;
     if (funcName.compare(0, 3, "FT_") == 0) {
         static auto genericFTError = +[]() -> intptr_t { return 1; };
         func = reinterpret_cast<void*>(genericFTError);
@@ -616,6 +622,37 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
 #endif
 
     return nullptr;
+}
+
+// Does the module name pin a library version -- libcrypto.1.1.dylib,
+// libcairo.2.dylib, libcrypto.so.1.1?  Such a name asks for one ABI.
+bool isVersionedLibraryName(const std::string& moduleName) {
+    size_t slash = moduleName.find_last_of('/');
+    std::string base = (slash == std::string::npos) ? moduleName : moduleName.substr(slash + 1);
+    auto versionText = [](const std::string& v) {
+        if (v.empty() || !std::isdigit(static_cast<unsigned char>(v[0]))) return false;
+        for (char c : v)
+            if (!std::isdigit(static_cast<unsigned char>(c)) && c != '.') return false;
+        return true;
+    };
+    const std::string dylib = ".dylib";
+    if (base.size() > dylib.size()
+            && base.compare(base.size() - dylib.size(), dylib.size(), dylib) == 0) {
+        std::string stem = base.substr(0, base.size() - dylib.size());
+        size_t dot = stem.find('.');
+        return dot != std::string::npos && versionText(stem.substr(dot + 1));
+    }
+    size_t so = base.find(".so.");
+    return so != std::string::npos && versionText(base.substr(so + 4));
+}
+
+// A symbol from the named module or nothing: its own search paths, then the
+// missing-library stubs.  Never the process-wide namespace, which may hold a
+// DIFFERENT version of the same library (a LibreSSL libcrypto loaded by a
+// system framework answering for libcrypto.1.1.dylib, 2026-10-13).
+void* lookupSymbolInModuleOnly(const std::string& moduleName, const std::string& funcName) {
+    if (void* f = tryLoadFromSearchPaths(moduleName, funcName)) return f;
+    return missingLibraryStub(funcName);
 }
 
 // Names explicitly registered via registerFunction — distinguishable from

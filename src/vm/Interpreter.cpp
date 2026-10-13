@@ -11413,6 +11413,32 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
     sendSelector(literal(literalIndex), 2);
 }
 
+#if PHARO_JIT_ENABLED
+// sendSelector's megamorphic-cache refill, out of line so the send path
+// keeps a small register footprint: runs only when jit::g_jitStateEpoch
+// moved since this cache entry last filled.
+void Interpreter::refillMegaCache(MethodCacheEntry* cached, Oop rcvr, Oop selector) {
+    const uint32_t epochAtFill = jit::g_jitStateEpoch;
+    uint64_t tag = rcvr.rawBits() & 0x7;
+    uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
+        ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
+        : (tag != 0 ? (tag | 0x80000000ULL) : 0);
+    if (megaKey == 0) return;
+    uint64_t jitAddr = 0;
+    auto* jm = jitRuntime_.methodMap().lookup(cached->method.rawBits());
+    if (jm) {
+        // Only store jitEntry for methods safe for J2J
+        // (same check as pharo_jit_convert_send)
+        bool hasPrim = (jm->methodHeader >> 16) & 1;
+        if (!hasPrim || jm->hasPrimPrologue)
+            jitAddr = reinterpret_cast<uint64_t>(jm->codeStart());
+    }
+    if (jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey,
+                            cached->method.rawBits(), jitAddr))
+        cached->megaEpoch = epochAtFill;
+}
+#endif
+
 void Interpreter::sendSelector(Oop selector, int argCount) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
         checkIpCoherence("sendSelector");
@@ -12245,27 +12271,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // the JIT state changed since this entry last did it (see
         // jit::g_jitStateEpoch); the refill is a method-map probe and a
         // write into a 2 MB table, ~7% of a send-bound run.
-        if (__builtin_expect(cached->megaEpoch != jit::g_jitStateEpoch, 0)) {
-            const uint32_t epochAtFill = jit::g_jitStateEpoch;
-            uint64_t tag = rcvr.rawBits() & 0x7;
-            uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
-                ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
-                : (tag != 0 ? (tag | 0x80000000ULL) : 0);
-            if (megaKey != 0) {
-                uint64_t jitAddr = 0;
-                auto* jm = jitRuntime_.methodMap().lookup(cached->method.rawBits());
-                if (jm) {
-                    // Only store jitEntry for methods safe for J2J
-                    // (same check as pharo_jit_convert_send)
-                    bool hasPrim = (jm->methodHeader >> 16) & 1;
-                    if (!hasPrim || jm->hasPrimPrologue)
-                        jitAddr = reinterpret_cast<uint64_t>(jm->codeStart());
-                }
-                if (jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey,
-                                        cached->method.rawBits(), jitAddr))
-                    cached->megaEpoch = epochAtFill;
-            }
-        }
+        if (__builtin_expect(cached->megaEpoch != jit::g_jitStateEpoch, 0))
+            refillMegaCache(cached, rcvr, selector);   // out of line: rare
 #endif
 
         // PHARO_SORTSTR_WATCH: capture cache state right before the
@@ -21693,7 +21700,27 @@ Oop Interpreter::materializeFrameStack() {
                         sender.isObject() && sender.rawBits() > 0x10000) {
                         Oop oldMethod = memory_.fetchPointer(3, oldOuterCtx);
                         Oop senderMethod = memory_.fetchPointer(3, sender);
-                        if (oldMethod.rawBits() == senderMethod.rawBits()) {
+                        // Same method is not enough: under recursion the old
+                        // outerContext is ANOTHER live activation of that
+                        // method, and it is still on the sender chain (the
+                        // #30 wrong answer: thisContext home answered the
+                        // recursive call's arguments).  A stale duplicate --
+                        // what this rule exists to repair -- is not on the
+                        // chain, because the chain holds the fresh copy.
+                        bool oldOuterIsLive = false;
+                        if (oldMethod.rawBits() == senderMethod.rawBits()
+                                && oldOuterCtx.rawBits() != sender.rawBits()) {
+                            Oop walk = sender;
+                            for (int w = 0; w < 4096 && walk.isObject() && !walk.isNil()
+                                    && walk.rawBits() > 0x10000; ++w) {
+                                if (walk.rawBits() == oldOuterCtx.rawBits()) {
+                                    oldOuterIsLive = true;
+                                    break;
+                                }
+                                walk = memory_.fetchPointer(0, walk);
+                            }
+                        }
+                        if (oldMethod.rawBits() == senderMethod.rawBits() && !oldOuterIsLive) {
                             // PHARO_ACTIVATION_CHECK: classify the re-home.
                             // Same receiver + same arguments = one activation
                             // under TWO Context objects (the #30 duplicate);
@@ -25052,6 +25079,16 @@ void Interpreter::initializeJIT() {
     // explicit here.
     if (g_debug.noJitStrict) {
         fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
+        return;
+    }
+    // PHARO_NO_ASMJIT_T1 used to swap in the legacy stencil T1 compiler.
+    // Nothing exercises that path any more and it has rotted: a plain
+    // `inject:into:` segfaulted (2026-09-03) and later looped forever in
+    // primitiveFindHandlerContext (2026-10-13; vm-compat-bugs.md LEAD 24).
+    // As a bisect arm it now means "no T1": run without the JIT.
+    if (!g_debug.useAsmjitT1) {
+        fprintf(stderr, "[JIT] PHARO_NO_ASMJIT_T1: the legacy stencil T1 is "
+                        "unmaintained; running without the JIT\n");
         return;
     }
 
