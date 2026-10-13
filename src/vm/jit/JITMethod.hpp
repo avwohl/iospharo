@@ -227,7 +227,8 @@ inline uint32_t g_mcCodeEpoch = 1;
 
 // Machine-code frames, phase 2: direct-mapped cache "CompiledMethod oop ->
 // JITMethod" that T1 code probes at an inline-cache hit to call a compiled
-// callee without leaving machine code.  Filled only by mcfActivate, only for
+// callee without leaving machine code, or to run a primitive that only
+// touches the stack (prim != 0).  Filled only by mcfActivate, only for
 // old-space methods T1 can call natively.  Cleared whenever code may change
 // (mcfCodeChanged) and whenever objects move (rebuildMethodMap), so T1 code
 // can trust every hit without an epoch check.
@@ -235,7 +236,7 @@ struct McfCallEntry {
     uint64_t methodBits;   // key (0 = empty)
     struct JITMethod* jm;
     uint64_t bcEndOff;     // bytecodeEnd - method, for SavedFrame.savedBytecodeEnd
-    uint64_t spare;
+    uint64_t prim;         // != 0: call this primitive (pharo_mcf_prim); jm is null
 };
 static_assert(sizeof(McfCallEntry) == 32, "T1 indexes McfCallEntry with lsl #5");
 constexpr size_t kMcfCallCacheSize = 4096;   // T1 masks with kMcfCallCacheSize - 1

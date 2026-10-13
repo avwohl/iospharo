@@ -174,6 +174,37 @@ version without this check failed at startup.
 | printString (instructions) | 84.8 billion | 81.9 billion |
 | deeptraverser (instructions) | 1004 billion | 1173 billion |
 
-The VM fix battery passes with `PHARO_MCF=1`.  Next: primitive methods
-(direct primitive calls from machine code), blocks, and the reason for
-the deeptraverser loss.
+The VM fix battery passes with `PHARO_MCF=1`.
+
+**Phase 2b (2026-10-13): primitives and receiver-independent
+specializations.**  A census by selector showed where the remaining exits
+went.  Three changes:
+
+1. Every send site in this mode takes the inline-cache-hit path without
+   inline J2J.  That path lacked the `^ literal`, `^ argument` and
+   `^ self` specializations, so a quick primitive on an immediate receiver
+   (`SmallInteger>>asInteger`) left machine code every time.  The path
+   now dispatches them before its heap-receiver check.
+2. A compiled method whose primitive T1 implements as a prologue (the
+   arithmetic, comparison and bit primitives, `at:`, `at:put:`, `size`,
+   `==`, SmallFloat arithmetic) can be called directly: the prologue is the
+   primitive, and its failure edge runs the method body.  A method that
+   stores a primitive error code is refused.
+3. A send to a primitive that only touches the stack (a whitelist in
+   `mcfPrimCallable`) runs the primitive through the helper
+   `pharo_mcf_prim` and continues in machine code.  On failure the send
+   exits and the interpreter runs it.  If the primitive pushed a frame or
+   switched process, machine code exits with `ExitDeopt` and the
+   interpreter's state is used as it is.
+
+| Benchmark | Interpreter | `PHARO_MCF=1` |
+|---|---|---|
+| `30 zzFib` | 62 ms | 31 ms |
+| 3M sends of `zzB:` | 97 ms | 15 ms |
+| 300K `inject:into:` | 132 ms | 142 ms |
+| printString (instructions) | 84.8 billion | 70.7 billion |
+| deeptraverser (instructions) | 1004 billion | 941 billion |
+
+The battery passes.  On deeptraverser, 39% of the remaining exits are
+inline-cache misses: sites with more than three receiver classes, which
+the T1 probe does not cover.  Blocks still run in the interpreter.

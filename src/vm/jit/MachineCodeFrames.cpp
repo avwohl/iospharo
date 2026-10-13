@@ -17,12 +17,21 @@
 #include "JITMethod.hpp"
 #include "SistaV1.hpp"
 #include "TrampolineAsm.hpp"
+#include <unordered_map>
+#include <string>
+#include <vector>
+#include <algorithm>
 
 namespace pharo {
 
 extern uint64_t g_stepNum;
 
 #if PHARO_JIT_ENABLED && (defined(__aarch64__) || defined(__arm64__))
+
+extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
+    return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
+                                        (int)(primAndArgs >> 16));
+}
 
 // Length of the send at ip, extension prefixes included.  ip is where T1's
 // send exit points (the first byte the interpreter executes for the send).
@@ -54,6 +63,98 @@ static inline bool mcfReceiverOk(jit::JITMethod* jm, Oop receiver) {
     return jm->maxRecvFieldIndex < r->slotCount();
 }
 
+// May T1 code call this primitive method natively?  Only when its T1 code
+// starts with a prologue that IS the primitive (emitPrimProlog_arm64):
+// success returns, failure falls into the method body, which is then the
+// primitive's failure code.  For any other primitive the prologue is empty
+// and a native call would skip the primitive.  A method that stores the
+// primitive's error code (<primitive: N error: ec>) is refused: activateMethod
+// stores the error object, a native call could not.
+bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
+    switch (primitiveIndexOf(method)) {
+    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
+    case 14: case 15: case 16:
+    case 60: case 61: case 62:
+    case 110:
+    case 541: case 542: case 549:
+        break;
+    default:
+        return false;
+    }
+    ObjectHeader* mo = method.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return false;
+    const uint8_t* bc = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    const uint8_t op = bc[3];   // first bytecode after CallPrimitive
+    return !(op == jit::SistaV1::ExtStoreTemp || op == jit::SistaV1::ExtPopStoreTemp
+             || (op >= jit::SistaV1::PopStoreTempBase && op <= jit::SistaV1::PopStoreTempLast));
+}
+
+// Primitives T1 code may run through pharo_mcf_prim without leaving
+// machine code: they read their arguments from the stack, answer on the
+// stack, and run no Smalltalk code.  Any that allocate may GC, which is
+// safe (the JITState is a root); a process switch or a pushed frame is
+// detected after the call and handed to the interpreter.
+static bool mcfPrimCallable(int p) {
+    if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
+    if (p >= 40 && p <= 59) return true;         // Float
+    switch (p) {
+    case 60: case 61: case 62: case 63: case 64: // at: at:put: size, string at:
+    case 68: case 69:                            // objectAt: objectAt:put:
+    case 70: case 71:                            // basicNew basicNew:
+    case 73: case 74:                            // instVarAt: instVarAt:put:
+    case 75:                                     // identityHash
+    case 105:                                    // replaceFrom:to:with:startingAt:
+    case 110: case 111:                          // == class
+    case 148:                                    // shallowCopy
+    case 169: case 170: case 171:                // ~~ and immediate conversions
+    case 175:                                    // behavior hash
+        return true;
+    default:
+        return p >= 541 && p <= 559;             // SmallFloat
+    }
+}
+
+// Called from T1 code (pharo_mcf_prim) at an inline-cache hit whose method
+// is a callable primitive.  Answers 1 = success (result on the stack, sp in
+// the state), 0 = failure (stack unchanged; the send exits to the
+// interpreter, which retries the primitive and runs the method), 2 = the
+// primitive pushed a frame or switched process: the interpreter's state is
+// now the truth and machine code must exit without touching it.
+int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
+    stackPointer_ = st->sp;
+    if (st->method.rawBits() != method_.rawBits()
+            || st->tempBase - 1 != framePointer_) {
+        method_ = st->method;
+        homeMethod_ = st->method;
+        receiver_ = st->receiver;
+        framePointer_ = st->tempBase - 1;
+        argCount_ = st->argCount;
+        bytecodeEnd_ = reinterpret_cast<uint8_t*>(st->method.rawBits()) + st->mcfBcEndOff;
+    }
+    instructionPointer_ = st->ip;   // bcStart: inside the method, for GC
+    Oop* spBefore = stackPointer_;
+    const size_t depth = frameDepth_;
+    const uint64_t switches = processSwitchCount_;
+    argCount_ = nArgs;
+    primitiveFailed_ = false;
+    primFailCode_ = 0;
+    newMethod_ = st->cachedTarget;
+    PrimitiveResult r = executePrimitive(primIndex, nArgs);
+    if (frameDepth_ != depth || processSwitchCount_ != switches) {
+        st->sp = stackPointer_;
+        return 2;
+    }
+    if (r == PrimitiveResult::Success) {
+        lastPrimitiveIndex_ = primIndex;
+        st->sp = stackPointer_;
+        return 1;
+    }
+    stackPointer_ = spBefore;
+    primFailCode_ = 0;
+    return 0;
+}
+
 bool Interpreter::mcfIsMethodFrame() const {
     return closure_.isNil()
         && method_.isObject()
@@ -75,18 +176,41 @@ bool Interpreter::mcfActivate(Oop method) {
     // safe for any receiver of the classes that reach it.
     {
         const bool hasPrim = (jm->methodHeader >> 16) & 1;
-        if (!hasPrim && !memory_.isYoung(method)
+        if ((!hasPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
                 && (!jm->hasRecvFieldAccess || receiver_.isObject())) {
             jit::McfCallEntry& e = jit::g_mcfCallCache[
                 (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
             e.methodBits = method.rawBits();
             e.jm = jm;
+            e.prim = 0;
             e.bcEndOff = static_cast<uint64_t>(
                 bytecodeEnd_ - reinterpret_cast<uint8_t*>(method.rawBits()));
         }
     }
     mcfRun(jm, const_cast<uint8_t*>(jm->codeStart()));
     return true;
+}
+
+// A send left machine code for this method.  When it is a primitive T1 code
+// can run through pharo_mcf_prim, record it so the next hit stays in
+// machine code.  Never displaces a native-call entry for a compiled method.
+void Interpreter::mcfNotePrimitiveTarget(Oop method) {
+    if (!method.isObject() || method.rawBits() < 0x10000) return;
+    ObjectHeader* mo = method.asObjectPtr();
+    if (mo->classIndex() != compiledMethodClassIndex_) return;
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger() || !((hdr.asSmallInteger() >> 16) & 1)) return;
+    if (memory_.isYoung(method)) return;
+    const int p = primitiveIndexOf(method);
+    if (!mcfPrimCallable(p)) return;
+    jit::McfCallEntry& e = jit::g_mcfCallCache[
+        (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
+    if (e.methodBits == method.rawBits()) return;
+    if (e.methodBits && e.jm) return;   // keep a native-call entry
+    e.methodBits = method.rawBits();
+    e.jm = nullptr;
+    e.bcEndOff = 0;
+    e.prim = static_cast<uint64_t>(p);
 }
 
 // Called once from initializeJIT: SavedFrame layout for T1's native call
@@ -157,6 +281,44 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
             bool hasPrim = hdr.isSmallInteger() && ((hdr.asSmallInteger() >> 16) & 1);
             if (tj && tj->isExecutable() && tj->numBytecodes) (hasPrim ? compPrim : comp)++;
             else (hasPrim ? prim : interp)++;
+            {
+                // Top exits by (selector, receiver class, primitive).
+                static std::unordered_map<std::string, uint64_t> bySite;
+                Oop rcv = st.sp[-(st.sendArgCount + 1)];
+                std::string key = memory_.selectorOf(t) + " rcv=" +
+                    (rcv.isObject() ? memory_.classNameOf(rcv)
+                                    : rcv.isSmallInteger() ? std::string("SmI") : std::string("imm"))
+                    + " prim=" + std::to_string(hasPrim ? primitiveIndexOf(t) : 0)
+                    + (tj && tj->isExecutable() ? " compiled" : "")
+                    + " extrasHi=" + std::to_string(st.icDataPtr ? (st.icDataPtr[2] >> 48) : 99999)
+                    + " entryMatch=" + std::to_string(st.icDataPtr && st.icDataPtr[1] == t.rawBits());
+                bySite[key]++;
+                if ((n & 0x3FFFFF) == 0) {
+                    std::vector<std::pair<uint64_t, std::string>> v;
+                    for (auto& kv : bySite) v.push_back({kv.second, kv.first});
+                    std::sort(v.rbegin(), v.rend());
+                    for (size_t k = 0; k < v.size() && k < 12; k++)
+                        fprintf(stderr, "[MCF-CENSUS]   %llu %s\n",
+                                (unsigned long long)v[k].first, v[k].second.c_str());
+                    bySite.clear();
+                }
+            }
+            if (hasPrim) {
+                static uint64_t primHist[1024];
+                int pi = primitiveIndexOf(t);
+                if (pi >= 0 && pi < 1024) primHist[pi]++;
+                if ((n & 0x3FFFFF) == 0) {
+                    fprintf(stderr, "[MCF-CENSUS] prims:");
+                    for (int k = 0; k < 12; k++) {
+                        int best = 0;
+                        for (int q = 1; q < 1024; q++) if (primHist[q] > primHist[best]) best = q;
+                        if (!primHist[best]) break;
+                        fprintf(stderr, " p%d=%llu", best, (unsigned long long)primHist[best]);
+                        primHist[best] = 0;   // destructive top-k: the next print starts over
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
         }
     }
     if ((n & 0x3FFFFF) == 0)
@@ -231,6 +393,12 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         pharo_jit_osr_resume(&st, entry);
 
         currentJITState_ = st.prevState;
+        if (st.exitReason == jit::ExitDeopt) {
+            // pharo_mcf_prim answered 2: a primitive pushed a frame or
+            // switched process, and the interpreter's state is the truth.
+            mcfActive_ = false;
+            return;
+        }
         stackPointer_ = st.sp;
         // Native calls and returns (phase 2) may have moved to another
         // frame: the interpreter's frame registers follow the state view.
@@ -263,6 +431,9 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             [[fallthrough]];
         case jit::ExitSendCached: {
             instructionPointer_ = st.ip;
+            if (st.exitReason == jit::ExitSendCached)
+                mcfNotePrimitiveTarget(st.cachedTarget);
+
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_CENSUS), 0))
                 mcfCensus(st);
             const uint8_t* after = mcfPastSend(st.ip);
@@ -336,6 +507,9 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame*) {}
 void Interpreter::mcfRun(jit::JITMethod*, void*) {}
 void Interpreter::mcfCensus(const jit::JITState&) {}
 void Interpreter::mcfInit() {}
+bool Interpreter::mcfPrologueIsPrimitive(Oop) { return false; }
+int Interpreter::mcfCallPrimitive(jit::JITState*, int, int) { return 0; }
+void Interpreter::mcfNotePrimitiveTarget(Oop) {}
 #endif  // PHARO_JIT_ENABLED && arm64
 
 }  // namespace pharo

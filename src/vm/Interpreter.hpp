@@ -1824,6 +1824,9 @@ public:
     void mcfRun(jit::JITMethod* jm, void* entry);
     void mcfCensus(const jit::JITState& st);
     void mcfInit();
+    bool mcfPrologueIsPrimitive(Oop method);
+    void mcfNotePrimitiveTarget(Oop method);
+    int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
 
     // B-1: depth of nested jitSistaCallSend frames.  When > 0, an outer
     // helper is driving step(), and nested sends (recursive Sista

@@ -50,6 +50,8 @@
 extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val,
                                     uint64_t bcOff);
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
+// Machine-code frames: run a primitive from T1 code (MachineCodeFrames.cpp).
+extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
 extern "C" void jit_rt_xm_fire_trace(uint64_t statep,
                                      uint64_t calleeEntryAddr, uint64_t recvBits);
 extern "C" void jit_rt_j2j_dbg(uint64_t statep, uint64_t kind, uint64_t id);
@@ -8341,6 +8343,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.b(dispatchCached);
             } else {
+                // Machine-code frames: this is the path every site takes (no
+                // inline J2J), so give it the receiver-independent
+                // specializations the inline-J2J path dispatches before its
+                // heap/SmI split -- `^ literal`, `^ argN`, `^ self` -- which
+                // matter most for immediate receivers (SmallInteger>>asInteger).
+                if (::pharo::mcfEnabled()) {
+                    if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_RETURNS_LITERAL))
+                        a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
+                    if (nArgs >= 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN))
+                        a.tbnz(x7, asmjit::Imm(54), tryTempReturn);
+                    if (g_debug.t1InlineReturnsSelf)
+                        a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                }
                 // Inline specializations need heap receiver (tag==0).
                 // Also check primKind for SmI receivers with bitwise prim
                 // dispatch (skips chain-loop for nArgs==1 bitAnd/bitOr/bitXor).
@@ -9924,6 +9939,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldp(x8, x9, ptr(x7));                      // key, callee JM
                 a.cmp(x8, x6);
                 a.b_ne(mcfSlow);
+                asmjit::Label mcfPrim = a.new_label();
+                a.ldr(x10, ptr(x7, 24));                     // entry.prim
+                a.cbnz(x10, mcfPrim);
                 a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));       // interrupt checks
                 a.ldr(w11, ptr(x10));
                 a.ldrh(w12, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
@@ -10011,6 +10029,36 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldur(x26, ptr(x13, -8));                   // TOS mirror
                 a.add(x15, x9, asmjit::Imm((int)sizeof(JITMethod)));
                 a.br(x15);
+                // A primitive that only touches the stack: run it through
+                // pharo_mcf_prim and continue after the send.  x5 (the IC
+                // entry) is stashed for the failure path's SendCached exit.
+                {
+                    asmjit::Label mcfPrimFail = a.new_label();
+                    asmjit::Label mcfDeopt = a.new_label();
+                    a.bind(mcfPrim);
+                    emitSyncSpToState(a);
+                    a.str(x6, ptr(x0, OFF_CACHED_TARGET));
+                    a.str(x5, ptr(x0, OFF_ICDATAPTR));
+                    a.stp(x0, x30, ptr_pre(sp, -16));
+                    a.mov(w1, w10);
+                    a.movk(w1, asmjit::Imm(nArgs), 16);
+                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_prim));
+                    a.blr(x16);
+                    a.mov(w9, w0);
+                    a.ldp(x0, x30, ptr_post(sp, 16));
+                    emitReloadSpFromState(a);
+                    a.cbz(w9, mcfPrimFail);
+                    a.cmp(w9, asmjit::Imm(2));
+                    a.b_eq(mcfDeopt);
+                    a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+                    a.b(mcfCont);
+                    a.bind(mcfDeopt);                        // interpreter owns the state
+                    a.mov(w3, asmjit::Imm((int)ExitDeopt));
+                    a.str(w3, ptr(x0, OFF_EXIT));
+                    a.ret(x30);
+                    a.bind(mcfPrimFail);
+                    a.ldr(x5, ptr(x0, OFF_ICDATAPTR));
+                }
                 a.bind(mcfSlow);
             }
             if (g_fsrCursorVerify) {
