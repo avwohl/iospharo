@@ -15,6 +15,30 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 13:30) -- `f9220e43`/`e9ba6650` pushed; frame-0 resync skip (sweep P)
+
+Uncommitted: materializeFrameStack no longer re-copies frame 0 (the
+suspended context-mode base) into activeContext_ on every call -- it is
+suspended, so once synced it stays exact; `ctxSynced` now stays true after a
+sync instead of being forced false.  Lexicon 1832 -> 1781 billion
+instructions.  ContextTest, BlockClosureTest, ProcessTest, SemaphoreTest,
+ExceptionTest and the battery pass; sweep P: 27879 P / 10 F / 1 E, nothing
+new.
+
+Package batch 3 (26 more August-parity packages): identical to Cog except
+myprecious (speed) and soil (same 687 P; Cog and we time out different
+SoilCleanCodeTest tests).  With batches 1-2 and the heavy set that is 83
+packages checked today; every difference is speed (lexicon, myprecious,
+deeptraverser under load) or environment (google-cloud before OpenSSL 1.1,
+pharo-cig's libclang) or the attributed special-#value split
+(methodproxies).  Batch 4 (the ten with August JIT-only failures) and a
+newtools re-run are running.
+
+FFI callbacks measured: 175 us each against Cog's 10.7 (qsort with a
+Smalltalk comparator).  Scavenging inside the callback loop wedged the run
+-- something below the callback holds raw young pointers -- so it is
+reverted and the fix order is in deferred.md.
+
 ## Right now (2026-10-13, 12:00) -- #30 closed: re-home rule off, sweep O clean
 
 `cf1a7e5b` (#30 live-chain check, #32 FFI, LEAD 24, prim 132) pushed after

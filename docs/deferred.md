@@ -277,8 +277,19 @@ The history lives in `docs/history/`; nothing was deleted.
   callback falls back to old space (`allocateRawYoung` returns nullptr and the
   caller tenures on the spot) and is reclaimed only by a full compacting GC.
   So a long callback runs the expensive collector in place of the cheap one and
-  tenures everything it touches.  Not a leak and not a correctness bug;
-  unquantified, like the `step()` cost above.  The low-space breaker's latch
+  tenures everything it touches.  Not a leak and not a correctness bug.
+  **Quantified 2026-10-13** (both costs): `FFICallback primQsort:` over 5000
+  doubles with a Smalltalk comparator, 49391 callbacks: 175 us per callback
+  on ours, 10.7 on Cog.  Profile: ~28% `step()`/`dispatchBytecode`, ~30% full
+  GC (`markPhase`, compaction).  Each callback also runs at least one
+  1000-step batch plus a 500-step cooldown, whatever its block needs.  Tried
+  a scavenge in the batch loop (`needsScavenge()` -> prepareForGC / scavenge
+  / afterGC): the qsort run then WEDGED (300 s timeout).  So something on the
+  C stack below the callback holds raw young pointers -- most likely the
+  callout primitive's own locals -- and a full GC there is only rare enough
+  not to show.  Fix order: make the callout primitive keep its arguments in
+  GC roots across the call, then scavenge here, then run the handler through
+  interpret() instead of step().  The low-space breaker's latch
   IS delivered from this loop as of `3c75aca5`, which matters more here than
   on the main path precisely because everything allocated here is tenured.
 

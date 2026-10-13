@@ -21157,6 +21157,14 @@ Oop Interpreter::materializeFrameStack() {
         // This is the first materialization: activeContext_ matches what was saved when frame 0 was pushed.
         const auto& frame0 = savedFrames_[0];
         ObjectHeader* acHdr = activeContext_.asObjectPtr();
+        // Already synced: frame 0 is suspended under the frames above it, so
+        // its temps and stack cannot have changed since (every savedFrames_
+        // writer clears ctxSynced).  Only the bookkeeping below is needed.
+        if (frame0.ctxSynced && !GET_DEBUG_BOOL(PHARO_MAT_FULL_RESYNC)
+                && frame0.materializedContext.rawBits() == activeContext_.rawBits()) {
+            sender = activeContext_;
+            startFrame = 1;
+        } else
         if (acHdr->slotCount() >= 6 && acHdr->format() == ObjectFormat::IndexableWithFixed &&
             frame0.savedMethod.isObject()) {
             // DO NOT update PC here. The heap context's PC was already synced
@@ -21277,7 +21285,7 @@ Oop Interpreter::materializeFrameStack() {
             // (no separate context was created for frame[0]). This caused
             // thisContext sender == nil inside Context>>jump, crashing startup.
             savedFrames_[0].materializedContext = activeContext_;
-            savedFrames_[0].ctxSynced = false;
+            savedFrames_[0].ctxSynced = true;   // snapshot exact until frame 0 runs again
         }
     }
 
