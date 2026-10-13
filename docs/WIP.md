@@ -15,6 +15,29 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 16:00) -- why the arm64 JIT is neutral (partly open)
+
+A loop of SmallInteger arithmetic in a method (`zzArith:`, 30M iterations)
+runs at interpreter speed with the JIT on: 546 ms on, 517 off, Cog 44; a
+sample shows no time in JIT code.  With `PHARO_T1_RESUME_EXTERNAL_J2J=1` it
+runs in 152 ms (3.5x).  `PHARO_T1_TRACE_COMPILE` (diag build): default mode
+attempts 42 T1 compiles and never `zzArith:`, with 20 "inline-J2J closure
+push refused" lines (the log stops at 20); external mode attempts 323,
+`zzArith:` among them, none refused.  So on arm64 the default resume-internal
+mode keeps most loop methods out of T1.  NOT yet established: why `zzArith:`
+in particular -- a code read says `+` / `<=` never reach the send emitter
+that holds the refused push, so its blocker is elsewhere (the trace may
+print only after a successful emit).
+
+Compiling everything external mode allows loses on real code (instructions,
+default -> external): printString 83.7 -> 104.6, deeptraverser 1039 ->
+1387, lexicon 1781 -> 1923, myprecious 44.2 -> 54.6.  And a static census of
+the image's 138,862 methods finds 2,573 with loops, of which only 44 send
+nothing but arithmetic/comparison (94 adding at:/at:put:/size).  So making
+just those compile would help numeric loops and benchmarks, not the slow
+packages.  Next step if pursued: find the exact refusal for `zzArith:` by
+lifting the 20-line refusal-log cap on a diag build.
+
 ## Right now (2026-10-13, 15:00) -- end-of-day numbers; `0aa5f085` pushed
 
 Instructions retired, this morning -> now (build-rel, JIT on):
