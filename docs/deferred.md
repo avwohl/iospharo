@@ -242,17 +242,17 @@ The history lives in `docs/history/`; nothing was deleted.
   (`[DEPTH0]` exit line, bytecode checkpoints at frame depth 0): myprecious
   round trips 2.5%, lexicon CodeAnalysisRunnerTest 1.3%, deeptraverser 0.1%.**
   So it matters for one long loop that gets preempted (the micro-benchmarks),
-  not for the slow packages.  How much, measured the same day: `zzSum:` (a
-  21M-iteration byte loop in a method) takes 744 ms, 753 ms with the JIT off
-  -- the JIT never enters a context-mode method -- against 148 ms for the
-  same loop in a DoIt that OSR compiled, and Cog's 94 ms; `[DEPTH0]` 63%.
-  The cheaper fix than married contexts: on resume, rebuild the top
-  context as a frame above its sender (sender at depth 0, the resumed
-  method at depth 1 with currentFrameMaterializedCtx_ = its Context, so
-  identity holds and `thisContext` still converts back).  Safe as long as
-  nothing writes a RUNNING method's Context except through thisContext;
-  needs the savedFrames_[0] fields built from the sender Context.  For the
-  slow packages it does nothing; their cost is ordinary interpretation, chiefly
+  not for the slow packages.  **Correction, same day:** an earlier version
+  of this note said a preempted long loop runs "5x slower and is never
+  JIT-entered" in context mode.  That compared a 21M-iteration method loop
+  with a DoIt loop that ran only 1.2M iterations (it scanned printString's 4
+  bytecodes, not 70).  Measured properly: `Interpreter::resumeAsFrame` (the
+  resumed method pushed as a frame above its sender, its Context kept as
+  currentFrameMaterializedCtx_) took the loop's depth-0 share from 47% to
+  0.06% and its time from 601 to 595 ms -- no gain -- so it was reverted.
+  The loop is 28 ns per iteration on ours, 4.5 on Cog, with the JIT on or
+  off: plain interpretation, and T1 does not speed it up.  For the slow
+  packages context mode does nothing either; their cost is ordinary interpretation, chiefly
   block calls (~700 instructions each; Fuel's `isBehaviorAnonymous:` scans
   all of `Smalltalk globals` with a block per element on every myprecious
   message).

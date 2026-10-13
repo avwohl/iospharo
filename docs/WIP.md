@@ -81,8 +81,9 @@ timed out under the sweep's load, as before).
 After vm-O (not in sweep O): the fd==0 `PushThisContext` pc rewind in
 materializeFrameStack now requires `!inExtension_` and decodes the method to
 confirm the byte before ip starts an instruction (deferred.md, prefix
-paths).  Measured for deferred.md: a preempted long loop method runs 5x
-slower in context mode and the JIT never enters it (`zzSum:` 744 ms, Cog 94).
+paths).  (A note here that context mode made a loop 5x slower was a
+measurement error -- see deferred.md's correction; resume-as-frame was built,
+measured as no gain, and reverted.)
 
 ## Right now (2026-10-13, 11:00) -- #30 wrong home fixed in the repro; #32 FFI crash fixed
 
