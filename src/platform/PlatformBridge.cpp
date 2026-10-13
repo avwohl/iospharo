@@ -286,7 +286,7 @@ bool vm_initialize_with_config(size_t maxHeap, size_t initialHeap) {
     pharo::MemoryConfig config;
     if (maxHeap > 0) config.oldSpaceMaxSize = maxHeap;
     if (initialHeap > 0) config.oldSpaceInitialSize = initialHeap;
-    config.newSpaceSize = 32 * 1024 * 1024;
+    config.newSpaceSize = 64 * 1024 * 1024;   // same as test_load_image (see there)
     config.permSpaceSize = 8 * 1024 * 1024;
 
     return gMemory->initialize(config);

@@ -3829,6 +3829,11 @@ static bool compiledCodeHasLoop(Oop code) {
     return false;
 }
 
+bool JITRuntime::entryCountMatters(Oop compiledMethod) {
+    return GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL) || g_debug.sistaDispatch
+        || compiledCodeHasLoop(compiledMethod);
+}
+
 void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 

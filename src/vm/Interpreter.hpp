@@ -235,6 +235,7 @@ struct MethodCacheEntry {
     int8_t  returnsLiteralKind; // 1=nil, 2=true, 3=false, 4=SmI 0,
                               // 5=SmI 1, 6=SmI -1, 7=SmI 2; 0=not literal
     bool trivialShape;        // any of the five shortcuts above applies (cacheMethod)
+    bool jitCounted;          // JITRuntime::entryCountMatters(method) (cacheMethod)
     uint32_t megaEpoch;       // jit::g_jitStateEpoch when this entry last filled
                               // the JIT mega cache; 0 = not yet (sendSelector)
 };
@@ -2362,6 +2363,7 @@ private:
     void widowReturningContext();
     bool returnValueAtDepth0(Oop value);
     void returnFromMethod();
+    [[gnu::noinline]] void returnFromMethodSlow(Oop value);
     void returnFromBlock();
     bool handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx);
     bool nlrDelegateToImageProtocol(Oop value, size_t homeFrame);
@@ -2481,6 +2483,8 @@ private:
 
     /// Create a new stack frame
     bool pushFrame(Oop method, int argCount);
+    [[noreturn]] __attribute__((noinline, cold)) void reportBadMethodHeader(Oop method, Oop newMethodHeader);
+    __attribute__((noinline, cold)) void reportSpCorruptAtPush(Oop method, int argCount);
     void reportFrameOverflow(Oop method, int argCount);  // Returns false if recursion detected
 
     /// Pop the current stack frame. Returns false if this was the last frame

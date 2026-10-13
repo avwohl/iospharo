@@ -470,6 +470,7 @@ DEBUG_BOOL(PHARO_RJ2J_VALIDATE)
 DEBUG_BOOL(PHARO_SCAV_BIT_AUDIT)
 DEBUG_BOOL_RT(PHARO_SCAV_FULL_SCAN)     // opt-out: every scavenge scans all of old space instead of trusting the remembered set (the pre-2026-10-13 behaviour; see docs/deferred.md)
 DEBUG_BOOL_RT(PHARO_SCAV_TRUST_VERIFY)    // after each trusted scan, find (and repair) every old->young pointer it missed; prints [SCAV-TRUST-MISS]
+DEBUG_BOOL_RT(PHARO_BECOME_SERIAL_SCAN) // opt-out: an old-key becomeForward scans old space on one thread instead of the worker pool
 DEBUG_BOOL_RT(PHARO_BECOME_FULL_SCAN)   // opt-out: becomeForward of young objects scans the whole heap instead of eden + remembered set + recent old space
 DEBUG_BOOL_RT(PHARO_BECOME_YOUNG_VERIFY) // after a young-only become, rescan the whole heap; prints [BECOME-YOUNG-MISS] for refs it missed (and fixes them)
 DEBUG_BOOL(PHARO_BARRIER_WHO)          // with PHARO_SCAV_BIT_AUDIT: backtrace the raw slotAtPut that made each un-remembered old->young pointer

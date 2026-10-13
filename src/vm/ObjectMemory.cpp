@@ -19,6 +19,9 @@
 #include <chrono>
 #include <unordered_map>
 #include <unordered_set>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <execinfo.h>
 #include <dlfcn.h>
 #include <functional>
@@ -1836,6 +1839,133 @@ void ObjectMemory::noteClassHashCopy(Oop cls, uint32_t newHash) {
     pendingClassIndexRemap_[oldHash] = newHash;
 }
 
+// The heap walk every whole-heap enumeration shares.  Visits objects whose
+// loop-top position lies in [start, stopAt); `limit` is the end of the space
+// and bounds the size checks, so a chunked walk (stopAt < limit) parses
+// exactly the positions the one-pass walk does.  posCb(position) runs at each
+// loop top (the restart points becomeForwardAll's parallel scan cuts at);
+// objCb(header) runs for each object, free chunks (classIndex 0) included.
+template <class PosCb, class ObjCb>
+static void walkObjects(uint8_t* start, uint8_t* stopAt, uint8_t* limit,
+                        PosCb&& posCb, ObjCb&& objCb) {
+    uint8_t* scan = start;
+    while (scan < stopAt) {
+        posCb(scan);
+        uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
+        uint64_t word = *wordPtr;
+
+        // Skip zero headers (free space / padding)
+        if (word == 0) {
+            scan += 8;
+            while (scan < stopAt) {
+                wordPtr = reinterpret_cast<uint64_t*>(scan);
+                if (*wordPtr != 0) break;
+                scan += 8;
+            }
+            if (scan >= stopAt) break;
+            word = *wordPtr;
+        }
+
+        // Check for overflow header.
+        // In Spur, overflow objects have: [overflow_count_word][header_word][slots...]
+        // Both the overflow count word and the header word have 0xFF in bits 56-63.
+        // CRITICAL: Only check for overflow when the CURRENT word has 0xFF in its
+        // top byte. Otherwise, wordPtr+1 is a slot value, not a header!
+        uint64_t* headerPtr = wordPtr;
+        uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
+        if (topByte == 255 && scan + 8 < limit) {
+            uint64_t nextWord = *(wordPtr + 1);
+            uint8_t nextNumSlots = static_cast<uint8_t>((nextWord >> 56) & 0xFF);
+            if (nextNumSlots == 255) {
+                // Current word is overflow count, next word is the actual header
+                // The overflow count is in the low 56 bits of the first word
+                uint64_t overflowCount = (word << 8) >> 8;  // mask off top byte
+                size_t remaining = limit - scan;
+                size_t neededSize = 8 + 8 + overflowCount * 8;  // overflow word + header + slots
+
+                if (overflowCount >= 255 && neededSize <= remaining) {
+                    headerPtr = wordPtr + 1;
+                } else {
+                    // Invalid overflow - skip past both words
+                    scan += 16;
+                    continue;
+                }
+            }
+        }
+
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(headerPtr);
+        size_t size = obj->totalSize();
+
+        // Bounds check: size must fit within remaining heap
+        size_t remaining = limit - scan;
+        if (size == 0 || size > remaining) {
+            // Invalid size - skip 8 bytes and resync
+            scan += 8;
+            continue;
+        }
+
+        objCb(obj);
+
+        // Advance past the object
+        scan += size;
+    }
+}
+
+// Worker threads for the parallel old-space become scan.  Created on first
+// use, parked on a condition variable between jobs, never destroyed (a
+// static std::thread would terminate the process at exit).  run(job) calls
+// job(i) for every i in [0, size()] -- index size() on the calling thread --
+// and returns when all have finished.
+namespace {
+class HeapScanPool {
+public:
+    explicit HeapScanPool(int workers) : n_(workers) {
+        for (int i = 0; i < n_; ++i) std::thread([this, i] { loop(i); }).detach();
+    }
+    int size() const { return n_; }
+    void run(const std::function<void(int)>& job) {
+        {
+            std::lock_guard<std::mutex> g(m_);
+            job_ = &job;
+            pending_ = n_;
+            ++generation_;
+        }
+        cv_.notify_all();
+        job(n_);
+        std::unique_lock<std::mutex> g(m_);
+        done_.wait(g, [this] { return pending_ == 0; });
+        job_ = nullptr;
+    }
+private:
+    void loop(int i) {
+        uint64_t seen = 0;
+        for (;;) {
+            const std::function<void(int)>* job;
+            {
+                std::unique_lock<std::mutex> g(m_);
+                cv_.wait(g, [&] { return generation_ != seen; });
+                seen = generation_;
+                job = job_;
+            }
+            (*job)(i);
+            std::lock_guard<std::mutex> g(m_);
+            if (--pending_ == 0) done_.notify_one();
+        }
+    }
+    const int n_;
+    std::mutex m_;
+    std::condition_variable cv_, done_;
+    const std::function<void(int)>* job_ = nullptr;
+    int pending_ = 0;
+    uint64_t generation_ = 0;
+};
+HeapScanPool& heapScanPool() {
+    static HeapScanPool* pool = new HeapScanPool(static_cast<int>(
+        std::min(7u, std::max(1u, std::thread::hardware_concurrency()) - 1)));
+    return *pool;
+}
+}  // namespace
+
 bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map) {
     g_objectMotionEpoch++;
     if (map.empty()) return true;
@@ -1969,6 +2099,69 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
                 fprintf(stderr, "[BECOME-YOUNG-MISS] %zu refs the young-only scan missed\n",
                         becomeReplacedCount - before);
         }
+    } else if (classRemap.empty()
+            && !GET_DEBUG_BOOL(PHARO_OLDSPACE_FREELIST)
+            && !GET_DEBUG_BOOL(PHARO_BECOME_SERIAL_SCAN)
+            && static_cast<size_t>(oldSpaceFree_ - oldSpaceStart_) > (16u << 20)
+            && heapScanPool().size() > 0) {
+        // Parallel old-space scan (opt-out PHARO_BECOME_SERIAL_SCAN).  The
+        // one-pass scan runs at one core's memory bandwidth, ~6.5 ms per
+        // 100 MB, and an old-key becomeForward: pays it every time --
+        // StSpotter new does 11 (ByteString -> WideString upgrades).  Workers
+        // walk old space in chunks between restart points and only COLLECT
+        // the slots that hit a key; this thread applies them through the
+        // write barrier afterwards (rememberedSet_ is not thread-safe).
+        ensureScanCuts();
+        using Hit = std::pair<ObjectHeader*, uint32_t>;
+        HeapScanPool& pool = heapScanPool();
+        const int nThreads = pool.size() + 1;
+        std::vector<std::vector<Hit>> hits(nThreads);
+        const std::vector<uint8_t*>& cuts = scanCuts_;
+        const size_t nChunks = cuts.size();
+        uint8_t* const oldEnd = oldSpaceFree_;
+        auto noPos = [](uint8_t*) {};
+        std::function<void(int)> job = [&](int t) {
+            std::vector<Hit>& out = hits[t];
+            for (size_t c = static_cast<size_t>(t); c < nChunks; c += nThreads) {
+                uint8_t* stop = (c + 1 < nChunks) ? cuts[c + 1] : oldEnd;
+                walkObjects(cuts[c], stop, oldEnd, noPos, [&](ObjectHeader* header) {
+                    if (header->classIndex() == 0) return;
+                    ObjectFormat format = header->format();
+                    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
+                    if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return;
+                    if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
+                    if (format >= ObjectFormat::Reserved6 && format <= ObjectFormat::Reserved8) return;
+                    size_t slots = header->slotCount();
+                    if (header->isCompiledMethod() && slots > 0) {
+                        Oop methodHeader = header->slotAt(0);
+                        if (methodHeader.isSmallInteger())
+                            slots = std::min(slots, static_cast<size_t>(
+                                methodHeader.asSmallInteger() & 0x7FFF) + 1);
+                    }
+                    Oop ignored;
+                    for (size_t i = 0; i < slots; ++i) {
+                        Oop slot = header->slotAt(i);
+                        if (slot.isObject() && lookup(slot.rawBits(), ignored))
+                            out.emplace_back(header, static_cast<uint32_t>(i));
+                    }
+                });
+            }
+        };
+        pool.run(job);
+        for (const std::vector<Hit>& v : hits) {
+            for (const Hit& h : v) {
+                Oop target;
+                if (lookup(h.first->slotAt(h.second).rawBits(), target)) {
+                    slotAtPutBarriered(h.first, h.second, target);
+                    becomeReplacedCount++;
+                }
+            }
+        }
+        auto each = [&](ObjectHeader* h) {
+            if (h->classIndex() != 0) visit(oopFromPointer(h));
+        };
+        walkObjects(permSpaceStart_, permSpaceEnd_, permSpaceEnd_, noPos, each);
+        walkObjects(edenAllocBase_, edenFree_, edenFree_, noPos, each);
     } else {
         allObjectsDo(visit);
     }
@@ -3252,6 +3445,9 @@ bool ObjectMemory::checkHeapIntegrity(const char* when) {
 }
 
 GCResult ObjectMemory::fullGC(bool skipEphemerons) {
+    // Compaction moves old space: the restart points no longer fall on
+    // object boundaries.
+    scanCutsEnd_ = nullptr;
     extern uint64_t g_gcEpoch;
     g_gcEpoch++;
     g_objectMotionEpoch++;
@@ -3636,90 +3832,47 @@ void ObjectMemory::removeRoot(Oop* root) {
 }
 
 void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
-    // Helper to scan a memory region
-    auto scanRegion = [&](uint8_t* start, uint8_t* end) {
-        uint8_t* scan = start;
-        while (scan < end) {
-            uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
-            uint64_t word = *wordPtr;
-
-            // Skip zero headers (free space / padding)
-            if (word == 0) {
-                scan += 8;
-                while (scan < end) {
-                    wordPtr = reinterpret_cast<uint64_t*>(scan);
-                    if (*wordPtr != 0) break;
-                    scan += 8;
-                }
-                if (scan >= end) break;
-                word = *wordPtr;
-            }
-
-            // Check for overflow header.
-            // In Spur, overflow objects have: [overflow_count_word][header_word][slots...]
-            // Both the overflow count word and the header word have 0xFF in bits 56-63.
-            // CRITICAL: Only check for overflow when the CURRENT word has 0xFF in its
-            // top byte. Otherwise, wordPtr+1 is a slot value, not a header!
-            uint64_t* headerPtr = wordPtr;
-            uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
-            if (topByte == 255 && scan + 8 < end) {
-                uint64_t nextWord = *(wordPtr + 1);
-                uint8_t nextNumSlots = static_cast<uint8_t>((nextWord >> 56) & 0xFF);
-                if (nextNumSlots == 255) {
-                    // Current word is overflow count, next word is the actual header
-                    // The overflow count is in the low 56 bits of the first word
-                    uint64_t overflowCount = (word << 8) >> 8;  // mask off top byte
-                    size_t remaining = end - scan;
-                    size_t neededSize = 8 + 8 + overflowCount * 8;  // overflow word + header + slots
-
-                    if (overflowCount >= 255 && neededSize <= remaining) {
-                        headerPtr = wordPtr + 1;
-                    } else {
-                        // Invalid overflow - skip past both words
-                        scan += 16;
-                        continue;
-                    }
-                }
-            }
-
-            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(headerPtr);
-            size_t size = obj->totalSize();
-
-            // Bounds check: size must fit within remaining heap
-            size_t remaining = end - scan;
-            if (size == 0 || size > remaining) {
-                // Invalid size - skip 8 bytes and resync
-                scan += 8;
-                continue;
-            }
-
-            // Free chunks are NOT Smalltalk objects: they carry classIndex 0
-            // (see makeFreeChunk) and have no class, so handing one to the
-            // image is fatal.  Measured 2026-08-23 with
-            // PHARO_OLDSPACE_FREELIST=1: class-shape migration
-            // (Metaclass>>addSlot: -> copyObject:to:) enumerated the heap,
-            // reached free chunk 0x700008ba20, sent it #isReadOnlyObject and
-            // took a doesNotUnderstand with classIdx=0 -- killing the process
-            // and wedging the run.  This never bit before because without the
-            // knob the post-compaction gaps stay zero-filled and are skipped
-            // by the zero-word path above; the knob writes real headers there.
-            if (obj->classIndex() != 0) {
-                callback(oopFromPointer(obj));
-            }
-
-            // Advance past the object
-            scan += size;
-        }
+    auto noPos = [](uint8_t*) {};
+    // Free chunks are NOT Smalltalk objects: they carry classIndex 0
+    // (see makeFreeChunk) and have no class, so handing one to the
+    // image is fatal.  Measured 2026-08-23 with
+    // PHARO_OLDSPACE_FREELIST=1: class-shape migration
+    // (Metaclass>>addSlot: -> copyObject:to:) enumerated the heap,
+    // reached free chunk 0x700008ba20, sent it #isReadOnlyObject and
+    // took a doesNotUnderstand with classIdx=0 -- killing the process
+    // and wedging the run.  This never bit before because without the
+    // knob the post-compaction gaps stay zero-filled and are skipped
+    // by the zero-word path above; the knob writes real headers there.
+    auto each = [&](ObjectHeader* obj) {
+        if (obj->classIndex() != 0) callback(oopFromPointer(obj));
     };
+    walkObjects(permSpaceStart_, permSpaceEnd_, permSpaceEnd_, noPos, each);
+    walkObjects(oldSpaceStart_, oldSpaceFree_, oldSpaceFree_, noPos, each);
+    walkObjects(edenAllocBase_, edenFree_, edenFree_, noPos, each);
+}
 
-    // Scan permanent space
-    scanRegion(permSpaceStart_, permSpaceEnd_);
-
-    // Scan old space
-    scanRegion(oldSpaceStart_, oldSpaceFree_);
-
-    // Scan eden
-    scanRegion(edenAllocBase_, edenFree_);
+// Restart points in old space for chunked walks: positions the one-pass
+// walk visits, about every kScanCutBytes.  Valid while old space only grows
+// at oldSpaceFree_; fullGC (compaction) discards them.  Never inside the pin
+// arena, which carves objects out of already-reserved space.
+void ObjectMemory::ensureScanCuts() {
+    constexpr size_t kScanCutBytes = 1u << 20;
+    if (!scanCutsEnd_) {
+        scanCuts_.assign(1, oldSpaceStart_);
+        scanCutsEnd_ = oldSpaceStart_;
+    }
+    if (scanCutsEnd_ >= oldSpaceFree_) return;
+    uint8_t* nextCut = scanCuts_.back() + kScanCutBytes;
+    walkObjects(scanCutsEnd_, oldSpaceFree_, oldSpaceFree_,
+        [&](uint8_t* pos) {
+            if (pos >= nextCut
+                    && !(pos >= pinArenaStart_ && pos < pinArenaEnd_)) {
+                scanCuts_.push_back(pos);
+                nextCut = pos + kScanCutBytes;
+            }
+        },
+        [](ObjectHeader*) {});
+    scanCutsEnd_ = oldSpaceFree_;
 }
 
 void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,

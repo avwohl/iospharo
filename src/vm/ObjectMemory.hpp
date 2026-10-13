@@ -145,7 +145,10 @@ struct MemoryConfig {
     size_t newSpaceSize = 16 * 1024 * 1024;    // 16 MB default
     size_t permSpaceSize = 8 * 1024 * 1024;    // 8 MB default
     size_t classTableSize = 1 << 22;           // 4M entries (22-bit index)
-    size_t edenRatio = 80;                     // Eden is 80% of new space
+    // Eden's share of new space.  100 since 2026-10-13: the scavenger
+    // tenures every survivor, so nothing ever used the 20% that used to be
+    // set aside past survivorStart_ (it is only read as the eden limit).
+    size_t edenRatio = 100;
 };
 
 /// Indices into special objects array
@@ -1001,6 +1004,11 @@ private:
     uint8_t* edenAllocBase_ = nullptr;
     uint8_t* edenAllocLimit_ = nullptr;
     uint8_t* survivorStart_ = nullptr;
+    // Old-space restart points for becomeForwardAll's parallel scan
+    // (ensureScanCuts); valid up to scanCutsEnd_, nullptr = rebuild.
+    std::vector<uint8_t*> scanCuts_;
+    uint8_t* scanCutsEnd_ = nullptr;
+    void ensureScanCuts();
 
     // Low-space breaker state; see armLowSpaceThreshold().
     size_t lowSpaceThresholdBytes_ = 0;   // 0 = disarmed

@@ -228,6 +228,12 @@ public:
         noteMethodEntrySlow(compiledMethod);
     }
     void noteMethodEntrySlow(Oop compiledMethod);
+    /// Could noteMethodEntry's count ever lead to a compile of this code?
+    /// Under the loops-only T1 policy only code with a backward jump
+    /// compiles from the count (PHARO_T1_COMPILE_ALL and Sista dispatch
+    /// need every count).  The interpreter caches the answer per method-
+    /// cache entry and skips counting the rest.
+    static bool entryCountMatters(Oop compiledMethod);
 
     // OSR-driven recompile (2026-04-30).  When OSR fires for a method that
     // was already T1-compiled but never reached the recompile threshold,

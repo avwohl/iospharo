@@ -1095,7 +1095,13 @@ int main(int argc, char* argv[]) {
     if (GET_DEBUG_INT(PHARO_MAX_OLD_SPACE_MB) > 0)
         config.oldSpaceSize =
             static_cast<size_t>(GET_DEBUG_INT(PHARO_MAX_OLD_SPACE_MB)) * 1024 * 1024;
-    config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB (128MB bump reverted: changed Delay-scheduler timing -> arm SUnit wedge on ArrayTest; goal=pass SUnit > 6% compiler win)
+    // 64 MB (2026-10-13).  Every scavenge tenures all survivors (no survivor
+    // space), so a bigger eden gives short-lived objects longer to die:
+    // lexicon's CodeAnalysisRunnerTest 2069 -> 1962 billion instructions
+    // (128 MB: 1915), deeptraverser -1.4%.  An earlier 128 MB bump was
+    // reverted for an arm SUnit wedge on ArrayTest (Delay-scheduler timing);
+    // the scheduler fixes since then are what this default relies on.
+    config.newSpaceSize = 64 * 1024 * 1024;
     if (GET_DEBUG_INT(PHARO_NEWSPACE_MB) > 0)
         config.newSpaceSize = static_cast<size_t>(GET_DEBUG_INT(PHARO_NEWSPACE_MB)) * 1024 * 1024;
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB

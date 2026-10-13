@@ -4359,7 +4359,11 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     }
 
     // Get numArgs from the closure (slot 2) — closure already validated
-    Oop numArgsOop = memory_.fetchPointerUnchecked(2, closure);
+    if (__builtin_expect(!closure.asObjectPtr()->hasAtLeastSlots(3), 0)) {
+        reportNonClosure("fewer than 3 slots");
+        return PrimitiveResult::Failure;
+    }
+    Oop numArgsOop = closure.asObjectPtr()->slotAt(2);
     if (__builtin_expect(!numArgsOop.isSmallInteger(), 0)) {
         reportNonClosure("slot 2 is not a SmallInteger numArgs");
         return PrimitiveResult::Failure;
@@ -4389,7 +4393,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     // g_objectMotionEpoch, that none of them fired for it, and go straight
     // to activateBlock next time -- the matchers re-read the block's header
     // and bytecodes on every call (~10% of a whole-image AST scan).
-    Oop shapeKeyBlock = memory_.fetchPointerUnchecked(1, closure);
+    Oop shapeKeyBlock = closure.asObjectPtr()->slotAt(1);
     BlockShapeMemo& shapeMemo =
         g_blockShapeMemo[(shapeKeyBlock.rawBits() >> 3) & 4095];
     const bool tryShapes = !(shapeMemo.block == shapeKeyBlock.rawBits()

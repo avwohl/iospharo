@@ -164,6 +164,14 @@ public:
     /// overflow word: (overflowWord << 8) >> 8, extracting the low 56 bits.
     /// This is because the overflow word has 0xFF in its top byte (matching
     /// the numSlots marker pattern).
+    /// At least n slots (n < 255)?  One shift and compare: the slot-count
+    /// byte is the count itself, or 255 when the real count (>= 255) sits
+    /// in the overflow word.  Lets a hot path check a fixed shape once and
+    /// then read the fixed slots with slotAt().
+    bool hasAtLeastSlots(unsigned n) const {
+        return ((header_ & SlotCountMask) >> SlotCountShift) >= n;
+    }
+
     size_t slotCount() const {
         uint64_t count = (header_ & SlotCountMask) >> SlotCountShift;
         if (count == OverflowSlots) {

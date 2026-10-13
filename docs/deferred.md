@@ -279,6 +279,26 @@ The history lives in `docs/history/`; nothing was deleted.
   and stay in.  Defect #26 in `docs/vm-compat-bugs.md` covers the quit half of
   the same stuck counter.
 
+- **A block called from T1 code costs more than from the interpreter
+  (measured 2026-10-13).**  `blockbench.sh` (`b value: i` in a counted loop,
+  per call, instructions retired): JIT on 1002, `PHARO_NO_JIT=1` 698.  The
+  loop method has a loop, so T1 compiles it; each `value:` then leaves
+  emitted code, activates the block in the interpreter and resumes the
+  emitted caller.  Every `do:` / `collect:` / `inject:into:` is this shape.
+  On whole workloads the JIT is net neutral (printString 91.3 vs 93.2
+  billion; deeptraverser 1147 vs 1138; myprecious 49.1 vs 49.4), so this is
+  a lost win, not a regression.  Fix candidates: compile the block too and
+  call it J2J, or keep loops whose body is a block `value:` out of T1.  Tried
+  the second (refuse at `compile_check`, which OSR also reaches): WORSE, 1069
+  vs 1011, while `PHARO_NO_JIT=1` gives 698 on the same benchmark.  Cause not
+  found: the depth-0 share is similar in both modes (`[DEPTH0]` 40% vs 34% of
+  checkpoints).  Find what the JIT-on interpreter path does per block call
+  that the no-JIT one does not before trying again.
+- **`PHARO_NO_JIT=1` still pays `noteMethodEntrySlow` on every activation.**
+  The JIT runtime initializes with the compiler off, `countThresholdCache_`
+  stays 0, so the inline gate never takes its fast path.  Diagnostic mode
+  only; makes no-JIT instruction counts read ~5% high.
+
 ## The primitive surface is much larger than the primitive table
 
 Audited 2026-09-02, recorded so nobody re-derives it and reads it as breakage:

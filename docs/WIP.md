@@ -15,6 +15,48 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 09:30) -- famix, polymath, soil at parity; parallel become
+
+`329924b6` pushed.  Package A/B since then (Cog vs ours, same image):
+famix 1316 P both, polymath 776 P both, soil 687 P both (Cog fails one
+SoilCleanCodeTest and times out another; we time out both), newtools 931 vs
+935 P (the four differences are the attributed timing tests in
+`docs/vm-compat-bugs.md`).  Still speed-bound: lexicon 1 TIMEOUT, myprecious 3.
+
+Committed in one unit; sweeps J (first item) 27878 P / 12 F / 1 E, K (through
+parallel become) 27880 P / 9 F / 1 E, L (through the count gate) 27881 P /
+9 F / 1 E, nothing new in any.  Sweep M re-runs the exact commit:
+- `pushFrame`'s fatal bad-header report and sp-corrupt trace moved out of
+  line; one shape check (`hasAtLeastSlots(3)`) then raw slot reads in
+  `activateBlock` / `primitiveFullClosureValue`; raw method-header read in
+  `pushFrame`.  Send 471 -> 403 instructions, block call 708 -> 648.
+- New space 64 MB (was 32), eden 100% of it (the 20% survivor reserve was
+  never used): lexicon 2069 -> 1942 billion instructions.
+- Old-key `becomeForward:` scans old space with a worker pool (opt-out
+  `PHARO_BECOME_SERIAL_SCAN`): restart points every ~1 MB
+  (`ensureScanCuts`, rebuilt after fullGC), workers collect hits, the main
+  thread applies them through the barrier.  2000 ByteString -> WideString
+  upgrades 15.3 -> 3.3 s; `StSpotter new` 86 -> 38 ms cold (Cog 28).
+  Correct with the forwarder safety net disabled (diagnostic build).
+
+- JIT entry counting only for code a count can compile: the method-cache
+  entry caches `JITRuntime::entryCountMatters` (`jitCounted`; under the
+  loops-only T1 policy, code with a loop), blocks the same through the
+  per-block facts memo.  The count probe ran on every send: printString
+  90.4 -> 85.0 billion, deeptraverser 1132 -> 1056, lexicon 1942 -> 1833,
+  myprecious 48.2 -> 44.9.
+- The Sista backward-jump hook is gated inline on the Sista runtime existing
+  (it is created on the first Sista activation); `returnFromMethod` is a
+  small function whose plain-method case calls `returnValue` directly, the
+  NLR and diagnostic paths moved to `returnFromMethodSlow`.  printString
+  85.0 -> 83.8 billion.
+- Tried and reverted: inlining the OSR countdown at the nine backward-jump
+  sites (+0.5%), a lean `sendSelector` front for plain sends (+2.7%: the
+  primitive and shortcut sends then pay two calls).
+
+`[DEPTH0]` measurement: context mode is 0.1-2.5% of checkpoints on the slow
+packages, so married contexts are not their lever (deferred.md corrected).
+
 ## Right now (2026-10-13, 07:00) -- sweeps E/G/H clean; deeptraverser at parity; lexicon -23%
 
 Sweep E (exact `064e1de6` tree, nothing alongside): 27875 P / 12 F / 3 E,

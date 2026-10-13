@@ -4540,7 +4540,8 @@ void Interpreter::interpret() {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
-            tryPerBcSistaAtBackwardJump();
+            if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
             backwardBranchInterruptCheck();
         }
@@ -4558,7 +4559,8 @@ void Interpreter::interpret() {
             if (offset < 0) {
 #if PHARO_JIT_ENABLED
                 tryOSRAtBackwardJump();
-                tryPerBcSistaAtBackwardJump();
+                if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                    tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
                 backwardBranchInterruptCheck();
             }
@@ -4580,7 +4582,8 @@ void Interpreter::interpret() {
             if (offset < 0) {
 #if PHARO_JIT_ENABLED
                 tryOSRAtBackwardJump();
-                tryPerBcSistaAtBackwardJump();
+                if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                    tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
                 backwardBranchInterruptCheck();
             }
@@ -8241,7 +8244,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
-            tryPerBcSistaAtBackwardJump();
+            if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
             backwardBranchInterruptCheck();
         }
@@ -8258,7 +8262,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             if (offset < 0) {
 #if PHARO_JIT_ENABLED
                 tryOSRAtBackwardJump();
-                tryPerBcSistaAtBackwardJump();
+                if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                    tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
                 backwardBranchInterruptCheck();
             }
@@ -8279,7 +8284,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             if (offset < 0) {
 #if PHARO_JIT_ENABLED
                 tryOSRAtBackwardJump();
-                tryPerBcSistaAtBackwardJump();
+                if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                    tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
                 backwardBranchInterruptCheck();
             }
@@ -9673,8 +9679,29 @@ size_t Interpreter::validateNLRHomeFrame(size_t homeFrame, Oop expectedHome) {
     return SIZE_MAX;  // home not on the inline stack -> context-NLR path
 }
 
+// Every ^-return.  Small on purpose: the common case -- a CompiledMethod
+// activation whose frame carries no paused-NLR marker -- goes straight to
+// returnValue, and only the rest pays returnFromMethodSlow's twelve-register
+// prologue (its NLR and diagnostic paths need them).
 void Interpreter::returnFromMethod() {
-    Oop value = pop();
+    if (__builtin_expect(DIAG_FLAG(g_fpushArm)
+            || GET_DEBUG_BOOL(PHARO_RETMETH_TRACE)
+            || GET_DEBUG_BOOL(PHARO_T1_TRACE_HIT)
+            || GET_DEBUG_BOOL(PHARO_TRACE_CULL_RETURN), 0)) {
+        returnFromMethodSlow(pop());
+        return;
+    }
+    if (__builtin_expect(frameDepth_ > 0
+            && savedFrames_[frameDepth_ - 1].homeFrameDepth == SIZE_MAX
+            && method_.isObject()
+            && method_.asObjectPtr()->classIndex() == compiledMethodClassIndex_, 1)) {
+        returnValue(pop());
+        return;
+    }
+    returnFromMethodSlow(pop());
+}
+
+void Interpreter::returnFromMethodSlow(Oop value) {
 
     // Cascade-#3 residual: trace ^-returns from CompiledBlocks while the
     // FPUSH tape is armed — the swallowed-NLR hunt.
@@ -10917,7 +10944,8 @@ void Interpreter::longJump() {
     if (offset < 0) {
 #if PHARO_JIT_ENABLED
         tryOSRAtBackwardJump();
-        tryPerBcSistaAtBackwardJump();
+        if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+            tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
         backwardBranchInterruptCheck();
     }
@@ -10931,7 +10959,8 @@ void Interpreter::longJumpIfTrue() {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
-            tryPerBcSistaAtBackwardJump();
+            if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
             backwardBranchInterruptCheck();
         }
@@ -10949,7 +10978,8 @@ void Interpreter::longJumpIfFalse() {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
-            tryPerBcSistaAtBackwardJump();
+            if (__builtin_expect(sistaRuntimeForGCHook_ != nullptr || traceSpCorrupt_, 0))
+                tryPerBcSistaAtBackwardJump();   // Sista runtime exists only once Sista dispatch ran
 #endif
             backwardBranchInterruptCheck();
         }
@@ -12206,8 +12236,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     if (__builtin_expect(cached != nullptr, 1)) {
 #if PHARO_JIT_ENABLED
-        // Count ALL sends for JIT compilation, not just activateMethod calls
-        jitRuntime_.noteMethodEntry(cached->method);
+        // Count sends for JIT compilation -- only for code a count can
+        // compile (jitCounted: under the loops-only policy, code with a
+        // loop).  The count probe was ~15 instructions on every send.
+        if (cached->jitCounted) jitRuntime_.noteMethodEntry(cached->method);
 
         // Populate megamorphic cache for JIT stencil probes -- only when
         // the JIT state changed since this entry last did it (see
@@ -13389,6 +13421,9 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.megaEpoch = 0;
         e1.trivialShape = e1.accessorIndex >= 0 || e1.setterIndex >= 0 || e1.returnsSelf
             || e1.evenOddKind >= 0 || e1.returnsLiteralKind != 0;
+#if PHARO_JIT_ENABLED
+        e1.jitCounted = jit::JITRuntime::entryCountMatters(e1.method);
+#endif
         return;
     }
 
@@ -13408,6 +13443,9 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.megaEpoch = 0;
     e2.trivialShape = e2.accessorIndex >= 0 || e2.setterIndex >= 0 || e2.returnsSelf
         || e2.evenOddKind >= 0 || e2.returnsLiteralKind != 0;
+#if PHARO_JIT_ENABLED
+    e2.jitCounted = jit::JITRuntime::entryCountMatters(e2.method);
+#endif
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
@@ -15525,16 +15563,18 @@ past_sista_block:
 // carrying an Extend A (nested-block return).  activateBlock needs the home
 // method and frame only for such blocks, and computing them -- the outer-code
 // chain walk plus a scan of the saved frames -- was most of its cost.
-// Memoized per block oop for one g_objectMotionEpoch (objects move at GC).
+// Memoized per block oop for one g_objectMotionEpoch (objects move at GC),
+// together with whether its JIT entry count matters
+// (JITRuntime::entryCountMatters: under the loops-only policy, a loop).
 extern uint64_t g_objectMotionEpoch;
 namespace {
-struct BlockNlrMemo { uint64_t block; uint64_t epoch; bool nlr; };
-BlockNlrMemo g_blockNlrMemo[4096];
+struct BlockFactsMemo { uint64_t block; uint64_t epoch; bool nlr; bool counted; };
+BlockFactsMemo g_blockFactsMemo[4096];
 }
-static bool compiledBlockMayReturnNonLocally(Oop compiledBlock) {
+static const BlockFactsMemo& compiledBlockFacts(Oop compiledBlock) {
     uint64_t key = compiledBlock.rawBits();
-    BlockNlrMemo& m = g_blockNlrMemo[(key >> 3) & 4095];
-    if (m.block == key && m.epoch == g_objectMotionEpoch) return m.nlr;
+    BlockFactsMemo& m = g_blockFactsMemo[(key >> 3) & 4095];
+    if (m.block == key && m.epoch == g_objectMotionEpoch) return m;
     bool nlr = false;
     ObjectHeader* h = compiledBlock.asObjectPtr();
     Oop hdr = h->slotAt(0);
@@ -15553,8 +15593,13 @@ static bool compiledBlockMayReturnNonLocally(Oop compiledBlock) {
             i += static_cast<size_t>(jit::SistaV1::bytecodeLength(op));
         }
     }
-    m = {key, g_objectMotionEpoch, nlr};
-    return nlr;
+#if PHARO_JIT_ENABLED
+    const bool counted = jit::JITRuntime::entryCountMatters(compiledBlock);
+#else
+    const bool counted = false;
+#endif
+    m = {key, g_objectMotionEpoch, nlr, counted};
+    return m;
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
@@ -15580,8 +15625,15 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // 3+: copied values
 
     // block is a known-valid FullBlockClosure/BlockClosure
-    Oop slot1 = memory_.fetchPointerUnchecked(1, block);
-    Oop outerContext = memory_.fetchPointerUnchecked(0, block);
+    // Every closure has outerContext, startpc/compiledBlock and numArgs: one
+    // shape check, then plain slot reads.
+    ObjectHeader* const blockHdr = block.asObjectPtr();
+    if (__builtin_expect(!blockHdr->hasAtLeastSlots(3), 0)) {
+        primitiveFail();
+        return;
+    }
+    Oop slot1 = blockHdr->slotAt(1);
+    Oop outerContext = blockHdr->slotAt(0);
 
     Oop methodToExecute;
     uint8_t* startAddress = nullptr;
@@ -15616,7 +15668,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // invocations via primitiveFullClosureValue never trigger T1
         // compilation.  Sista may already own this method via splice; if
         // so, noteMethodEntry returns early.
-        jitRuntime_.noteMethodEntry(compiledBlock);
+        // Only blocks a count can compile (compiledBlockFacts.counted).
+        if (compiledBlockFacts(compiledBlock).counted)
+            jitRuntime_.noteMethodEntry(compiledBlock);
         // Eager block compile: PHARO_T1_EAGER_BLOCK_COMPILE=1 triggers
         // compile on FIRST invocation (instead of after threshold).
         // Use to test whether the standard hot-count path misses
@@ -15631,8 +15685,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 #endif
 
         methodToExecute = compiledBlock;
-        // compiledBlock validated above (isCompiledMethod check)
-        Oop header = memory_.fetchPointerUnchecked(0, compiledBlock);
+        // compiledBlock validated above (isCompiledMethod check), so its
+        // header slot exists.
+        Oop header = blockObj->slotAt(0);
         int64_t headerBits = header.asSmallInteger();
         int numLiterals = headerBits & 0x7FFF;  // bits 0-14
         size_t bytecodeOffset = (1 + numLiterals) * 8;
@@ -15648,7 +15703,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // If not, it's the home method.
         // Skipped for a block that cannot return non-locally: the home is
         // used only by the NLR home-frame search below.
-        if (numLiterals >= 1 && compiledBlockMayReturnNonLocally(compiledBlock)) {
+        if (numLiterals >= 1 && compiledBlockFacts(compiledBlock).nlr) {
             Oop enclosingCode = memory_.fetchPointerUnchecked(numLiterals, compiledBlock);
             // Follow the chain of enclosing blocks until we reach the home method
             int chainDepth = 0;
@@ -15977,6 +16032,109 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
 // ===== FRAME MANAGEMENT =====
 
+// Cold halves of pushFrame, kept out of line so the hot path's prologue
+// stays small (their fprintf calls made every push save the full
+// register set).
+void Interpreter::reportBadMethodHeader(Oop method, Oop newMethodHeader) {
+    FILE* crashLog = fopen("/tmp/pharosmalltalk-crash.log", "w");
+    if (!crashLog) crashLog = stderr;
+    ObjectHeader* mObj = method.asObjectPtr();
+    // Print raw header and overflow word for deep analysis
+    uint64_t rawHdr = mObj->rawHeader();
+    uint64_t* rawPtr = reinterpret_cast<uint64_t*>(mObj);
+    uint64_t overflowWord = *(rawPtr - 1);  // word before header
+    uint8_t slotCountByte = (rawHdr >> 56) & 0xFF;
+    fprintf(crashLog, "[FATAL] pushFrame: method header not SmallInteger!\n"
+            "  method=0x%llx rawHdr=0x%llx overflowWord=0x%llx slotCountByte=%u\n"
+            "  cls=%u fmt=%d slots=%zu isCompiledMethod=%d\n"
+            "  header(slot0)=0x%llx tag=%d isObj=%d\n"
+            "  step=%llu frameDepth=%zu\n",
+            (unsigned long long)method.rawBits(),
+            (unsigned long long)rawHdr, (unsigned long long)overflowWord,
+            (unsigned)slotCountByte,
+            mObj->classIndex(), (int)mObj->format(), mObj->slotCount(),
+            mObj->isCompiledMethod(),
+            (unsigned long long)newMethodHeader.rawBits(),
+            (int)(newMethodHeader.rawBits() & 7),
+            newMethodHeader.isObject(),
+            (unsigned long long)g_stepNum, frameDepth_);
+    // Dump first 10 slots
+    fprintf(crashLog, "  slots:");
+    for (size_t i = 0; i < std::min(mObj->slotCount(), (size_t)10); ++i) {
+        Oop s = mObj->slotAt(i);
+        fprintf(crashLog, " [%zu]=0x%llx(%s)", i, (unsigned long long)s.rawBits(),
+                s.isSmallInteger() ? "smi" : s.isObject() ? "obj" : "imm");
+    }
+    fprintf(crashLog, "\n");
+    // Check if the method object has a valid class
+    Oop cls = memory_.classOf(method);
+    if (cls.isObject()) {
+        Oop clsName = memory_.fetchPointer(6, cls);
+        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
+            ObjectHeader* nh = clsName.asObjectPtr();
+            if (nh->isBytesObject() && nh->byteSize() < 80) {
+                fprintf(crashLog, "  className=%.*s\n", (int)nh->byteSize(), (char*)nh->bytes());
+            }
+        }
+    }
+    // Dump selector from the last literal
+    if (mObj->isCompiledMethod() && mObj->slotCount() > 1) {
+        Oop hdr = mObj->slotAt(0);
+        if (hdr.isSmallInteger()) {
+            size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+            if (nLits >= 2 && nLits < mObj->slotCount()) {
+                Oop selLit = mObj->slotAt(nLits);  // penultimate literal = methodClass assoc
+                Oop selLit2 = mObj->slotAt(nLits - 1);  // second-to-last = selector (usually)
+                fprintf(crashLog, "  lastLiteral[%zu]=0x%llx penultimate[%zu]=0x%llx\n",
+                        nLits, (unsigned long long)selLit.rawBits(),
+                        nLits-1, (unsigned long long)selLit2.rawBits());
+            }
+        }
+    }
+    // Current selector being sent
+    fprintf(crashLog, "  newMethod_=0x%llx method_=0x%llx receiver_=0x%llx\n",
+            (unsigned long long)newMethod_.rawBits(),
+            (unsigned long long)method_.rawBits(),
+            (unsigned long long)receiver_.rawBits());
+    // GC info
+    fprintf(crashLog, "  gcCount=%zu step=%llu lastGCAtStep=%llu stepsSinceGC=%llu\n",
+            memory_.statistics().gcCount,
+            (unsigned long long)g_stepNum,
+            (unsigned long long)stepCountAtLastGC_,
+            (unsigned long long)(g_stepNum - stepCountAtLastGC_));
+    // Check if method address is in valid heap range
+    fprintf(crashLog, "  methodAddr in heap: old=%d perm=%d\n",
+            memory_.isOldObject(mObj), memory_.isPermObject(mObj));
+    // Walk the stack to show recent callers
+    fprintf(crashLog, "  recent frames:\n");
+    for (size_t fi = frameDepth_; fi > 0 && fi > frameDepth_ - 8; --fi) {
+        SavedFrame& sf = savedFrames_[fi - 1];
+        std::string selStr = memory_.selectorOf(sf.savedMethod);
+        fprintf(crashLog, "    frame[%zu] #%s method=0x%llx\n",
+                fi-1, selStr.c_str(), (unsigned long long)sf.savedMethod.rawBits());
+    }
+    fflush(crashLog);
+    if (crashLog != stderr) fclose(crashLog);
+    abort();
+}
+
+void Interpreter::reportSpCorruptAtPush(Oop method, int argCount) {
+    uint64_t spB = (uint64_t)stackPointer_;
+    uint64_t fpB = (uint64_t)framePointer_;
+    if (((spB & 7) == 1) || ((fpB & 7) == 1)) {
+        static int n = 0;
+        if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
+            fprintf(stderr,
+                "[SP-CORRUPT-pushFrame] entry sp=0x%llx fp=0x%llx "
+                "callee=#%s caller=#%s argCount=%d fd=%zu\n",
+                (unsigned long long)spB, (unsigned long long)fpB,
+                memory_.selectorOf(method).c_str(),
+                memory_.selectorOf(method_).c_str(),
+                argCount, frameDepth_);
+        }
+    }
+}
+
 bool Interpreter::pushFrame(Oop method, int argCount) {
     // Entry-path census for the scanFor: bypass (PHARO_JIT_FAIL_REASONS).
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)) {
@@ -16147,22 +16305,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // 2026-05-06 A1 trace: detect SP-tag corruption AT pushFrame entry —
     // tells us whether the bug is before pushFrame (in send dispatch) or
     // produced by pushFrame's FP computation.
-    if (__builtin_expect(traceSpCorrupt_, 0)) {
-        uint64_t spB = (uint64_t)stackPointer_;
-        uint64_t fpB = (uint64_t)framePointer_;
-        if (((spB & 7) == 1) || ((fpB & 7) == 1)) {
-            static int n = 0;
-            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
-                fprintf(stderr,
-                    "[SP-CORRUPT-pushFrame] entry sp=0x%llx fp=0x%llx "
-                    "callee=#%s caller=#%s argCount=%d fd=%zu\n",
-                    (unsigned long long)spB, (unsigned long long)fpB,
-                    memory_.selectorOf(method).c_str(),
-                    memory_.selectorOf(method_).c_str(),
-                    argCount, frameDepth_);
-            }
-        }
-    }
+    if (__builtin_expect(traceSpCorrupt_, 0)) reportSpCorruptAtPush(method, argCount);
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
     // catches both infinite recursion (soft) and hard overflow. Hot path is the
     // single compare below; only while DRIVING the overflow-recovery terminate
@@ -16261,89 +16404,12 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     // Calculate number of temporaries for the new method
     // method is a known-valid CompiledMethod at this point
-    Oop newMethodHeader = memory_.fetchPointerUnchecked(0, method);
-    if (__builtin_expect(!newMethodHeader.isSmallInteger(), 0)) {
-        FILE* crashLog = fopen("/tmp/pharosmalltalk-crash.log", "w");
-        if (!crashLog) crashLog = stderr;
-        ObjectHeader* mObj = method.asObjectPtr();
-        // Print raw header and overflow word for deep analysis
-        uint64_t rawHdr = mObj->rawHeader();
-        uint64_t* rawPtr = reinterpret_cast<uint64_t*>(mObj);
-        uint64_t overflowWord = *(rawPtr - 1);  // word before header
-        uint8_t slotCountByte = (rawHdr >> 56) & 0xFF;
-        fprintf(crashLog, "[FATAL] pushFrame: method header not SmallInteger!\n"
-                "  method=0x%llx rawHdr=0x%llx overflowWord=0x%llx slotCountByte=%u\n"
-                "  cls=%u fmt=%d slots=%zu isCompiledMethod=%d\n"
-                "  header(slot0)=0x%llx tag=%d isObj=%d\n"
-                "  step=%llu frameDepth=%zu\n",
-                (unsigned long long)method.rawBits(),
-                (unsigned long long)rawHdr, (unsigned long long)overflowWord,
-                (unsigned)slotCountByte,
-                mObj->classIndex(), (int)mObj->format(), mObj->slotCount(),
-                mObj->isCompiledMethod(),
-                (unsigned long long)newMethodHeader.rawBits(),
-                (int)(newMethodHeader.rawBits() & 7),
-                newMethodHeader.isObject(),
-                (unsigned long long)g_stepNum, frameDepth_);
-        // Dump first 10 slots
-        fprintf(crashLog, "  slots:");
-        for (size_t i = 0; i < std::min(mObj->slotCount(), (size_t)10); ++i) {
-            Oop s = mObj->slotAt(i);
-            fprintf(crashLog, " [%zu]=0x%llx(%s)", i, (unsigned long long)s.rawBits(),
-                    s.isSmallInteger() ? "smi" : s.isObject() ? "obj" : "imm");
-        }
-        fprintf(crashLog, "\n");
-        // Check if the method object has a valid class
-        Oop cls = memory_.classOf(method);
-        if (cls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, cls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* nh = clsName.asObjectPtr();
-                if (nh->isBytesObject() && nh->byteSize() < 80) {
-                    fprintf(crashLog, "  className=%.*s\n", (int)nh->byteSize(), (char*)nh->bytes());
-                }
-            }
-        }
-        // Dump selector from the last literal
-        if (mObj->isCompiledMethod() && mObj->slotCount() > 1) {
-            Oop hdr = mObj->slotAt(0);
-            if (hdr.isSmallInteger()) {
-                size_t nLits = hdr.asSmallInteger() & 0x7FFF;
-                if (nLits >= 2 && nLits < mObj->slotCount()) {
-                    Oop selLit = mObj->slotAt(nLits);  // penultimate literal = methodClass assoc
-                    Oop selLit2 = mObj->slotAt(nLits - 1);  // second-to-last = selector (usually)
-                    fprintf(crashLog, "  lastLiteral[%zu]=0x%llx penultimate[%zu]=0x%llx\n",
-                            nLits, (unsigned long long)selLit.rawBits(),
-                            nLits-1, (unsigned long long)selLit2.rawBits());
-                }
-            }
-        }
-        // Current selector being sent
-        fprintf(crashLog, "  newMethod_=0x%llx method_=0x%llx receiver_=0x%llx\n",
-                (unsigned long long)newMethod_.rawBits(),
-                (unsigned long long)method_.rawBits(),
-                (unsigned long long)receiver_.rawBits());
-        // GC info
-        fprintf(crashLog, "  gcCount=%zu step=%llu lastGCAtStep=%llu stepsSinceGC=%llu\n",
-                memory_.statistics().gcCount,
-                (unsigned long long)g_stepNum,
-                (unsigned long long)stepCountAtLastGC_,
-                (unsigned long long)(g_stepNum - stepCountAtLastGC_));
-        // Check if method address is in valid heap range
-        fprintf(crashLog, "  methodAddr in heap: old=%d perm=%d\n",
-                memory_.isOldObject(mObj), memory_.isPermObject(mObj));
-        // Walk the stack to show recent callers
-        fprintf(crashLog, "  recent frames:\n");
-        for (size_t fi = frameDepth_; fi > 0 && fi > frameDepth_ - 8; --fi) {
-            SavedFrame& sf = savedFrames_[fi - 1];
-            std::string selStr = memory_.selectorOf(sf.savedMethod);
-            fprintf(crashLog, "    frame[%zu] #%s method=0x%llx\n",
-                    fi-1, selStr.c_str(), (unsigned long long)sf.savedMethod.rawBits());
-        }
-        fflush(crashLog);
-        if (crashLog != stderr) fclose(crashLog);
-        abort();
-    }
+    // Slot 0 of any object is readable (a 0-slot object still has its
+    // 8-byte body), and a non-method's word fails the SmallInteger check
+    // below exactly as the bounds-checked read's nil did.
+    Oop newMethodHeader = method.asObjectPtr()->slotAt(0);
+    if (__builtin_expect(!newMethodHeader.isSmallInteger(), 0))
+        reportBadMethodHeader(method, newMethodHeader);   // cold; aborts
     int64_t headerBits = newMethodHeader.asSmallInteger();
     int numTemps = (headerBits >> 18) & 0x3F;
 
