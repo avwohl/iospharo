@@ -15,28 +15,33 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-13, 16:00) -- why the arm64 JIT is neutral (partly open)
+## Right now (2026-10-13, 16:30) -- T1 compiled method TRAILERS: loops refused; fixed
 
 A loop of SmallInteger arithmetic in a method (`zzArith:`, 30M iterations)
-runs at interpreter speed with the JIT on: 546 ms on, 517 off, Cog 44; a
-sample shows no time in JIT code.  With `PHARO_T1_RESUME_EXTERNAL_J2J=1` it
-runs in 152 ms (3.5x).  `PHARO_T1_TRACE_COMPILE` (diag build): default mode
-attempts 42 T1 compiles and never `zzArith:`, with 20 "inline-J2J closure
-push refused" lines (the log stops at 20); external mode attempts 323,
-`zzArith:` among them, none refused.  So on arm64 the default resume-internal
-mode keeps most loop methods out of T1.  NOT yet established: why `zzArith:`
-in particular -- a code read says `+` / `<=` never reach the send emitter
-that holds the refused push, so its blocker is elsewhere (the trace may
-print only after a successful emit).
+ran at interpreter speed with the JIT on (546 ms; off 517; Cog 44).  The new
+`[T1-REFUSED]` trace line (PHARO_T1_TRACE_COMPILE, diag build) and the
+opcode now printed in the refusal log showed why: T1 refused it at "bc 29
+op 0xad" -- a byte of the method TRAILER (source pointer), not a bytecode.
+`computeLiveLength`, which trims the trailer, read every extended jump's
+operand as an unsigned forward offset and ignored the ExtendB sign prefix,
+so a loop's back edge `E1 FF ED xx` looked like a jump past the end and
+nothing was trimmed.  Trailer bytes were then emitted as bytecodes; one that
+decodes as a send reached the arm64 inline-J2J closure-push refusal and the
+whole method stayed interpreted.  Fixed (ExtendB decoded as the interpreter
+does; a back edge cannot keep later bytes alive): `zzArith:` 546 -> 133 ms
+(x86 204 ms), correct result.  Instructions, before -> after: printString
+83.7 -> 83.7, deeptraverser 1039 -> 1004, lexicon 1781 -> 1703, myprecious
+44.2 -> 44.3.  Battery passes; sweep T 27880 P / 10 F / 1 E (its new
+ProcessSpecificTest>>testLocalVariable passes alone 5/5 and in its batch
+2/2); heavy packages polymath, vector-matrix, famix, linear-models,
+graph-algorithms identical to Cog (deeptraverser, lexicon, cormas: their
+timing tests under load, as before).
 
-Compiling everything external mode allows loses on real code (instructions,
-default -> external): printString 83.7 -> 104.6, deeptraverser 1039 ->
-1387, lexicon 1781 -> 1923, myprecious 44.2 -> 54.6.  And a static census of
-the image's 138,862 methods finds 2,573 with loops, of which only 44 send
-nothing but arithmetic/comparison (94 adding at:/at:put:/size).  So making
-just those compile would help numeric loops and benchmarks, not the slow
-packages.  Next step if pursued: find the exact refusal for `zzArith:` by
-lifting the 20-line refusal-log cap on a diag build.
+Context (unchanged by this fix): compiling every send-bearing method
+(`PHARO_T1_RESUME_EXTERNAL_J2J=1`) still loses on real code -- printString
+83.7 -> 104.6, deeptraverser 1039 -> 1387 -- so the closure-push refusal for
+real sends stays.  Static census: 2,573 of the image's 138,862 methods have
+loops.
 
 ## Right now (2026-10-13, 15:00) -- end-of-day numbers; `0aa5f085` pushed
 

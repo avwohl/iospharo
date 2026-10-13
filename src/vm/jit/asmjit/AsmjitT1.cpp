@@ -1267,6 +1267,16 @@ inline bool isPhase3ModOp(uint8_t op) {
 // to that point (effectively trims the malformed tail).
 size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
     int maxBranchTarget = 0;
+    // Extend B prefix value, decoded as the interpreter does (the first
+    // byte signed, later ones shifted in; Extend A does not reset it).
+    // Without it every loop's back edge `E1 FF ED xx` read as a FORWARD jump
+    // of xx bytes, usually past the end, so a method with a loop was never
+    // trimmed: its trailer (source pointer, temp names) was emitted as
+    // bytecodes, and on arm64 a trailer byte that decodes as a send hit the
+    // inline-J2J closure-push refusal and kept the whole method out of T1
+    // (`zzArith:` -- a plain arithmetic loop -- ran interpreted, 3.5x slower).
+    int64_t extB = 0;
+    bool haveExtB = false;
     size_t i = 0;
     while (i < bcLen) {
         uint8_t op = bc[i];
@@ -1276,32 +1286,33 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
             // dead.  (The stencil decoder does `goto done`.)
             return i;
         }
-        // Track forward branch targets for short jumps.  ExtJump*
-        // (0xED..0xEF) need extB which we don't decode here; for now,
-        // assume any ExtJump points forward and pessimistically extend
-        // maxBranchTarget to bcLen so we DON'T trim past an ExtJump.
-        // (Phase 4 doesn't yet emit jumps anyway, so any method with
-        // ExtJump bails-on-entry via the pre-scan; this is just for
-        // safety against future Phase-5 work.)
+        if (op == SistaV1::ExtendB) {
+            const uint8_t b = bc[i + 1];
+            extB = haveExtB ? extB * 256 + b : (b > 127 ? b - 256 : b);
+            haveExtB = true;
+            i += (size_t)len;
+            continue;
+        }
+        if (op == SistaV1::ExtendA) {
+            i += (size_t)len;
+            continue;
+        }
         if (SistaV1::isAnyShortJump(op)) {
             int tgt = SistaV1::shortJumpTarget(op, (int)i);
             if (tgt > maxBranchTarget) maxBranchTarget = tgt;
         } else if (op == SistaV1::ExtJump
                 || op == SistaV1::ExtJumpTrue
                 || op == SistaV1::ExtJumpFalse) {
-            // Naked long-jump operand is UNSIGNED (forward 0-255);
-            // the sign lives in an ExtendB prefix.  We don't track
-            // ExtB prefix state here so prefixed long jumps may have
-            // a larger effective offset; for those rare cases, fall
-            // back to the pessimistic "could jump past bcLen".
-            // Target = (i + 2) + offset.
-            if (i + 1 < bcLen) {
-                int tgt = static_cast<int>(i) + 2 + bc[i + 1];
-                if (tgt > maxBranchTarget) maxBranchTarget = tgt;
-            } else {
-                maxBranchTarget = (int)bcLen;
-            }
+            // Target = (i + 2) + (extB * 256 + operand); a negative offset
+            // is a back edge and cannot keep later bytes alive.
+            const int64_t off = extB * 256 + bc[i + 1];
+            const int64_t tgt = static_cast<int64_t>(i) + 2 + off;
+            if (tgt > maxBranchTarget)
+                maxBranchTarget = tgt > static_cast<int64_t>(bcLen)
+                    ? static_cast<int>(bcLen) : static_cast<int>(tgt);
         }
+        extB = 0;
+        haveExtB = false;
         i += (size_t)len;
         // Stop at first unconditional return if no branches point past us.
         // Includes block returns (0x5D BlockReturnNil, 0x5E BlockReturnTop)
@@ -1390,6 +1401,10 @@ inline bool isX86SendSite(uint8_t op, uint8_t prevOp) {
 // add >4095).  This handler latches the failure; emitMethodBytes checks
 // it and FAILS the compile, so the method stays interpreted instead of
 // running with a hole in its code.
+// The bytecode being emitted when an encoding error / policy refusal fires
+// (set by the arm64 emit loop; single-threaded like the rest of emit).
+static int g_t1EmittingOp = -1;
+static long g_t1EmittingIdx = -1;
 struct T1EncodingErrorHandler : public asmjit::ErrorHandler {
     bool failed = false;
     asmjit::Error first = asmjit::kErrorOk;
@@ -1398,9 +1413,10 @@ struct T1EncodingErrorHandler : public asmjit::ErrorHandler {
         failed = true;
         if (first == asmjit::kErrorOk) first = err;
         static int logged = 0;
-        if (++logged <= 20)
+        if (++logged <= 20 || GET_DEBUG_BOOL(PHARO_T1_TRACE_COMPILE))
             fprintf(stderr,
-                "[asmjit-t1] compile refused (bail): %s\n",
+                "[asmjit-t1] compile refused (bail) at bc %ld op 0x%02x: %s\n",
+                g_t1EmittingIdx, g_t1EmittingOp & 0xFF,
                 message ? message : "?");
     }
 };
@@ -11279,6 +11295,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 continue;
             }
 
+            g_t1EmittingOp = op;          // for the refusal log
+            g_t1EmittingIdx = globalIdx;
             if (!emitOne_arm64(a, op, nilBits,
                                 bcOffsetBase + globalIdx, siteIdx,
                                 bcLabels, globalIdx,
@@ -12026,6 +12044,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     if (!emitOk) {
         g_failed++; g_failedBcOther++;
+        // The success trace below names every compiled method; name the
+        // refused ones too, or a method that never compiles is invisible
+        // (the encoding-error handler's own log stops after 20 lines).
+        if (GET_DEBUG_BOOL(PHARO_T1_TRACE_COMPILE))
+            fprintf(stderr, "[T1-REFUSED] sel=#%s oop=0x%llx bcLen=%zu\n",
+                    memory.selectorOf(compiledMethod).c_str(),
+                    (unsigned long long)compiledMethod.rawBits(), bcLen);
         // PERMANENT emit failure (not zone-full — that's the allocate() path
         // below) -> negative-cache so this method is never re-emitted.  Stops
         // the x86 compile-thrash (the entry check above consumes this).
