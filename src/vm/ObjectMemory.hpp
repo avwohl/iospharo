@@ -218,6 +218,23 @@ struct GCResult {
     size_t compactPasses = 0;
 };
 
+// Old->young holders recorded by EMITTED code.  The JIT's inline write
+// barrier sets the holder's remembered bit and appends it here (cursor/limit
+// at fixed offsets 0 and 8, the overflow flag at 16); scavenge drains it into
+// rememberedSet_.  When full, the barrier sets `overflow` instead and the
+// next scavenge scans all of old space.
+struct JitRememberBuffer {
+    static constexpr size_t kEntries = 16384;
+    uint64_t* cursor;
+    uint64_t* limit;
+    uint64_t  overflow;
+    uint64_t  entries[kEntries];
+};
+static_assert(offsetof(JitRememberBuffer, cursor) == 0, "emitted barrier offset");
+static_assert(offsetof(JitRememberBuffer, limit) == 8, "emitted barrier offset");
+static_assert(offsetof(JitRememberBuffer, overflow) == 16, "emitted barrier offset");
+extern JitRememberBuffer g_jitRememberBuf;
+
 class ObjectMemory {
 public:
     // ===== INITIALIZATION =====
@@ -319,7 +336,7 @@ public:
     /// answer classOfSlow gives (isValidPointer, then classAtIndex), without
     /// the call.  Every send asks this, ~4% of a send-bound run as a call.
     /// Immediates, forwarders and out-of-heap pointers take classOfSlow.
-    Oop classOf(Oop obj) const {
+    [[gnu::always_inline]] Oop classOf(Oop obj) const {
         if (__builtin_expect(obj.isObject(), 1)) {
             uint8_t* p = reinterpret_cast<uint8_t*>(obj.asObjectPtr());
             if (__builtin_expect((p >= oldSpaceStart_ && p < oldSpaceEnd_)
@@ -330,8 +347,10 @@ public:
                     return classTable_[ci];
             }
         } else if (obj.isSmallInteger()) {
+            if (__builtin_expect(immediateClassesInTable_, 1)) return classTable_[1];
             return specialObject(SpecialObjectIndex::ClassSmallInteger);
         } else if (obj.isCharacter()) {
+            if (__builtin_expect(immediateClassesInTable_, 1)) return classTable_[2];
             return specialObject(SpecialObjectIndex::ClassCharacter);
         }
         return classOfSlow(obj);
@@ -1006,6 +1025,7 @@ private:
     // bug, not the storage container.  See
     // `docs/class-table-container-analysis.md`.
     std::vector<Oop> classTable_;
+    bool immediateClassesInTable_ = false;  // classTable_[1]/[2] are SmallInteger/Character (cacheGCClassIndices)
     uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
     // One past the highest class-table index EVER written (never lowered).
     // The table is 4M entries (22-bit index space); loops that look for a
@@ -1090,6 +1110,10 @@ private:
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers
+    bool drainJitRememberBuffer();
+    bool emittedStoresBarriered() const;
+    void discardRememberedSet();
+    bool rememberedBitsExact_ = false;  // a full scan has cleared every remembered bit (scavenge)
     uint8_t* oldFreeAtLastScavenge_ = nullptr;  // old-space top when the last scavenge finished (PHARO_SCAV_BIT_AUDIT: "recent" holders)
 
     // Segregated free lists for old space (Spur-style)

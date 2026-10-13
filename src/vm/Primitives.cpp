@@ -1926,6 +1926,32 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // Fast path for the common receivers -- a plain Array (format 2) or a
+    // byte object -- with an in-range SmallInteger index.  Same answers as
+    // the general code below, which handles every other case.
+    if (__builtin_expect(index.isSmallInteger() && rcvr.isObject(), 1)) {
+        uint8_t* p = reinterpret_cast<uint8_t*>(rcvr.rawBits());
+        if (memory_.isOldObject(p) || memory_.isYoungObject(p)) {
+            ObjectHeader* h = rcvr.asObjectPtr();
+            uint64_t i = static_cast<uint64_t>(index.asSmallInteger() - 1);
+            ObjectFormat f = h->format();
+            if (f == ObjectFormat::Indexable
+                    && h->classIndex() != ObjectHeader::ForwardedClassIndex) {
+                if (i < h->slotCount()) {
+                    primitiveSuccess(h->slotAt(i));
+                    return PrimitiveResult::Success;
+                }
+            } else if (f >= ObjectFormat::Indexable8 && f <= ObjectFormat::Indexable8_7) {
+                size_t n = h->slotCount() * 8
+                    - (static_cast<size_t>(f) - static_cast<size_t>(ObjectFormat::Indexable8));
+                if (i < n) {
+                    primitiveSuccess(Oop::fromSmallInteger(h->bytes()[i]));
+                    return PrimitiveResult::Success;
+                }
+            }
+        }
+    }
+
     // PHARO_T1_PRIM_OVERPOP: does do:'s at: reach C++ primitiveAt? If so, log the
     // operand depth + argCount_ so the over-pop (net -2) can be localized: if
     // depth==tempCount+4 and argCount_==1, primitiveSuccess is net -1 (correct)
@@ -4361,7 +4387,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
             if (hdr0.isSmallInteger()) {
                 int numLits = (int)(hdr0.asSmallInteger() & 0x7FFF);
                 size_t bcStart = (1 + numLits) * 8;
-                size_t totalBytes = blockObj->byteSize();
+                size_t totalBytes = blockObj->compiledCodeByteSize();
                 if (totalBytes >= bcStart + 9) {
                     const uint8_t* bc = blockObj->bytes() + bcStart;
                     // 9-byte pattern (0-indexed): 0xFB N M, push K,
@@ -4463,7 +4489,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                 if (hdr.isSmallInteger()) {
                     int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
                     size_t bcStart = (1 + numLits) * 8;
-                    size_t totalBytes = blockObj->byteSize();
+                    size_t totalBytes = blockObj->compiledCodeByteSize();
                     if (totalBytes >= bcStart + 4) {
                         const uint8_t* bc = blockObj->bytes() + bcStart;
                         // Block return: 0x5E (BlockReturnTop) is the
@@ -4558,7 +4584,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                 if (hdr.isSmallInteger()) {
                     int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
                     size_t bcStart = (1 + numLits) * 8;
-                    size_t totalBytes = blockObj->byteSize();
+                    size_t totalBytes = blockObj->compiledCodeByteSize();
                     if (totalBytes >= bcStart + 5) {
                         const uint8_t* bc = blockObj->bytes() + bcStart;
                         if (bc[0] == 0x40 && bc[1] == 0x41
@@ -4631,7 +4657,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
             if (outerHdr.isSmallInteger()) {
                 int outerNumLits = (int)(outerHdr.asSmallInteger() & 0x7FFF);
                 size_t outerBcStart = (1 + outerNumLits) * 8;
-                size_t outerTotal = outerCBObj->byteSize();
+                size_t outerTotal = outerCBObj->compiledCodeByteSize();
                 if (outerTotal >= outerBcStart + 10) {
                     const uint8_t* obc = outerCBObj->bytes() + outerBcStart;
                     // Outer iter pattern:
@@ -4689,7 +4715,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                                         int bbNumLits = bbHdrBits & 0x7FFF;
                                                         if (bbNumArgs == 2) {
                                                             size_t bbBcStart = (1 + bbNumLits) * 8;
-                                                            size_t bbTotal = bbCBObj->byteSize();
+                                                            size_t bbTotal = bbCBObj->compiledCodeByteSize();
                                                             if (bbTotal >= bbBcStart + 4) {
                                                                 const uint8_t* bbBc =
                                                                     bbCBObj->bytes() + bbBcStart;
@@ -4819,7 +4845,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
             if (hdr.isSmallInteger()) {
                 int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
                 size_t bcStart = (1 + numLits) * 8;
-                size_t totalBytes = blockObj->byteSize();
+                size_t totalBytes = blockObj->compiledCodeByteSize();
                 if (totalBytes >= bcStart + 3) {
                     const uint8_t* bc = blockObj->bytes() + bcStart;
                     // Pattern: PushTemp 0; Send0 literal N; return.
@@ -4867,7 +4893,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                 if (hdr.isSmallInteger()) {
                     int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
                     size_t bcStart = (1 + numLits) * 8;
-                    size_t totalBytes = blockObj->byteSize();
+                    size_t totalBytes = blockObj->compiledCodeByteSize();
                     if (totalBytes >= bcStart + 4) {
                         const uint8_t* bc = blockObj->bytes() + bcStart;
                         // Pattern: PushTemp 0 (0x40); PushLitConst N

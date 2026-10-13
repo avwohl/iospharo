@@ -3935,6 +3935,8 @@ void Interpreter::interpret() {
         dispatchTable[jit::SistaV1::ReturnFalse]    = &&op_returnFalse;
         dispatchTable[jit::SistaV1::ReturnNil]      = &&op_returnNil;
         dispatchTable[jit::SistaV1::ReturnTop]      = &&op_returnTop;
+        dispatchTable[jit::SistaV1::BlockReturnNil] = &&op_blockReturnNil;
+        dispatchTable[jit::SistaV1::BlockReturnTop] = &&op_blockReturnTop;
         for (int i = 0x70; i <= 0x7F; i++)
             if (i != 0x76 && i != 0x79 && i != 0x7A)
                 dispatchTable[i] = &&op_specialSend;
@@ -4447,6 +4449,53 @@ void Interpreter::interpret() {
         returnFromMethod();
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         DISPATCH_NEXT();
+    // Copies of the dispatchBytecode cases.
+    op_blockReturnNil: {
+        bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
+                            method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
+        if (inFullBlock) {
+            returnValue(memory_.nil());
+        } else {
+            push(memory_.nil());
+            if (extB_ != 0) {
+                instructionPointer_ += extB_;
+                extB_ = 0;
+            }
+        }
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+    op_blockReturnTop: {
+        int enclosingLevels = extA_;
+        int jumpDist = extB_;
+        extA_ = 0;
+        extB_ = 0;
+        if (enclosingLevels > 0) {
+            returnFromBlock();
+        } else {
+            bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
+                                method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
+            if (!inFullBlock && frameDepth_ > 10) {
+                static int blockRetLog = 0;
+                if (blockRetLog++ < 5 || (blockRetLog & 0xFFF) == 0) {  // first 5 + every 4096th
+                    uint32_t methodClsIdx = method_.isObject() ? method_.asObjectPtr()->classIndex() : 9999;
+                    fprintf(stderr, "[BLOCKRET-FAIL] #%d: inFullBlock=false method_clsIdx=%u compiledBlockClassIndex_=%u fd=%zu method=#%s\n",
+                            blockRetLog, methodClsIdx, compiledBlockClassIndex_,
+                            frameDepth_, memory_.selectorOf(method_).c_str());
+                    fflush(stderr);
+                }
+            }
+            if (inFullBlock) {
+                Oop value = pop();
+                returnValue(value);
+            } else {
+                instructionPointer_ += jumpDist;
+            }
+        }
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+
     op_specialSend:
         commonSend(bytecode - 0x70);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
@@ -8626,558 +8675,9 @@ void Interpreter::returnValue(Oop value) {
     }
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
-        // Check for pending NLR through ensure:.
-        // When a context-based NLR (fd=0) encounters an ensure: context,
-        // handleContextNLRUnwind resumes the ensure: to run its cleanup block.
-        // When ensure: returns (^ returnValue), we intercept here to continue
-        // the NLR to the home method's sender, handling multiple ensure: contexts.
-        if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) {
-            Oop homeCtx = nlrTargetCtx_;
-            Oop nilObj = memory_.nil();
-
-            // Verify NLR target is reachable from current sender chain.
-            // Context>>jump can transfer control to a completely different stack
-            // (e.g., from a terminated process back to the terminator process via
-            // runUntilReturnFrom:). If the NLR target is not reachable, the NLR
-            // must be abandoned — continuing it would walk the wrong stack.
-            {
-                Oop check = memory_.fetchPointer(0, activeContext_);
-                bool reachable = false;
-                // Bound raised 2000 -> 70000 (2026-07-03, silent-cap audit):
-                // this was the single bound in the NLR block NOT raised with
-                // its siblings in the 2026-06-19/20 sweep (see the ~6880
-                // comment: legitimate NLR homes sit ~14000 hops up via
-                // recursive printString).  A reachable home >2000 hops away
-                // was misclassified as a cross-stack Context>>jump target and
-                // the NLR silently became a normal return.  70000 >
-                // MaxFrameDepth(65536) covers any real chain; the abandon
-                // path below remains correct for genuinely unreachable
-                // (cross-stack) targets.
-                for (int i = 0; i < 70000 && check.isObject() && !check.isNil(); i++) {
-                    if (check.rawBits() == homeCtx.rawBits()) {
-                        reachable = true;
-                        break;
-                    }
-                    check = memory_.fetchPointer(0, check);
-                }
-                if (!reachable) {
-                    // NLR target is unreachable — abandon NLR and do normal return
-                    nlrTargetCtx_ = Oop::nil();
-                    nlrEnsureCtx_ = Oop::nil();
-                    nlrHomeMethod_ = Oop::nil();
-                    nlrValue_ = Oop::nil();
-                    // Fall through to normal fd=0 return below
-                    goto normalReturn;
-                }
-            }
-
-            // Get sender of current context BEFORE killing it
-            Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
-
-            // Kill the current context (ensure: is done)
-            memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
-            memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)
-
-            // Look for MORE ensure: (prim 198) contexts between here and homeCtx
-            Oop nextEnsureCtx = Oop::nil();
-            {
-                Oop ctx = senderOfCurrent;
-                int depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
-                    if (ctx.rawBits() == homeCtx.rawBits()) break;
-                    Oop method = memory_.fetchPointer(3, ctx);
-                    if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
-                        nextEnsureCtx = ctx;
-                        break;
-                    }
-                    ctx = memory_.fetchPointer(0, ctx);
-                    depth++;
-                }
-            }
-
-            if (nextEnsureCtx.isObject() && !nextEnsureCtx.isNil()) {
-                // Found another ensure: — kill contexts between current and it
-                Oop c = senderOfCurrent;
-                int safety = 0;
-                while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 70000) {
-                    Oop next = memory_.fetchPointer(0, c);
-                    memory_.storePointer(0, c, nilObj);
-                    memory_.storePointer(1, c, nilObj);
-                    c = next;
-                }
-
-                // Update pending NLR to next ensure:
-                nlrEnsureCtx_ = nextEnsureCtx;
-                // nlrTargetCtx_ stays as homeCtx
-
-                // Push NLR value onto next ensure:'s stack (as valueNoContextSwitch return)
-                Oop stackpOop = memory_.fetchPointer(2, nextEnsureCtx);
-                if (stackpOop.isSmallInteger()) {
-                    int stackp = stackpOop.asSmallInteger();
-                    stackp++;
-                    memory_.storePointer(2, nextEnsureCtx, Oop::fromSmallInteger(stackp));
-                    memory_.storePointer(5 + stackp, nextEnsureCtx, value);
-                }
-
-                // Resume next ensure: context
-                executeFromContext(nextEnsureCtx);
-                return;
-            } else {
-                // No more ensure: — complete the NLR
-                nlrTargetCtx_ = Oop::nil();
-                nlrEnsureCtx_ = Oop::nil();
-
-                // Kill remaining contexts from senderOfCurrent to homeCtx (not including homeCtx)
-                Oop c = senderOfCurrent;
-                int safety = 0;
-                while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                       c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
-                    Oop next = memory_.fetchPointer(0, c);
-                    memory_.storePointer(0, c, nilObj);
-                    memory_.storePointer(1, c, nilObj);
-                    c = next;
-                }
-
-                // Get homeCtx's sender (NLR returns to caller of home method)
-                Oop homeSender = memory_.fetchPointer(0, homeCtx);
-
-                // Kill homeCtx itself
-                memory_.storePointer(0, homeCtx, nilObj);
-                memory_.storePointer(1, homeCtx, nilObj);
-
-                // Return to homeCtx's sender with the NLR value
-                if (homeSender.isObject() && !homeSender.isNil() &&
-                    memory_.isValidPointer(homeSender)) {
-                    stackPointer_ = stackBase_;
-                    Oop hsStackp = memory_.fetchPointer(2, homeSender);
-                    int hsOrigSp = hsStackp.isSmallInteger()
-                        ? static_cast<int>(hsStackp.asSmallInteger()) : 0;
-                    executeFromContext(homeSender);
-                    framePointer_[1 + hsOrigSp] = value;
-                    Oop* pastVal = framePointer_ + 1 + hsOrigSp + 1;
-                    if (pastVal > stackPointer_) stackPointer_ = pastVal;
-                    return;
-                } else {
-                    terminateCurrentProcess();
-                    return;
-                }
-            }
-        }
-
-        // Safety net: inline NLR through ensure: lost its homeFrameDepth
-        // due to a process switch (materialize→context→executeFromContext).
-        // nlrHomeMethod_ was set by the inline ensure: handler. Search the
-        // context chain for the home context and continue the NLR.
-        if (nlrHomeMethod_.isObject() && !nlrHomeMethod_.isNil()) {
-            Oop homeMethodOop = nlrHomeMethod_;
-            Oop savedValue = nlrValue_;
-            nlrHomeMethod_ = Oop::nil();
-            nlrValue_ = Oop::nil();
-
-            // Kill current context (ensure: is done)
-            Oop nilObj = memory_.nil();
-            Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
-            memory_.storePointer(0, activeContext_, nilObj);
-            memory_.storePointer(1, activeContext_, nilObj);
-
-            // Search sender chain for home context (method match).
-            // Bound raised 200 -> 70000 (2026-06-19): a LEGITIMATE deep non-local
-            // return can have its home thousands of contexts up the chain — e.g.
-            // recursive `printString`'s LimitedWriteStream limit-block does `^` to
-            // truncate from ~14000 frames deep (ArrayTest>>testPrintingRecursive).
-            // The old 200 cap stopped the search early, so the home was never found
-            // and we spuriously sent cannotReturn: (uncatchable BlockCannotReturn).
-            // 70000 > MaxFrameDepth(65536) covers the whole possible chain; it is
-            // still a finite guard against a corrupted/cyclic sender chain.  (All
-            // the sibling 200 bounds in this NLR block were raised to match.)
-            Oop homeCtx = Oop::nil();
-            Oop ctx = senderOfCurrent;
-            int depth = 0;
-            while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
-                if (memory_.fetchPointer(3, ctx).rawBits() == homeMethodOop.rawBits()) {
-                    homeCtx = ctx;
-                    break;
-                }
-                ctx = memory_.fetchPointer(0, ctx);
-                depth++;
-            }
-
-            if (homeCtx.isObject() && !homeCtx.isNil()) {
-                // Check for MORE ensure: between here and home
-                Oop nextEnsure = Oop::nil();
-                ctx = senderOfCurrent;
-                depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
-                    if (ctx.rawBits() == homeCtx.rawBits()) break;
-                    Oop method = memory_.fetchPointer(3, ctx);
-                    if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
-                        nextEnsure = ctx;
-                        break;
-                    }
-                    ctx = memory_.fetchPointer(0, ctx);
-                    depth++;
-                }
-
-                if (nextEnsure.isObject() && !nextEnsure.isNil()) {
-                    // Set up pending NLR for the next ensure:
-                    // Kill contexts between senderOfCurrent and nextEnsure
-                    Oop c = senderOfCurrent;
-                    int safety = 0;
-                    while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                           c.rawBits() != nextEnsure.rawBits() && safety++ < 70000) {
-                        Oop next = memory_.fetchPointer(0, c);
-                        memory_.storePointer(0, c, nilObj);
-                        memory_.storePointer(1, c, nilObj);
-                        c = next;
-                    }
-                    nlrTargetCtx_ = homeCtx;
-                    nlrEnsureCtx_ = nextEnsure;
-                    // Push value onto next ensure:'s stack
-                    Oop stackpOop = memory_.fetchPointer(2, nextEnsure);
-                    if (stackpOop.isSmallInteger()) {
-                        int stackp = stackpOop.asSmallInteger();
-                        stackp++;
-                        memory_.storePointer(2, nextEnsure, Oop::fromSmallInteger(stackp));
-                        memory_.storePointer(5 + stackp, nextEnsure, savedValue);
-                    }
-                    executeFromContext(nextEnsure);
-                } else {
-                    // No more ensure: — complete the NLR directly
-                    // Kill contexts between senderOfCurrent and homeCtx.
-                    // Set PC to HasBeenReturnedFrom sentinel (SmallInteger -1)
-                    // so attempts to resume detect the returned-from state.
-                    Oop hasBeenReturnedPC = Oop::fromSmallInteger(-1);
-                    Oop c = senderOfCurrent;
-                    int safety = 0;
-                    while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                           c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
-                        Oop next = memory_.fetchPointer(0, c);
-                        memory_.storePointer(0, c, nilObj);
-                        memory_.storePointer(1, c, hasBeenReturnedPC);
-                        g_contextsKilledByUnwind[0]++;
-                        c = next;
-                    }
-                    Oop homeSender = memory_.fetchPointer(0, homeCtx);
-                    memory_.storePointer(0, homeCtx, nilObj);
-                    memory_.storePointer(1, homeCtx, hasBeenReturnedPC);
-
-                    if (homeSender.isObject() && !homeSender.isNil() &&
-                        memory_.isValidPointer(homeSender)) {
-                        stackPointer_ = stackBase_;
-                        Oop hs2Stackp = memory_.fetchPointer(2, homeSender);
-                        int hs2OrigSp = hs2Stackp.isSmallInteger()
-                            ? static_cast<int>(hs2Stackp.asSmallInteger()) : 0;
-                        executeFromContext(homeSender);
-                        framePointer_[1 + hs2OrigSp] = savedValue;
-                        Oop* pastVal2 = framePointer_ + 1 + hs2OrigSp + 1;
-                        if (pastVal2 > stackPointer_) stackPointer_ = pastVal2;
-                    } else {
-                        // homeSender is nil/invalid — send cannotReturn: per spec
-                        // Back up IP past return bytecode to prevent dead code execution
-                        if (instructionPointer_ > method_.asObjectPtr()->bytes()) {
-                            instructionPointer_--;
-                        }
-                        stackPointer_ = stackBase_;
-                        push(activeContext_);
-                        push(savedValue);
-                        g_cannotReturnSite[0]++;
-                        if (cannotReturnStormGuard(kCannotReturnSiteName[0])) return;
-                        sendSelector(selectors_.cannotReturn, 1);
-                    }
-                }
-                return;
-            }
-            // Home context not found — fall through to normal return
-            // (nlrHomeMethod_ was already cleared above)
-        }
-
-        normalReturn:
-        // Check if current context has a sender
-        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-        if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
-            Oop sender = memory_.fetchPointer(0, activeContext_);
-
-            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
-                    && method_.isObject() && method_.rawBits() > 0x10000) {
-                std::string nrs = memory_.selectorOf(method_);
-                if (nrs == "resolve:" || nrs == "resolve"
-                        || nrs == "asResolvedBy:" || nrs == "resolvePath:") {
-                    static int nrN = 0;
-                    if (++nrN <= 20)
-                        fprintf(stderr, "[FD0-RET] #%s sender=%s%s\n", nrs.c_str(),
-                            sender.rawBits()==0 ? "ZERO" :
-                            sender.isNil() ? "NIL" :
-                            sender.rawBits()<0x10000 ? "LOW" :
-                            !memory_.isValidPointer(sender) ? "INVALID" : "obj",
-                            sender.rawBits()>0x10000 && memory_.isValidPointer(sender)
-                                && sender.asObjectPtr()->slotCount()>=4
-                                ? "" : " <BAD/will-terminate>");
-                }
-            }
-            // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
-            if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
-                // Corrupted sender - treat as end of context chain
-                // Fall through to terminate current process
-            } else if (sender.rawBits() == nilObj.rawBits()) {
-                // Sender is nil - this method is at the top of the context chain
-                // Fall through to terminate current process
-            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
-                // Verify sender is not an unrelocated pointer from old image base
-                {
-                    const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
-                    uint64_t sndAddr = sender.rawBits() & ~7ULL;
-                    // !isValidPointer guard: a valid relocated pointer can land
-                    // in this window on Windows (VirtualAlloc ASLR).  See below.
-                    if (sndAddr >= OLD_IMAGE_BASE && sndAddr < OLD_IMAGE_BASE * 2
-                            && !memory_.isValidPointer(sender)) {
-                        stopVM("Unrelocated sender pointer — ImageLoader bug");
-                        return;
-                    }
-                }
-                if (!memory_.isValidPointer(sender)) {
-                    // Invalid sender - terminate process
-                    goto terminate_process;
-                }
-                ObjectHeader* senderHdr = sender.asObjectPtr();
-
-                // Check if sender looks like a Context (has enough slots and right format)
-                bool hasEnoughSlots = senderHdr->slotCount() >= 6;
-                bool isContextFormat = senderHdr->format() == ObjectFormat::IndexableWithFixed;
-
-                if (hasEnoughSlots && isContextFormat) {
-                    // Dead sender (pc nil, or the -1 HasBeenReturnedFrom sentinel)?
-                    // Cannot return INTO a dead context.  Stock parity (Cog
-                    // internalCannotReturn:): send cannotReturn: to the RETURNING
-                    // context instead of returning, and do NOT mark it dead first —
-                    // the Error raised by Context>>cannotReturn:'s non-closure
-                    // branch must still find handlers through its sender chain.
-                    // Sending to the returning (method) context reaches
-                    // `self error: 'computation has been terminated'`; the old
-                    // behavior fell into executeFromContext's dead-pc branch which
-                    // sends cannotReturn: to the DEAD context — for a closure
-                    // context under `on: BlockCannotReturn do: #resume` that
-                    // re-signals BCR forever (ProcessTest>>testResumeAfterBCR spin).
-                    {
-                        Oop senderPC = memory_.fetchPointer(1, sender);
-                        if (senderPC.isNil() ||
-                                (senderPC.isSmallInteger() && senderPC.asSmallInteger() == -1)) {
-                            if (method_.isObject() && memory_.isValidPointer(method_)
-                                    && instructionPointer_ > method_.asObjectPtr()->bytes()) {
-                                instructionPointer_--;  // don't re-execute the return bytecode
-                            }
-                            push(activeContext_);  // receiver: the returning context
-                            push(value);           // arg: the value being returned
-                            g_cannotReturnSite[1]++;
-                            // Name the first few: which method is returning,
-                            // and into whose corpse.  Bounded -- a storm sends
-                            // half a million of these.
-                            if (g_cannotReturnSite[1] <= 3) {
-                                fprintf(stderr,
-                                    "[DEAD-SENDER #%llu] #%s returning into a dead "
-                                    "sender (#%s, pc=%s); unwind kills so far: "
-                                    "nlr=%llu aboutToReturn=%llu\n",
-                                    (unsigned long long)g_cannotReturnSite[1],
-                                    memory_.selectorOf(method_).c_str(),
-                                    memory_.selectorOf(
-                                        memory_.fetchPointer(3, sender)).c_str(),
-                                    senderPC.isNil() ? "nil" : "-1",
-                                    (unsigned long long)g_contextsKilledByUnwind[0],
-                                    (unsigned long long)g_contextsKilledByUnwind[1]);
-                            }
-                            if (cannotReturnStormGuard(kCannotReturnSiteName[1])) return;
-                            sendSelector(selectors_.cannotReturn, 1);
-                            return;
-                        }
-                    }
-
-                    // Reset stack for new context
-                    stackPointer_ = stackBase_;
-
-                    if (__builtin_expect(GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL) != nullptr, 0))
-                        traceReturnPath("ctx-return", method_, activeContext_);
-                    // Mark the returning context as dead per Cog VM semantics:
-                    // nil the sender and PC so isDead returns true and sender chain is broken.
-                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(1, activeContext_, framePointer_ + 1);
-                    if (memory_.fetchPointer(3, activeContext_).rawBits()
-                            != method_.rawBits()) {
-                        g_widowOwnerMismatch[1]++;
-                        if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
-                                && g_widowOwnerMismatch[1] <= 20)
-                            fprintf(stderr, "[WIDOW-OWNER ctx-return] returning=#%s "
-                                    "ctxOf=#%s\n", memory_.selectorOf(method_).c_str(),
-                                    memory_.selectorOf(memory_.fetchPointer(
-                                        3, activeContext_)).c_str());
-                    }
-                    memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
-                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
-                        crossKillCheck("widow-1", activeContext_);
-                        // Resume side: the sender about to be resumed belongs to
-                        // another process's suspended chain -- name the context
-                        // that is returning into it.
-                        crossResumeCheck(sender, activeContext_);
-                    }
-                    memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
-                    g_contextsWidowedOnReturn[2]++;
-                    traceWidow("ctx-return", activeContext_);
-
-                    // Read sender's stackp BEFORE executeFromContext (which uses it).
-                    // We need this to place the return value at the correct
-                    // Pharo stack position, especially when stackp < numTemps
-                    // (e.g., after Context>>jump's "self pop" decrements stackp).
-                    Oop senderStackp = memory_.fetchPointer(2, sender);
-                    int origSp = senderStackp.isSmallInteger()
-                        ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
-
-                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTBUILD), 0)) {
-                        Oop sm = memory_.fetchPointer(3, sender);
-                        std::string ssel = (sm.isObject() && sm.rawBits() > 0x10000)
-                            ? memory_.selectorOf(sm) : "?";
-                        if (ssel.find("copyWith") != std::string::npos
-                                || ssel.find("Slot") != std::string::npos
-                                || ssel.find("slot") != std::string::npos
-                                || ssel.find("replaceFrom") != std::string::npos
-                                || ssel.find("copyReplace") != std::string::npos
-                                || ssel.find("add") != std::string::npos
-                                || ssel.find(",") != std::string::npos) {
-                            std::string rc = value.isSmallInteger() ? "SmI"
-                                : (value.isObject() && value.rawBits() >= 0x10000)
-                                    ? memory_.classNameOf(value) : "imm";
-                            fprintf(stderr, "[SLOTBUILD-RET] senderM=#%s origSp=%d retval=%s step=%llu savedStack=[",
-                                ssel.c_str(), origSp, rc.c_str(), (unsigned long long)g_stepNum);
-                            for (int q = 0; q < origSp && q < 12; q++) {
-                                Oop it = memory_.fetchPointer(6 + q, sender);
-                                // classNameOf returns std::string BY VALUE, so
-                                // .c_str() on the temporary dangles as soon as the
-                                // full expression ends — the fprintf below then read
-                                // freed memory.  Bind the string to a named local.
-                                const bool itNamed = it.isObject() && it.rawBits() >= 0x10000;
-                                const std::string itName =
-                                    itNamed ? memory_.classNameOf(it) : std::string();
-                                const char* qc = it.isNil() ? "nil"
-                                    : it.isSmallInteger() ? "SmI"
-                                    : itNamed ? itName.c_str() : "imm";
-                                fprintf(stderr, "%s%s", q ? " " : "", qc);
-                            }
-                            fprintf(stderr, "]\n");
-                        }
-                    }
-
-                    if (executeFromContext(sender)) {
-                        // Place return value at framePointer_[1 + origSp],
-                        // which is the Pharo context's stackp+1 position.
-                        // In the normal case (origSp >= numTemps), this is the
-                        // same as push(). In the jump case (origSp < numTemps),
-                        // this correctly overwrites the temp slot instead of
-                        // going above the padded nil temps.
-                                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
-                            Oop _rv = value;
-                            std::string _rc = _rv.isSmallInteger() ? "SmI"
-                                : (_rv.isObject() && _rv.rawBits() >= 0x10000)
-                                    ? memory_.classNameOf(_rv) : "imm";
-                            Oop _old = framePointer_[1 + origSp];
-                            std::string _oc = _old.isSmallInteger() ? "SmI"
-                                : (_old.isObject() && _old.rawBits() >= 0x10000)
-                                    ? memory_.classNameOf(_old) : "imm";
-                            fprintf(stderr,
-                                "[CTX-RET@6646] m=#%s origSp=%d retval=%s "
-                                "slotOld=%s sp-fp=%lld fd=%zu\n",
-                                memory_.selectorOf(method_).c_str(), origSp,
-                                _rc.c_str(), _oc.c_str(),
-                                (long long)(stackPointer_ - framePointer_),
-                                frameDepth_);
-                        }
-                        framePointer_[1 + origSp] = value;
-                        // Ensure stackPointer_ is past the written position
-                        Oop* pastValue = framePointer_ + 1 + origSp + 1;
-                        if (pastValue > stackPointer_) {
-                            stackPointer_ = pastValue;
-                        }
-                        if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
-                            doRec("RET-INTO", sender.rawBits(), origSp,
-                                  (int)(stackPointer_ - framePointer_ - 1),
-                                  (int)(instructionPointer_ - g_doBase), g_stepNum);
-                        return;
-                    }
-                }
-            }
-        }
-
-terminate_process:
-        if (benchMode_) {
-            handleBenchComplete(value);
-            return;
-        }
-
-        // When a method returns but has no sender (nil or no valid context),
-        // this is the top of the process's execution chain. The correct action
-        // is to terminate the process, per Smalltalk spec.
-        //
-        // First check: if we're at fd=0 and the context's sender is nil,
-        // this is a normal process-top return. Terminate immediately without
-        // entering the expensive cannotReturn: exception handling path.
-        // The cannotReturn: error handling involves copyTo: which recurses
-        // O(n) on the context chain length, causing O(n²) behavior that
-        // can monopolize the CPU for millions of steps.
-        if (frameDepth_ == 0 && activeContext_.isObject() && !activeContext_.isNil()) {
-            Oop sender = memory_.fetchPointer(0, activeContext_);
-            if (sender.isNil() || sender.rawBits() == 0 || sender.rawBits() == memory_.nil().rawBits()) {
-                // Top of process chain — terminate directly.
-                terminateCurrentProcess();
-                if (tryReschedule()) return;
-                if (bootstrapStartup()) return;
-                stopVM("No runnable processes after top-of-chain return");
-                return;
-            }
-        }
-
-        // Per reference VM spec: send cannotReturn: instead of silently terminating.
-        // This gives Smalltalk's exception handling a chance to handle the situation.
-        if (activeContext_.isObject() && !activeContext_.isNil()) {
-            Oop currentProcess = getActiveProcess();
-            if (currentProcess.rawBits() != lastCannotReturnProcess_.rawBits()) {
-                cannotReturnCount_ = 0;
-                lastCannotReturnProcess_ = currentProcess;
-            }
-            cannotReturnCount_++;
-            if (cannotReturnCount_ <= 2) {
-                lastCannotReturnCtx_ = activeContext_;
-                // Set a step deadline for error handling.
-                if (cannotReturnCount_ == 1) {
-                    cannotReturnDeadline_ = g_stepNum + 2000000;
-                }
-                // Back up IP to the return bytecode. When cannotReturn: returns
-                // and popFrame restores this IP, the return will be retried instead
-                // of falling through into dead code after the return bytecode.
-                // The return bytecodes (0x58-0x5C) are all single-byte, so IP-1
-                // points to the return instruction that triggered this path.
-                if (instructionPointer_ > method_.asObjectPtr()->bytes()) {
-                    instructionPointer_--;
-                }
-                stackPointer_ = stackBase_;
-                push(activeContext_);  // receiver: the context that cannot return
-                push(value);           // arg: the value that was being returned
-                g_cannotReturnSite[2]++;
-                sendSelector(selectors_.cannotReturn, 1);
-                return;
-            }
-            // Too many cannotReturn: events — error handler is not terminating.
-            // Fall through to terminate the process.
-            cannotReturnCount_ = 0;
-            cannotReturnDeadline_ = 0;
-            lastCannotReturnProcess_ = Oop::nil();
-            lastCannotReturnCtx_ = Oop::nil();
-        }
-
-        // Terminate the process (cannotReturn: failed or activeContext_ is nil)
-        terminateCurrentProcess();
-        if (tryReschedule()) {
-            return;
-        }
-        if (bootstrapStartup()) {
-            return;
-        }
-        stopVM("No runnable processes after terminate with nil activeContext");
+        // Return into a Context (frame depth 0).  Out of line: see
+        // returnValueAtDepth0.  It answers true where it returned.
+        if (returnValueAtDepth0(value)) return;
     }
 
 
@@ -9202,42 +8702,9 @@ terminate_process:
     // its sender/pc (isDead) breaks the live sender chain that a capturing closure
     // would otherwise keep alive — without which Fuel serializes the entire call
     // stack (250KB + SubscriptOutOfBounds, docs/soogle.md closure cluster).
-    if (currentFrameMaterializedCtx_.isObject()
-            && !currentFrameMaterializedCtx_.isNil()
-            && currentFrameMaterializedCtx_.rawBits() > 0x10000
-            && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
-        // Already dead means this activation is returning a SECOND time --
-        // the duplicate the residual dead-sender loop would need.  Counted,
-        // not corrected: the store below is idempotent.
-        Oop wasPC = memory_.fetchPointer(1, currentFrameMaterializedCtx_);
-        if (wasPC.isNil()
-                || (wasPC.isSmallInteger() && wasPC.asSmallInteger() == -1)) {
-            g_duplicateActivation[0]++;
-            if (g_duplicateActivation[0] <= 3)
-                fprintf(stderr, "[DOUBLE-RETURN #%llu] #%s returning again from a "
-                        "context already marked dead (0x%llx)\n",
-                        (unsigned long long)g_duplicateActivation[0],
-                        memory_.selectorOf(method_).c_str(),
-                        (unsigned long long)currentFrameMaterializedCtx_.rawBits());
-        }
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(0, currentFrameMaterializedCtx_, framePointer_ + 1);
-        if (memory_.fetchPointer(3, currentFrameMaterializedCtx_).rawBits()
-                != method_.rawBits()) {
-            g_widowOwnerMismatch[0]++;
-            if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
-                    && g_widowOwnerMismatch[0] <= 20)
-                fprintf(stderr, "[WIDOW-OWNER returnValue] returning=#%s ctxOf=#%s "
-                        "fd=%zu\n", memory_.selectorOf(method_).c_str(),
-                        memory_.selectorOf(memory_.fetchPointer(
-                            3, currentFrameMaterializedCtx_)).c_str(), frameDepth_);
-        }
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
-            liveWidowCheck("returnValue", currentFrameMaterializedCtx_);
-        memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-2", currentFrameMaterializedCtx_);
-        memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
-        g_contextsWidowedOnReturn[0]++;
-        traceWidow("popFrame", currentFrameMaterializedCtx_);
+    if (__builtin_expect(currentFrameMaterializedCtx_.isObject()
+            && !currentFrameMaterializedCtx_.isNil(), 0)) {
+        widowReturningContext();   // out of line: rare, and heavy
     }
 
     // Debug: track method_ changes through popFrame
@@ -9441,6 +8908,608 @@ terminate_process:
         }
 #endif
     }
+}
+
+// returnValue's widow step: the returning frame had a materialized
+// Context; mark it dead (sender nil, pc nil).  Out of line so ordinary
+// returns do not pay for its registers.
+[[gnu::noinline]] void Interpreter::widowReturningContext() {
+    if (!(currentFrameMaterializedCtx_.isObject()
+            && !currentFrameMaterializedCtx_.isNil()
+            && currentFrameMaterializedCtx_.rawBits() > 0x10000
+            && memory_.isValidPointer(currentFrameMaterializedCtx_))) return;
+        // Already dead means this activation is returning a SECOND time --
+        // the duplicate the residual dead-sender loop would need.  Counted,
+        // not corrected: the store below is idempotent.
+        Oop wasPC = memory_.fetchPointer(1, currentFrameMaterializedCtx_);
+        if (wasPC.isNil()
+                || (wasPC.isSmallInteger() && wasPC.asSmallInteger() == -1)) {
+            g_duplicateActivation[0]++;
+            if (g_duplicateActivation[0] <= 3)
+                fprintf(stderr, "[DOUBLE-RETURN #%llu] #%s returning again from a "
+                        "context already marked dead (0x%llx)\n",
+                        (unsigned long long)g_duplicateActivation[0],
+                        memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)currentFrameMaterializedCtx_.rawBits());
+        }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(0, currentFrameMaterializedCtx_, framePointer_ + 1);
+        if (memory_.fetchPointer(3, currentFrameMaterializedCtx_).rawBits()
+                != method_.rawBits()) {
+            g_widowOwnerMismatch[0]++;
+            if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
+                    && g_widowOwnerMismatch[0] <= 20)
+                fprintf(stderr, "[WIDOW-OWNER returnValue] returning=#%s ctxOf=#%s "
+                        "fd=%zu\n", memory_.selectorOf(method_).c_str(),
+                        memory_.selectorOf(memory_.fetchPointer(
+                            3, currentFrameMaterializedCtx_)).c_str(), frameDepth_);
+        }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK), 0))
+            liveWidowCheck("returnValue", currentFrameMaterializedCtx_);
+        memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) crossKillCheck("widow-2", currentFrameMaterializedCtx_);
+        memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
+        g_contextsWidowedOnReturn[0]++;
+        traceWidow("popFrame", currentFrameMaterializedCtx_);
+}
+
+// returnValue at frame depth 0: the caller is a Context, not a saved frame.
+// Out of line because sharing returnValue's frame made every ordinary
+// return save and restore the registers this path needs.  Answers true
+// where the original code returned, false where it fell through.
+[[gnu::noinline]] bool Interpreter::returnValueAtDepth0(Oop value) {
+        // Check for pending NLR through ensure:.
+        // When a context-based NLR (fd=0) encounters an ensure: context,
+        // handleContextNLRUnwind resumes the ensure: to run its cleanup block.
+        // When ensure: returns (^ returnValue), we intercept here to continue
+        // the NLR to the home method's sender, handling multiple ensure: contexts.
+        if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) {
+            Oop homeCtx = nlrTargetCtx_;
+            Oop nilObj = memory_.nil();
+
+            // Verify NLR target is reachable from current sender chain.
+            // Context>>jump can transfer control to a completely different stack
+            // (e.g., from a terminated process back to the terminator process via
+            // runUntilReturnFrom:). If the NLR target is not reachable, the NLR
+            // must be abandoned — continuing it would walk the wrong stack.
+            {
+                Oop check = memory_.fetchPointer(0, activeContext_);
+                bool reachable = false;
+                // Bound raised 2000 -> 70000 (2026-07-03, silent-cap audit):
+                // this was the single bound in the NLR block NOT raised with
+                // its siblings in the 2026-06-19/20 sweep (see the ~6880
+                // comment: legitimate NLR homes sit ~14000 hops up via
+                // recursive printString).  A reachable home >2000 hops away
+                // was misclassified as a cross-stack Context>>jump target and
+                // the NLR silently became a normal return.  70000 >
+                // MaxFrameDepth(65536) covers any real chain; the abandon
+                // path below remains correct for genuinely unreachable
+                // (cross-stack) targets.
+                for (int i = 0; i < 70000 && check.isObject() && !check.isNil(); i++) {
+                    if (check.rawBits() == homeCtx.rawBits()) {
+                        reachable = true;
+                        break;
+                    }
+                    check = memory_.fetchPointer(0, check);
+                }
+                if (!reachable) {
+                    // NLR target is unreachable — abandon NLR and do normal return
+                    nlrTargetCtx_ = Oop::nil();
+                    nlrEnsureCtx_ = Oop::nil();
+                    nlrHomeMethod_ = Oop::nil();
+                    nlrValue_ = Oop::nil();
+                    // Fall through to normal fd=0 return below
+                    goto normalReturn;
+                }
+            }
+
+            // Get sender of current context BEFORE killing it
+            Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
+
+            // Kill the current context (ensure: is done)
+            memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
+            memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)
+
+            // Look for MORE ensure: (prim 198) contexts between here and homeCtx
+            Oop nextEnsureCtx = Oop::nil();
+            {
+                Oop ctx = senderOfCurrent;
+                int depth = 0;
+                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+                    if (ctx.rawBits() == homeCtx.rawBits()) break;
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
+                        nextEnsureCtx = ctx;
+                        break;
+                    }
+                    ctx = memory_.fetchPointer(0, ctx);
+                    depth++;
+                }
+            }
+
+            if (nextEnsureCtx.isObject() && !nextEnsureCtx.isNil()) {
+                // Found another ensure: — kill contexts between current and it
+                Oop c = senderOfCurrent;
+                int safety = 0;
+                while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 70000) {
+                    Oop next = memory_.fetchPointer(0, c);
+                    memory_.storePointer(0, c, nilObj);
+                    memory_.storePointer(1, c, nilObj);
+                    c = next;
+                }
+
+                // Update pending NLR to next ensure:
+                nlrEnsureCtx_ = nextEnsureCtx;
+                // nlrTargetCtx_ stays as homeCtx
+
+                // Push NLR value onto next ensure:'s stack (as valueNoContextSwitch return)
+                Oop stackpOop = memory_.fetchPointer(2, nextEnsureCtx);
+                if (stackpOop.isSmallInteger()) {
+                    int stackp = stackpOop.asSmallInteger();
+                    stackp++;
+                    memory_.storePointer(2, nextEnsureCtx, Oop::fromSmallInteger(stackp));
+                    memory_.storePointer(5 + stackp, nextEnsureCtx, value);
+                }
+
+                // Resume next ensure: context
+                executeFromContext(nextEnsureCtx);
+                return true;
+            } else {
+                // No more ensure: — complete the NLR
+                nlrTargetCtx_ = Oop::nil();
+                nlrEnsureCtx_ = Oop::nil();
+
+                // Kill remaining contexts from senderOfCurrent to homeCtx (not including homeCtx)
+                Oop c = senderOfCurrent;
+                int safety = 0;
+                while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                       c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
+                    Oop next = memory_.fetchPointer(0, c);
+                    memory_.storePointer(0, c, nilObj);
+                    memory_.storePointer(1, c, nilObj);
+                    c = next;
+                }
+
+                // Get homeCtx's sender (NLR returns to caller of home method)
+                Oop homeSender = memory_.fetchPointer(0, homeCtx);
+
+                // Kill homeCtx itself
+                memory_.storePointer(0, homeCtx, nilObj);
+                memory_.storePointer(1, homeCtx, nilObj);
+
+                // Return to homeCtx's sender with the NLR value
+                if (homeSender.isObject() && !homeSender.isNil() &&
+                    memory_.isValidPointer(homeSender)) {
+                    stackPointer_ = stackBase_;
+                    Oop hsStackp = memory_.fetchPointer(2, homeSender);
+                    int hsOrigSp = hsStackp.isSmallInteger()
+                        ? static_cast<int>(hsStackp.asSmallInteger()) : 0;
+                    executeFromContext(homeSender);
+                    framePointer_[1 + hsOrigSp] = value;
+                    Oop* pastVal = framePointer_ + 1 + hsOrigSp + 1;
+                    if (pastVal > stackPointer_) stackPointer_ = pastVal;
+                    return true;
+                } else {
+                    terminateCurrentProcess();
+                    return true;
+                }
+            }
+        }
+
+        // Safety net: inline NLR through ensure: lost its homeFrameDepth
+        // due to a process switch (materialize→context→executeFromContext).
+        // nlrHomeMethod_ was set by the inline ensure: handler. Search the
+        // context chain for the home context and continue the NLR.
+        if (nlrHomeMethod_.isObject() && !nlrHomeMethod_.isNil()) {
+            Oop homeMethodOop = nlrHomeMethod_;
+            Oop savedValue = nlrValue_;
+            nlrHomeMethod_ = Oop::nil();
+            nlrValue_ = Oop::nil();
+
+            // Kill current context (ensure: is done)
+            Oop nilObj = memory_.nil();
+            Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
+            memory_.storePointer(0, activeContext_, nilObj);
+            memory_.storePointer(1, activeContext_, nilObj);
+
+            // Search sender chain for home context (method match).
+            // Bound raised 200 -> 70000 (2026-06-19): a LEGITIMATE deep non-local
+            // return can have its home thousands of contexts up the chain — e.g.
+            // recursive `printString`'s LimitedWriteStream limit-block does `^` to
+            // truncate from ~14000 frames deep (ArrayTest>>testPrintingRecursive).
+            // The old 200 cap stopped the search early, so the home was never found
+            // and we spuriously sent cannotReturn: (uncatchable BlockCannotReturn).
+            // 70000 > MaxFrameDepth(65536) covers the whole possible chain; it is
+            // still a finite guard against a corrupted/cyclic sender chain.  (All
+            // the sibling 200 bounds in this NLR block were raised to match.)
+            Oop homeCtx = Oop::nil();
+            Oop ctx = senderOfCurrent;
+            int depth = 0;
+            while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+                if (memory_.fetchPointer(3, ctx).rawBits() == homeMethodOop.rawBits()) {
+                    homeCtx = ctx;
+                    break;
+                }
+                ctx = memory_.fetchPointer(0, ctx);
+                depth++;
+            }
+
+            if (homeCtx.isObject() && !homeCtx.isNil()) {
+                // Check for MORE ensure: between here and home
+                Oop nextEnsure = Oop::nil();
+                ctx = senderOfCurrent;
+                depth = 0;
+                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+                    if (ctx.rawBits() == homeCtx.rawBits()) break;
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
+                        nextEnsure = ctx;
+                        break;
+                    }
+                    ctx = memory_.fetchPointer(0, ctx);
+                    depth++;
+                }
+
+                if (nextEnsure.isObject() && !nextEnsure.isNil()) {
+                    // Set up pending NLR for the next ensure:
+                    // Kill contexts between senderOfCurrent and nextEnsure
+                    Oop c = senderOfCurrent;
+                    int safety = 0;
+                    while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                           c.rawBits() != nextEnsure.rawBits() && safety++ < 70000) {
+                        Oop next = memory_.fetchPointer(0, c);
+                        memory_.storePointer(0, c, nilObj);
+                        memory_.storePointer(1, c, nilObj);
+                        c = next;
+                    }
+                    nlrTargetCtx_ = homeCtx;
+                    nlrEnsureCtx_ = nextEnsure;
+                    // Push value onto next ensure:'s stack
+                    Oop stackpOop = memory_.fetchPointer(2, nextEnsure);
+                    if (stackpOop.isSmallInteger()) {
+                        int stackp = stackpOop.asSmallInteger();
+                        stackp++;
+                        memory_.storePointer(2, nextEnsure, Oop::fromSmallInteger(stackp));
+                        memory_.storePointer(5 + stackp, nextEnsure, savedValue);
+                    }
+                    executeFromContext(nextEnsure);
+                } else {
+                    // No more ensure: — complete the NLR directly
+                    // Kill contexts between senderOfCurrent and homeCtx.
+                    // Set PC to HasBeenReturnedFrom sentinel (SmallInteger -1)
+                    // so attempts to resume detect the returned-from state.
+                    Oop hasBeenReturnedPC = Oop::fromSmallInteger(-1);
+                    Oop c = senderOfCurrent;
+                    int safety = 0;
+                    while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
+                           c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
+                        Oop next = memory_.fetchPointer(0, c);
+                        memory_.storePointer(0, c, nilObj);
+                        memory_.storePointer(1, c, hasBeenReturnedPC);
+                        g_contextsKilledByUnwind[0]++;
+                        c = next;
+                    }
+                    Oop homeSender = memory_.fetchPointer(0, homeCtx);
+                    memory_.storePointer(0, homeCtx, nilObj);
+                    memory_.storePointer(1, homeCtx, hasBeenReturnedPC);
+
+                    if (homeSender.isObject() && !homeSender.isNil() &&
+                        memory_.isValidPointer(homeSender)) {
+                        stackPointer_ = stackBase_;
+                        Oop hs2Stackp = memory_.fetchPointer(2, homeSender);
+                        int hs2OrigSp = hs2Stackp.isSmallInteger()
+                            ? static_cast<int>(hs2Stackp.asSmallInteger()) : 0;
+                        executeFromContext(homeSender);
+                        framePointer_[1 + hs2OrigSp] = savedValue;
+                        Oop* pastVal2 = framePointer_ + 1 + hs2OrigSp + 1;
+                        if (pastVal2 > stackPointer_) stackPointer_ = pastVal2;
+                    } else {
+                        // homeSender is nil/invalid — send cannotReturn: per spec
+                        // Back up IP past return bytecode to prevent dead code execution
+                        if (instructionPointer_ > method_.asObjectPtr()->bytes()) {
+                            instructionPointer_--;
+                        }
+                        stackPointer_ = stackBase_;
+                        push(activeContext_);
+                        push(savedValue);
+                        g_cannotReturnSite[0]++;
+                        if (cannotReturnStormGuard(kCannotReturnSiteName[0])) return true;
+                        sendSelector(selectors_.cannotReturn, 1);
+                    }
+                }
+                return true;
+            }
+            // Home context not found — fall through to normal return
+            // (nlrHomeMethod_ was already cleared above)
+        }
+
+        normalReturn:
+        // Check if current context has a sender
+        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
+        if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
+            Oop sender = memory_.fetchPointer(0, activeContext_);
+
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                    && method_.isObject() && method_.rawBits() > 0x10000) {
+                std::string nrs = memory_.selectorOf(method_);
+                if (nrs == "resolve:" || nrs == "resolve"
+                        || nrs == "asResolvedBy:" || nrs == "resolvePath:") {
+                    static int nrN = 0;
+                    if (++nrN <= 20)
+                        fprintf(stderr, "[FD0-RET] #%s sender=%s%s\n", nrs.c_str(),
+                            sender.rawBits()==0 ? "ZERO" :
+                            sender.isNil() ? "NIL" :
+                            sender.rawBits()<0x10000 ? "LOW" :
+                            !memory_.isValidPointer(sender) ? "INVALID" : "obj",
+                            sender.rawBits()>0x10000 && memory_.isValidPointer(sender)
+                                && sender.asObjectPtr()->slotCount()>=4
+                                ? "" : " <BAD/will-terminate>");
+                }
+            }
+            // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
+            if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
+                // Corrupted sender - treat as end of context chain
+                // Fall through to terminate current process
+            } else if (sender.rawBits() == nilObj.rawBits()) {
+                // Sender is nil - this method is at the top of the context chain
+                // Fall through to terminate current process
+            } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
+                // Verify sender is not an unrelocated pointer from old image base
+                {
+                    const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
+                    uint64_t sndAddr = sender.rawBits() & ~7ULL;
+                    // !isValidPointer guard: a valid relocated pointer can land
+                    // in this window on Windows (VirtualAlloc ASLR).  See below.
+                    if (sndAddr >= OLD_IMAGE_BASE && sndAddr < OLD_IMAGE_BASE * 2
+                            && !memory_.isValidPointer(sender)) {
+                        stopVM("Unrelocated sender pointer — ImageLoader bug");
+                        return true;
+                    }
+                }
+                if (!memory_.isValidPointer(sender)) {
+                    // Invalid sender - terminate process
+                    goto terminate_process;
+                }
+                ObjectHeader* senderHdr = sender.asObjectPtr();
+
+                // Check if sender looks like a Context (has enough slots and right format)
+                bool hasEnoughSlots = senderHdr->slotCount() >= 6;
+                bool isContextFormat = senderHdr->format() == ObjectFormat::IndexableWithFixed;
+
+                if (hasEnoughSlots && isContextFormat) {
+                    // Dead sender (pc nil, or the -1 HasBeenReturnedFrom sentinel)?
+                    // Cannot return INTO a dead context.  Stock parity (Cog
+                    // internalCannotReturn:): send cannotReturn: to the RETURNING
+                    // context instead of returning, and do NOT mark it dead first —
+                    // the Error raised by Context>>cannotReturn:'s non-closure
+                    // branch must still find handlers through its sender chain.
+                    // Sending to the returning (method) context reaches
+                    // `self error: 'computation has been terminated'`; the old
+                    // behavior fell into executeFromContext's dead-pc branch which
+                    // sends cannotReturn: to the DEAD context — for a closure
+                    // context under `on: BlockCannotReturn do: #resume` that
+                    // re-signals BCR forever (ProcessTest>>testResumeAfterBCR spin).
+                    {
+                        Oop senderPC = memory_.fetchPointer(1, sender);
+                        if (senderPC.isNil() ||
+                                (senderPC.isSmallInteger() && senderPC.asSmallInteger() == -1)) {
+                            if (method_.isObject() && memory_.isValidPointer(method_)
+                                    && instructionPointer_ > method_.asObjectPtr()->bytes()) {
+                                instructionPointer_--;  // don't re-execute the return bytecode
+                            }
+                            push(activeContext_);  // receiver: the returning context
+                            push(value);           // arg: the value being returned
+                            g_cannotReturnSite[1]++;
+                            // Name the first few: which method is returning,
+                            // and into whose corpse.  Bounded -- a storm sends
+                            // half a million of these.
+                            if (g_cannotReturnSite[1] <= 3) {
+                                fprintf(stderr,
+                                    "[DEAD-SENDER #%llu] #%s returning into a dead "
+                                    "sender (#%s, pc=%s); unwind kills so far: "
+                                    "nlr=%llu aboutToReturn=%llu\n",
+                                    (unsigned long long)g_cannotReturnSite[1],
+                                    memory_.selectorOf(method_).c_str(),
+                                    memory_.selectorOf(
+                                        memory_.fetchPointer(3, sender)).c_str(),
+                                    senderPC.isNil() ? "nil" : "-1",
+                                    (unsigned long long)g_contextsKilledByUnwind[0],
+                                    (unsigned long long)g_contextsKilledByUnwind[1]);
+                            }
+                            if (cannotReturnStormGuard(kCannotReturnSiteName[1])) return true;
+                            sendSelector(selectors_.cannotReturn, 1);
+                            return true;
+                        }
+                    }
+
+                    // Reset stack for new context
+                    stackPointer_ = stackBase_;
+
+                    if (__builtin_expect(GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL) != nullptr, 0))
+                        traceReturnPath("ctx-return", method_, activeContext_);
+                    // Mark the returning context as dead per Cog VM semantics:
+                    // nil the sender and PC so isDead returns true and sender chain is broken.
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(1, activeContext_, framePointer_ + 1);
+                    if (memory_.fetchPointer(3, activeContext_).rawBits()
+                            != method_.rawBits()) {
+                        g_widowOwnerMismatch[1]++;
+                        if (GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE)
+                                && g_widowOwnerMismatch[1] <= 20)
+                            fprintf(stderr, "[WIDOW-OWNER ctx-return] returning=#%s "
+                                    "ctxOf=#%s\n", memory_.selectorOf(method_).c_str(),
+                                    memory_.selectorOf(memory_.fetchPointer(
+                                        3, activeContext_)).c_str());
+                    }
+                    memory_.storePointer(0, activeContext_, memory_.nil());  // sender = nil
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
+                        crossKillCheck("widow-1", activeContext_);
+                        // Resume side: the sender about to be resumed belongs to
+                        // another process's suspended chain -- name the context
+                        // that is returning into it.
+                        crossResumeCheck(sender, activeContext_);
+                    }
+                    memory_.storePointer(1, activeContext_, memory_.nil());  // pc = nil → isDead
+                    g_contextsWidowedOnReturn[2]++;
+                    traceWidow("ctx-return", activeContext_);
+
+                    // Read sender's stackp BEFORE executeFromContext (which uses it).
+                    // We need this to place the return value at the correct
+                    // Pharo stack position, especially when stackp < numTemps
+                    // (e.g., after Context>>jump's "self pop" decrements stackp).
+                    Oop senderStackp = memory_.fetchPointer(2, sender);
+                    int origSp = senderStackp.isSmallInteger()
+                        ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTBUILD), 0)) {
+                        Oop sm = memory_.fetchPointer(3, sender);
+                        std::string ssel = (sm.isObject() && sm.rawBits() > 0x10000)
+                            ? memory_.selectorOf(sm) : "?";
+                        if (ssel.find("copyWith") != std::string::npos
+                                || ssel.find("Slot") != std::string::npos
+                                || ssel.find("slot") != std::string::npos
+                                || ssel.find("replaceFrom") != std::string::npos
+                                || ssel.find("copyReplace") != std::string::npos
+                                || ssel.find("add") != std::string::npos
+                                || ssel.find(",") != std::string::npos) {
+                            std::string rc = value.isSmallInteger() ? "SmI"
+                                : (value.isObject() && value.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(value) : "imm";
+                            fprintf(stderr, "[SLOTBUILD-RET] senderM=#%s origSp=%d retval=%s step=%llu savedStack=[",
+                                ssel.c_str(), origSp, rc.c_str(), (unsigned long long)g_stepNum);
+                            for (int q = 0; q < origSp && q < 12; q++) {
+                                Oop it = memory_.fetchPointer(6 + q, sender);
+                                // classNameOf returns std::string BY VALUE, so
+                                // .c_str() on the temporary dangles as soon as the
+                                // full expression ends — the fprintf below then read
+                                // freed memory.  Bind the string to a named local.
+                                const bool itNamed = it.isObject() && it.rawBits() >= 0x10000;
+                                const std::string itName =
+                                    itNamed ? memory_.classNameOf(it) : std::string();
+                                const char* qc = it.isNil() ? "nil"
+                                    : it.isSmallInteger() ? "SmI"
+                                    : itNamed ? itName.c_str() : "imm";
+                                fprintf(stderr, "%s%s", q ? " " : "", qc);
+                            }
+                            fprintf(stderr, "]\n");
+                        }
+                    }
+
+                    if (executeFromContext(sender)) {
+                        // Place return value at framePointer_[1 + origSp],
+                        // which is the Pharo context's stackp+1 position.
+                        // In the normal case (origSp >= numTemps), this is the
+                        // same as push(). In the jump case (origSp < numTemps),
+                        // this correctly overwrites the temp slot instead of
+                        // going above the padded nil temps.
+                                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                            Oop _rv = value;
+                            std::string _rc = _rv.isSmallInteger() ? "SmI"
+                                : (_rv.isObject() && _rv.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_rv) : "imm";
+                            Oop _old = framePointer_[1 + origSp];
+                            std::string _oc = _old.isSmallInteger() ? "SmI"
+                                : (_old.isObject() && _old.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_old) : "imm";
+                            fprintf(stderr,
+                                "[CTX-RET@6646] m=#%s origSp=%d retval=%s "
+                                "slotOld=%s sp-fp=%lld fd=%zu\n",
+                                memory_.selectorOf(method_).c_str(), origSp,
+                                _rc.c_str(), _oc.c_str(),
+                                (long long)(stackPointer_ - framePointer_),
+                                frameDepth_);
+                        }
+                        framePointer_[1 + origSp] = value;
+                        // Ensure stackPointer_ is past the written position
+                        Oop* pastValue = framePointer_ + 1 + origSp + 1;
+                        if (pastValue > stackPointer_) {
+                            stackPointer_ = pastValue;
+                        }
+                        if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
+                            doRec("RET-INTO", sender.rawBits(), origSp,
+                                  (int)(stackPointer_ - framePointer_ - 1),
+                                  (int)(instructionPointer_ - g_doBase), g_stepNum);
+                        return true;
+                    }
+                }
+            }
+        }
+
+terminate_process:
+        if (benchMode_) {
+            handleBenchComplete(value);
+            return true;
+        }
+
+        // When a method returns but has no sender (nil or no valid context),
+        // this is the top of the process's execution chain. The correct action
+        // is to terminate the process, per Smalltalk spec.
+        //
+        // First check: if we're at fd=0 and the context's sender is nil,
+        // this is a normal process-top return. Terminate immediately without
+        // entering the expensive cannotReturn: exception handling path.
+        // The cannotReturn: error handling involves copyTo: which recurses
+        // O(n) on the context chain length, causing O(n²) behavior that
+        // can monopolize the CPU for millions of steps.
+        if (frameDepth_ == 0 && activeContext_.isObject() && !activeContext_.isNil()) {
+            Oop sender = memory_.fetchPointer(0, activeContext_);
+            if (sender.isNil() || sender.rawBits() == 0 || sender.rawBits() == memory_.nil().rawBits()) {
+                // Top of process chain — terminate directly.
+                terminateCurrentProcess();
+                if (tryReschedule()) return true;
+                if (bootstrapStartup()) return true;
+                stopVM("No runnable processes after top-of-chain return");
+                return true;
+            }
+        }
+
+        // Per reference VM spec: send cannotReturn: instead of silently terminating.
+        // This gives Smalltalk's exception handling a chance to handle the situation.
+        if (activeContext_.isObject() && !activeContext_.isNil()) {
+            Oop currentProcess = getActiveProcess();
+            if (currentProcess.rawBits() != lastCannotReturnProcess_.rawBits()) {
+                cannotReturnCount_ = 0;
+                lastCannotReturnProcess_ = currentProcess;
+            }
+            cannotReturnCount_++;
+            if (cannotReturnCount_ <= 2) {
+                lastCannotReturnCtx_ = activeContext_;
+                // Set a step deadline for error handling.
+                if (cannotReturnCount_ == 1) {
+                    cannotReturnDeadline_ = g_stepNum + 2000000;
+                }
+                // Back up IP to the return bytecode. When cannotReturn: returns
+                // and popFrame restores this IP, the return will be retried instead
+                // of falling through into dead code after the return bytecode.
+                // The return bytecodes (0x58-0x5C) are all single-byte, so IP-1
+                // points to the return instruction that triggered this path.
+                if (instructionPointer_ > method_.asObjectPtr()->bytes()) {
+                    instructionPointer_--;
+                }
+                stackPointer_ = stackBase_;
+                push(activeContext_);  // receiver: the context that cannot return
+                push(value);           // arg: the value that was being returned
+                g_cannotReturnSite[2]++;
+                sendSelector(selectors_.cannotReturn, 1);
+                return true;
+            }
+            // Too many cannotReturn: events — error handler is not terminating.
+            // Fall through to terminate the process.
+            cannotReturnCount_ = 0;
+            cannotReturnDeadline_ = 0;
+            lastCannotReturnProcess_ = Oop::nil();
+            lastCannotReturnCtx_ = Oop::nil();
+        }
+
+        // Terminate the process (cannotReturn: failed or activeContext_ is nil)
+        terminateCurrentProcess();
+        if (tryReschedule()) {
+            return true;
+        }
+        if (bootstrapStartup()) {
+            return true;
+        }
+        stopVM("No runnable processes after terminate with nil activeContext");
+    return false;
 }
 
 // NLR-marker validation helper (cascade-#3 residual, 2026-06-11).
@@ -12313,6 +12382,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
+    sendSelectorMiss(selector, argCount, rcvr, rcvrClass);
+}
+
+// The method-cache miss path of sendSelector: full lookup, DNU, object-as-
+// method, cache fill.  Out of line on purpose -- sharing sendSelector's frame
+// made every cache hit save and restore the registers this path needs.
+[[gnu::noinline]] void Interpreter::sendSelectorMiss(Oop selector, int argCount,
+                                                     Oop rcvr, Oop rcvrClass) {
     // Selector sanity check: must be a bytes object (Symbol/ByteString).
     // On the miss path only: a method-cache hit means this selector was
     // already checked when its entry was made, and reading the Symbol's
@@ -14163,8 +14240,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
 
-    // Set bytecode end
-    size_t totalBytes = methodObj->byteSize();
+    // Set bytecode end (method_ is compiled code here; see pushFrame)
+    size_t totalBytes = methodObj->compiledCodeByteSize();
     bytecodeEnd_ = methodBytes + totalBytes;
 
               // << " rawHdr=0x" << std::hex << methodHeader.rawBits()
@@ -14194,6 +14271,98 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // ExitSend (Sista bailed mid-method — interpreter resumes at the
     // bail bytecode in the same frame).
     if ((GET_DEBUG_BOOL(PHARO_SISTA_COMPILE) || g_debug.sistaDispatch) && !inSyncSend_) {
+        if (trySistaActivation(method, argCount, methodBytes, bytecodeStart, totalBytes)) return;   // out of line
+    }
+past_sista_block:
+
+    // Try JIT execution. If it handles the method, it pops the frame
+    // and pushes the return value — the dispatch loop continues with
+    // the caller's next bytecode.
+    //
+    // Inline fast-reject (todo.md §2.9): ~90% of activations miss the
+    // JIT method map.  Skipping the tryJITActivation call entirely on
+    // the miss path avoids its prologue/epilogue + trace-guard costs
+    // for the common case.
+    // scanFor: activation diagnosis (PHARO_JIT_FAIL_REASONS).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)) {
+        static uint64_t sfActs = 0, sfCan = 0, sfJit = 0;
+        if (memory_.selectorOf(method) == "scanFor:") {
+            sfActs++;
+            bool can = canJITActivate(method);
+            if (can) sfCan++;
+            bool jitted = can && tryJITActivation(method, argCount);
+            if (jitted) sfJit++;
+            if ((sfActs & 0x3FFFF) == 1)
+                fprintf(stderr, "[SF-ACT] acts=%llu canJIT=%llu jitOk=%llu\n",
+                    (unsigned long long)sfActs, (unsigned long long)sfCan,
+                    (unsigned long long)sfJit);
+            if (jitted) return;
+            goto sfActFallthrough;
+        }
+    }
+    {
+    // Deferred FinalizationSemaphore one-shot (armed by prim 130/131):
+    // snapshot the flag BEFORE the activation runs.  tryJITActivation
+    // executes the whole method, prim prologue included — so when the GC
+    // primitive runs INSIDE this activation, this exit is MID-STATEMENT
+    // in the caller (right after `Smalltalk garbageCollect` returns,
+    // BEFORE testClearing's pre-drain `dict size` read), and waking the
+    // P50 mourner here drained WeakKeyDictionary tallies inside the
+    // test's invariant window (warm-run-3 deviation, 2026-07-05).
+    //
+    // Interpreter parity: a successful GC prim never runs activateMethod
+    // at all, so the interp one-shot fires at the end of the NEXT
+    // activation — after the caller's straight-line quick-prim reads.
+    // Mirror that exactly: fire at this exit ONLY when the flag was
+    // already armed at ENTRY (this activation IS the "next" one);
+    // arming that happened inside this activation waits for the next.
+    //
+    // The activateMethod ENTRY drain above has already native-processed
+    // WKA mourners by the time an armed-at-entry activation completes;
+    // the P50 signal here dispatches the re-pushed keeper mourners
+    // (WeakSubscription / ObjectFinalizer / ...) image-side — gating it
+    // off under finalizeDeferred regressed WeakAnnouncerTest
+    // (testNoDeadWeakSubscriptions) because nothing else wakes P50 on
+    // JIT-resident runs (mourn-queue starvation, the 2026-07-03 fix).
+    bool finArmedAtEntry = finalizationCheckAfterGC_;
+    if (canJITActivate(method) && tryJITActivation(method, argCount)) {
+        if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
+            finalizationCheckAfterGC_ = false;
+            signalFinalizationIfNeeded();
+        }
+        return;  // JIT handled it
+    }
+    }
+    sfActFallthrough:;
+    // Otherwise fall through to interpreter execution via the dispatch loop
+#endif
+
+    // Deferred FinalizationSemaphore signal: primitiveFullGC/primitiveIncrementalGC
+    // set `finalizationCheckAfterGC_` instead of signaling immediately.  Fire at
+    // the END of activateMethod — method setup is complete, so if synchronousSignal
+    // transferTo's to FP, the test process's frame state is consistent and can
+    // resume from the beginning of its (newly activated) method body when
+    // scheduled again.
+    //
+    // testClearing invariant: `dict size` is prim 264 (quick) — doesn't go
+    // through activateMethod.  First method activation after garbageCollect
+    // is typically `self assert:equals:` whose args (pre-drain tally) are
+    // already on the operand stack evaluated by caller.  Preemption here
+    // doesn't disturb them.
+    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+        finalizationCheckAfterGC_ = false;
+        signalFinalizationIfNeeded();
+    }
+}
+
+#if PHARO_JIT_ENABLED
+// The Sista compile + dispatch hook of activateMethod, out of line: it is
+// off by default, and inline its locals made every activation save more
+// registers.  Answers true when it handled the activation (activateMethod
+// then returns), false to fall through to the T1 / interpreter path.
+[[gnu::noinline]] bool Interpreter::trySistaActivation(Oop method, int argCount,
+        uint8_t* methodBytes, size_t bytecodeStart, size_t totalBytes) {
+    ObjectHeader* methodObj = method_.asObjectPtr();   // activateMethod set method_ = method
         // 2026-04-29 (B7 fix): skip Sista compile + dispatch while a
         // helper-send is driving step() to completion.  Otherwise
         // each inner activation may JIT-emit kSendCallHelper, which
@@ -14235,11 +14404,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sistaSkipMemo_[(method.rawBits() >> 3) & 4095];
         if (skipMemo.method == method.rawBits()
                 && skipMemo.epoch == g_sistaEpoch) {
-            goto past_sista_block;
+            return false;
         }
         if (sista->wasCachedAsFail(method)) {
             skipMemo = {method.rawBits(), g_sistaEpoch};
-            goto past_sista_block;
+            return false;
         }
         // Hot-path early-reject: if the gate cache has already
         // classified this method as Rejected (hasUnsafeOp scan
@@ -14268,7 +14437,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // the compiler profile).  PHARO_SISTA_RECOMPILE_ADMITTED=1
                 // restores the old per-entry-recompile behavior for A/B.
                 skipMemo = {method.rawBits(), g_sistaEpoch};
-                goto past_sista_block;
+                return false;
             }
         }
         // Phase 4 Step 1: build inline hints from T1's IC info.
@@ -14306,7 +14475,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // useless no-hint result.
             const uint32_t t1Warmup = (uint32_t)g_debug.sistaT1Warmup;
             if (!jm || !jm->stats || jm->stats->executionCount < t1Warmup) {
-                goto past_sista_block;
+                return false;
             }
         }
         sista::Lowering::CompiledFn fn = sista->compile(method, memory_,
@@ -14993,11 +15162,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     if (!popFrame()) {
                         if (benchMode_) {
                             handleBenchComplete(sstate.returnValue);
-                            return;
+                            return true;
                         }
                         terminateCurrentProcess();
                         tryReschedule();
-                        return;
+                        return true;
                     }
                     if (matRet) {
                         *matRet = sstate.returnValue;
@@ -15006,7 +15175,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         push(sstate.returnValue);
                     }
                 }
-                return;
+                return true;
             }
             case jit::ExitSend: {
                 sistaSends++;
@@ -15260,7 +15429,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 stackPointer_ = sstate.sp;
                 instructionPointer_ = sstate.ip;
-                return;
+                return true;
             }
             default:
                 sistaUnknown++;
@@ -15277,87 +15446,45 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 hits, attempts, sista->compiledCount(),
                 dispatched, sistaReturns, sistaSends, sistaUnknown);
         }
-    }
-past_sista_block:
-
-    // Try JIT execution. If it handles the method, it pops the frame
-    // and pushes the return value — the dispatch loop continues with
-    // the caller's next bytecode.
-    //
-    // Inline fast-reject (todo.md §2.9): ~90% of activations miss the
-    // JIT method map.  Skipping the tryJITActivation call entirely on
-    // the miss path avoids its prologue/epilogue + trace-guard costs
-    // for the common case.
-    // scanFor: activation diagnosis (PHARO_JIT_FAIL_REASONS).
-    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)) {
-        static uint64_t sfActs = 0, sfCan = 0, sfJit = 0;
-        if (memory_.selectorOf(method) == "scanFor:") {
-            sfActs++;
-            bool can = canJITActivate(method);
-            if (can) sfCan++;
-            bool jitted = can && tryJITActivation(method, argCount);
-            if (jitted) sfJit++;
-            if ((sfActs & 0x3FFFF) == 1)
-                fprintf(stderr, "[SF-ACT] acts=%llu canJIT=%llu jitOk=%llu\n",
-                    (unsigned long long)sfActs, (unsigned long long)sfCan,
-                    (unsigned long long)sfJit);
-            if (jitted) return;
-            goto sfActFallthrough;
-        }
-    }
-    {
-    // Deferred FinalizationSemaphore one-shot (armed by prim 130/131):
-    // snapshot the flag BEFORE the activation runs.  tryJITActivation
-    // executes the whole method, prim prologue included — so when the GC
-    // primitive runs INSIDE this activation, this exit is MID-STATEMENT
-    // in the caller (right after `Smalltalk garbageCollect` returns,
-    // BEFORE testClearing's pre-drain `dict size` read), and waking the
-    // P50 mourner here drained WeakKeyDictionary tallies inside the
-    // test's invariant window (warm-run-3 deviation, 2026-07-05).
-    //
-    // Interpreter parity: a successful GC prim never runs activateMethod
-    // at all, so the interp one-shot fires at the end of the NEXT
-    // activation — after the caller's straight-line quick-prim reads.
-    // Mirror that exactly: fire at this exit ONLY when the flag was
-    // already armed at ENTRY (this activation IS the "next" one);
-    // arming that happened inside this activation waits for the next.
-    //
-    // The activateMethod ENTRY drain above has already native-processed
-    // WKA mourners by the time an armed-at-entry activation completes;
-    // the P50 signal here dispatches the re-pushed keeper mourners
-    // (WeakSubscription / ObjectFinalizer / ...) image-side — gating it
-    // off under finalizeDeferred regressed WeakAnnouncerTest
-    // (testNoDeadWeakSubscriptions) because nothing else wakes P50 on
-    // JIT-resident runs (mourn-queue starvation, the 2026-07-03 fix).
-    bool finArmedAtEntry = finalizationCheckAfterGC_;
-    if (canJITActivate(method) && tryJITActivation(method, argCount)) {
-        if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
-            finalizationCheckAfterGC_ = false;
-            signalFinalizationIfNeeded();
-        }
-        return;  // JIT handled it
-    }
-    }
-    sfActFallthrough:;
-    // Otherwise fall through to interpreter execution via the dispatch loop
+    return false;
+}
 #endif
 
-    // Deferred FinalizationSemaphore signal: primitiveFullGC/primitiveIncrementalGC
-    // set `finalizationCheckAfterGC_` instead of signaling immediately.  Fire at
-    // the END of activateMethod — method setup is complete, so if synchronousSignal
-    // transferTo's to FP, the test process's frame state is consistent and can
-    // resume from the beginning of its (newly activated) method body when
-    // scheduled again.
-    //
-    // testClearing invariant: `dict size` is prim 264 (quick) — doesn't go
-    // through activateMethod.  First method activation after garbageCollect
-    // is typically `self assert:equals:` whose args (pre-drain tally) are
-    // already on the operand stack evaluated by caller.  Preemption here
-    // doesn't disturb them.
-    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
-        finalizationCheckAfterGC_ = false;
-        signalFinalizationIfNeeded();
+// Can this CompiledBlock return non-locally?  Only a method-return bytecode
+// (ReturnReceiver..ReturnTop) inside a block does, or a BlockReturnTop
+// carrying an Extend A (nested-block return).  activateBlock needs the home
+// method and frame only for such blocks, and computing them -- the outer-code
+// chain walk plus a scan of the saved frames -- was most of its cost.
+// Memoized per block oop for one g_objectMotionEpoch (objects move at GC).
+extern uint64_t g_objectMotionEpoch;
+namespace {
+struct BlockNlrMemo { uint64_t block; uint64_t epoch; bool nlr; };
+BlockNlrMemo g_blockNlrMemo[4096];
+}
+static bool compiledBlockMayReturnNonLocally(Oop compiledBlock) {
+    uint64_t key = compiledBlock.rawBits();
+    BlockNlrMemo& m = g_blockNlrMemo[(key >> 3) & 4095];
+    if (m.block == key && m.epoch == g_objectMotionEpoch) return m.nlr;
+    bool nlr = false;
+    ObjectHeader* h = compiledBlock.asObjectPtr();
+    Oop hdr = h->slotAt(0);
+    if (!hdr.isSmallInteger()) {
+        nlr = true;   // malformed: keep the full path
+    } else {
+        size_t start = (1 + static_cast<size_t>(hdr.asSmallInteger() & 0x7FFF)) * 8;
+        size_t total = h->compiledCodeByteSize();
+        const uint8_t* bc = h->bytes();
+        bool extA = false;
+        for (size_t i = start; i < total; ) {
+            uint8_t op = bc[i];
+            if (op >= jit::SistaV1::ReturnReceiver && op <= jit::SistaV1::ReturnTop) { nlr = true; break; }
+            if (op == jit::SistaV1::BlockReturnTop && extA) { nlr = true; break; }
+            extA = (op == jit::SistaV1::ExtendA) || (extA && op == jit::SistaV1::ExtendB);
+            i += static_cast<size_t>(jit::SistaV1::bytecodeLength(op));
+        }
     }
+    m = {key, g_objectMotionEpoch, nlr};
+    return nlr;
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
@@ -15449,7 +15576,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // We identify a CompiledBlock vs CompiledMethod by checking if its last literal
         // is also a CompiledMethod/Block. If so, it's a block (with outerCode).
         // If not, it's the home method.
-        if (numLiterals >= 1) {
+        // Skipped for a block that cannot return non-locally: the home is
+        // used only by the NLR home-frame search below.
+        if (numLiterals >= 1 && compiledBlockMayReturnNonLocally(compiledBlock)) {
             Oop enclosingCode = memory_.fetchPointerUnchecked(numLiterals, compiledBlock);
             // Follow the chain of enclosing blocks until we reach the home method
             int chainDepth = 0;
@@ -15768,7 +15897,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 
     // Set bytecode end based on method size
     ObjectHeader* methodHdr = methodToExecute.asObjectPtr();
-    bytecodeEnd_ = methodHdr->bytes() + methodHdr->byteSize();
+    bytecodeEnd_ = methodHdr->bytes() + methodHdr->compiledCodeByteSize();
 
     // jit-may23 Issue 4 fix ATTEMPTED: tryJITActivation here breaks
     // bench-correctness (block frames already set up; tryJITActivation
@@ -15987,120 +16116,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             overflowLimit += StackOverflowSignalHeadroom;
     }
     if (__builtin_expect(frameDepth_ >= overflowLimit, 0)) {
-        static int overflowLog = 0;
-        if (overflowLog++ < 3) {
-            fprintf(stderr, "[OVERFLOW] fd=%zu pushing #%s (argCount=%d)\n",
-                    frameDepth_, memory_.selectorOf(method).c_str(), argCount);
-            // Dump first 40 frames (to see what started the chain)
-            fprintf(stderr, "[OVERFLOW] Call stack (first 40):\n");
-            size_t earlyEnd = frameDepth_ < 40 ? frameDepth_ : 40;
-            for (size_t f = 0; f < earlyEnd; f++) {
-                Oop savedM = savedFrames_[f].savedMethod;
-                Oop savedR = savedFrames_[f].savedReceiver;
-                std::string savedSel = memory_.selectorOf(savedM);
-                fprintf(stderr, "  [%zu] #%s rcvr=0x%llx method=0x%llx\n",
-                        f, savedSel.c_str(),
-                        (unsigned long long)savedR.rawBits(),
-                        (unsigned long long)savedM.rawBits());
-            }
-            // Dump first transition: where does copyTo:/recursion start?
-            // Walk forward from frame 40 and show any selector change.
-            fprintf(stderr, "[OVERFLOW] Selector transitions (40..fd):\n");
-            std::string prevSel;
-            size_t runStart = 40;
-            for (size_t f = 40; f < frameDepth_; f++) {
-                Oop savedM = savedFrames_[f].savedMethod;
-                std::string sel = memory_.selectorOf(savedM);
-                if (f == 40) { prevSel = sel; runStart = f; continue; }
-                if (sel != prevSel) {
-                    fprintf(stderr, "  [%zu..%zu] #%s (run len=%zu)\n",
-                            runStart, f - 1, prevSel.c_str(), f - runStart);
-                    prevSel = sel;
-                    runStart = f;
-                }
-            }
-            if (frameDepth_ > 40) {
-                fprintf(stderr, "  [%zu..%zu] #%s (run len=%zu)\n",
-                        runStart, frameDepth_ - 1, prevSel.c_str(),
-                        frameDepth_ - runStart);
-            }
-            // If we're in a Context>>copyTo:-style chain walk, the receiver at
-            // frame[2] is the root of the "errored" chain we're walking. Walk
-            // its sender chain directly and print each Context's method
-            // selector to see what the ORIGINAL call stack looked like.
-            if (frameDepth_ >= 3) {
-                Oop c2rcvr = savedFrames_[2].savedReceiver;
-                std::string f2sel = memory_.selectorOf(savedFrames_[2].savedMethod);
-                if (f2sel == "copyTo:" && c2rcvr.isObject() && c2rcvr.rawBits() > 0x10000) {
-                    fprintf(stderr, "[OVERFLOW] Walking errored-context sender chain from frame[2].rcvr=0x%llx:\n",
-                            (unsigned long long)c2rcvr.rawBits());
-                    Oop cur = c2rcvr;
-                    int depth = 0;
-                    int maxWalk = 8192;
-                    std::string prevCtxSel;
-                    int runStartIdx = 0;
-                    while (cur.isObject() && cur.rawBits() > 0x10000 && depth < maxWalk) {
-                        Oop ctxMethod = memory_.fetchPointerUnchecked(3, cur);
-                        std::string ctxSel = (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000)
-                            ? memory_.selectorOf(ctxMethod) : "(nil-method)";
-                        if (depth < 40) {
-                            Oop ctxRcvr = memory_.fetchPointerUnchecked(5, cur);
-                            std::string rcls = memory_.classNameOf(ctxRcvr);
-                            fprintf(stderr, "  ctx[%d]=0x%llx method=0x%llx #%s rcvrClass=%s\n",
-                                    depth, (unsigned long long)cur.rawBits(),
-                                    (unsigned long long)ctxMethod.rawBits(),
-                                    ctxSel.c_str(), rcls.c_str());
-                        } else {
-                            if (depth == 40) { prevCtxSel = ctxSel; runStartIdx = 40; }
-                            else if (ctxSel != prevCtxSel) {
-                                fprintf(stderr, "  ctx[%d..%d] #%s (run len=%d)\n",
-                                        runStartIdx, depth - 1, prevCtxSel.c_str(),
-                                        depth - runStartIdx);
-                                prevCtxSel = ctxSel;
-                                runStartIdx = depth;
-                            }
-                        }
-                        Oop nextSender = memory_.fetchPointerUnchecked(0, cur);
-                        if (!nextSender.isObject() || nextSender.rawBits() <= 0x10000) {
-                            fprintf(stderr, "  ctx chain ends at depth %d (sender=0x%llx)\n",
-                                    depth + 1, (unsigned long long)nextSender.rawBits());
-                            break;
-                        }
-                        cur = nextSender;
-                        depth++;
-                    }
-                    if (depth > 40 && !prevCtxSel.empty()) {
-                        fprintf(stderr, "  ctx[%d..%d] #%s (run len=%d)\n",
-                                runStartIdx, depth - 1, prevCtxSel.c_str(),
-                                depth - runStartIdx);
-                    }
-                    if (depth >= maxWalk) {
-                        fprintf(stderr, "  ctx walk truncated at maxWalk=%d\n", maxWalk);
-                    }
-                }
-            }
-            // Dump last 50 frames with raw bits for debugging
-            fprintf(stderr, "[OVERFLOW] Call stack (last 50):\n");
-            size_t start = frameDepth_ > 50 ? frameDepth_ - 50 : 0;
-            for (size_t f = start; f < frameDepth_; f++) {
-                Oop savedM = savedFrames_[f].savedMethod;
-                Oop savedR = savedFrames_[f].savedReceiver;
-                std::string savedSel = memory_.selectorOf(savedM);
-                Oop rcvrSender = memory_.nil();
-                if (savedR.isObject() && savedR.rawBits() > 0x10000) {
-                    rcvrSender = memory_.fetchPointer(0, savedR);
-                }
-                fprintf(stderr, "  [%zu] #%s rcvr=0x%llx rcvr.sender=0x%llx method=0x%llx\n",
-                        f, savedSel.c_str(),
-                        (unsigned long long)savedR.rawBits(),
-                        (unsigned long long)rcvrSender.rawBits(),
-                        (unsigned long long)savedM.rawBits());
-            }
-            fflush(stderr);
-        }
-        if (frameDepth_ >= MaxFrameDepth) {
-            stopVM("Frame depth overflow in pushFrame()");
-        }
+        reportFrameOverflow(method, argCount);   // cold, out of line
         return false;
     }
 
@@ -16312,6 +16328,125 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // (0xF5 storeTemp after 0xF8 callPrimitive), matching the reference VM's behavior.
 
     return true;  // Successfully created frame
+}
+
+// pushFrame's stack-overflow report, out of line so the hot push does not
+// pay for its registers.
+[[gnu::noinline, gnu::cold]] void Interpreter::reportFrameOverflow(Oop method, int argCount) {
+        static int overflowLog = 0;
+        if (overflowLog++ < 3) {
+            fprintf(stderr, "[OVERFLOW] fd=%zu pushing #%s (argCount=%d)\n",
+                    frameDepth_, memory_.selectorOf(method).c_str(), argCount);
+            // Dump first 40 frames (to see what started the chain)
+            fprintf(stderr, "[OVERFLOW] Call stack (first 40):\n");
+            size_t earlyEnd = frameDepth_ < 40 ? frameDepth_ : 40;
+            for (size_t f = 0; f < earlyEnd; f++) {
+                Oop savedM = savedFrames_[f].savedMethod;
+                Oop savedR = savedFrames_[f].savedReceiver;
+                std::string savedSel = memory_.selectorOf(savedM);
+                fprintf(stderr, "  [%zu] #%s rcvr=0x%llx method=0x%llx\n",
+                        f, savedSel.c_str(),
+                        (unsigned long long)savedR.rawBits(),
+                        (unsigned long long)savedM.rawBits());
+            }
+            // Dump first transition: where does copyTo:/recursion start?
+            // Walk forward from frame 40 and show any selector change.
+            fprintf(stderr, "[OVERFLOW] Selector transitions (40..fd):\n");
+            std::string prevSel;
+            size_t runStart = 40;
+            for (size_t f = 40; f < frameDepth_; f++) {
+                Oop savedM = savedFrames_[f].savedMethod;
+                std::string sel = memory_.selectorOf(savedM);
+                if (f == 40) { prevSel = sel; runStart = f; continue; }
+                if (sel != prevSel) {
+                    fprintf(stderr, "  [%zu..%zu] #%s (run len=%zu)\n",
+                            runStart, f - 1, prevSel.c_str(), f - runStart);
+                    prevSel = sel;
+                    runStart = f;
+                }
+            }
+            if (frameDepth_ > 40) {
+                fprintf(stderr, "  [%zu..%zu] #%s (run len=%zu)\n",
+                        runStart, frameDepth_ - 1, prevSel.c_str(),
+                        frameDepth_ - runStart);
+            }
+            // If we're in a Context>>copyTo:-style chain walk, the receiver at
+            // frame[2] is the root of the "errored" chain we're walking. Walk
+            // its sender chain directly and print each Context's method
+            // selector to see what the ORIGINAL call stack looked like.
+            if (frameDepth_ >= 3) {
+                Oop c2rcvr = savedFrames_[2].savedReceiver;
+                std::string f2sel = memory_.selectorOf(savedFrames_[2].savedMethod);
+                if (f2sel == "copyTo:" && c2rcvr.isObject() && c2rcvr.rawBits() > 0x10000) {
+                    fprintf(stderr, "[OVERFLOW] Walking errored-context sender chain from frame[2].rcvr=0x%llx:\n",
+                            (unsigned long long)c2rcvr.rawBits());
+                    Oop cur = c2rcvr;
+                    int depth = 0;
+                    int maxWalk = 8192;
+                    std::string prevCtxSel;
+                    int runStartIdx = 0;
+                    while (cur.isObject() && cur.rawBits() > 0x10000 && depth < maxWalk) {
+                        Oop ctxMethod = memory_.fetchPointerUnchecked(3, cur);
+                        std::string ctxSel = (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000)
+                            ? memory_.selectorOf(ctxMethod) : "(nil-method)";
+                        if (depth < 40) {
+                            Oop ctxRcvr = memory_.fetchPointerUnchecked(5, cur);
+                            std::string rcls = memory_.classNameOf(ctxRcvr);
+                            fprintf(stderr, "  ctx[%d]=0x%llx method=0x%llx #%s rcvrClass=%s\n",
+                                    depth, (unsigned long long)cur.rawBits(),
+                                    (unsigned long long)ctxMethod.rawBits(),
+                                    ctxSel.c_str(), rcls.c_str());
+                        } else {
+                            if (depth == 40) { prevCtxSel = ctxSel; runStartIdx = 40; }
+                            else if (ctxSel != prevCtxSel) {
+                                fprintf(stderr, "  ctx[%d..%d] #%s (run len=%d)\n",
+                                        runStartIdx, depth - 1, prevCtxSel.c_str(),
+                                        depth - runStartIdx);
+                                prevCtxSel = ctxSel;
+                                runStartIdx = depth;
+                            }
+                        }
+                        Oop nextSender = memory_.fetchPointerUnchecked(0, cur);
+                        if (!nextSender.isObject() || nextSender.rawBits() <= 0x10000) {
+                            fprintf(stderr, "  ctx chain ends at depth %d (sender=0x%llx)\n",
+                                    depth + 1, (unsigned long long)nextSender.rawBits());
+                            break;
+                        }
+                        cur = nextSender;
+                        depth++;
+                    }
+                    if (depth > 40 && !prevCtxSel.empty()) {
+                        fprintf(stderr, "  ctx[%d..%d] #%s (run len=%d)\n",
+                                runStartIdx, depth - 1, prevCtxSel.c_str(),
+                                depth - runStartIdx);
+                    }
+                    if (depth >= maxWalk) {
+                        fprintf(stderr, "  ctx walk truncated at maxWalk=%d\n", maxWalk);
+                    }
+                }
+            }
+            // Dump last 50 frames with raw bits for debugging
+            fprintf(stderr, "[OVERFLOW] Call stack (last 50):\n");
+            size_t start = frameDepth_ > 50 ? frameDepth_ - 50 : 0;
+            for (size_t f = start; f < frameDepth_; f++) {
+                Oop savedM = savedFrames_[f].savedMethod;
+                Oop savedR = savedFrames_[f].savedReceiver;
+                std::string savedSel = memory_.selectorOf(savedM);
+                Oop rcvrSender = memory_.nil();
+                if (savedR.isObject() && savedR.rawBits() > 0x10000) {
+                    rcvrSender = memory_.fetchPointer(0, savedR);
+                }
+                fprintf(stderr, "  [%zu] #%s rcvr=0x%llx rcvr.sender=0x%llx method=0x%llx\n",
+                        f, savedSel.c_str(),
+                        (unsigned long long)savedR.rawBits(),
+                        (unsigned long long)rcvrSender.rawBits(),
+                        (unsigned long long)savedM.rawBits());
+            }
+            fflush(stderr);
+        }
+        if (frameDepth_ >= MaxFrameDepth) {
+            stopVM("Frame depth overflow in pushFrame()");
+        }
 }
 
 Oop Interpreter::getErrorObjectFromPrimFailCode() {
@@ -16791,35 +16926,6 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
 
 // ===== VARIABLE ACCESS =====
 
-Oop Interpreter::literal(size_t index) const {
-    // In Pharo 10+ with FullBlockClosure model, both CompiledMethods and CompiledBlocks
-    // have their own literal frames. Each compiled object (method or block) contains
-    // its own literals - blocks do NOT share literals with their home method.
-    //
-    // So we always use method_ (the currently executing CompiledMethod or CompiledBlock)
-    // for literal access, NOT homeMethod_.
-    Oop literalMethod = method_;
-
-    // Safety check (cold path — method_ should always be valid during execution)
-    if (__builtin_expect(literalMethod.isNil() || !literalMethod.isObject(), 0)) {
-        return memory_.specialObject(SpecialObjectIndex::NilObject);
-    }
-
-    // method_ is a known-valid CompiledMethod/CompiledBlock
-    Oop methodHeader = memory_.fetchPointerUnchecked(0, literalMethod);
-    if (__builtin_expect(methodHeader.isSmallInteger(), 1)) {
-        int64_t headerBits = methodHeader.asSmallInteger();
-        size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
-
-        if (__builtin_expect(index >= numLiterals, 0)) {
-            return memory_.specialObject(SpecialObjectIndex::NilObject);
-        }
-    } else {
-        return memory_.specialObject(SpecialObjectIndex::NilObject);
-    }
-
-    return memory_.fetchPointerUnchecked(index + 1, literalMethod);
-}
 
 Oop Interpreter::temporary(int index) const {
     // In Sista bytecodes, temp indices 0..argCount-1 are the arguments,
@@ -23269,7 +23375,9 @@ bool Interpreter::executeFromContext(Oop context) {
 
 // ===== PRIMITIVE SUPPORT =====
 
-void Interpreter::primitiveSuccess(Oop result) {
+
+// The PHARO_HOT_PATH_DIAG check of primitiveSuccess, out of line.
+[[gnu::cold]] void Interpreter::primitiveSuccessTrace(Oop result) {
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {
@@ -23284,10 +23392,6 @@ void Interpreter::primitiveSuccess(Oop result) {
             }
         }
     }
-    primitiveFailed_ = false;
-    // Pop args and receiver, push result
-    popN(argCount_ + 1);
-    push(result);
 }
 
 void Interpreter::auditChainPrim(Oop* spBefore, int argCountBefore, int primIdx,
@@ -25668,7 +25772,7 @@ uint32_t Interpreter::computeCurrentBCOffset() {
     return static_cast<uint32_t>(instructionPointer_ - bytecodeStart);
 }
 
-void Interpreter::tryJITResumeInCaller() {
+void Interpreter::tryJITResumeInCallerSlow() {
     // After a send returns, we're in the caller's frame with IP at the
     // bytecode after the send and the return value on the stack. If the
     // caller has JIT code, resume execution in JIT from this bytecode.

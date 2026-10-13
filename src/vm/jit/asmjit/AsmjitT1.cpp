@@ -537,6 +537,54 @@ static void emitShadowReadVerify(asmjit::a64::Assembler& a, int slotIdx) {
     a.add(sp, sp, asmjit::Imm(144));
 }
 
+// Generational write barrier after emitted code stores `val` into heap
+// object `obj`.  When val is a young heap Oop and obj an old object not yet
+// remembered: set obj's remembered bit (header bit 29) and append obj to
+// g_jitRememberBuf, which the next scavenge drains into rememberedSet_; if
+// the buffer is full, set its overflow flag instead (that scavenge then
+// scans all of old space).  x0 = JITState (space bounds at 240-264).
+// Clobbers the three scratch registers; obj and val are preserved.
+static void emitRememberBarrierA64(asmjit::a64::Assembler& a,
+                                   const asmjit::a64::Gp& obj,
+                                   const asmjit::a64::Gp& val,
+                                   const asmjit::a64::Gp& s1,
+                                   const asmjit::a64::Gp& s2,
+                                   const asmjit::a64::Gp& s3) {
+    using namespace asmjit::a64;
+    asmjit::Label skip = a.new_label();
+    asmjit::Label full = a.new_label();
+    a.and_(s1, val, asmjit::Imm(7));
+    a.cbnz(s1, skip);                        // immediate: no barrier
+    a.ldr(s1, ptr(x0, 256));                 // newSpaceStart
+    a.cmp(val, s1);
+    a.b_lo(skip);
+    a.ldr(s1, ptr(x0, 264));                 // newSpaceEnd
+    a.cmp(val, s1);
+    a.b_hs(skip);                            // value not young
+    a.ldr(s1, ptr(x0, 240));                 // oldSpaceStart
+    a.cmp(obj, s1);
+    a.b_lo(skip);
+    a.ldr(s1, ptr(x0, 248));                 // oldSpaceEnd
+    a.cmp(obj, s1);
+    a.b_hs(skip);                            // holder not old
+    a.ldr(s1, ptr(obj));
+    a.tbnz(s1, 29, skip);                    // already remembered
+    a.orr(s1, s1, asmjit::Imm(1ULL << 29));
+    a.str(s1, ptr(obj));
+    a.mov(s2, asmjit::Imm(reinterpret_cast<uint64_t>(&g_jitRememberBuf)));
+    a.ldp(s3, s1, ptr(s2));                  // cursor, limit
+    a.cmp(s3, s1);
+    a.b_hs(full);
+    a.str(obj, ptr(s3));
+    a.add(s3, s3, asmjit::Imm(8));
+    a.str(s3, ptr(s2));
+    a.b(skip);
+    a.bind(full);
+    a.mov(s1, asmjit::Imm(1));
+    a.str(s1, ptr(s2, 16));                  // overflow
+    a.bind(skip);
+}
+
 // Emit a knob-gated call to jit_rt_store_ring at a receiver-ivar store
 // site.  Convention at the call point: x4 = receiver, x1 = value (both
 // store emits use these).  Saves the FULL caller-saved set across the
@@ -1838,6 +1886,44 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
 // sp-residency helpers.  At =0 these emit the exact ldr/str-equivalent the raw
 // `mov ...,[rdi+OFF_SP]` they replace, so the converted code is byte-identical;
 // at =1 they become rbx register moves.
+// x86_64 twin of emitRememberBarrierA64.  rdi = JITState.  Clobbers the two
+// scratch registers and the flags; obj and val are preserved.
+static void emitRememberBarrierX86(asmjit::x86::Assembler& a,
+                                   const asmjit::x86::Gp& obj,
+                                   const asmjit::x86::Gp& val,
+                                   const asmjit::x86::Gp& s1,
+                                   const asmjit::x86::Gp& s2) {
+    using namespace asmjit::x86;
+    asmjit::Label skip = a.new_label();
+    asmjit::Label full = a.new_label();
+    a.test(val, asmjit::Imm(7));
+    a.jnz(skip);                             // immediate: no barrier
+    a.cmp(val, qword_ptr(rdi, 256));         // newSpaceStart
+    a.jb(skip);
+    a.cmp(val, qword_ptr(rdi, 264));         // newSpaceEnd
+    a.jae(skip);                             // value not young
+    a.cmp(obj, qword_ptr(rdi, 240));         // oldSpaceStart
+    a.jb(skip);
+    a.cmp(obj, qword_ptr(rdi, 248));         // oldSpaceEnd
+    a.jae(skip);                             // holder not old
+    a.mov(s1, qword_ptr(obj));
+    a.bt(s1, asmjit::Imm(29));
+    a.jc(skip);                              // already remembered
+    a.bts(s1, asmjit::Imm(29));
+    a.mov(qword_ptr(obj), s1);
+    a.mov(s2, asmjit::Imm(reinterpret_cast<uint64_t>(&g_jitRememberBuf)));
+    a.mov(s1, qword_ptr(s2));                // cursor
+    a.cmp(s1, qword_ptr(s2, 8));             // limit
+    a.jae(full);
+    a.mov(qword_ptr(s1), obj);
+    a.add(s1, asmjit::Imm(8));
+    a.mov(qword_ptr(s2), s1);
+    a.jmp(skip);
+    a.bind(full);
+    a.mov(qword_ptr(s2, 16), asmjit::Imm(1)); // overflow
+    a.bind(skip);
+}
+
 static inline void emitLoadSp_x86(asmjit::x86::Assembler& a,
                                   asmjit::x86::Gp dst) {
 #if PHARO_T1_X86_SP_IN_REG
@@ -2692,6 +2778,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitStoreSp_x86(a, rcx);
         a.mov(rax, ptr(rcx));
         a.mov(ptr(rdx, OBJ_SLOT_0 + n * 8), rax);
+        emitRememberBarrierX86(a, rdx, rax, r10, r11);
         a.jmp(end);
         a.bind(bail);
         a.mov(r8, ptr(rdi, OFF_METHOD));
@@ -3743,6 +3830,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.and_(rdx, asmjit::Imm(0xFFFF));    // slotIdx in rdx
             a.mov(r9, ptr(rcx, -8));             // arg = sp[-1] (rcx is SP)
             a.mov(ptr(rax, rdx, 3, 8), r9);      // recv->slot[slotIdx] = arg
+            emitRememberBarrierX86(a, rax, r9, r10, r11);
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
                 emitStoreSp_x86(a, rcx);
@@ -4445,6 +4533,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
             a.lsl(x4, x4, asmjit::Imm(3));
             a.add(x6, x1, x4);
             a.str(x9, ptr(x6));               // store value at slot
+            emitRememberBarrierA64(a, x1, x9, x4, x7, x8);
             a.str(x9, ptr(x0, OFF_RETVAL));   // return value
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
@@ -5235,26 +5324,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         }
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
         emitStoreRingLog(a, n);
-        // Inline write barrier.  Skip if value isn't an Oop (tag != 0),
-        // receiver not in oldSpace, or value not in newSpace.  Else set
-        // bit 29 of receiver header (RememberedBit).
-        a.and_(x6, x1, asmjit::Imm(7));
-        a.cbnz(x6, barrierSkip);
-        a.ldr(x6, ptr(x0, 240));            // oldSpaceStart
-        a.cmp(x4, x6);
-        a.b_lo(barrierSkip);
-        a.ldr(x6, ptr(x0, 248));            // oldSpaceEnd
-        a.cmp(x4, x6);
-        a.b_hs(barrierSkip);
-        a.ldr(x6, ptr(x0, 256));            // newSpaceStart
-        a.cmp(x1, x6);
-        a.b_lo(barrierSkip);
-        a.ldr(x6, ptr(x0, 264));            // newSpaceEnd
-        a.cmp(x1, x6);
-        a.b_hs(barrierSkip);
-        a.ldr(x6, ptr(x4));
-        a.orr(x6, x6, asmjit::Imm(1ULL << 29));
-        a.str(x6, ptr(x4));
+        // Generational write barrier: set the remembered bit AND record the
+        // holder (the old inline code set the bit only, so the holder never
+        // reached a remembered set and later barriers skipped it).
+        emitRememberBarrierA64(a, x4, x1, x6, x7, x8);
         a.bind(barrierSkip);
         a.b(end);
         a.bind(bail);
@@ -8311,6 +8384,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.add(x4, x1, x6, asmjit::a64::lsl(3));
             a.str(x3, ptr(x4, 8));
+            emitRememberBarrierA64(a, x1, x3, x8, x9, x10);
             // Store-provenance ring hook (PHARO_T1_STORE_RING) — this
             // site's convention differs from the bytecode store emits
             // (x1=recv, x3=value, x6=dynamic slotIdx), so inline the
@@ -9408,6 +9482,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.add(x6, x1, x4);
                 a.str(x3, ptr(x6));                  // recv[idx*8] = val
+                emitRememberBarrierA64(a, x1, x3, x4, x6, x7);
                 // at:put: returns the value (sp[-3]=recv slot becomes val)
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
@@ -10331,6 +10406,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.mov(rdx, ptr(rdi, OFF_LITERALS));
                         a.mov(rdx, ptr(rdx, idx * 8));       // Association oop
                         a.mov(ptr(rdx, OBJ_SLOT_0 + 8), rax); // slot[1] = value
+                        emitRememberBarrierX86(a, rdx, rax, r10, r11);
                     }
                     if ((size_t)(globalIdx + 1) < bcLabels.size())
                         a.bind(bcLabels[globalIdx + 1]);
@@ -10381,6 +10457,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.test(rdx, asmjit::Imm(0x7));
                         a.jne(vecNotObj);                        // non-object → skip
                         a.mov(ptr(rdx, OBJ_SLOT_0 + tempIdx * 8), rax);  // vec[tempIdx]=TOS
+                        emitRememberBarrierX86(a, rdx, rax, r10, r11);
                         a.bind(vecNotObj);
                     }
                     if ((size_t)(globalIdx + 1) < bcLabels.size())
@@ -10892,6 +10969,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.tst(a64::x5, asmjit::Imm(0x7));
                     a.b_ne(vecNotObj);                // not Object → skip store
                     a.str(a64::x6, a64::ptr(a64::x5, 8 + tempIdx * 8));
+                    emitRememberBarrierA64(a, a64::x5, a64::x6, a64::x7, a64::x8, a64::x9);
                     a.bind(vecNotObj);
                 }
                 a.bind(bcLabels[globalIdx + 1]);
@@ -11063,6 +11141,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_LITERALS));
                     a.ldr(a64::x4, a64::ptr(a64::x4, idx * 8));
                     a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + 8));
+                    emitRememberBarrierA64(a, a64::x4, a64::x1, a64::x6, a64::x7, a64::x8);
                 } else if (op == SistaV1::ExtPopStoreRecv
                         || op == SistaV1::ExtStoreRecv) {
                     // Receiver store with immutable-bit check (mirror
@@ -11085,6 +11164,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     }
                     a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + idx * 8));
                     emitStoreRingLog(a, idx);
+                    emitRememberBarrierA64(a, a64::x4, a64::x1, a64::x6, a64::x7, a64::x8);
                     a.b(end);
                     a.bind(bail);
                     if (g_fsrLazy) {

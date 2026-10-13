@@ -473,3 +473,33 @@ Before this round: ~47K instructions per printString, 387 bytecodes and ~50
 sends, so about 110 instructions per bytecode.  The interpreter keeps its state in members
 (`stackPointer_`, `instructionPointer_`, ...), so every push and pop is a
 memory access, and the send path is still ~600 instructions.
+
+### Later the same day: frames, blocks, and the trusted scavenge
+
+Further steps, each checked with instruction counts:
+
+- **Cold paths out of the hot frames.**  `sendSelector`'s cache-miss path,
+  `returnValue`'s return-into-Context branch and widow step, the Sista hook of
+  `activateMethod`, and `pushFrame`'s overflow report now live in their own
+  out-of-line functions (`sendSelectorMiss`, `returnValueAtDepth0`,
+  `widowReturningContext`, `trySistaActivation`, `reportFrameOverflow`), and
+  `tryJITResumeInCaller` has an inline gate.  Sharing one frame made every
+  ordinary send and return save the registers the rare paths needed; the
+  lldb trace showed prologue + epilogue at ~25 instructions per call.
+- **`literal()` and `primitiveSuccess` inline**, the class of SmallInteger /
+  Character read from the class table (verified at image load), `primitiveAt`
+  fast path for Arrays and byte objects.
+- **Sista dispatch off by default** (DebugSettings.cpp, with the numbers).
+- **Blocks:** direct dispatch for BlockReturnNil / BlockReturnTop; the
+  home-method walk and home-frame search in `activateBlock` run only for a
+  block that can return non-locally (`compiledBlockMayReturnNonLocally`,
+  memoized per block for one `g_objectMotionEpoch`).  A one-argument block
+  call went from ~1060 to ~800 instructions.
+- **Trusted remembered set** (`docs/deferred.md`): the scavenge no longer
+  scans all of old space.  cormas analysis 23.84 -> 22.30 billion
+  instructions; with it the cormas package reaches parity with Cog (332 P on
+  both) and the deeptraverser test runs in ~47 s against its 50 s limit
+  (Cog 6 s; 66 s this morning).
+
+Deeptraverser instructions: 2311 billion this morning, 1200 now -- but wall
+time fell only ~28%: what is left of that workload is partly memory-bound.

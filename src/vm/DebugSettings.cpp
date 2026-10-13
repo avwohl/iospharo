@@ -361,12 +361,16 @@ DebugSettings::DebugSettings() {
     // running it on x86_64 hits a SIGSEGV at fault 0x358.  PHARO_NO_SISTA
     // forces OFF on any host; PHARO_SISTA_DISPATCH=1 forces ON (useful
     // when bisecting Sista-x86_64 lowering work in progress).
+    //
+    // 2026-10-13: default OFF on arm64 too.  Measured with T1 compiling
+    // only code with loops, billions of instructions, Sista on vs off:
+    // 3M printString 97.9 / 96.2, 30 benchFib 2.50 / 2.43, a counted loop,
+    // inject:into: and collect: within 0.3% -- it no longer pays for its
+    // per-activation probe, and its emitted stores carry no write barrier,
+    // so a scavenge cannot trust the remembered set while it runs.
+    // PHARO_SISTA_DISPATCH=1 still turns it on.
     {
-#if defined(__aarch64__)
-        constexpr bool kDefaultSistaOn = true;
-#else
         constexpr bool kDefaultSistaOn = false;
-#endif
         const bool noSista = envPresent("PHARO_NO_SISTA");
         const bool explicitOn = envPresent("PHARO_SISTA_DISPATCH");
         sistaDispatch = explicitOn || (kDefaultSistaOn && !noSista);

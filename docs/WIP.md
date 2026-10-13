@@ -15,6 +15,31 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 04:40) -- trusted remembered set ON; cormas at parity
+
+**`c0f09c26` pushed (sweep C: 27876 P / 12 F / 1 E, 45 min).  The next
+commit adds:** the trusted remembered set by default (opt-out
+`PHARO_SCAV_FULL_SCAN`; every T1 store barriered; Sista dispatch off by
+default because its stores are not), cold paths split out of the hot frames,
+inline `literal()` / `primitiveSuccess`, a `primitiveAt` fast path, and for
+blocks direct block-return dispatch plus skipping the NLR home search when a
+block has no `^`.  Sweep D (trusted scan + `PHARO_SCAV_TRUST_VERIFY` on
+every scavenge, binary from before the block changes): 2047 classes, zero
+missed holders, no new deterministic failure (RSLinesTest>>testMarkerOffset
+passes 3/3 alone).  Two of its batches were SIGKILLed mid-run with no VM
+output while I ran package A/B jobs alongside -- probably memory pressure;
+the retry pass recovered them.  Sweep E (exact tree, nothing alongside)
+gates the push.
+
+Package results on the new binaries: cormas-cormas at parity with Cog
+(332 P both; the 1 s `testRunIsAsynchronous` now passes, analysis ~935 ms).
+deeptraverser `testCollectionStart` ~47 s quiet against a 50 s limit (Cog
+6 s) -- still TIMEOUT under the A/B runner with a sweep alongside.
+myprecious round trip ~10.6 ms (Cog 2.4 ms): needs a structural change.
+
+Measured instruction counts, morning -> now: 3M printString 210.8 -> 93
+billion; deeptraverser 2311 -> 1200; one block call ~2370 -> ~800.
+
 ## Right now (2026-10-13, 02:40) -- interpreter send path, ~40% fewer instructions
 
 **Speed work on the interpreter, every change measured by instruction count

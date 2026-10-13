@@ -468,6 +468,8 @@ DEBUG_BOOL(PHARO_RESUME_J2J)
 DEBUG_BOOL(PHARO_RESUME_STATE_DEBUG)
 DEBUG_BOOL(PHARO_RJ2J_VALIDATE)
 DEBUG_BOOL(PHARO_SCAV_BIT_AUDIT)
+DEBUG_BOOL_RT(PHARO_SCAV_FULL_SCAN)     // opt-out: every scavenge scans all of old space instead of trusting the remembered set (the pre-2026-10-13 behaviour; see docs/deferred.md)
+DEBUG_BOOL_RT(PHARO_SCAV_TRUST_VERIFY)    // after each trusted scan, find (and repair) every old->young pointer it missed; prints [SCAV-TRUST-MISS]
 DEBUG_BOOL(PHARO_BARRIER_WHO)          // with PHARO_SCAV_BIT_AUDIT: backtrace the raw slotAtPut that made each un-remembered old->young pointer
 DEBUG_BOOL(PHARO_SDL_TRACE)
 DEBUG_BOOL(PHARO_SEM_SIGNAL_TRACE)

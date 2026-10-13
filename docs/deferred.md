@@ -202,6 +202,22 @@ The history lives in `docs/history/`; nothing was deleted.
   scavenge drains the buffer into `rememberedSet_`.  Gain: the old-space scan
   is 11.8% of the cormas analysis and 5% of the myprecious round trips.
 
+  **Implemented the same day; default ON (opt-out `PHARO_SCAV_FULL_SCAN`,
+  runtime).**
+  `emitRememberBarrierA64` / `emitRememberBarrierX86` (AsmjitT1.cpp) at every
+  T1 store into a heap object (arm64: popStoreRecv, Ext(Pop)StoreRecv,
+  Ext(Pop)StoreLitVar, remote-temp stores, inline setter, prim-61 prologue,
+  inline send-site at:put:; x86: popStoreRecv, inline setter, LitVar,
+  remote-temp) append the holder to `g_jitRememberBuf`; overflow forces a full
+  scan.  The trusted scan runs only when every emitter that can run is
+  barriered (`emittedStoresBarriered`: asmjit T1, Sista dispatch off -- now
+  the default, see DebugSettings.cpp -- and Tier2 off).
+  `PHARO_SCAV_TRUST_VERIFY` (runtime) re-walks old space after each trusted
+  scan and reports + repairs any missed holder.  Zero misses so far on
+  printString, cormas, myprecious, bench_ast_phases (arm64 and x86) and the
+  VM fix battery; the full-sweep verify run decides the default.
+  cormas analysis: 23.84 -> 22.30 billion instructions.
+
 - **Smalltalk that runs inside an FFI callback executes through
   `Interpreter::step()`, one bytecode per call**, not through the
   computed-goto dispatch loop: `enterInterpreterFromCallback` is

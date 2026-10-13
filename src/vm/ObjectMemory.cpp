@@ -76,6 +76,9 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
         std::aligned_alloc(8, config.permSpaceSize));
 #endif
     if (!permSpaceStart_) return false;
+    g_jitRememberBuf.cursor = g_jitRememberBuf.entries;
+    g_jitRememberBuf.limit = g_jitRememberBuf.entries + JitRememberBuffer::kEntries;
+    g_jitRememberBuf.overflow = 0;
     // Nothing is ever allocated in permanent space: the image loader puts
     // every object in old space, primitives 90-93 are no-ops, and the
     // snapshot writer refuses a non-empty perm space.  So the region is
@@ -696,6 +699,13 @@ void ObjectMemory::cacheSpecialObjects() {
 }
 
 void ObjectMemory::cacheGCClassIndices() {
+    // Spur keeps SmallInteger at class index 1 and Character at 2 (our tags
+    // are 1 and 3, so the tag is not the index).  Confirm the image agrees
+    // before classOf reads the table for immediates instead of the
+    // special-objects array.
+    immediateClassesInTable_ = classTable_.size() > 2
+        && classTable_[1] == specialObject(SpecialObjectIndex::ClassSmallInteger)
+        && classTable_[2] == specialObject(SpecialObjectIndex::ClassCharacter);
     // Cache Context class index for GC. Context objects need special handling:
     // only trace slots up to the stack pointer, not all slots, because slots
     // beyond the stack pointer contain garbage from previous activations.
@@ -1650,7 +1660,10 @@ void ObjectMemory::makeImmutable(Oop obj) {
     }
 }
 
+extern uint64_t g_objectMotionEpoch;   // defined below, next to g_gcEpoch
+
 bool ObjectMemory::become(Oop obj1, Oop obj2) {
+    g_objectMotionEpoch++;
     if (!obj1.isObject() || !obj2.isObject()) {
         return false;  // Can only become: heap objects
     }
@@ -1701,6 +1714,7 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
 }
 
 bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
+    g_objectMotionEpoch++;
     // Shadow-slot detector: identities are about to swap arbitrarily —
     // the (object, slot) keys cannot be remapped, so drop the table.
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
@@ -1823,6 +1837,7 @@ void ObjectMemory::noteClassHashCopy(Oop cls, uint32_t newHash) {
 }
 
 bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map) {
+    g_objectMotionEpoch++;
     if (map.empty()) return true;
     // Instances of a class whose hash a copyHash become just moved (see
     // noteClassHashCopy): rewritten in the same heap scan, before any format
@@ -2052,6 +2067,9 @@ uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
 // Bumped by every scavenge and full GC: raw oops recorded before a change of
 // epoch may now name a different object (debug-only consumers).
 uint64_t g_gcEpoch = 0;
+// Bumped whenever an object can move or change identity (scavenge, full GC,
+// become): caches keyed by raw oop bits are valid only within one epoch.
+uint64_t g_objectMotionEpoch = 1;
 // PHARO_BARRIER_WHO: first raw slotAtPut that put a young pointer into an
 // old, un-remembered holder.  storePointer remembers BEFORE it calls
 // slotAtPut, so a barriered store never lands here.  Audit builds only.
@@ -2083,6 +2101,37 @@ static void barrierWhoReport(const ObjectHeader* hdr) {
     }
 }
 
+JitRememberBuffer g_jitRememberBuf{};
+
+// Move the holders emitted code recorded into rememberedSet_.  They already
+// carry the remembered bit (the emitted barrier sets it before appending).
+// Answers true when the buffer overflowed since the last drain: some holders
+// then exist only as a set bit, so this scavenge must scan all of old space.
+bool ObjectMemory::drainJitRememberBuffer() {
+    JitRememberBuffer& b = g_jitRememberBuf;
+    if (!b.cursor) { b.cursor = b.entries; b.limit = b.entries + JitRememberBuffer::kEntries; }
+    for (uint64_t* p = b.entries; p < b.cursor; ++p)
+        rememberedSet_.push_back(reinterpret_cast<ObjectHeader*>(*p));
+    b.cursor = b.entries;
+    bool overflow = b.overflow != 0;
+    b.overflow = 0;
+    return overflow;
+}
+
+// The remembered set covers emitted code only for asmjit T1, whose store
+// emits all carry emitRememberBarrier*.  The legacy stencil JIT, Sista
+// lowering and Tier2 store without recording the holder, so any of them
+// running means the full scan.
+bool ObjectMemory::emittedStoresBarriered() const {
+    return g_debug.useAsmjitT1 && !g_debug.sistaDispatch && !g_debug.t2Strict;
+}
+
+void ObjectMemory::discardRememberedSet() {
+    drainJitRememberBuffer();
+    for (ObjectHeader* h : rememberedSet_) h->setRemembered(false);
+    rememberedSet_.clear();
+}
+
 GCResult ObjectMemory::scavenge() {
     // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young
     // exists anymore (allocation falls back to old space) — later scavenge
@@ -2091,6 +2140,7 @@ GCResult ObjectMemory::scavenge() {
     if (scavQuarantineActive) return GCResult{0, 0, 0};
     g_scavengeCount++;
     g_gcEpoch++;
+    g_objectMotionEpoch++;
     // Copying scavenge: tenure all reachable young objects to old
     // space, reset eden.  Unreachable young objects vanish when
     // eden is reset.
@@ -2445,9 +2495,46 @@ GCResult ObjectMemory::scavenge() {
             if (obj->isRemembered()) obj->setRemembered(false);
         }
     };
-    // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
-    // objects appended during this loop (Phase 2 drains those).
-    scanRegionForYoung(oldSpaceStart_, oldSpaceFree_);
+    // Trusted remembered set (default since 2026-10-13; opt-out
+    // PHARO_SCAV_FULL_SCAN): scan only the holders the write barriers
+    // recorded plus the objects allocated in old space since the last GC,
+    // instead of all of old space.  Needs exact remembered bits, which the
+    // first full scan establishes (it clears every bit), every emitted store
+    // barriered (emittedStoresBarriered), and no buffer overflow; the audit
+    // needs the full scan.  PHARO_SCAV_TRUST_VERIFY checks it.
+    // Holders recorded by emitted code (jit::g_jitRememberBuf) join the set.
+    const bool jitRSOverflow = drainJitRememberBuffer();
+    const bool trustRS = rememberedBitsExact_ && !bitAudit && !jitRSOverflow
+        && emittedStoresBarriered()
+        && !GET_DEBUG_BOOL(PHARO_SCAV_FULL_SCAN);
+    if (trustRS) {
+        std::vector<ObjectHeader*> holders;
+        holders.swap(rememberedSet_);
+        for (ObjectHeader* obj : holders) {
+            size_t np = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            size_t cnt = obj->slotCount();
+            for (size_t i = 0; i < np && i < cnt; ++i) {
+                Oop sv = slots[i];
+                if (!sv.isObject()) continue;
+                uint8_t* hp = reinterpret_cast<uint8_t*>(sv.asObjectPtr());
+                if (hp >= edenAllocBase_ && hp < edenFree_) {
+                    Oop newS = tenureIfYoung(sv);
+                    slots[i] = newS;
+                    if (newS.rawBits() != sv.rawBits()) scanQueue.push_back(newS.asObjectPtr());
+                }
+            }
+            obj->setRemembered(false);
+        }
+        uint8_t* recentStart = (oldFreeAtLastScavenge_ && oldFreeAtLastScavenge_ > oldSpaceStart_)
+            ? oldFreeAtLastScavenge_ : oldSpaceStart_;
+        if (recentStart < oldSpaceFree_) scanRegionForYoung(recentStart, oldSpaceFree_);
+    } else {
+        // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
+        // objects appended during this loop (Phase 2 drains those).
+        scanRegionForYoung(oldSpaceStart_, oldSpaceFree_);
+        rememberedBitsExact_ = true;   // the full scan cleared every bit
+    }
     // Permanent space holds the special-objects array, and setSpecialObject
     // does direct slotAtPut bypassing the write barrier.
     if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_) {
@@ -2474,23 +2561,63 @@ GCResult ObjectMemory::scavenge() {
 
     // Phase 2: drain scanQueue.  For each newly-tenured object,
     // scan its pointer slots and tenure any young targets.
-    while (!scanQueue.empty()) {
-        ObjectHeader* obj = scanQueue.back();
-        scanQueue.pop_back();
-        size_t np = pointerSlotsOf(obj);
-        Oop* slots = obj->slots();
-        for (size_t i = 0; i < np && i < obj->slotCount(); ++i) {
-            Oop s = slots[i];
-            if (!s.isObject()) continue;
-            uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
-            if (hp >= edenAllocBase_ && hp < edenFree_) {
-                Oop newS = tenureIfYoung(s);
-                if (newS.rawBits() != s.rawBits()) {
-                    slots[i] = newS;
-                    scanQueue.push_back(newS.asObjectPtr());
+    auto drainScanQueue = [&]() {
+        while (!scanQueue.empty()) {
+            ObjectHeader* obj = scanQueue.back();
+            scanQueue.pop_back();
+            size_t np = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            for (size_t i = 0; i < np && i < obj->slotCount(); ++i) {
+                Oop s = slots[i];
+                if (!s.isObject()) continue;
+                uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
+                if (hp >= edenAllocBase_ && hp < edenFree_) {
+                    Oop newS = tenureIfYoung(s);
+                    if (newS.rawBits() != s.rawBits()) {
+                        slots[i] = newS;
+                        scanQueue.push_back(newS.asObjectPtr());
+                    }
                 }
             }
         }
+    };
+    drainScanQueue();
+
+    // PHARO_SCAV_TRUST_VERIFY: after each trusted
+    // scan, walk ALL of old space for pointers still aimed into eden.  Each
+    // one is a holder the barrier never recorded.  Report it, then repair it
+    // the way the full scan would have, so a verify run is as safe as the
+    // full scan and names every gap.
+    if (trustRS && GET_DEBUG_BOOL(PHARO_SCAV_TRUST_VERIFY)) {
+        static size_t missLog = 0;
+        size_t missed = 0;
+        ObjectScanner vscan(oldSpaceStart_, oldSpaceFree_);
+        while (ObjectHeader* obj = vscan.next()) {
+            size_t np = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            size_t cnt = obj->slotCount();
+            for (size_t i = 0; i < np && i < cnt; ++i) {
+                Oop sv = slots[i];
+                if (!sv.isObject()) continue;
+                uint8_t* hp = reinterpret_cast<uint8_t*>(sv.asObjectPtr());
+                if (hp < edenAllocBase_ || hp >= edenFree_) continue;
+                missed++;
+                if (missLog++ < 200) {
+                    Oop hc = classAtIndex(obj->classIndex());
+                    Oop vc = classAtIndex(sv.asObjectPtr()->classIndex());
+                    fprintf(stderr, "[SCAV-TRUST-MISS] holder=%s slot=%zu value=%s remembered=%d\n",
+                        hc.isObject() ? nameOfClass(hc).c_str() : "?", i,
+                        vc.isObject() ? nameOfClass(vc).c_str() : "?",
+                        (int)obj->isRemembered());
+                }
+                Oop newS = tenureIfYoung(sv);
+                slots[i] = newS;
+                if (newS.rawBits() != sv.rawBits()) scanQueue.push_back(newS.asObjectPtr());
+            }
+        }
+        drainScanQueue();
+        if (missed) fprintf(stderr, "[SCAV-TRUST-VERIFY] scavenge %llu: %zu missed old->young pointers\n",
+                            (unsigned long long)g_scavengeCount, missed);
     }
 
     oldFreeAtLastScavenge_ = oldSpaceFree_;
@@ -3001,6 +3128,7 @@ bool ObjectMemory::checkHeapIntegrity(const char* when) {
 GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     extern uint64_t g_gcEpoch;
     g_gcEpoch++;
+    g_objectMotionEpoch++;
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
@@ -3078,6 +3206,9 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             && !GET_DEBUG_BOOL(PHARO_YG_NO_SCAVENGE)) {
         scavenge();
     }
+    // No young object is live now, so no holder needs remembering, and
+    // compaction is about to move the holders: drop the set and the bits.
+    discardRememberedSet();
 #ifdef _WIN32
     // EDEN_ROTATE detector: compact legitimately scribbles scratch over all
     // of new space — unprotect for the GC's duration (re-protected at the

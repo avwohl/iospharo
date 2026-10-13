@@ -560,7 +560,20 @@ public:
     // ===== METHOD ACCESS (for primitives) =====
 
     /// Get a literal from the current method
-    Oop literal(size_t index) const;
+    /// Literal `index` of the executing method or block (each CompiledBlock
+    /// has its own literal frame, so method_, never homeMethod_).  Inline:
+    /// every send fetches its selector here.  Out-of-range and malformed
+    /// methods answer nil, as before.
+    Oop literal(size_t index) const {
+        if (__builtin_expect(method_.isNil() || !method_.isObject(), 0))
+            return memory_.nil();
+        ObjectHeader* m = method_.asObjectPtr();
+        Oop methodHeader = m->slotAt(0);
+        if (__builtin_expect(!methodHeader.isSmallInteger()
+                || index >= static_cast<size_t>(methodHeader.asSmallInteger() & 0x7FFF), 0))
+            return memory_.nil();
+        return m->slotAt(index + 1);   // index + 1 <= numLiterals < slotCount
+    }
 
     /// Get the receiver's instance variable
     Oop receiverInstVar(size_t index) const;
@@ -610,7 +623,15 @@ public:
     // ===== PRIMITIVE SUPPORT =====
 
     /// Set the primitive result (success)
-    void primitiveSuccess(Oop result);
+    /// Pop the receiver and arguments, push the result.  Inline: every
+    /// primitive that succeeds ends here.
+    void primitiveSuccess(Oop result) {
+        if (__builtin_expect(traceSpCorrupt_, 0)) primitiveSuccessTrace(result);
+        primitiveFailed_ = false;
+        popN(argCount_ + 1);
+        push(result);
+    }
+    void primitiveSuccessTrace(Oop result);
 
     /// Mark primitive as failed
     void primitiveFail();
@@ -1715,7 +1736,19 @@ public:
 
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).
-    void tryJITResumeInCaller();
+    /// After a return, resume the caller in emitted code when it has some.
+    /// Inline gate for the common answer -- the caller is not compiled --
+    /// so most returns skip the large out-of-line resume function and its
+    /// register saves.  The slow function repeats every check.
+    void tryJITResumeInCaller() {
+#if PHARO_JIT_ENABLED
+        if (inJITResume_) return;
+        if (!method_.isObject() || method_.rawBits() < 0x10000) return;
+        if (!jitRuntime_.methodMap().lookup(method_.rawBits())) return;
+        tryJITResumeInCallerSlow();
+#endif
+    }
+    void tryJITResumeInCallerSlow();
 
     // Compute the current bytecode offset (IP - method bytecode start).
     // Returns UINT32_MAX if it can't be computed.
@@ -2323,6 +2356,8 @@ private:
     void storeTemporary(int index);
     void pushSpecial(int which);
     void returnValue(Oop value);
+    void widowReturningContext();
+    bool returnValueAtDepth0(Oop value);
     void returnFromMethod();
     void returnFromBlock();
     bool handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx);
@@ -2351,6 +2386,7 @@ private:
     void sendLiteralOneArg(int literalIndex);
     void sendLiteralTwoArgs(int literalIndex);
     void sendSelector(Oop selector, int argCount);
+    void sendSelectorMiss(Oop selector, int argCount, Oop rcvr, Oop rcvrClass);
 
     // Special operations
     void duplicateTop();
@@ -2383,6 +2419,8 @@ private:
 
     /// Activate a method (create new frame)
     void activateMethod(Oop method, int argCount);
+    bool trySistaActivation(Oop method, int argCount, uint8_t* methodBytes,
+                            size_t bytecodeStart, size_t totalBytes);
 
     /// Activate a block closure
     void activateBlock(Oop block, int argCount);
@@ -2414,7 +2452,8 @@ private:
     // ===== FRAME MANAGEMENT =====
 
     /// Create a new stack frame
-    bool pushFrame(Oop method, int argCount);  // Returns false if recursion detected
+    bool pushFrame(Oop method, int argCount);
+    void reportFrameOverflow(Oop method, int argCount);  // Returns false if recursion detected
 
     /// Pop the current stack frame. Returns false if this was the last frame
     /// (process completed) and the caller should NOT push a return value.

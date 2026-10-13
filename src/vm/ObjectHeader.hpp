@@ -300,6 +300,15 @@ public:
 
     // ===== SIZE CALCULATIONS =====
 
+    /// byteSize() for an object already known to be compiled code (format
+    /// 24-31: CompiledMethod / CompiledBlock) -- the last branch of
+    /// byteSize(), without walking the format chain.  The activation paths
+    /// compute bytecodeEnd_ from it on every send.
+    size_t compiledCodeByteSize() const {
+        return slotCount() * 8
+            - (static_cast<size_t>(format()) - static_cast<size_t>(ObjectFormat::CompiledMethod));
+    }
+
     /// Get the size of this object in bytes (excluding header).
     size_t byteSize() const {
         auto fmt = format();
