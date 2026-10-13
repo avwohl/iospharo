@@ -56,10 +56,11 @@ The history lives in `docs/history/`; nothing was deleted.
   - x86 `PHARO_T1_EXTBAIL_SEND=1` (bisect knob, default off) turns the
     prefix bail into an ExitSend.  The send handlers then dispatch a stale
     selector and advance ip by 1 into the prefix.
-  - `materializeFrameStack`'s fd==0 PushThisContext rewind tests the raw byte
-    before ip.  Inside a prefix window that byte is the operand, so `E0 52` /
-    `E1 52` with thisContext on top of stack would rewind into the prefix.
-    It should key off the recorded last opcode.
+  - ~~`materializeFrameStack`'s fd==0 PushThisContext rewind tests the raw
+    byte before ip.~~  FIXED 2026-10-13: the rewind also requires
+    `!inExtension_` and decodes the method from its first bytecode to confirm
+    the byte before ip starts an instruction (only in the rare state that
+    reaches the check: the Context itself on top of its own stack).
   - `SistaBuilder` marks "inside a prefix" by a non-zero pending value and
     OVERWRITES chained prefixes (`pendingExtA_ = byte`; the interpreter
     shifts).  Only methods with 8193+ literals or very long jumps emit
@@ -149,7 +150,10 @@ The history lives in `docs/history/`; nothing was deleted.
 
 ## Known structural costs, not yet measured
 
-- **Every scavenge scans ALL of old space for old->young pointers**
+- **~~Every scavenge scans ALL of old space for old->young pointers~~ --
+  DONE 2026-10-13 (`064e1de6`): the remembered set is trusted by default
+  (every T1 store barriered; opt-out `PHARO_SCAV_FULL_SCAN`, check
+  `PHARO_SCAV_TRUST_VERIFY`, zero misses over full sweeps).  History:**
   (`ObjectMemory::scavenge`, the `scanRegionForYoung(oldSpaceStart_, ...)`
   call), because the remembered set is not trusted: measured 2026-10-12 with
   `PHARO_SCAV_BIT_AUDIT=1` on StringTest + OrderedCollectionTest + 100
@@ -238,7 +242,17 @@ The history lives in `docs/history/`; nothing was deleted.
   (`[DEPTH0]` exit line, bytecode checkpoints at frame depth 0): myprecious
   round trips 2.5%, lexicon CodeAnalysisRunnerTest 1.3%, deeptraverser 0.1%.**
   So it matters for one long loop that gets preempted (the micro-benchmarks),
-  not for the slow packages; their cost is ordinary interpretation, chiefly
+  not for the slow packages.  How much, measured the same day: `zzSum:` (a
+  21M-iteration byte loop in a method) takes 744 ms, 753 ms with the JIT off
+  -- the JIT never enters a context-mode method -- against 148 ms for the
+  same loop in a DoIt that OSR compiled, and Cog's 94 ms; `[DEPTH0]` 63%.
+  The cheaper fix than married contexts: on resume, rebuild the top
+  context as a frame above its sender (sender at depth 0, the resumed
+  method at depth 1 with currentFrameMaterializedCtx_ = its Context, so
+  identity holds and `thisContext` still converts back).  Safe as long as
+  nothing writes a RUNNING method's Context except through thisContext;
+  needs the savedFrames_[0] fields built from the sender Context.  For the
+  slow packages it does nothing; their cost is ordinary interpretation, chiefly
   block calls (~700 instructions each; Fuel's `isBehaviorAnonymous:` scans
   all of `Smalltalk globals` with a block per element on every myprecious
   message).

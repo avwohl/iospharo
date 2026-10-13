@@ -21036,8 +21036,29 @@ Oop Interpreter::materializeFrameStack() {
                 bool topIsSelf = (stackPointer_ > framePointer_ + 1)
                     && stackPointer_[-1].rawBits() == activeContext_.rawBits();
                 size_t ipOff = (size_t)(instructionPointer_ - methodBytes);
-                if (topIsSelf && numItems >= 1 && ipOff >= 1
-                        && methodBytes[ipOff - 1] == jit::SistaV1::PushThisContext) {
+                // The byte before ip must BE the last instruction: inside a
+                // prefix window it is the prefix's operand (`E0 52`), and
+                // after any 2-byte instruction it may be an operand that
+                // happens to equal PushThisContext.  Decode from the first
+                // bytecode to check -- only reached in this rare state
+                // (the Context itself on top of its own stack).
+                auto lastInstructionIsPushThisContext = [&]() {
+                    Oop hdr = methodObj->slotAt(0);
+                    if (!hdr.isSmallInteger()) return false;
+                    size_t i = (1 + static_cast<size_t>(hdr.asSmallInteger() & 0x7FFF)) * 8;
+                    size_t last = SIZE_MAX;
+                    while (i < ipOff) {
+                        last = i;
+                        int n = jit::SistaV1::bytecodeLength(methodBytes[i]);
+                        if (n <= 0) return false;
+                        i += static_cast<size_t>(n);
+                    }
+                    return i == ipOff && last == ipOff - 1
+                        && methodBytes[last] == jit::SistaV1::PushThisContext;
+                };
+                if (topIsSelf && numItems >= 1 && ipOff >= 1 && !inExtension_
+                        && methodBytes[ipOff - 1] == jit::SistaV1::PushThisContext
+                        && lastInstructionIsPushThisContext()) {
                     numItems -= 1;  // don't count the reified self
                     // rewind stored pc by 1 byte to the PushThisContext bytecode
                     memory_.storePointer(1, activeContext_,
@@ -21680,20 +21701,18 @@ Oop Interpreter::materializeFrameStack() {
                 // which calls ensure: which calls the block) have a sender that's a
                 // DIFFERENT method — updating outerContext would break homeMethod navigation.
                 //
-                // KNOWN WRONG, KEPT ON (2026-10-11).  A method-oop match cannot
-                // tell two ACTIVATIONS of one method apart, so this re-homes a
-                // block created in one activation onto a recursive one:
-                //     m: n with: blk  n = 0 ifTrue: [^ blk value].
-                //         ^ self m: n - 1 with: [thisContext home arguments first]
-                // answers 0 here, 1 on Cog.  But turning it OFF
-                // (PHARO_NO_REHOME_CLOSURES) breaks the SUnit runner itself:
-                // batch 1151-1200 times out RSExamplesTest and a runner block
-                // sends the string '  TIMEOUT(prim-stuck): ' as a selector to
-                // Object class -- the block read its outer temps from a STALE
-                // duplicate Context.  So this rule is masking a duplicate-
-                // Context bug elsewhere (docs/vm-compat-bugs.md #23 / #30);
-                // remove it only once that duplicate is found.
-                if (!GET_DEBUG_BOOL(PHARO_NO_REHOME_CLOSURES)
+                // It was KNOWN WRONG under recursion: a method-oop match
+                // cannot tell two ACTIVATIONS of one method apart, so it
+                // re-homed a block onto a recursive activation
+                // (`m:with:` answered 0 where Cog answers 1).  It was kept
+                // on 2026-10-11 because turning it off broke SUnit batch
+                // 1151-1200 through a stale duplicate Context.
+                // OFF since 2026-10-13 (opt-in PHARO_REHOME_CLOSURES, for
+                // bisecting): with the live-chain check below it re-homed
+                // nothing in SUnit batch 1151-1200, and with the whole rule
+                // off that batch -- the one that broke on 2026-10-11 -- is
+                // clean, as is the full sweep.  docs/vm-compat-bugs.md #30.
+                if (GET_DEBUG_BOOL(PHARO_REHOME_CLOSURES)
                         && closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
                     Oop oldOuterCtx = memory_.fetchPointer(0, closure_);
                     if (oldOuterCtx.isObject() && oldOuterCtx.rawBits() > 0x10000 &&

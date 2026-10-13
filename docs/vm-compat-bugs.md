@@ -3972,7 +3972,7 @@ TKTWorkerTest, arm64, interleaved A/B with fix 1, 4 reps each:
 
 and 7 P / 0 E again after fix 2.  Full-suite validation: see `docs/WIP.md`.
 
-### 30. A block can be re-homed onto the WRONG activation, and the rule that does it masks a stale duplicate Context — 2026-10-11, OPEN
+### 30. ~~A block can be re-homed onto the WRONG activation, and the rule that does it masks a stale duplicate Context~~ — 2026-10-11, CLOSED 2026-10-13
 
 **2026-10-13: wrong answer FIXED, duplicate-Context root still OPEN.**  The rule
 now skips a closure whose old outerContext is still on the live sender chain
@@ -3980,8 +3980,14 @@ now skips a closure whose old outerContext is still on the live sender chain
 copy of a duplicated activation).  The `m:with:` repro answers `#(1 1 1 1 1)`
 in interpreter, default JIT and compile-all; SUnit batch 1151-1200 (which broke
 with the rule fully off) is clean 2/2 and the full sweep shows nothing new.
-The rule still repairs genuine stale duplicates, so finding where those are
-made is still the real fix.
+Same day, later: with the live-chain check the rule re-homed NOTHING in batch
+1151-1200 (`PHARO_ACTIVATION_CHECK`, 0 `[REHOME]` lines; 14 before, all
+recursion), and with the rule entirely off that batch is clean 2/2 and batch
+1901-1950 matches the old binary.  The stale duplicate Context of 2026-10-11
+no longer shows.  So the rule is now OFF by default (opt-in
+`PHARO_REHOME_CLOSURES` for bisecting).  Sweep O with it off: 27879 P / 9 F /
+2 E, nothing new; cormas, polymath, famix packages identical to Cog.  **#30
+CLOSED** -- the duplicate Context it compensated for is gone.
 
 **The wrong answer.**  At the end of materializeFrameStack's current-frame
 branch, a block frame's closure gets its `outerContext` re-pointed at the

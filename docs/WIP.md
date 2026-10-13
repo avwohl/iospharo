@@ -15,6 +15,22 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 12:00) -- #30 closed: re-home rule off, sweep O clean
+
+`cf1a7e5b` (#30 live-chain check, #32 FFI, LEAD 24, prim 132) pushed after
+sweep N.  Next: the #30 re-home rule itself is now OFF by default (opt-in
+`PHARO_REHOME_CLOSURES`): with the live-chain check it re-homed nothing in
+batch 1151-1200, and with it fully off that batch is clean and 1901-1950
+matches the old binary.  Sweep O on that tree: 27879 P / 9 F / 2 E, nothing
+new; cormas, polymath, famix identical to Cog (deeptraverser's 50 s test
+timed out under the sweep's load, as before).
+
+After vm-O (not in sweep O): the fd==0 `PushThisContext` pc rewind in
+materializeFrameStack now requires `!inExtension_` and decodes the method to
+confirm the byte before ip starts an instruction (deferred.md, prefix
+paths).  Measured for deferred.md: a preempted long loop method runs 5x
+slower in context mode and the JIT never enters it (`zzSum:` 744 ms, Cog 94).
+
 ## Right now (2026-10-13, 11:00) -- #30 wrong home fixed in the repro; #32 FFI crash fixed
 
 `8ed7f35a` pushed (sweep M 27880 P / 9 F / 1 E).  The next commit (sweep N:
