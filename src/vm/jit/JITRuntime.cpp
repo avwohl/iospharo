@@ -3831,7 +3831,7 @@ static bool compiledCodeHasLoop(Oop code) {
 
 bool JITRuntime::entryCountMatters(Oop compiledMethod) {
     return GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL) || g_debug.sistaDispatch
-        || compiledCodeHasLoop(compiledMethod);
+        || ::pharo::mcfEnabled() || compiledCodeHasLoop(compiledMethod);
 }
 
 void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
@@ -4071,7 +4071,7 @@ void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
                 // Methods called FROM emitted code still compile through the
                 // eager-compile and block-value paths.
                 // PHARO_T1_COMPILE_ALL restores compiling every hot method.
-                if (!GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL)
+                if (!GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL) && !::pharo::mcfEnabled()
                         && !compiledCodeHasLoop(compiledMethod)) {
                     return;
                 }
@@ -5066,6 +5066,7 @@ void JITRuntime::flushCaches() {
     // Clear mega cache
     std::memset(megaCache_, 0, sizeof(megaCache_));
     ++g_jitStateEpoch;
+    mcfCodeChanged();
 
     // Clear IC entries but preserve selectorBits (slot 18 of each 19-slot IC).
     // selectorBits is written once at compile time and never re-patched,
@@ -5116,6 +5117,7 @@ void JITRuntime::flushT2ICs() {
 void JITRuntime::rebuildMethodMap() {
     if (!initialized_) return;
     methodMap_.clear();
+    mcfClearCallCache();   // keyed by method oops, which may have moved
     JITMethod* m = codeZone_.firstMethod();
     size_t skippedSuperseded = 0;
     while (m) {
@@ -5155,6 +5157,7 @@ void JITRuntime::rebuildMethodMap() {
 
 void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     if (!initialized_) return;
+    mcfClearCallCache();
 
     // PMS §7 event 1: full GC flushes every IC below — unlink all
     // patched sites first (KEEP PERMANENTLY for v1: re-linking is

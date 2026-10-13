@@ -219,6 +219,47 @@ static_assert(sizeof(SendSitePatch) == 16, "SendSitePatch layout");
 // stamp still matches.
 inline uint32_t g_jitStateEpoch = 1;
 
+// Machine-code frames (docs/mc-frames-design.md, INV-3): bumped whenever
+// code that a SavedFrame.mcReturn memo can point into may stop being the
+// right code -- invalidate, map removal, cache flush, recompile, eviction.
+// Not on insert: new code does not make old memos wrong.
+inline uint32_t g_mcCodeEpoch = 1;
+
+// Machine-code frames, phase 2: direct-mapped cache "CompiledMethod oop ->
+// JITMethod" that T1 code probes at an inline-cache hit to call a compiled
+// callee without leaving machine code.  Filled only by mcfActivate, only for
+// old-space methods T1 can call natively.  Cleared whenever code may change
+// (mcfCodeChanged) and whenever objects move (rebuildMethodMap), so T1 code
+// can trust every hit without an epoch check.
+struct McfCallEntry {
+    uint64_t methodBits;   // key (0 = empty)
+    struct JITMethod* jm;
+    uint64_t bcEndOff;     // bytecodeEnd - method, for SavedFrame.savedBytecodeEnd
+    uint64_t spare;
+};
+static_assert(sizeof(McfCallEntry) == 32, "T1 indexes McfCallEntry with lsl #5");
+constexpr size_t kMcfCallCacheSize = 4096;   // T1 masks with kMcfCallCacheSize - 1
+inline McfCallEntry* g_mcfCallCache = nullptr;
+inline void mcfClearCallCache() {
+    if (g_mcfCallCache)
+        std::memset(g_mcfCallCache, 0, sizeof(McfCallEntry) * kMcfCallCacheSize);
+}
+// Code that a memo or a cache entry can point into may stop being right.
+inline void mcfCodeChanged() {
+    ++g_mcCodeEpoch;
+    mcfClearCallCache();
+}
+
+// SavedFrame layout for T1's native call and return, filled by the
+// interpreter at JIT initialization (SavedFrame is private to Interpreter).
+struct McfFrameLayout {
+    uint32_t size, savedIP, savedBytecodeEnd, savedMethod, savedHomeMethod,
+             savedReceiver, savedClosure, savedActiveContext,
+             materializedContext, ctxSynced, savedFP, materializedRetSlot,
+             savedArgCount, homeFrameDepth, mcReturn, mcKeyIP, mcJM, mcEpoch;
+};
+inline McfFrameLayout g_mcfLayout{};
+
 struct JITMethod {
     // --- Identity (link back to Smalltalk objects) ---
     uint64_t  compiledMethodOop;  // The CompiledMethod this was compiled from (raw Oop bits)
@@ -525,6 +566,7 @@ struct JITMethod {
     void invalidate() {
         state = MethodState::Invalidated;
         ++g_jitStateEpoch;
+        mcfCodeChanged();
     }
 
     // Total bytes consumed in the code zone
@@ -688,6 +730,7 @@ public:
     void remove(uint64_t compiledMethodBits) {
         if (!entries_) return;
         ++g_jitStateEpoch;
+        mcfCodeChanged();
         size_t mask = capacity_ - 1;
         size_t idx = hash(compiledMethodBits) & mask;
 

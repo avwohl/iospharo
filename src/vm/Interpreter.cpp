@@ -8989,6 +8989,8 @@ void Interpreter::returnValue(Oop value) {
             }
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_JIT_RESUME_AFTER_RETURN), 0)) {
                 // bisect: skip JIT re-entry to see if it's the trigger
+            } else if (::pharo::mcfEnabled()) {
+                mcfResumeAfterReturn(&savedFrames_[frameDepth_]);
             } else {
                 tryJITResumeInCaller();
             }
@@ -14453,7 +14455,15 @@ past_sista_block:
     // (testNoDeadWeakSubscriptions) because nothing else wakes P50 on
     // JIT-resident runs (mourn-queue starvation, the 2026-07-03 fix).
     bool finArmedAtEntry = finalizationCheckAfterGC_;
-    if (canJITActivate(method) && tryJITActivation(method, argCount)) {
+    if (::pharo::mcfEnabled()) {
+        if (mcfActivate(method)) {
+            if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
+                finalizationCheckAfterGC_ = false;
+                signalFinalizationIfNeeded();
+            }
+            return;
+        }
+    } else if (canJITActivate(method) && tryJITActivation(method, argCount)) {
         if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
             finalizationCheckAfterGC_ = false;
             signalFinalizationIfNeeded();
@@ -16360,6 +16370,24 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     SavedFrame& frame = savedFrames_[frameDepth_++];
     frame.pushSite = "push@L15731";
+#if PHARO_JIT_ENABLED
+    // Machine-code frames: a send that machine code left to the interpreter
+    // recorded where the caller's code continues (mcfExit).  The memo is a
+    // pure function of (method, ip, code epoch), so it is right for any
+    // frame pushed at that ip.
+    if (__builtin_expect(pendingMcReturn_ != nullptr, 0)
+            && instructionPointer_ == pendingMcKeyIP_) {
+        frame.mcReturn = pendingMcReturn_;
+        frame.mcKeyIP = pendingMcKeyIP_;
+        frame.mcJM = pendingMcJM_;
+        frame.mcEpoch = pendingMcEpoch_;
+        pendingMcReturn_ = nullptr;
+    } else {
+        frame.mcReturn = nullptr;
+    }
+#else
+    frame.mcReturn = nullptr;
+#endif
     if (false) {
         g_fpushN++;
         fprintf(stderr, "[FPUSH-A fd=%zu] #%s\n", frameDepth_ - 1,
@@ -25112,6 +25140,9 @@ void Interpreter::purgeDeadCacheRoots() {
 void Interpreter::initializeJIT() {
     if (jitInitialized_) return;
     jitInitialized_ = true;
+#if defined(__aarch64__) || defined(__arm64__)
+    mcfInit();
+#endif
 
     // PHARO_NO_JIT=0 is NOT treated as disable — preserves historical
     // behavior where "=0" meant "off" conceptually.  All other sites
@@ -25466,7 +25497,8 @@ void Interpreter::tryOSRAtBackwardJump() {
 
     // Method is compiled — enter JIT at current IP (OSR)
     jitOSREntries_++;
-    tryJITResumeInCaller();
+    if (::pharo::mcfEnabled()) mcfResumeAfterReturn(nullptr);
+    else tryJITResumeInCaller();
 }
 
 // Per-bytecode Sista hook (item #8 in jit-multiweek-work.md).

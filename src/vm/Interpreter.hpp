@@ -690,6 +690,14 @@ private:
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
         const char* pushSite;
+        // Machine-code frames (docs/mc-frames-design.md, INV-3): the address
+        // in the caller's compiled code that continues the caller after this
+        // frame returns.  A memo of "code entry for (savedMethod, savedIP)",
+        // valid only while savedIP == mcKeyIP and mcEpoch == g_mcCodeEpoch.
+        void* mcReturn;
+        const uint8_t* mcKeyIP;
+        void* mcJM;            // jit::JITMethod* that mcReturn points into
+        uint32_t mcEpoch;
     };
     static constexpr size_t MaxFrameDepth = 65536;
     // Soft recursion limit.  Raised 4096 -> 56000 (2026-06-19): the
@@ -1793,6 +1801,29 @@ public:
 
     // Re-entrancy guard for JIT resume chaining
     bool inJITResume_ = false;
+
+    // Machine-code frames (docs/mc-frames-design.md).  Set by mcfExit when
+    // machine code leaves a send to the interpreter: the code address that
+    // continues the caller after the send, keyed by the ip after the send.
+    // pushFrame moves it into the callee's SavedFrame.
+    void* pendingMcReturn_ = nullptr;
+    const uint8_t* pendingMcKeyIP_ = nullptr;
+    void* pendingMcJM_ = nullptr;
+    uint32_t pendingMcEpoch_ = 0;
+    // True while mcfRun runs machine code or handles its exit: the
+    // activation and return hooks must not nest a second mcfRun.
+    bool mcfActive_ = false;
+    jit::JITState* mcfState_ = nullptr;   // reused by every mcfRun
+    // Is the current frame a method frame (not a block)?
+    bool mcfIsMethodFrame() const;
+    // Run the compiled code of the frame just activated; false = not run.
+    bool mcfActivate(Oop method);
+    // After returnValue: continue the current frame in machine code, from
+    // the popped frame's memo or a lookup.  popped may be null.
+    void mcfResumeAfterReturn(const SavedFrame* popped);
+    void mcfRun(jit::JITMethod* jm, void* entry);
+    void mcfCensus(const jit::JITState& st);
+    void mcfInit();
 
     // B-1: depth of nested jitSistaCallSend frames.  When > 0, an outer
     // helper is driving step(), and nested sends (recursive Sista

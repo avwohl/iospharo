@@ -224,11 +224,27 @@ struct JITState {
     // stencil offset shifts.
     JITState* prevState;      // offset 328: next-outer parked state (or null)
     ptrdiff_t gcIpOffset;     // offset 336: prepareForGC ip round-trip
+
+    // Machine-code frames (docs/mc-frames-design.md, phase 2): what T1 code
+    // needs to push and pop the interpreter's own SavedFrames.  All but
+    // mcfBcEndOff are constant per interpreter (set by mcfRun).
+    void*     mcfFrames;          // offset 344: &savedFrames_[0]
+    size_t*   mcfFrameDepthPtr;   // offset 352: &frameDepth_
+    Oop*      mcfMatCtxPtr;       // offset 360: &currentFrameMaterializedCtx_
+    Oop*      mcfActiveCtxPtr;    // offset 368: &activeContext_
+    int*      mcfCheckCountdownPtr; // offset 376: &checkCountdown_
+    size_t    mcfDepthLimit;      // offset 384: native calls only below this depth
+    Oop       mcfNil;             // offset 392
+    uint32_t* mcfEpochPtr;        // offset 400: &g_mcCodeEpoch
+    void*     mcfCallCache;       // offset 408: McfCallEntry[kMcfCallCacheSize]
+    uint64_t  mcfBcEndOff;        // offset 416: current frame: bytecodeEnd - method
 };
 static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
 static_assert(offsetof(JITState, closure) == 320, "JITState.closure offset (JS_CLOSURE in asm)");
 static_assert(offsetof(JITState, prevState) == 328, "JITState.prevState offset");
 static_assert(offsetof(JITState, gcIpOffset) == 336, "JITState.gcIpOffset offset");
+static_assert(offsetof(JITState, mcfFrames) == 344, "JITState.mcfFrames offset");
+static_assert(offsetof(JITState, mcfBcEndOff) == 416, "JITState.mcfBcEndOff offset");
 
 // Verify expected offsets (stencils depend on these)
 static_assert(offsetof(JITState, sp)        == 0,  "sp offset");

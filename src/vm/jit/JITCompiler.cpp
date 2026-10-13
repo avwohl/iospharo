@@ -1507,6 +1507,7 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
         // whenever the replacement was allocated at a lower address.
         // (stats is a heap side-table, so no W^X window is needed.)
         if (old->stats) old->stats->flags |= kSuperseded;
+        mcfCodeChanged();
         // Existing callers are still wired to the OLD code.  A monomorphic
         // J2J site branches straight to icData[2]'s entry address without
         // consulting the MethodMap, so it never notices the replacement and
@@ -1786,6 +1787,7 @@ JITMethod* allocateWithEviction(CodeZone& zone, MethodMap& methodMap,
         freed = zone.evictLRU(evictTarget, evictCallback, &methodMap,
                               preEvictCallback, &evictedRanges);
         if (freed > 0) {
+            mcfCodeChanged();
             // Sort + coalesce ONCE, so the scrub below and
             // scrubEvictedCodeRanges can binary-search instead of scanning
             // every range for every IC entry of every method in the zone.

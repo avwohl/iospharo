@@ -80,8 +80,18 @@ namespace dbg_live {
 // "Correction").  It also reserves the resume J2J slice in
 // tryJITResumeInCaller.  Opt-out PHARO_T1_RESUME_EXTERNAL_J2J.  x86_64 stays
 // opt-in (PHARO_T1_RESUME_INTERNAL_J2J), where the push IS encodable.
+// Machine-code frames (docs/mc-frames-design.md).  arm64 only; opt-in.
+inline bool mcfEnabled() {
+#if defined(__aarch64__) || defined(__arm64__)
+    return GET_DEBUG_BOOL(PHARO_MCF);
+#else
+    return false;
+#endif
+}
+
 inline bool resumeInternalJ2JEnabled() {
 #if defined(__aarch64__) || defined(__arm64__)
+    if (mcfEnabled()) return false;   // MCF emits no inline J2J at all
     return !GET_DEBUG_BOOL(PHARO_T1_RESUME_EXTERNAL_J2J);
 #else
     return GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J);
