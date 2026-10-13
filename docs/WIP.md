@@ -34,10 +34,18 @@ pharo-cig's libclang) or the attributed special-#value split
 (methodproxies).  Batch 4 (the ten with August JIT-only failures) and a
 newtools re-run are running.
 
-FFI callbacks measured: 175 us each against Cog's 10.7 (qsort with a
-Smalltalk comparator).  Scavenging inside the callback loop wedged the run
--- something below the callback holds raw young pointers -- so it is
-reverted and the fix order is in deferred.md.
+FFI callbacks: 175 us each against Cog's 10.7 (qsort with a Smalltalk
+comparator).  The callback loop now scavenges when eden is full (it never did,
+so callbacks ran on full GCs): 95 us.  Sweep S 27881 P / 9 F / 1 E, nothing
+new; the callback suites (FFICallback*, TF*Callback*) match the old binary.
+An FFI callout is 6.3 us against Cog's 1.5 -- all of it UFFI's Smalltalk
+marshalling, i.e. interpreter speed.
+
+Batch 4 (the ten packages with August JIT-only failures): pharo-sqlite3
+(111 then) and porpoise now identical to Cog; p3 / redistick / tsf-nexio /
+soccertheory / escapeanalysis identical (service-less or runner-level
+errors on both); pharoows 2 network TIMEOUTs; famixreplication 1 benchmark
+TIMEOUT; restoreforpharo still over the 900 s budget (#7, speed).
 
 ## Right now (2026-10-13, 12:00) -- #30 closed: re-home rule off, sweep O clean
 

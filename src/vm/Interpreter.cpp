@@ -7198,6 +7198,19 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // hosts execution, so a storm inside a callback would otherwise
         // exhaust the heap with the breaker armed and latched.
         if (!inExtension_) checkLowSpaceSignal();
+        // Scavenge HERE too.  needsScavenge_ is consumed only at the main
+        // interpret() checkpoint, which does not run while this loop hosts
+        // execution, so during a callback a full eden made every allocation
+        // fall back to old space, reclaimed only by full compacting GCs:
+        // qsort with a Smalltalk comparator spent ~30% in fullGC, 175 us per
+        // callback (Cog 11); with this, 95 us.  step() already runs full
+        // GCs here, which move objects too.
+        if (__builtin_expect(memory_.needsScavenge(), 0) && !inExtension_) {
+            memory_.clearScavengeFlag();   // as the interpret() checkpoint does
+            prepareForGC();
+            memory_.scavenge();
+            afterGC();
+        }
         // And the deferred quit, for the same reason and then some: the quit
         // was deferred BECAUSE a callback is outstanding, and the only loop
         // running while one is outstanding is this one.  Without this the

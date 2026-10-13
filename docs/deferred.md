@@ -282,14 +282,13 @@ The history lives in `docs/history/`; nothing was deleted.
   doubles with a Smalltalk comparator, 49391 callbacks: 175 us per callback
   on ours, 10.7 on Cog.  Profile: ~28% `step()`/`dispatchBytecode`, ~30% full
   GC (`markPhase`, compaction).  Each callback also runs at least one
-  1000-step batch plus a 500-step cooldown, whatever its block needs.  Tried
-  a scavenge in the batch loop (`needsScavenge()` -> prepareForGC / scavenge
-  / afterGC): the qsort run then WEDGED (300 s timeout).  So something on the
-  C stack below the callback holds raw young pointers -- most likely the
-  callout primitive's own locals -- and a full GC there is only rare enough
-  not to show.  Fix order: make the callout primitive keep its arguments in
-  GC roots across the call, then scavenge here, then run the handler through
-  interpret() instead of step().  The low-space breaker's latch
+  1000-step batch plus a 500-step cooldown, whatever its block needs.
+  **Scavenge part FIXED the same day:** the batch loop now scavenges when
+  eden is full (clearing `needsScavenge_` first, as the interpret()
+  checkpoint does -- a first try that did not clear it rescanned after every
+  batch and looked like a wedge).  95 us per callback.  Still open: the
+  handler runs through `step()`, not interpret(), and each callback pays the
+  1000-step batch and the 500-step cooldown.  The low-space breaker's latch
   IS delivered from this loop as of `3c75aca5`, which matters more here than
   on the main path precisely because everything allocated here is tenured.
 
