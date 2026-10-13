@@ -286,9 +286,13 @@ The history lives in `docs/history/`; nothing was deleted.
   **Scavenge part FIXED the same day:** the batch loop now scavenges when
   eden is full (clearing `needsScavenge_` first, as the interpret()
   checkpoint does -- a first try that did not clear it rescanned after every
-  batch and looked like a wedge).  95 us per callback.  Still open: the
-  handler runs through `step()`, not interpret(), and each callback pays the
-  1000-step batch and the 500-step cooldown.  The low-space breaker's latch
+  batch and looked like a wedge).  95 us per callback.  Still open: ~49% of
+  what is left is `step()` + `dispatchBytecode` (the switch path, not
+  interpret()'s fused loop) and ~4% is the C++ exception that ends each
+  callback (libunwind + dyld unwind-info lookups).  The 1000-step batch is
+  NOT a cost: batches of 200 or 50 measured 99 and 104 us.  Running the
+  handler through interpret() needs interpret() to be re-entrant with a
+  "callback returned" exit at its checkpoint.  The low-space breaker's latch
   IS delivered from this loop as of `3c75aca5`, which matters more here than
   on the main path precisely because everything allocated here is tenured.
 

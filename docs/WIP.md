@@ -15,6 +15,27 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 15:00) -- end-of-day numbers; `0aa5f085` pushed
+
+Instructions retired, this morning -> now (build-rel, JIT on):
+
+    3M printString                      210.8 ->   83.7 billion
+    deeptraverser testCollectionStart  2311   -> 1039
+    lexicon CodeAnalysisRunnerTest     2736   -> 1781   (sweep-E binary first)
+    myprecious 200 round trips           49.4 ->   44.2
+
+Sweeps all day: 27875-27881 P, 9-13 F, 1-3 E, every non-pass attributed.
+Packages: 83 August-parity packages plus the ten August JIT-only ones
+re-checked; every remaining difference is speed (lexicon 1 TIMEOUT,
+myprecious 3 ERR, deeptraverser under load, restoreforpharo #7,
+famixreplication's benchmark test), network/services, environment
+(pharo-cig libclang), or the attributed special-#value split.  newtools now
+934 P against Cog's 935 (931 this morning): StSpotterModelTest passes since
+the parallel become; the one JIT-only failure left is the attributed
+StDebuggerActionModelTest>>testEventAfterProceed timing.  The common
+cause of the speed residue is activation cost (separate Smalltalk stack,
+SavedFrame per send), which is a JIT/interpreter redesign, not a tuning job.
+
 ## Right now (2026-10-13, 13:30) -- `f9220e43`/`e9ba6650` pushed; frame-0 resync skip (sweep P)
 
 Uncommitted: materializeFrameStack no longer re-copies frame 0 (the
