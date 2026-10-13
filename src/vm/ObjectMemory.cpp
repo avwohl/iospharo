@@ -2323,10 +2323,11 @@ GCResult ObjectMemory::scavenge() {
     size_t auditBitSetMiss = 0;    // bit set + no young ref (false positive, harmless)
     size_t auditBitUnsetHit = 0;   // bit unset + ≥1 young ref (audit-gap MISS!)
     size_t auditBitUnsetSafe = 0;  // bit unset + no young ref (true negative)
+    size_t auditGapRecent = 0;     // ... of the gaps: holder allocated in old space since the last scavenge
 
     // For audit-gap miss logging (first N per scavenge).
     static thread_local size_t auditMissLogCount = 0;
-    constexpr size_t kAuditMissLogMax = 10;
+    constexpr size_t kAuditMissLogMax = 200;
 
     auto scanRegionForYoung = [&](uint8_t* regionStart, uint8_t* regionEnd) {
         ObjectScanner scan(regionStart, regionEnd);
@@ -2356,7 +2357,12 @@ GCResult ObjectMemory::scavenge() {
                 else if (wasRemembered && !foundYoungRef) auditBitSetMiss++;
                 else if (!wasRemembered && foundYoungRef) {
                     auditBitUnsetHit++;
-                    if (auditMissLogCount < kAuditMissLogMax) {
+                    if (oldFreeAtLastScavenge_ && reinterpret_cast<uint8_t*>(obj) >= oldFreeAtLastScavenge_
+                            && reinterpret_cast<uint8_t*>(obj) < oldSpaceEnd_) auditGapRecent++;
+                    const bool recentHolder = oldFreeAtLastScavenge_
+                        && reinterpret_cast<uint8_t*>(obj) >= oldFreeAtLastScavenge_
+                        && reinterpret_cast<uint8_t*>(obj) < oldSpaceEnd_;
+                    if (!recentHolder && auditMissLogCount < kAuditMissLogMax) {
                         auditMissLogCount++;
                         uint32_t cls = obj->classIndex();
                         Oop clsOop = classAtIndex(cls);
@@ -2401,9 +2407,9 @@ GCResult ObjectMemory::scavenge() {
     if (bitAudit) {
         fprintf(stderr,
             "[SCAV-AUDIT] bit accuracy: setHit=%zu setMiss=%zu "
-            "unsetHit=%zu (gap!) unsetSafe=%zu\n",
+            "unsetHit=%zu (gap!) unsetSafe=%zu gapRecent=%zu\n",
             auditBitSetHit, auditBitSetMiss,
-            auditBitUnsetHit, auditBitUnsetSafe);
+            auditBitUnsetHit, auditBitUnsetSafe, auditGapRecent);
     }
     rememberedSet_.clear();
 
@@ -2433,6 +2439,8 @@ GCResult ObjectMemory::scavenge() {
             }
         }
     }
+
+    oldFreeAtLastScavenge_ = oldSpaceFree_;
 
     // Update nil/true/false bits if they moved (they shouldn't —
     // permanent specials are in old/perm space — but defensive).

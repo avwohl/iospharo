@@ -149,6 +149,32 @@ The history lives in `docs/history/`; nothing was deleted.
 
 ## Known structural costs, not yet measured
 
+- **Every scavenge scans ALL of old space for old->young pointers**
+  (`ObjectMemory::scavenge`, the `scanRegionForYoung(oldSpaceStart_, ...)`
+  call), because the remembered set is not trusted: measured 2026-10-12 with
+  `PHARO_SCAV_BIT_AUDIT=1` on StringTest + OrderedCollectionTest + 100
+  compiler evaluations, 276 old objects in 16 scavenges held a young pointer
+  with the remembered bit CLEAR (Dictionary, Array, OrderedDictionary,
+  Context, FFI parser objects).  The scan was ~13% of a native profile of
+  `NoUnusedVariablesLeftTest` (a TIMEOUT).  Trusting the remembered set
+  needs every store path audited -- interpreter store bytecodes, JIT
+  stencils, primitives that `slotAtPut` directly -- until the audit reports
+  zero gaps over a sweep.  Same root blocks a cheap young-only become (#2
+  batch 5 newtools paragraph in `docs/vm-compat-bugs.md`).
+  Breakdown (same workload, PHARO_NO_JIT, so none of it is JIT stores):
+  230 of 290 gaps (79%) are holders allocated in OLD space since the last
+  scavenge (eden-full fallback, overflow objects, old clones) and filled
+  with young pointers -- the audit now reports them as `gapRecent`, and a
+  scan of [oldFreeAtLastScavenge_, oldSpaceFree_) would cover them.  Of the
+  60 older holders, 43 are a Context's sender or a FullBlockClosure's
+  outerContext pointing at a YOUNG Context (VM frame linking), 5 are
+  CompiledMethod literal 2 = a young TFExternalFunction (FFI), and the rest
+  single instance-variable stores.  Every interpreter store path checked
+  (setReceiverInstVar, storePointer, storePointerUnchecked) does apply the
+  barrier and isYoung/isOld use the scavenger's bounds, so the older gaps
+  are either writes outside those helpers or a header rewrite that drops
+  the remembered bit -- not yet found.
+
 - **Smalltalk that runs inside an FFI callback executes through
   `Interpreter::step()`, one bytecode per call**, not through the
   computed-goto dispatch loop: `enterInterpreterFromCallback` is

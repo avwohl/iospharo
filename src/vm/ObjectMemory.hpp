@@ -1036,6 +1036,7 @@ private:
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers
+    uint8_t* oldFreeAtLastScavenge_ = nullptr;  // old-space top when the last scavenge finished (PHARO_SCAV_BIT_AUDIT: "recent" holders)
 
     // Segregated free lists for old space (Spur-style)
     // Index 0: large free chunks (linked list)
