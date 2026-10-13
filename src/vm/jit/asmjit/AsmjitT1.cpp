@@ -6168,8 +6168,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // produced 5-7 deterministic startup DNUs (2026-06-12; this
         // also poisoned every knob-bisect that used NO_INLINE_J2J as
         // an arm since at least 2026-06-11).  Auto-disable.
+        // at: / at:put: / size sites have inline primitive paths; under the
+        // resume-internal policy their inline-J2J fallback is what got a
+        // whole array loop refused (emitClosurePush).  Emit them without
+        // inline J2J -- an IC hit still takes the inline primitive, the
+        // rest goes through dispatchCached -- so such loops can compile.
+        // patchedShape must follow inlineJ2J (see above).
+        const bool siteNoJ2J = ::pharo::resumeInternalJ2JEnabled()
+            && op >= SistaV1::SpecialSendBase && op <= SistaV1::SpecialSendBase + 2;
         const bool patchedShape =
-            !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)
+            !siteNoJ2J
+            && !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)
             && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
             && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  // SCOPING FIX #2 (UPDATE 31)
             && probeThis;
@@ -6524,7 +6533,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // recursive sends.  MVP: self-recursive only (caller == callee).
             // Mirrors stencils.cpp:1733-1877's `j2j_direct_call:` block.
             // See deferred.md A6 for full design.
-            const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
+            const bool inlineJ2J = !siteNoJ2J && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
                 && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */
                 && !GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH);  // TEST: NO_J2J_BRANCH now gates the WHOLE block
             if (inlineJ2J) {

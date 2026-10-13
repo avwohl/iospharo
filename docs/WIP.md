@@ -15,6 +15,20 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 17:30) -- array loops into T1
+
+Under the arm64 resume-internal policy, at: / at:put: / size
+send sites are emitted without inline J2J (their inline primitive paths
+stay; the rest goes through dispatchCached), so a loop whose only sends are
+those plus inlined arithmetic is no longer refused.  A byte-array sum loop
+(`zzSum:`, 21M iterations) 600 -> 129 ms, correct result.  Real workloads
+unchanged (printString 83.7, deeptraverser 1004, lexicon 1699, myprecious
+44.3 billion), as the census predicted -- this is for numeric and array
+code.  Battery passes; sweep U 27879 P / 9 F / 2 E (its new TKTWorkerPoolTest
+error passes alone 5/5); ten numeric/array packages (polymath,
+vector-matrix, famix, linear-models, graph-algorithms, array2d,
+edit-distances, linear-algebra, neojson, neocsv) identical to Cog.
+
 ## Right now (2026-10-13, 16:30) -- T1 compiled method TRAILERS: loops refused; fixed
 
 A loop of SmallInteger arithmetic in a method (`zzArith:`, 30M iterations)
