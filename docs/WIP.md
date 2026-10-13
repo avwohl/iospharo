@@ -15,6 +15,78 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-12, 23:50) -- stopped for a reboot
+
+**Tree clean, everything pushed (`8b71c753`).  No sweep or package run is in
+flight; nothing in the scratchpad needs saving.**  Since the 19:40 entry:
+
+- `553a942a` cheap exits on the activation path (`tryJITResumeInCaller`
+  returns early when the caller has no executable JIT method;
+  `SistaRuntime::hasSplice` skips the lookup when nothing is spliced) and
+  `PHARO_TRACE_BECOME` reports `youngKeys`;
+- `8b71c753` `PHARO_SCAV_BIT_AUDIT` splits write-barrier gaps by holder age
+  (`gapRecent` = holder allocated in old space since the last scavenge, mark
+  `oldFreeAtLastScavenge_`) and logs only the gaps in older holders.
+
+Latest full sweep: 27879 P / 11 F / 1 E, every non-pass attributed.  All
+remaining work is speed.  Three candidate projects, best measured first:
+
+1. **Trust the remembered set** (`docs/deferred.md`, "Every scavenge scans
+   ALL of old space").  Next step: find the 60 older-holder gaps (43 are a
+   Context sender or a FullBlockClosure outerContext pointing at a young
+   Context, 5 a CompiledMethod literal = young TFExternalFunction), then scan
+   only `[oldFreeAtLastScavenge_, oldSpaceFree_)` plus the remembered set,
+   behind an opt-out knob.  Done when `PHARO_SCAV_BIT_AUDIT` shows zero gaps
+   over a full sweep.
+2. **Lazy become** (Cog follows forwarders; ours scans the heap, about 7 ms
+   per call; StSpotter does 12 ByteString -> WideString becomes per open).
+   Needs item 1 for a young-only variant.  Analysis: `docs/vm-compat-bugs.md`
+   #2, batch 5 newtools paragraph.
+3. **Activation wall** (#6: myprecious round trips 10x Cog, polymath, cormas,
+   famix).
+
+**A reboot clears `/private/tmp`.**  The session scratchpad, its sweep image
+and package images, `/tmp/harness` and `/tmp/harness-x86` are all gone
+afterwards.  Rebuild them before the next run:
+
+- `/tmp/harness` and `/tmp/harness-x86`: see "Running Pharo test suites" in
+  `CLAUDE.md` (the x86 one needs the `arch -x86_64` prefix).
+- Sweep image: prep a copy of `/tmp/harness/Pharo.image` with our VM
+  (setup_fake_gui.st, then run_sunit_tests.st, then
+  `Smalltalk snapshot: true andQuit: true`), as in `CLAUDE.md`.
+
+Full sweep, about 55 min.  Copy the binary and its dylibs into `$S/vm-X/`
+first, and run no other eval of our VM while a sweep runs:
+
+```
+PHARO_PRIM_SP_AUDIT=1 STEP=50 PER_BATCH_TIMEOUT=1800 RETRY_DAMAGED=1 \
+PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000 \
+PHARO_MAX_OLD_SPACE_MB=12288 \
+  scripts/sunit-sweep.sh $S/vm-X/test_load_image $S/work/sunit.image $S/sweep-X
+awk '/^ *=== [A-Za-z0-9]+ ===$/{c=$2} /^  (FAIL|ERROR|TIMEOUT): /{print c, $1, $2}' \
+  $S/sweep-X/all_results.txt | sort -u
+```
+
+Package A/B against Cog (the scratchpad `pkg-run.sh`, lost on reboot).
+Per label in `scripts/pkg-jit-test/packages-200.tsv` (column 12 = test
+prefixes, column 15 = load expression), the script loads the package with
+stock Cog into a copy of the pristine x86 image, then runs both VMs.
+`$S/bin/pharo-x86` is a two-line wrapper,
+`exec arch -x86_64 /tmp/harness-x86/pharo "$@"`.  The core lines are:
+
+```
+cp /tmp/harness-x86/Pharo.image $img; cp /tmp/harness-x86/Pharo.changes ${img%.image}.changes
+(cd /tmp/harness-x86 && rm -f startup.st && \
+  timeout 1500 arch -x86_64 ./pharo $img eval --save "$expr")
+PHARO=$S/bin/pharo-x86 CUSTOM_VM=$R/build-rel/test_load_image OUT=$S/pkgout7 \
+  COG_TIMEOUT=900 JIT_TIMEOUT=900 timeout 2400 \
+  bash scripts/pkg-jit-test/run-pkg-jit-test.sh $img $label "$prefixes"
+```
+
+Parity means one distinct `RESULT pass= fail= err= timeout=` line and no
+ERR/FAIL/TIMEOUT between the `JIT-only` and `Cog-only` markers.  For slow
+packages, use 2400 s per VM and a 5400 s outer timeout.
+
 ## Right now (2026-10-12, 19:40)
 
 **Catalog re-run on arm64 finished: all 141 packages re-checked; every
