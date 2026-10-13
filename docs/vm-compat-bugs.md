@@ -823,7 +823,14 @@ pharo-llm packages, neojson/neocsv, geoview, ...).  The other three:
   lookup per pointer slot, and a class-table high-water mark
   (`classTableUsedEnd_`) instead of walking all 4M entries per become.
   165 ms -> 84 ms; the scan is now at memory bandwidth (~7 ms per become on
-  an 85 MB heap), so passing needs lazy become.  OPEN, speed.
+  an 85 MB heap), so passing needs lazy become.  OPEN, speed.  The 12
+  becomes are the image upgrading a ByteString to a WideString
+  (`ByteString>>at:put:` / `replaceFrom:to:with:startingAt:` fall back to
+  `becomeForward:` when a wide character arrives -- KMOSXShortcutPrinter's
+  shortcut glyphs, SpAction>>id).  A young-only become (scan new space +
+  remembered set + roots) would cover them, but `allocateBytes` puts every
+  byte object in OLD space, so the strings are never young.  Either byte
+  objects allocated young or a lazy (forwarder-following) become fixes it.
 
 **2026-10-12: arm64 catalog re-run, batch 4 (25 packages).**  18 identical
 to Cog.  pharo-graphics-roassal: 733 P on both; `RSExamplesTest>>testExamples`

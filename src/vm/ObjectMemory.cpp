@@ -1960,10 +1960,12 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
 
     if (becomeTrace || __builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_BECOME), 0)) {
         extern uint64_t g_stepNum;
+        int youngKeys = 0;
+        for (const auto& e : map) if (isYoung(Oop::fromRawBits(e.first))) youngKeys++;
         fprintf(stderr,
-                "[BECOME-FWD-ALL] step=%llu pairs=%zu heapRefs=%zu ctHits=%zu\n",
+                "[BECOME-FWD-ALL] step=%llu pairs=%zu heapRefs=%zu ctHits=%zu youngKeys=%d\n",
                 (unsigned long long)g_stepNum, map.size(),
-                becomeReplacedCount, classTableHits);
+                becomeReplacedCount, classTableHits, youngKeys);
     }
 
     return true;

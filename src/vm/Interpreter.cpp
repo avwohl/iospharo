@@ -25462,6 +25462,15 @@ void Interpreter::tryJITResumeInCaller() {
     // leak (see PHARO_T1_NO_CALLER_RESUME in debug_vars.h).  When set, skip
     // the JIT re-entry so the interpreter continues the caller correctly.
     if (GET_DEBUG_BOOL(PHARO_T1_NO_CALLER_RESUME)) return;
+    // The loop below gives up on its first iteration when the caller has no
+    // executable JIT method -- the common case while T1 refuses most
+    // compiles -- but only after reserving and clearing a J2J slice and
+    // arming the exit check.  Take that exit before any of it.
+    if (!method_.isObject() || method_.rawBits() < 0x10000) return;
+    {
+        jit::JITMethod* jm0 = jitRuntime_.methodMap().lookup(method_.rawBits());
+        if (!jm0 || !jm0->isExecutable()) return;
+    }
     inJITResume_ = true;
 
     // PHARO_ACTIVATION_CHECK: on every way out of the resume loop, the

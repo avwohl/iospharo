@@ -15,6 +15,27 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-12, 19:40)
+
+**Catalog re-run on arm64 finished: all 141 packages re-checked; every
+remaining difference from Cog is speed or an environment limit.**  Batches
+1-5 are in `docs/vm-compat-bugs.md` #2.  Fixed on the way today (all swept):
+
+- `d9f8888f` pipe `atEnd`/size (OSSubprocess 9/9) and the stack contract of
+  the FilePlugin / SocketPlugin named primitives;
+- `5753f317` the numbered-primitive audit (#31): closure fast path read the
+  receiver slot, nested primitives got the outer argCount_, perform arity,
+  minVal / -1, Float nan truncated, Context size/at:, FFI stores, ...;
+- `56c1cd64` idle sleep now ends at the timer deadline (`1 milliSecond wait`
+  12.6 ms -> 1.5 ms); eval mode no longer suspends Morphic (a harness defect
+  that failed Spec tests under the package runner only); become no longer
+  walks all 4M class-table entries (StSpotter new 165 -> 84 ms).
+
+Open, all speed: activation wall (#6: myprecious round trips 10x Cog, polymath,
+cormas, famix, ...), and become = full heap scan (Cog's is lazy; #2 batch 5
+newtools paragraph has the analysis).  SUnit: 27878 P / 11 F / 2 E, every
+non-pass attributed (image bugs, Cog-shared, network, speed).
+
 ## Right now (2026-10-12, 08:00)
 
 **Packages re-checked against Cog, all freshly loaded: seven more at parity.**

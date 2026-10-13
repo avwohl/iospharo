@@ -166,7 +166,9 @@ public:
     // activation and falls back to per-iter IC speed.  See
     // memory/project_t1_vs_sista_race.md.
     bool hasSplice(Oop method) const {
-        return spliceMethods_.count(method.rawBits()) > 0;
+        // Called on EVERY method activation (JITRuntime::noteMethodEntry);
+        // skip the hash probe while no method is spliced, which is most runs.
+        return !spliceMethods_.empty() && spliceMethods_.count(method.rawBits()) > 0;
     }
 
     // ===== Per-bytecode hook (item #8 in jit-multiweek-work.md) =====
