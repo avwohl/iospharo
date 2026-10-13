@@ -314,7 +314,29 @@ public:
     }
 
     /// Get the class of an object (follows class index to class table)
-    Oop classOf(Oop obj) const;
+    ///
+    /// Inline fast path for a heap object that is not a forwarder: the same
+    /// answer classOfSlow gives (isValidPointer, then classAtIndex), without
+    /// the call.  Every send asks this, ~4% of a send-bound run as a call.
+    /// Immediates, forwarders and out-of-heap pointers take classOfSlow.
+    Oop classOf(Oop obj) const {
+        if (__builtin_expect(obj.isObject(), 1)) {
+            uint8_t* p = reinterpret_cast<uint8_t*>(obj.asObjectPtr());
+            if (__builtin_expect((p >= oldSpaceStart_ && p < oldSpaceEnd_)
+                    || (p >= newSpaceStart_ && p < newSpaceEnd_), 1)) {
+                uint32_t ci = obj.asObjectPtr()->classIndex();
+                if (__builtin_expect(ci != ObjectHeader::ForwardedClassIndex
+                        && ci < classTable_.size(), 1))
+                    return classTable_[ci];
+            }
+        } else if (obj.isSmallInteger()) {
+            return specialObject(SpecialObjectIndex::ClassSmallInteger);
+        } else if (obj.isCharacter()) {
+            return specialObject(SpecialObjectIndex::ClassCharacter);
+        }
+        return classOfSlow(obj);
+    }
+    Oop classOfSlow(Oop obj) const;
 
     /// Get the number of fixed (strong) instance variable slots for an object.
     /// For WeakWithFixed objects, these are the strong fields before the weak
@@ -357,7 +379,18 @@ public:
     // ===== SPECIAL OBJECTS =====
 
     /// Get a special object by index
-    Oop specialObject(SpecialObjectIndex index) const;
+    Oop specialObject(SpecialObjectIndex index) const {
+        if (__builtin_expect(specialObjectsArray_.isNil()
+                || !specialObjectsArray_.isObject(), 0)) {
+            return nilObject_;
+        }
+        ObjectHeader* array = specialObjectsArray_.asObjectPtr();
+        size_t idx = static_cast<size_t>(index);
+        if (__builtin_expect(idx >= array->slotCount(), 0)) {
+            return nilObject_;
+        }
+        return array->slotAt(idx);
+    }
 
     /// Set a special object
     void setSpecialObject(SpecialObjectIndex index, Oop value);
@@ -504,10 +537,18 @@ public:
     }
 
     /// Is this object in young (new) space?
-    bool isYoung(Oop obj) const;
+    bool isYoung(Oop obj) const {
+        if (!obj.isObject()) return false;
+        auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
+        return p >= newSpaceStart_ && p < newSpaceEnd_;
+    }
 
-    /// Is this object in old space?
-    bool isOld(Oop obj) const;
+    /// Is this object in old space?  (Inline: every barriered store asks.)
+    bool isOld(Oop obj) const {
+        if (!obj.isObject()) return false;
+        auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
+        return p >= oldSpaceStart_ && p < oldSpaceEnd_;
+    }
 
     /// Is this object in permanent space?
     bool isPerm(Oop obj) const;
@@ -520,6 +561,19 @@ public:
 
     /// Is this object remembered (has old->young pointer)?
     bool isRemembered(Oop obj) const;
+
+    /// Slot store through an ObjectHeader* that still records an old->young
+    /// pointer, for VM-internal loops (become's reference rewrite, forwarder
+    /// slots, class-table pages).  A scavenge that trusts the remembered set
+    /// misses any old->young pointer stored without this or storePointer.
+    inline void slotAtPutBarriered(ObjectHeader* h, size_t index, Oop value) {
+        if (value.isObject() && isOldObject(h)
+                && isYoungObject(value.asObjectPtr()) && !h->isRemembered()) {
+            h->setRemembered(true);
+            rememberedSet_.push_back(h);
+        }
+        h->slotAtPut(index, value);
+    }
 
     /// Public hook for JIT helpers that perform their own slot writes
     /// (e.g. jit_rt_setter_write_barrier) and need to record the

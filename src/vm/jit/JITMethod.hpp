@@ -37,6 +37,7 @@
 #include "JITConfig.hpp"
 #include "../Oop.hpp"
 #include <cstdint>
+#include <cstring>
 #include "../DebugVars.hpp"
 #include <cstddef>
 #include <atomic>
@@ -209,6 +210,14 @@ static_assert(sizeof(SendSitePatch) == 16, "SendSitePatch layout");
 //
 // Lives at the start of each compiled method's allocation in the code zone.
 // Immediately followed by the machine code bytes.
+
+// Bumped whenever the answer of MethodMap::lookup can change for some method
+// (insert, remove, clear, invalidate) and whenever the mega cache loses or
+// rewrites entries.  Interpreter::sendSelector stamps each method-cache entry
+// with it after filling the mega cache, and skips the refill (a method-map
+// probe plus a 2 MB-table write per send, ~7% of a send-bound run) while the
+// stamp still matches.
+inline uint32_t g_jitStateEpoch = 1;
 
 struct JITMethod {
     // --- Identity (link back to Smalltalk objects) ---
@@ -515,6 +524,7 @@ struct JITMethod {
     // Mark for invalidation (e.g., class hierarchy change)
     void invalidate() {
         state = MethodState::Invalidated;
+        ++g_jitStateEpoch;
     }
 
     // Total bytes consumed in the code zone
@@ -606,6 +616,7 @@ public:
     // FreeBlock metadata).  Calling such a stale code pointer SIGILLs.
     JITMethod* lookup(uint64_t compiledMethodBits) const {
         if (!entries_) return nullptr;
+        if (!presenceMaybe(compiledMethodBits)) return nullptr;
         size_t mask = capacity_ - 1;
         size_t idx = hash(compiledMethodBits) & mask;
 
@@ -634,6 +645,8 @@ public:
     // count_ (live + tombstoned keys) stops growing across churn.
     bool insert(uint64_t compiledMethodBits, JITMethod* jitMethod) {
         if (!entries_) return false;
+        ++g_jitStateEpoch;
+        presenceSet(compiledMethodBits);
         if (count_ * 4 >= capacity_ * 3) return false;  // 75% load factor
 
         size_t mask = capacity_ - 1;
@@ -674,6 +687,7 @@ public:
     // Remove a method (on invalidation or eviction).
     void remove(uint64_t compiledMethodBits) {
         if (!entries_) return;
+        ++g_jitStateEpoch;
         size_t mask = capacity_ - 1;
         size_t idx = hash(compiledMethodBits) & mask;
 
@@ -690,6 +704,8 @@ public:
     }
 
     void clear() {
+        ++g_jitStateEpoch;
+        std::memset(presence_, 0, sizeof(presence_));
         if (entries_) {
             for (size_t i = 0; i < capacity_; i++) {
                 entries_[i].key = 0;
@@ -710,6 +726,24 @@ private:
     Entry* entries_;
     size_t capacity_;
     size_t count_;
+
+    // Presence filter, one bit per top-16-bit hash value.  Set by insert and
+    // cleared only by clear(), so a clear bit proves the key absent and a
+    // lookup miss costs one load instead of a probe chain.  Most lookups miss
+    // (every interpreted activation asks canJITActivate, every return asks
+    // tryJITResumeInCaller) since T1 compiles only code with loops.  Kept
+    // after count_: nothing reads MethodMap by offset, but keep the old
+    // fields where they were.
+    uint64_t presence_[1024] = {};
+    static size_t presenceIndex(uint64_t bits) { return hash(bits) >> 48; }
+    bool presenceMaybe(uint64_t bits) const {
+        size_t b = presenceIndex(bits);
+        return (presence_[b >> 6] >> (b & 63)) & 1;
+    }
+    void presenceSet(uint64_t bits) {
+        size_t b = presenceIndex(bits);
+        presence_[b >> 6] |= 1ULL << (b & 63);
+    }
 
     static size_t hash(uint64_t bits) {
         // Fibonacci hashing (good distribution for pointer-like values)

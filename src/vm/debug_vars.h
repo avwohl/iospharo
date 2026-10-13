@@ -21,6 +21,22 @@
 #ifndef DEBUG_BOOL
 #define DEBUG_BOOL(name)
 #endif
+// DEBUG_BOOL_RT: a bool knob that stays a runtime switch in EVERY build.
+// Plain DEBUG_BOOL knobs are diagnostics and A/B switches: a build configured
+// with PHARO_DIAG_KNOBS=OFF (the Release default) compiles them to constant
+// false, i.e. to their default behaviour, and deletes the code they guard.
+// Measured 2026-10-13: 1M printString 1720 -> 1340 ms interpreted, every
+// bench_ast_phases.st phase 12-18% faster.  Use DEBUG_BOOL_RT only for knobs a
+// user or a script sets on a normal build (display mode, scheduler mode, the
+// eval harness), not for one more trace.
+#ifndef DEBUG_BOOL_RT
+#define DEBUG_BOOL_RT(name) DEBUG_BOOL(name)
+#endif
+// DEBUG_STR_RT: the string-knob twin of DEBUG_BOOL_RT.  Plain DEBUG_STR knobs
+// (selector filters for traces) read as nullptr in a fast build.
+#ifndef DEBUG_STR_RT
+#define DEBUG_STR_RT(name) DEBUG_STR(name)
+#endif
 #ifndef DEBUG_INT
 #define DEBUG_INT(name, dflt)
 #endif
@@ -32,7 +48,7 @@
 // Drive the round-robin force-yield from the per-1024-bytecode checkpoint
 // (g_stepNum) instead of the wall-clock heartbeat, so timing-dependent JIT
 // transients reproduce at a FIXED point every run (de-Heisenbugs them).
-DEBUG_BOOL(PHARO_DET_SCHED)
+DEBUG_BOOL_RT(PHARO_DET_SCHED)
 DEBUG_INT(PHARO_DET_SCHED_QUANTUM, 1)   // × the 1024-bytecode checkpoint
 DEBUG_BOOL(PHARO_FINDNODE_WATCH)        // aigraph curEdge corruption capture
 DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK)     // post-scavenge: log pointers still aimed into eden (missed roots)
@@ -146,8 +162,8 @@ DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN)      // opt-OUT (default ON 2026-06-2
 DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg (STAYS opt-in: named mustBeBoolean corruptor)
 DEBUG_BOOL(PHARO_T1_NO_INLINE_INT_ARITH_RETURN) // opt-OUT (default ON 2026-06-23): bit 52 ^ self op arg (+/-/*)
 DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd (STAYS opt-in: named mustBeBoolean corruptor)
-DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)    // x86_64 opt-in: J2J pool slice for resumed methods (default ON on arm64 since 2026-10-12; see resumeInternalJ2JEnabled() in DebugVars.hpp)
-DEBUG_BOOL(PHARO_T1_RESUME_EXTERNAL_J2J)    // arm64 opt-out: restore the null-slice external-J2J mode for tryResume-resumed methods (one C++ round trip per send)
+DEBUG_BOOL_RT(PHARO_T1_RESUME_INTERNAL_J2J)    // x86_64 opt-in: J2J pool slice for resumed methods (default ON on arm64 since 2026-10-12; see resumeInternalJ2JEnabled() in DebugVars.hpp)
+DEBUG_BOOL_RT(PHARO_T1_RESUME_EXTERNAL_J2J)    // arm64 opt-out: restore the null-slice external-J2J mode for tryResume-resumed methods (one C++ round trip per send)
 DEBUG_BOOL(PHARO_T1_NO_IC_POLY_WALK)        // opt-out: probe IC slot 0 only (default walks slots 0-2 since 2026-06-12; poly sites missed once per activation -> interp residency)
 DEBUG_BOOL(PHARO_T1_NO_RESUME_CONDJUMP)     // opt-out: refuse mid-method resume for cond-jump send methods (default ADVERTISE since 2026-06-12)
 DEBUG_BOOL(PHARO_T1_ADMIT_BAILMID_CALLEES)  // opt-IN (default EXCLUDE since 2026-06-19): admit canBailMidMethod callees at the send-bearing xmethod J2J gate. They were admitted 2026-06-12 for perf, but PolyMath proved that when such a callee bails mid-body via ExitArithOverflow (SmallInteger arith overflowing to Fraction/Float), the caller's pending J2J save is left un-popped -> operand stack +1 -> wrong index to at: -> SubscriptOutOfBounds (51 PolyMath + Fuel failures, see docs/jit-test-packages.md). Default now EXCLUDES them (correct, +5-31% on collection/recursion); set this to restore the faster-but-wrong admit. The perf-preserving fix (correctly pop the save on V2 ExitArithOverflow, cf. PHARO_T1_AO_MAT_J2J which is V1-only) is a follow-up.
@@ -160,14 +176,14 @@ DEBUG_BOOL(PHARO_IGNOC_WIDEN)               // OPT-IN (unsound): VM-side ignoreO
 DEBUG_BOOL(PHARO_NO_GEN_CLONE)              // opt out of generational clones (shallowCopy small non-overflow objects in eden); restores the old always-old-space behavior
 DEBUG_BOOL(PHARO_PREEMPT_YIELDS)            // bisect: ALWAYS back-append a preempted process, at EVERY site including the ones Cog has no counterpart for. Not the same as honouring the image flag, which is now the default — see putToSleepPreemptedYieldingIf. This blanket form stalls the FFI callback suite. The old note here ("costs 4 scheduler/weak tests") no longer reproduces: 355 scheduler/weak tests are identical either way.
 DEBUG_BOOL(PHARO_PREEMPT_NO_YIELD)          // bisect: ALWAYS front-append, i.e. disable the starvation guard added 2026-08-13.  Reproduces docs/vm-compat-bugs.md #20 (a zero-ms-Delay spinner starves an equal-priority peer forever).
-DEBUG_BOOL(PHARO_RR_SCHED)                  // opt back IN to same-priority round-robin time-slicing (pre-2026-06-12 default; Cog never time-slices within a priority — rotation broke fork-window scheduling assumptions). Implied by PHARO_DET_SCHED.
+DEBUG_BOOL_RT(PHARO_RR_SCHED)                  // opt back IN to same-priority round-robin time-slicing (pre-2026-06-12 default; Cog never time-slices within a priority — rotation broke fork-window scheduling assumptions). Implied by PHARO_DET_SCHED.
 DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE)    // OPT-IN: in-JIT block creation via jit_rt_block_create — UNSOUND for J2J-hidden callers (caller frames invisible to materialize), see AsmjitT1 PushFullBlock comment
 DEBUG_INT(PHARO_T1_INLINE_BLOCK_CREATE_MAX, -1) // bisect: inline-create only the first N emitted PushFullBlock sites (-1 = all)  // opt out of in-JIT block creation (restore the ExitBlockCreate exit/resume round trip)
 DEBUG_BOOL(PHARO_T1_NO_PRIM_FALLBACK_BODY)  // opt out of compiling fallback bodies for unsupported-prim methods (restores the old refuse-whole-method behavior)
 DEBUG_BOOL(PHARO_MAT_FULL_RESYNC)           // opt back into the legacy full per-frame re-sync in materializeFrameStack (incremental skip is default since 2026-06-11)
 DEBUG_BOOL(PHARO_T1_NO_XGATE_FOLD)           // opt-OUT of the XGATE fold (extras bit 57 = precomputed cross-method gate verdict; emitted 4-load cascade remains as the unfolded fallback)
 DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC, 8)        // lever (c): admit cross-method inline-J2J callees with up to N IC send sites. DEFAULT 1 since 2026-06-10 (was 0 = leaf-only): with-send-callee bench 491 -> 57ms (8.6x); validated by an 80-rep eval catch loop + a 200-class suite at 2/8459 (both known environmental flakes). The leaf-only gate guarded bugs all fixed today: staticJ2JArgCount fold, stale bcStartCache, dispatch-A tryGetter entry, scavenge ip round-trip, swallowed block-NLR. Set 0 to restore leaf-only for bisects.
-DEBUG_STR(PHARO_MAX_STEPS)                   // test_load_image bytecode-step budget override (parsed with strtoll; default 60e9). The optimized thrash-fixed build burns 60G steps in ~4-5 min of busy-idle, which kills SUnit suite runs before the runner produces output — set to e.g. 2000000000000 for suite runs.
+DEBUG_STR_RT(PHARO_MAX_STEPS)                   // test_load_image bytecode-step budget override (parsed with strtoll; default 60e9). The optimized thrash-fixed build burns 60G steps in ~4-5 min of busy-idle, which kills SUnit suite runs before the runner produces output — set to e.g. 2000000000000 for suite runs.
 DEBUG_INT(PHARO_CODE_ZONE_MB, 0)             // code zone size override in MB (0 = DefaultCodeZoneSize, 64MB). SUnit suites fill 64MB at ~14.6K methods (~6KB/method T1 emit, lever (d)) and late-hot methods then run interpreted (SHA256Test TIMEOUT) — use e.g. 192 for suite runs until the per-method emit shrinks.
 DEBUG_BOOL(PHARO_SISTA_VALIDATE_HINTS)  // opt-IN: re-resolve each extracted Sista inline hint (selector lookup in classKey's class) and drop it if it no longer yields the cached method. Partial mitigation for stale-IC-derived hints (blocker #4); does NOT fully fix the JIT-tier IC staleness.
 DEBUG_BOOL(PHARO_T1_VALIDATE_IC)         // ExitSendCached: re-resolve cached IC method in receiver class; on mismatch use the fresh method (blocker #4 T1 stale-IC dispatch)
@@ -194,7 +210,7 @@ DEBUG_BOOL(PHARO_BV_TRACE_HITS)          // TEMP: log the first 120 BV-inline hi
 DEBUG_BOOL(PHARO_BV_DBGTRAP)            // TEMP: __builtin_debugtrap at the cmpat block codeStart capture (for lldb single-step)
 DEBUG_INT(PHARO_BV_MAX_CAP, 1)           // FIX 2026-06-20: bail BV inline if numCopied (captures) > this. Default 1: cap>=2 blocks corrupt under BV inline (foreign-frame EXECUTION bug; the C++ capture-copy was verified correct vs activateBlock, so the defect is in the JIT block's multi-copied-value access). Bisected: MAX_CAP<=1 stops the BV-on startup runaway. -1 disables the cap (to reproduce/investigate the cap>=2 bug).
 DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)         // bisect G* SmallFloat bug: disable bytecode-level inline SmallFloat +/- fast-path (0x60/0x61)
-DEBUG_BOOL(PHARO_HEADLESS)               // force headless: skip Metal test surface + GUI click injection so SUnit batches aren't poisoned by render-loop contention (no image args needed)
+DEBUG_BOOL_RT(PHARO_HEADLESS)               // force headless: skip Metal test surface + GUI click injection so SUnit batches aren't poisoned by render-loop contention (no image args needed)
 DEBUG_INT(PHARO_WATCH_HEAP_CLASSIDX, 0)  // Spur classIndex (== the class's identityHash) to trace during the GC MARK: reports the PARENT object+slot that reaches each instance, i.e. what is keeping it alive transitively. Companion to PHARO_WATCH_ROOT_CLASS, which only covers direct roots
 DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)       // selector substring: dump the C++ frame temp slots materializeFrameStack copies, to tell a stale CONTEXT from a stale FRAME
 DEBUG_BOOL(PHARO_WEAK_SURVIVOR_CLASSES)  // cheap sibling of PHARO_WEAK_SURVIVOR_PATHS: name each weak referent that SURVIVED, without the per-object parent map — low enough overhead to leave on while chasing a timing-sensitive survivor the full tracer suppresses
@@ -202,17 +218,19 @@ DEBUG_BOOL(PHARO_WEAK_SURVIVOR_PATHS)    // record each object's first-reaching 
 DEBUG_STR(PHARO_WATCH_HEAP_CLASS)        // same as PHARO_WATCH_HEAP_CLASSIDX but by class NAME (resolved to an index once, by scanning classTable_)
 DEBUG_INT(PHARO_WATCH_HEAP_MAXLOG, 400) // cap on [HEAP-WATCH] lines per GC
 DEBUG_STR(PHARO_WATCH_ROOT_CLASS)        // name a class; forEachRoot reports which ROOT CATEGORY (operand-stack / saved-frames / jit-code-zone / j2j-save-pool / jit-state / ... or, for the singleton VM registers, the FIELD name) is visiting each instance. Answers "why wasn't this collected?" without knob-bisecting
-DEBUG_STR(LD_LIBRARY_PATH)               // NOT a knob of ours — the platform's library search path, read here because this X-macro list is the single sanctioned env reader (bare getenv is poisoned).  ffi::ensurePlatformLibraryPath() prepends the platform lib dirs to it at startup, the way stock Cog's `pharo` wrapper script does
-DEBUG_BOOL(PHARO_NO_PLATFORM_LIB_PATH)   // skip that LD_LIBRARY_PATH augmentation and leave the environment exactly as inherited
+DEBUG_STR_RT(LD_LIBRARY_PATH)               // NOT a knob of ours — the platform's library search path, read here because this X-macro list is the single sanctioned env reader (bare getenv is poisoned).  ffi::ensurePlatformLibraryPath() prepends the platform lib dirs to it at startup, the way stock Cog's `pharo` wrapper script does
+DEBUG_BOOL_RT(PHARO_NO_PLATFORM_LIB_PATH)   // skip that LD_LIBRARY_PATH augmentation and leave the environment exactly as inherited
 DEBUG_STR(PHARO_TRACE_DNU_STACK)         // selector substring: at a doesNotUnderstand whose SELECTOR matches, dump the LIVE frame's operand stack (framePointer_..stackPointer_) with class names. The image cannot show this — reading the materialized context after the fact gives a stale snapshot that disagrees with the frame, which is exactly the WarpBlt expression-stack displacement's signature
 DEBUG_STR(PHARO_DEPTH_ORACLE)            // EXACT selector: operand-stack-depth oracle for one method. Records the depth (stackPointer_-framePointer_-1) the FIRST time each bytecode offset executes and reports every later visit that disagrees — a self-calibrating detector for expression-stack displacement that needs no static analysis (straight-line/loop code has a fixed depth per pc). On the first divergence it dumps the live frame, the owning context, and a ring of the preceding save/restore/return events
 DEBUG_BOOL(PHARO_NO_CTX_STACKP_RAISE)    // disable Interpreter::raiseContextStackpTo, the setTemporary write-through's stackp bump added with the Context trace bound. Raising stackp is not GC-only: executeFromContext restores exactly `stackp` slots as the activation's temps, so a stackp raised past the real content SHIFTS the resumed operand stack. Bisect knob for anything that looks like a value landing in the wrong variable
 DEBUG_BOOL(PHARO_CTX_TRACE_ALL_SLOTS)    // revert to tracing a Context's WHOLE slot array during GC instead of Spur's 6+stackp live extent. Off by default since 2026-08-11: the full scan made dead expression-stack residue a GC root and kept collectable objects alive one extra cycle (PropertyManagerTest>>testPropertyManagerValueWeakness). Set =1 to bisect a suspected stale-stackp crash back to this change
-DEBUG_BOOL(PHARO_CHDIR_IMAGE_DIR)        // legacy: chdir to the image's directory at startup.  Off by default since 2026-08-11 — stock Cog leaves the CWD alone, and the chdir made every CWD-relative lookup the image does resolve against the image dir (plus broke relative image paths)
-DEBUG_BOOL(PHARO_INTERACTIVE)            // bare launches default to NON-interactive (isInteractiveGraphic false) since 2026-07-06 — MorphicWindowManagerTest opened native windows headlessly and hijacked Clipboard Default; set =1 (or pass --interactive) for real GUI runs
-DEBUG_BOOL(PHARO_EVAL_SUSPEND_MORPHIC)   // eval mode: suspend the Morphic processes before evaluating (pre-2026-10-12 default).  Off = Cog parity: the UI process keeps running, so `World defer:` blocks run
+DEBUG_BOOL_RT(PHARO_CHDIR_IMAGE_DIR)        // legacy: chdir to the image's directory at startup.  Off by default since 2026-08-11 — stock Cog leaves the CWD alone, and the chdir made every CWD-relative lookup the image does resolve against the image dir (plus broke relative image paths)
+DEBUG_BOOL_RT(PHARO_INTERACTIVE)            // bare launches default to NON-interactive (isInteractiveGraphic false) since 2026-07-06 — MorphicWindowManagerTest opened native windows headlessly and hijacked Clipboard Default; set =1 (or pass --interactive) for real GUI runs
+DEBUG_BOOL_RT(PHARO_EVAL_SUSPEND_MORPHIC)   // eval mode: suspend the Morphic processes before evaluating (pre-2026-10-12 default).  Off = Cog parity: the UI process keeps running, so `World defer:` blocks run
+DEBUG_BOOL(PHARO_T1_COMPILE_ALL)        // T1 compiles every hot method, not only code with a loop (pre-2026-10-13 policy; see noteMethodEntrySlow)
+DEBUG_BOOL_RT(PHARO_EVAL_NO_SUNIT_MARKER)   // eval mode: do not touch /tmp/sunit_run_completed.txt.  Set it for an eval run beside a live sunit-sweep.sh, which reads that file as "batch finished"
 DEBUG_BOOL(PHARO_TRACE_WEDGE_NIL)        // full-suite wedge: at a nil-receiver DNU, dump the real activeContext_ chain to find the T1-miscompiled method
-DEBUG_BOOL(PHARO_NO_DELAY_HARD_RESTART)  // opt out of the VM-core self-heal: don't signal the registered image-side recovery semaphore (which drives Delay scheduler restartTimerEventLoop) on a [DELAY-DEATH] wedge
+DEBUG_BOOL_RT(PHARO_NO_DELAY_HARD_RESTART)  // opt out of the VM-core self-heal: don't signal the registered image-side recovery semaphore (which drives Delay scheduler restartTimerEventLoop) on a [DELAY-DEATH] wedge
 DEBUG_BOOL(PHARO_COMPILE_LOG)            // DIAGNOSTIC: log [COMPILE]/[RECOMPILE] <selector> for each JIT compile, to find run-once / transient-method compile waste
 DEBUG_BOOL(PHARO_SISTA_RECOMPILE_ADMITTED) // A/B: restore the old behavior where kSistaGateAdmitted methods re-run extractInlineHints+sista->compile on EVERY entry (the recompile churn). Default OFF = skip already-Sista-processed methods.
 DEBUG_BOOL(PHARO_ACTIVATION_LOG)         // DIAGNOSTIC: sample (every 4096th) the selector entering tryJITActivation (the interp->JIT boundary) to see what's bouncing -- warm (J2J-linkable, fixable) vs cold/transient (inherent)
@@ -313,8 +331,8 @@ DEBUG_BOOL(PHARO_FFI_TRACE)                 // log ffi_prep_cif failures (status
 DEBUG_BOOL(PHARO_T1_XM_TRACE)               // full-startup diagnostic (x86): log each cross-method inline-J2J admit fire whose RECEIVER is a CLASS (the startup-corruption shape) — caller + callee selector + receiver class, rate-limited to 400. The last few before the ShouldNotImplement/cannot-have-variable-instances error name the corrupting caller/callee. Emitted in the admit before jmp r11; helper jit_rt_xm_fire_trace in JITRuntime.cpp.
 DEBUG_BOOL(PHARO_T1_X86_XMETHOD_PROBE)      // capture-first-corruption probe (x86/V1, default-OFF): after each tryJITActivation, if state.j2jDepth != j2jEntryDepth (a leaked cross-method/inline-J2J save = the startup-corruption signature), print the leaked save's CALLER selector + state.method selector + code-zone churn delta and abort() — NAMES the first method whose cross-method inline-J2J leaks under PHARO_T1_X86_XMETHOD no-SEL startup. arm64 compiles out (#if !PHARO_J2J_SAVE_V2).
 DEBUG_BOOL(PHARO_T1_FATAL_DISAGREE)          // anti-regression: abort() at the prescan/emit-disagree site instead of silently bailing the method to interp. Run the suite + benches with this on BOTH arches so any future arm64 prescan widening that the x86 (or arm64) emit doesn't follow trips immediately, instead of silently degrading to interpreter. Default off (production bails quietly).
-DEBUG_BOOL(PHARO_X86_JIT)                    // DEPRECATED no-op (kept for back-compat): the x86_64 tier-1 JIT is now DEFAULT-ON (flipped 2026-06-17), so this explicit opt-in is redundant.  Use PHARO_NO_X86_JIT=1 to opt OUT.
-DEBUG_BOOL(PHARO_NO_X86_JIT)                 // opt-OUT escape hatch: disable the x86_64 tier-1 asmjit JIT (run interpreted).  The x86 JIT went DEFAULT-ON 2026-06-17 after: (a) 565-class headless SUnit at parity with the shipping arm64 JIT AND the interpreter (only nondeterministic weak-ref/GC-timing tests differ — same on arm64-JIT); (b) Morphic rendering (Morph/BorderedMorph fills+borders, gradient strips, StringMorph+TextMorph FreeType text, BitBlt compositing, PNG encode) PIXEL-IDENTICAL under JIT vs interp via imageForm.  Residual unverified surface: the live Catalyst Metal app render-loop (JIT-agnostic C++ bridge; needs actual x86 Catalyst) — this hatch + PHARO_NO_JIT mitigate.  No effect on arm64 (#if x86 only; arm64 JIT always on).
+DEBUG_BOOL_RT(PHARO_X86_JIT)                    // DEPRECATED no-op (kept for back-compat): the x86_64 tier-1 JIT is now DEFAULT-ON (flipped 2026-06-17), so this explicit opt-in is redundant.  Use PHARO_NO_X86_JIT=1 to opt OUT.
+DEBUG_BOOL_RT(PHARO_NO_X86_JIT)                 // opt-OUT escape hatch: disable the x86_64 tier-1 asmjit JIT (run interpreted).  The x86 JIT went DEFAULT-ON 2026-06-17 after: (a) 565-class headless SUnit at parity with the shipping arm64 JIT AND the interpreter (only nondeterministic weak-ref/GC-timing tests differ — same on arm64-JIT); (b) Morphic rendering (Morph/BorderedMorph fills+borders, gradient strips, StringMorph+TextMorph FreeType text, BitBlt compositing, PNG encode) PIXEL-IDENTICAL under JIT vs interp via imageForm.  Residual unverified surface: the live Catalyst Metal app render-loop (JIT-agnostic C++ bridge; needs actual x86 Catalyst) — this hatch + PHARO_NO_JIT mitigate.  No effect on arm64 (#if x86 only; arm64 JIT always on).
 DEBUG_BOOL(PHARO_T1_AO_MAT_J2J)              // default-OFF, x86/V1-scoped (#if !PHARO_J2J_SAVE_V2): case ExitArithOverflow (Interpreter.cpp:26322) materializes pending J2J saves (j2jDepth>0) via the in-scope materializeJ2J lambda before `return false`. Addresses a REAL but SECONDARY bug (an inline-J2J callee that arith-OVERFLOWS leaks its caller frame). NOT the cure for the PHARO_T1_X86_XMETHOD startup corruption: workflow wf_8b29daf3 proved (3+4)=7 is in SmallInteger range so it NEVER reaches ExitArithOverflow — the (3+4)->nil corruption is a cross-method bail-leak at a DIFFERENT exit (ExitSend DNU/non-standard, ExitMustBool, ExitBlockCreate), independent of this AO path. SUPERSEDED by PHARO_T1_X86_BAIL_MAT_J2J (the umbrella). arm64-SAFE: compiles out on V2. docs/x86-xmethod-j2j-design.md.
 DEBUG_BOOL(PHARO_T1_X86_BAIL_MAT_J2J)        // default-OFF, x86/V1 umbrella (#if !PHARO_J2J_SAVE_V2): the ROOT-CAUSE cure for the PHARO_T1_X86_XMETHOD startup corruption. On V1 the caller frame of a cross-method inline-J2J send lives ONLY in the unpopped J2J save; the callee's return prelude pops it on a CLEAN return, but a MID-METHOD bail (any chain-loop `return false` to interp: ExitSend DNU/non-standard/no-sel, ExitSendCached, ExitMustBool, ExitJ2JCall-invalid, ExitArithOverflow, ExitPrimFail/Deopt, ExitBlockCreate/ArrayCreate/Yield at the final jit_loop_exit switch) leaves it leaked -> the interp-resumed callee returns into a corrupt frame ((3+4)->nil via the startup send chain). cfibx proves the NORMAL emit is correct (its callees return cleanly), so per-class canSkipJ2JSave gating cannot converge (the leak is exit-driven, not class-driven). Fix: a `bailMatJ2J()` lambda materializes pending saves (reconstructs caller SavedFrame(s), resets depth/cursor) at EVERY such bail site; idempotent no-op when j2jDepth==0. Subsumes PHARO_T1_AO_MAT_J2J. arm64: bailMatJ2J is an empty lambda (V2 save machinery handles bails), so call sites compile to nothing.
 DEBUG_INT(PHARO_HEAP_SCAN_EVERY, 0)         // wild-write detector: every N×1024-bytecode checkpoints, walk the heap (checkHeapIntegrity) and report the first CLEAN->CORRUPT transition (victim + step window + recent bytecodes). 0=off.
@@ -332,8 +350,8 @@ DEBUG_INT(PHARO_T1_SP_TRAP_K, 0)            // with PHARO_T1_SP_TRACE: __builtin
 DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP)           // cold-boot over-pop detector: at every in-place chain primitive send (ExitSendCached 22053, J2J-cached 22388, ExitSend fallback 27874), check the operand-sp delta across executePrimitive == -argCount_ (primitiveSuccess net). Logs the FIRST few mismatches (over/under-pop) with caller/target/prim/argCount before&after/sp depth. Path-generic (not do:-scoped), so it catches whatever method's cold at: over-pops despite rebuild relocation.
 DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP_STOP)      // stop the VM at the first PRIM_OVERPOP mismatch.
 DEBUG_BOOL(PHARO_DUMP_DISPLAY)              // test_load_image: dump the TestDisplaySurface (gDisplaySurface) to /tmp/vm-display-{20,60,150}.ppm at those render-present counts — proves whether the VM actually draws the morphic World into gDisplaySurface (which screencapture can't grab from the app's Metal layer). Headless GUI-render verification.
-DEBUG_BOOL(PHARO_FORCE_DISPLAY)             // test_load_image: create gTestSurface/gDisplaySurface even in headless/eval mode, so a forced render (OSWorldRenderer doActivate) can present into it and be captured via PHARO_DUMP_DISPLAY. Proved the Windows GUI render path headlessly (the morphic World draws). See docs/deferred.md GUI section.
-DEBUG_BOOL(PHARO_GUI_WINDOW)                // test_load_image (Windows): back gDisplaySurface with a real on-screen Win32 HWND (Win32DisplaySurface, GDI StretchDIBits present) instead of the in-memory TestDisplaySurface — so the rendered morphic World is actually shown in a window. Implies the display surface is created. Input events not yet wired.
+DEBUG_BOOL_RT(PHARO_FORCE_DISPLAY)             // test_load_image: create gTestSurface/gDisplaySurface even in headless/eval mode, so a forced render (OSWorldRenderer doActivate) can present into it and be captured via PHARO_DUMP_DISPLAY. Proved the Windows GUI render path headlessly (the morphic World draws). See docs/deferred.md GUI section.
+DEBUG_BOOL_RT(PHARO_GUI_WINDOW)                // test_load_image (Windows): back gDisplaySurface with a real on-screen Win32 HWND (Win32DisplaySurface, GDI StretchDIBits present) instead of the in-memory TestDisplaySurface — so the rendered morphic World is actually shown in a window. Implies the display surface is created. Input events not yet wired.
 DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)           // Windows GUI input debug: trace real input events at the producer (Win32 wndProc push into gEventQueue) and the consumer (stub_SDL_PollEvent delivery to the image), so a click's full path is observable. Button/key events log individually; mouse moves are counted (logged every 64th).
 DEBUG_BOOL(PHARO_BITBLT_TRACE)              // log each primitiveCopyBits FAILURE (rule, src/dst depth, reason) — the image's copyBits fallback masks the real cause behind "Bad BitBlt arg (Fraction?)" so this is how you find which rule/depth combination the primitive actually lacks. First 50 + every 500th.
 DEBUG_BOOL(PHARO_NLR_TRACE)
@@ -379,7 +397,7 @@ DEBUG_BOOL(PHARO_ASMJIT_T1_TRACE_COND)
 DEBUG_BOOL(PHARO_B5_TRACE)
 DEBUG_BOOL(PHARO_BASICAT_TRACE)
 DEBUG_BOOL(PHARO_BC5_DUMP)
-DEBUG_BOOL(PHARO_BENCH)
+DEBUG_BOOL_RT(PHARO_BENCH)
 DEBUG_BOOL(PHARO_CALLBACK_DEBUG)
 DEBUG_BOOL(PHARO_CTX_TEMPAT_DBG)
 DEBUG_BOOL(PHARO_DETECT_ERRORS)
@@ -412,7 +430,7 @@ DEBUG_BOOL(PHARO_NO_EAGER_BLOCK_VALUE)
 DEBUG_BOOL(PHARO_NO_EAGER_COMPILE)
 DEBUG_BOOL(PHARO_NO_FWD_COLLAPSE)
 DEBUG_BOOL(PHARO_NO_GETTER_BIT)
-DEBUG_BOOL(PHARO_NO_HEARTBEAT)
+DEBUG_BOOL_RT(PHARO_NO_HEARTBEAT)
 DEBUG_BOOL(PHARO_NO_HOT_LOOP_THRESHOLD)
 DEBUG_BOOL(PHARO_NO_IC_FILL)
 DEBUG_BOOL(PHARO_NO_J2J)
@@ -442,14 +460,15 @@ DEBUG_BOOL(PHARO_PRIMAT_DEBUG)
 DEBUG_BOOL(PHARO_PRIMAT_OOB)
 DEBUG_BOOL(PHARO_PRIMSIZE_DEBUG)
 DEBUG_BOOL(PHARO_PRIMSIZE_STENCIL_DBG)
-DEBUG_BOOL(PHARO_PRIM_PROFILE)
+DEBUG_BOOL_RT(PHARO_PRIM_PROFILE)
 DEBUG_BOOL(PHARO_PROC_DUMP)
-DEBUG_BOOL(PHARO_PROFILE)
-DEBUG_BOOL(PHARO_REFLECT_PROFILE)
+DEBUG_BOOL_RT(PHARO_PROFILE)
+DEBUG_BOOL_RT(PHARO_REFLECT_PROFILE)
 DEBUG_BOOL(PHARO_RESUME_J2J)
 DEBUG_BOOL(PHARO_RESUME_STATE_DEBUG)
 DEBUG_BOOL(PHARO_RJ2J_VALIDATE)
 DEBUG_BOOL(PHARO_SCAV_BIT_AUDIT)
+DEBUG_BOOL(PHARO_BARRIER_WHO)          // with PHARO_SCAV_BIT_AUDIT: backtrace the raw slotAtPut that made each un-remembered old->young pointer
 DEBUG_BOOL(PHARO_SDL_TRACE)
 DEBUG_BOOL(PHARO_SEM_SIGNAL_TRACE)
 DEBUG_BOOL(PHARO_SENDER_TRIPWIRE)
@@ -555,7 +574,7 @@ DEBUG_BOOL(PHARO_T2_X86_LOG)
 DEBUG_BOOL(PHARO_T2_X86_TRACE)
 DEBUG_BOOL(PHARO_T2_ZEROARG_IC)
 DEBUG_BOOL(PHARO_TERM_BT)
-DEBUG_BOOL(PHARO_TIME_GC_PHASES)
+DEBUG_BOOL_RT(PHARO_TIME_GC_PHASES)
 DEBUG_BOOL(PHARO_TRACE_ACTIVATE_BLOCK)
 DEBUG_BOOL(PHARO_TRACE_BC_7A)
 DEBUG_BOOL(PHARO_TRACE_CULL_BAIL)
@@ -587,5 +606,7 @@ DEBUG_BOOL(PHARO_YG_NO_SCAVENGE)
 DEBUG_INT(PHARO_SCAV_SCAN_ABOVE_SP, 0)  // DIAGNOSTIC: also treat N operand-stack slots ABOVE stackPointer_ as GC roots (only those that pass isValidPointer). If a use-after-collect disappears with this set, the missed holder is a stack slot outside [stackBase_, stackPointer_) -- the defect #1 family. NOT a fix: it conservatively pins dead slots.
 
 #undef DEBUG_BOOL
+#undef DEBUG_BOOL_RT
+#undef DEBUG_STR_RT
 #undef DEBUG_INT
 #undef DEBUG_STR

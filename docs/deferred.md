@@ -175,6 +175,33 @@ The history lives in `docs/history/`; nothing was deleted.
   are either writes outside those helpers or a header rewrite that drops
   the remembered bit -- not yet found.
 
+  **2026-10-13: the older-holder gaps were mostly the audit's own mark, and
+  the real blocker is the JIT.**  Three fixes, then a re-audit:
+  (1) the remembered BIT was never cleared, so after an object's first
+  old->young store `rememberObject` never recorded it again; the full scan
+  now clears it per object, so a set bit means "barriered since the last
+  scavenge".  (2) `oldFreeAtLastScavenge_` was set only by scavenge, so after
+  a full GC compacted below it every new old-space object counted as an
+  older holder; `fullGC` now resets it.  (3) the last interpreter-side gaps
+  were raw `slotAtPut`s: `setSpecialObject`, both become loops, the
+  forwarder slot, and the class-table pages -- now `slotAtPutBarriered` /
+  `storePointerUnchecked`.  Re-audit (`PHARO_SCAV_BIT_AUDIT`, knobs-on
+  build) on 3M printString, the cormas analysis, the myprecious round trips
+  and `bench_ast_phases.st`: zero holders outside the remembered set and the
+  recent region (`gapNoBarrier=0` after fix 3, `gapBitOnly=0`).  A new knob,
+  `PHARO_BARRIER_WHO`, backtraces the raw `slotAtPut` behind any gap.
+  What still blocks trusting the set is emitted code: asmjit T1 stores with
+  NO barrier at ExtPopStoreLitVar/ExtStoreLitVar (globals and class
+  variables), ExtPopStoreRecv/ExtStoreRecv, the inline setter
+  (`PHARO_T1_SETTER_BARRIER` is off), and remote-temp stores (0xFC/0xFD);
+  popStoreRecv sets the bit but never records the object.  The audit stays
+  clean only because T1 now compiles little (loops only).  The plan that
+  fits: one emitter for an inline barrier that sets the bit and appends the
+  holder to a fixed global buffer (overflow sets a flag that makes the next
+  scavenge a full scan), called from every store emit on arm64 AND x86;
+  scavenge drains the buffer into `rememberedSet_`.  Gain: the old-space scan
+  is 11.8% of the cormas analysis and 5% of the myprecious round trips.
+
 - **Smalltalk that runs inside an FFI callback executes through
   `Interpreter::step()`, one bytecode per call**, not through the
   computed-goto dispatch loop: `enterInterpreterFromCallback` is

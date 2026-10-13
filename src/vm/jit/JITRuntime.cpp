@@ -17,6 +17,7 @@ extern "C" { extern uint8_t* g_t1ForceYieldAddr; }
 #include "../Interpreter.hpp"
 #include "sista/SistaRuntime.hpp"
 #include "TrampolineAsm.hpp"
+#include "SistaV1.hpp"
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -3773,6 +3774,7 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
             && megaCache_[k].jitEntry != 0) {
             megaCache_[k].jitEntry = unlinkTier2 ? 0 : newEntryAddr;
             megaRewrites++;
+            ++g_jitStateEpoch;
         }
     }
 
@@ -3787,7 +3789,47 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     }
 }
 
-void JITRuntime::noteMethodEntry(Oop compiledMethod) {
+// True when the CompiledMethod / CompiledBlock contains a loop: an ExtJump
+// whose signed offset (Extend B * 256 + byte) is negative.  Decodes
+// instruction boundaries, so literal and argument bytes are never mistaken
+// for opcodes (the byte scan this replaces read ExtJump's operand and the
+// NEXT opcode as one 16-bit offset, missing jumps back more than 128 bytes
+// and taking forward jumps of 128-255 bytes for loops).
+static bool compiledCodeHasLoop(Oop code) {
+    if (!code.isObject() || code.rawBits() <= 0x10000) return false;
+    ObjectHeader* mh = code.asObjectPtr();
+    Oop hdrOop = mh->slotAt(0);
+    if (!hdrOop.isSmallInteger()) return false;
+    size_t numLits = static_cast<size_t>(hdrOop.asSmallInteger() & 0x7FFF);
+    size_t bcStart = (1 + numLits) * 8;
+    size_t total = mh->byteSize();
+    if (total <= bcStart) return false;
+    const uint8_t* bc = mh->bytes() + bcStart;
+    size_t len = total - bcStart;
+    int64_t extB = 0;
+    bool haveExtB = false;
+    for (size_t i = 0; i < len; ) {
+        uint8_t op = bc[i];
+        size_t n = static_cast<size_t>(SistaV1::bytecodeLength(op));
+        if (i + n > len) break;
+        if (op == SistaV1::ExtendB) {
+            uint8_t b = bc[i + 1];
+            // VMMaker: the first Extend B byte is signed, later ones shift in.
+            extB = haveExtB ? extB * 256 + b : (b > 127 ? b - 256 : b);
+            haveExtB = true;
+        } else if (op == SistaV1::ExtendA) {
+            // Extend A does not reset Extend B.
+        } else {
+            if (op == SistaV1::ExtJump && extB * 256 + bc[i + 1] < 0) return true;
+            extB = 0;
+            haveExtB = false;
+        }
+        i += n;
+    }
+    return false;
+}
+
+void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 
     // No deferral: JIT compiles methods as soon as they're hot.  Older
@@ -3867,8 +3909,9 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
     static const int maxCompile = g_debug.jitMaxCompile;
 
-    static size_t totalEntries = 0;
-    totalEntries++;
+    // Counted by the inline noteMethodEntry, which hands over at each 64K
+    // boundary, so the periodic work below still runs every 64K entries.
+    const size_t totalEntries = totalEntries_;
 
     // (Removed 2026-05-09: per-entry [NOTE] log for #benchFib that was
     // an A4 investigation aid.  A4 is resolved at root cause; the
@@ -3892,8 +3935,11 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // method must go ~650K method entries untouched to be pass-1 eligible.
     if ((totalEntries & 0xFFFF) == 0) codeZone_.advanceEpoch();
 
-    // Periodic stats (every ~64K entries)
-    if ((totalEntries & 0xFFFF) == 0) {
+    // Periodic stats line, every 16M entries.  It was every 64K -- several
+    // lines per millisecond of send-heavy code, 1.9 MB of stderr in a 30 s
+    // run and ~2% of its time in write(2).  The exit summary prints the
+    // same counters.
+    if ((totalEntries & 0xFFFFFF) == 0) {
         size_t icHits = interp_ ? interp_->jitICHits() : 0;
         size_t icMisses = interp_ ? interp_->jitICMisses() : 0;
         size_t icPatches = interp_ ? interp_->jitICPatches() : 0;
@@ -3981,7 +4027,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     }
 
     uint64_t key = compiledMethod.rawBits();
-    size_t idx = (key >> 3) % CountMapSize;
+    size_t idx = countMapIndex(key);
 
     // Runtime-configurable threshold: PHARO_JIT_THRESHOLD=N (default: CompileThreshold=2)
     static uint32_t threshold = 0;
@@ -3990,6 +4036,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             ? static_cast<uint32_t>(g_debug.jitThreshold) : CompileThreshold;
         if (threshold < 1) threshold = 1;
     }
+    countThresholdCache_ = threshold;
 
     // jit-may22b Step 13: lower threshold to 1 for methods with
     // backward jumps (bytecode-level loops).  Scan only on the path
@@ -3997,37 +4044,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // bytecode walk costs amortise to O(1) per method, not per call.
     auto methodHasBackwardJump = [&]() -> bool {
         if (GET_DEBUG_BOOL(PHARO_NO_HOT_LOOP_THRESHOLD)) return false;
-        if (!compiledMethod.isObject()
-                || compiledMethod.rawBits() <= 0x10000) {
-            return false;
-        }
-        ObjectHeader* mh = compiledMethod.asObjectPtr();
-        // jit-may22b Step 13 extension attempted: treat ALL compiled
-        // blocks as hot-loop candidates.  Reverted — adds compile
-        // overhead for cold blocks (error handlers, config callbacks)
-        // that exceeds the savings from hot blocks compiling earlier.
-        // The default threshold-of-2 is the right balance.
-        Oop hdrOop = mh->slotAt(0);
-        if (!hdrOop.isSmallInteger()) return false;
-        int64_t hb = hdrOop.asSmallInteger();
-        int numLits = (int)(hb & 0x7FFF);
-        uint8_t* bytes = mh->bytes();
-        size_t bcStart = (1 + numLits) * 8;
-        size_t totalBytes = mh->byteSize();
-        if (totalBytes <= bcStart || totalBytes - bcStart < 3) {
-            return false;
-        }
-        size_t bcLen = totalBytes - bcStart;
-        const uint8_t* bc = bytes + bcStart;
-        for (size_t bi = 0; bi + 2 < bcLen; bi++) {
-            if (bc[bi] >= 0xED && bc[bi] <= 0xEF) {
-                int16_t offset =
-                    (int16_t)((bc[bi + 1] << 8) | bc[bi + 2]);
-                if (offset < 0) return true;
-                bi += 2;
-            }
-        }
-        return false;
+        return compiledCodeHasLoop(compiledMethod);
     };
 
     // Simple linear probe
@@ -4037,6 +4054,21 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             countMap_[i].count++;
             if (countMap_[i].count == threshold) {
             compile_check:
+                // Policy (2026-10-13): T1 compiles only code with a loop.
+                // Entering emitted code from the interpreter costs more than
+                // it saves for straight-line code: send-bearing methods are
+                // already refused (emitClosurePush), so the rest are small
+                // leaves.  Measured, billions of instructions, compile-all
+                // vs loops-only: 3M printString 142.4 vs 128.0 (the
+                // interpreter alone: 130.1), 30 benchFib 3.55 vs 3.37,
+                // inject:into: 5.03 vs 4.68, a counted loop 3.82 vs 3.51.
+                // Methods called FROM emitted code still compile through the
+                // eager-compile and block-value paths.
+                // PHARO_T1_COMPILE_ALL restores compiling every hot method.
+                if (!GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL)
+                        && !compiledCodeHasLoop(compiledMethod)) {
+                    return;
+                }
                 // Bisection: stop after N compilations
                 if (maxCompile >= 0 && (int)compiler_->methodsCompiled() >= maxCompile) {
                     return;
@@ -5012,6 +5044,7 @@ void JITRuntime::scrubEvictedCodeRanges(const EvictedCodeRange* ranges,
             // CompiledMethod whose JITMethod is gone, and leaving the pair
             // half-valid invites a probe hit that resolves to nothing.
             megaCache_[k] = MegaCacheEntry{};
+            ++g_jitStateEpoch;
         }
     }
 }
@@ -5026,6 +5059,7 @@ void JITRuntime::flushCaches() {
 
     // Clear mega cache
     std::memset(megaCache_, 0, sizeof(megaCache_));
+    ++g_jitStateEpoch;
 
     // Clear IC entries but preserve selectorBits (slot 18 of each 19-slot IC).
     // selectorBits is written once at compile time and never re-patched,
@@ -5246,6 +5280,7 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     }
     // Clear mega cache: keyed by selectorBits which changed.
     std::memset(megaCache_, 0, sizeof(megaCache_));
+    ++g_jitStateEpoch;
 
     // Flush T2 monomorphic IC slots (resolvedBits are stale after compaction)
     flushT2ICs();
@@ -5283,7 +5318,7 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
             if (temp[i].key == 0) continue;
             // Skip entries for methods already compiled — no need to count them
             if (methodMap_.lookup(temp[i].key)) continue;
-            size_t idx = (temp[i].key >> 3) % CountMapSize;
+            size_t idx = countMapIndex(temp[i].key);
             for (size_t probe = 0; probe < 8; probe++) {
                 size_t slot = (idx + probe) % CountMapSize;
                 if (countMap_[slot].key == 0) {

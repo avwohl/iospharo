@@ -301,6 +301,16 @@ Then read it anywhere (after `#include "DebugVars.hpp"`):
     if (GET_DEBUG_BOOL(PHARO_MY_FLAG)) ...
     int n = GET_DEBUG_INT(PHARO_MY_COUNT);
 
+**Release builds compile plain `DEBUG_BOOL` knobs OUT (2026-10-13).**  CMake
+option `PHARO_DIAG_KNOBS` (default ON only for `CMAKE_BUILD_TYPE=Debug`): when
+OFF, `GET_DEBUG_BOOL` on a plain `DEBUG_BOOL` knob is the constant `false`, so
+the check and the trace code behind it are deleted -- 12-22% faster on
+send-heavy code.  Setting such a knob on a fast build prints `[KNOB] ... has no
+effect` at startup.  To hunt a bug with knobs, configure a tree with
+`-DPHARO_DIAG_KNOBS=ON` (build-dbg has it).  Knobs a user or script sets on a
+normal build (display mode, scheduler mode, eval harness) are declared
+`DEBUG_BOOL_RT(...)` and stay live everywhere; do not use `_RT` for traces.
+
 This still obeys the **no-per-call-`getenv`** rule: all knobs are parsed ONCE at
 static init (`DebugVars.cpp`, `initDebugVars()`), and `GET_DEBUG_*` is just an
 array index. `DebugVars.cpp` is exempted from the CMake getenv-ban alongside

@@ -44,9 +44,31 @@ extern const char* g_debug_strs [DEBUG_STR_COUNT  ? DEBUG_STR_COUNT  : 1];
 // (e.g. from DebugSettings::reload()).  Also run once at static-init.
 void initDebugVars();
 
-#define GET_DEBUG_BOOL(name) (::pharo::g_debug_bools[::pharo::DBB_##name])
+// Which bool knobs this build can switch at runtime.  PHARO_DIAG_KNOBS=OFF
+// (CMake; the Release default) defines PHARO_FAST_KNOBS, and then only the
+// DEBUG_BOOL_RT knobs are live: GET_DEBUG_BOOL on any other knob is the
+// constant false, so the compiler deletes the check and the code behind it.
+// Setting such a knob in the environment prints a warning at startup
+// (initDebugVars) instead of being silently ignored.
+#ifdef PHARO_FAST_KNOBS
+#define PHARO_DIAG_KNOB_LIVE false
+#else
+#define PHARO_DIAG_KNOB_LIVE true
+#endif
+namespace dbg_live {
+#define DEBUG_BOOL(name) constexpr bool name = PHARO_DIAG_KNOB_LIVE;
+#define DEBUG_BOOL_RT(name) constexpr bool name = true;
+#define DEBUG_INT(name, dflt)
+#define DEBUG_STR(name) constexpr bool name = PHARO_DIAG_KNOB_LIVE;
+#define DEBUG_STR_RT(name) constexpr bool name = true;
+#include "debug_vars.h"
+}  // namespace dbg_live
+
+#define GET_DEBUG_BOOL(name) \
+    (::pharo::dbg_live::name && ::pharo::g_debug_bools[::pharo::DBB_##name])
 #define GET_DEBUG_INT(name)  (::pharo::g_debug_ints [::pharo::DBI_##name])
-#define GET_DEBUG_STR(name)  (::pharo::g_debug_strs [::pharo::DBS_##name])
+#define GET_DEBUG_STR(name) \
+    (::pharo::dbg_live::name ? ::pharo::g_debug_strs[::pharo::DBS_##name] : nullptr)
 
 // "Resume-internal J2J" mode.  Default ON on arm64 since 2026-10-12, but
 // read what it actually does there: T1 REFUSES every compile that would emit

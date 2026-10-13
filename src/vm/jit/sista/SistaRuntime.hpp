@@ -30,6 +30,15 @@
 #include <unordered_set>
 
 namespace pharo {
+// Mirrors !spliceMethods_.empty() for every Runtime (there is one), so
+// JITRuntime's inline noteMethodEntry can skip the splice check without
+// seeing this class.  Defined in SistaRuntime.cpp.
+extern bool g_sistaAnySplice;
+// Bumped whenever a method's Sista outcome can change (the fn cache, the
+// hintless set, the interpreter's gate cache); the interpreter's
+// "skip Sista for this method" memo is only trusted while it matches.
+extern uint32_t g_sistaEpoch;
+
 
 class ObjectMemory;
 
@@ -70,9 +79,11 @@ public:
     // lookup table is cleared.
     void reset() {
         cache_.clear();
+        ++g_sistaEpoch;
         bcOffsetCache_.clear();
         compiledHintless_.clear();
         spliceMethods_.clear();
+        g_sistaAnySplice = false;
         backwardJumpCounters_.clear();
         bcDispatchBailCounter_.clear();
     }
@@ -94,6 +105,7 @@ public:
             }
         }
         cache_ = std::move(newCache);
+        ++g_sistaEpoch;
         // bcOffsetCache_: similar shape; rekey if non-empty.
         if (!bcOffsetCache_.empty()) {
             std::unordered_map<uint64_t,
@@ -120,6 +132,7 @@ public:
             if (n != 0) newSplice.insert(n);
         }
         spliceMethods_ = std::move(newSplice);
+        g_sistaAnySplice = !spliceMethods_.empty();
         // The counter maps don't survive — they're rebuilt naturally.
         backwardJumpCounters_.clear();
         bcDispatchBailCounter_.clear();
@@ -153,6 +166,7 @@ public:
         }
         if (compiledHintless_.erase(key) > 0) {
             cache_.erase(key);
+            ++g_sistaEpoch;
         }
     }
 

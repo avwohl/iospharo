@@ -401,3 +401,75 @@ Open questions this raises: why T1-compiled send-bearing methods are slower
 than the interpreter (the activation wall, again), and whether a deliberate
 policy -- for example "T1 compiles only methods with no inline-J2J send" --
 should replace this indirect one.
+
+## The send path, measured by instruction count (2026-10-13)
+
+Wall-clock numbers on this machine swing by 10-20% with background load, so
+this round used `instructions retired` from `/usr/bin/time -l` (run the
+binary directly, not under `timeout`, or the count is the wrapper's).  The
+workload is `1 to: 3000000 do: [:i | i printString]`, minus the same run
+with eval `1` (startup).  Billions of instructions:
+
+    change                                        JIT     interpreter
+    start of session (11e94851)                   210.8   173.4
+    knobs compiled out (PHARO_DIAG_KNOBS=OFF)     167.8   143.0
+    + mega-cache refill gated on an epoch         ~166    ~142
+    + noteMethodEntry inline fast path            158.0   142.2
+    + classOf inline                              156.7   141.4
+    + lazy J2J-slice clear                        153.6   141.7
+    + plain method return skips the home walk     144.3   132.0
+    + specialObject inline, immediates in classOf 144.0   131.3
+    + Sista skip memo                             142.5   130.1
+    + T1 compiles only code with a loop           128.0   130.1
+    + method-map presence filter                  127.4     -
+    + direct dispatch: returns, special sends     122.4     -
+    + trace globals out of DISPATCH_NEXT          108.7     -
+    + DIAG_FLAG on the remaining trace globals    107.3     -
+    + extension / extended-jump direct dispatch   104.5     -
+
+What each one is:
+
+- **Knobs.**  Every `GET_DEBUG_BOOL` was a load and a branch, and the trace
+  code behind the knobs bloated the hot functions.  Release builds now compile
+  plain `DEBUG_BOOL` knobs to `false` (CMake `PHARO_DIAG_KNOBS`, see
+  CLAUDE.md); `DEBUG_BOOL_RT` knobs stay live.
+- **Mega cache.**  Every cache-hit send did a method-map probe and wrote the
+  JIT's 2 MB mega cache.  Now only when `jit::g_jitStateEpoch` changed since
+  that method-cache entry last did it (bumped on method-map insert / remove /
+  clear, invalidate, and mega-cache evictions and resets).
+- **noteMethodEntry.**  The fast path was defeated twice: entries past probe
+  slot 0, and `sistaRuntimeForGCHook_` being non-null in the default build.
+  It now probes 4 slots and asks `g_sistaAnySplice`.
+- **J2J slice.**  Each JIT entry cleared 32 save slots (20 cache lines).  Now
+  only slots that can be dirty: `j2jPoolDirtyHW_` marks the lowest slot that
+  may hold a stale oop, and a release whose first slot is still clear lowers
+  it.  A slice abandoned without release keeps the mark up.
+- **Plain return.**  `returnFromMethod` walked the method's last-literal chain
+  twice to decide "is this a block" for every `^`.  A CompiledMethod
+  activation with no paused-NLR marker now goes straight to `returnValue`.
+- **Sista memo.**  `g_debug.sistaDispatch` is ON by default, so every
+  activation probed two `unordered_map`s (`wasCachedAsFail`,
+  `sistaGateCache_`).  A 4096-entry direct-mapped memo, trusted while
+  `g_sistaEpoch` matches, answers "skip" with one compare.
+
+Wall clock, `bench_ast_phases.st`, same machine, ms:
+
+    phase            before   after
+    sourceCode         1322    1002
+    scan               1377    1009
+    parse              3789    2963
+    parse+semantic     9359    7029
+    testBody           9840    7619
+    printString3M      7045    4743
+
+A send + activate + return of `zzBench: x ^ x + 1` (from a method at frame
+depth >= 1, interpreter only) went from ~1570 to ~1085 instructions.  The
+lldb single-step histogram that found the dispatch cost is
+`stepcount.py`/`steplines.py` (attach, break in activateMethod, step N
+instructions, count per function or per source line); one `op_pushSelf` +
+`DISPATCH_NEXT` was 31 instructions, 7 of them trace-flag tests.
+
+Before this round: ~47K instructions per printString, 387 bytecodes and ~50
+sends, so about 110 instructions per bytecode.  The interpreter keeps its state in members
+(`stackPointer_`, `instructionPointer_`, ...), so every push and pop is a
+memory access, and the send path is still ~600 instructions.

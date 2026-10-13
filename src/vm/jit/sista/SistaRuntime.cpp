@@ -9,6 +9,8 @@
 #include "../../DebugVars.hpp"
 
 namespace pharo {
+bool g_sistaAnySplice = false;
+uint32_t g_sistaEpoch = 1;
 namespace sista {
 
 // W10 bail-reason counters.  Dumped at exit when PHARO_SISTA_BAIL_LOG=1.
@@ -330,6 +332,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         // and racing with Sista's splice.  See
         // memory/project_t1_vs_sista_race.md.
         spliceMethods_.insert(key);
+        g_sistaAnySplice = true;
     }
     if (hasSplice) {
         static int spliceLogCount = 0;
@@ -351,6 +354,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         }
     }
     cache_[key] = fn;
+    ++g_sistaEpoch;
     return fn;
 }
 

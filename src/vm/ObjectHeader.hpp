@@ -42,6 +42,7 @@
 #ifndef PHARO_OBJECT_HEADER_HPP
 #define PHARO_OBJECT_HEADER_HPP
 
+#include "DebugVars.hpp"
 #include "Oop.hpp"
 #include <cstdint>
 #include <cstring>
@@ -408,13 +409,22 @@ public:
                 }
             }
         }
+        // PHARO_BARRIER_WHO (audit build): remember who made an old->young
+        // pointer without the write barrier, for PHARO_SCAV_BIT_AUDIT to name.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BARRIER_WHO), 0)) {
+            barrier_who_note(this, value);
+        }
         slots()[index] = value;
     }
+    static void barrier_who_note(const ObjectHeader* hdr, Oop value);
 
-    // Declared out-of-line to keep the header lean and avoid <cstdio> here.
-    static bool slot_tripwire_enabled();
+    // The enable checks are inline knob reads -- constant false in a fast
+    // build (PHARO_DIAG_KNOBS=OFF), so slotAtPut costs nothing for them.
+    // They were out-of-line calls on every slot store.  The fire functions
+    // stay out of line to keep <cstdio> out of this header.
+    static bool slot_tripwire_enabled() { return GET_DEBUG_BOOL(PHARO_SLOT_TRIPWIRE); }
     static void slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oop method);
-    static bool slot_run_tripwire_enabled();
+    static bool slot_run_tripwire_enabled() { return GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE); }
     static void slot_run_tripwire_fire(const ObjectHeader* hdr, size_t index, Oop value);
 
     // ===== BYTE ACCESS (for byte objects) =====

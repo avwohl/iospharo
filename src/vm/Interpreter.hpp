@@ -232,6 +232,8 @@ struct MethodCacheEntry {
     int8_t  evenOddKind;      // 0=even, 1=odd, -1=not trivial-evenOdd
     int8_t  returnsLiteralKind; // 1=nil, 2=true, 3=false, 4=SmI 0,
                               // 5=SmI 1, 6=SmI -1, 7=SmI 2; 0=not literal
+    uint32_t megaEpoch;       // jit::g_jitStateEpoch when this entry last filled
+                              // the JIT mega cache; 0 = not yet (sendSelector)
 };
 
 /// Well-known selectors (cached for performance)
@@ -510,7 +512,7 @@ public:
                 stackPointer_ < stack_.data()
                 || stackPointer_ >= stack_.data() + MaxStackDepth
                 || GET_DEBUG_BOOL(PHARO_CORPSE_PUSH_TRAP)
-                || stackOriginEnabled_, 0)) {
+                || (GET_DEBUG_BOOL(PHARO_TRACE_STACK_ORIGIN) && stackOriginEnabled_), 0)) {
             pushSlow(value);
             return;
         }
@@ -785,6 +787,29 @@ private:
     // j2jPool_[0].receiver of a reserved-but-unwritten slot).
     // rawBits(0) is the established empty-slot convention (visitors skip it);
     // matches the chain-loop resume-slice init that already did this.
+    // Reserve [base,end) for a JIT entry: clear only what may be dirty.
+    // Invariant: every slot at or above j2jPoolDirtyHW_ is already clear.
+    // A leaf activation that makes no J2J call writes nothing into its
+    // slice, and releaseJ2JSlice then lowers the mark again, so the next
+    // reservation clears nothing.  Clearing all 32 slots on every entry was
+    // ~3.4% of a send-bound run (2026-10-13).
+    void reserveJ2JSlice(int base, int end) {
+        int hi = end < j2jPoolDirtyHW_ ? end : j2jPoolDirtyHW_;
+        if (base < hi) clearJ2JSlice(base, hi);
+        if (end > j2jPoolDirtyHW_) j2jPoolDirtyHW_ = end;
+    }
+    // Release a slice reserved by reserveJ2JSlice.  Saves are pushed
+    // contiguously from firstSlot, so a clear firstSlot means none were
+    // written and the slice is still clear.  The mark is lowered only when
+    // nothing above `end` is dirty either (j2jPoolDirtyHW_ == end): a slice
+    // abandoned without release (a longjmp past its guard) keeps the mark
+    // high, and the next reservation clears as before.
+    void releaseJ2JSlice(int base, int end, int firstSlot) {
+        if (j2jPoolDirtyHW_ == end
+                && j2jPool_[firstSlot].receiver.rawBits() == 0
+                && j2jPool_[firstSlot].resumeAddr == 0)
+            j2jPoolDirtyHW_ = base;
+    }
     void clearJ2JSlice(int base, int end) {
         if (end > (int)MaxJ2JPoolSize) end = (int)MaxJ2JPoolSize;
         for (int i = base; i < end; i++) {
@@ -860,6 +885,7 @@ private:
 #if PHARO_JIT_ENABLED
     std::array<J2JSave, MaxJ2JPoolSize> j2jPool_;
     int j2jPoolCursor_ = 0;
+    int j2jPoolDirtyHW_ = MaxJ2JPoolSize;  // slots >= this are clear (reserveJ2JSlice)
 public:
     // Session H side-stack for BV inline closure restore.  Lives in
     // Interpreter so forEachRoot can walk it during GC; the existing
@@ -1051,6 +1077,7 @@ private:
     }
 
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
+    uint32_t perBcSistaCountdown_ = 0;    // tryPerBcSistaAtBackwardJump: back-jumps until the next look
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     static constexpr bool dispatchTraceLeakOn_ = false;
     // SP-corruption / per-bc sp-watermark diagnostics: investigation aids

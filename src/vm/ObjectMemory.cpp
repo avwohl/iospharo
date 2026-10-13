@@ -19,6 +19,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <unordered_set>
+#include <execinfo.h>
 #include <dlfcn.h>
 #include <functional>
 #ifdef _WIN32
@@ -75,7 +76,13 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
         std::aligned_alloc(8, config.permSpaceSize));
 #endif
     if (!permSpaceStart_) return false;
-    permSpaceEnd_ = permSpaceStart_ + config.permSpaceSize;
+    // Nothing is ever allocated in permanent space: the image loader puts
+    // every object in old space, primitives 90-93 are no-ops, and the
+    // snapshot writer refuses a non-empty perm space.  So the region is
+    // EMPTY.  It used to span the whole 8 MB allocation, and every
+    // scavenge, allInstances, become and instance scan walked 8 MB of zero
+    // words (1M loop iterations) for nothing.
+    permSpaceEnd_ = permSpaceStart_;
 
     // Old-space: reserve `oldSpaceMaxSize` virtual bytes up-front.
     // mmap(MAP_ANONYMOUS) reserves address space without committing pages;
@@ -507,7 +514,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
 // ===== CLASS TABLE =====
 
 
-Oop ObjectMemory::classOf(Oop obj) const {
+Oop ObjectMemory::classOfSlow(Oop obj) const {
     if (obj.isSmallInteger()) {
         return specialObject(SpecialObjectIndex::ClassSmallInteger);
     }
@@ -558,7 +565,7 @@ Oop ObjectMemory::classOf(Oop obj) const {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_CLASSOF_FWD), 0))
             return classAtIndex(clsIdx);
         Oop target = followForwarded(obj);
-        if (!target.isObject()) return classOf(target);       // followed to an immediate
+        if (!target.isObject()) return classOfSlow(target);   // followed to an immediate
         if (!isValidPointer(target)) return nilObject_;
         return classAtIndex(target.asObjectPtr()->classIndex());
     }
@@ -654,19 +661,6 @@ uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
 
 // ===== SPECIAL OBJECTS =====
 
-Oop ObjectMemory::specialObject(SpecialObjectIndex index) const {
-    if (specialObjectsArray_.isNil() || !specialObjectsArray_.isObject()) {
-        return nilObject_;
-    }
-
-    ObjectHeader* array = specialObjectsArray_.asObjectPtr();
-    size_t idx = static_cast<size_t>(index);
-    if (idx >= array->slotCount()) {
-        return nilObject_;
-    }
-
-    return array->slotAt(idx);
-}
 
 void ObjectMemory::setSpecialObject(SpecialObjectIndex index, Oop value) {
     if (specialObjectsArray_.isNil() || !specialObjectsArray_.isObject()) {
@@ -676,7 +670,11 @@ void ObjectMemory::setSpecialObject(SpecialObjectIndex index, Oop value) {
     ObjectHeader* array = specialObjectsArray_.asObjectPtr();
     size_t idx = static_cast<size_t>(index);
     if (idx < array->slotCount()) {
-        array->slotAtPut(idx, value);
+        // Through the write barrier: the array is old and the value can be
+        // young (a freshly made Semaphore), and a scavenge that trusts the
+        // remembered set must see it.  It was the last raw old->young store
+        // the PHARO_SCAV_BIT_AUDIT sweep of 2026-10-13 found.
+        storePointerUnchecked(idx, specialObjectsArray_, value);
     }
 }
 
@@ -1495,18 +1493,6 @@ size_t ObjectMemory::totalSizeOf(Oop obj) const {
 
 // ===== OBJECT QUERIES =====
 
-bool ObjectMemory::isYoung(Oop obj) const {
-    if (!obj.isObject()) return false;
-    auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
-    return p >= newSpaceStart_ && p < newSpaceEnd_;
-}
-
-bool ObjectMemory::isOld(Oop obj) const {
-    if (!obj.isObject()) return false;
-    auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
-    return p >= oldSpaceStart_ && p < oldSpaceEnd_;
-}
-
 bool ObjectMemory::isPerm(Oop obj) const {
     if (!obj.isObject()) return false;
     auto p = reinterpret_cast<const uint8_t*>(obj.asObjectPtr());
@@ -1695,9 +1681,9 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
         for (size_t i = 0; i < slots; ++i) {
             Oop slot = header->slotAt(i);
             if (slot == obj1) {
-                header->slotAtPut(i, obj2);
+                slotAtPutBarriered(header, i, obj2);
             } else if (slot == obj2) {
-                header->slotAtPut(i, obj1);
+                slotAtPutBarriered(header, i, obj1);
             }
         }
     });
@@ -1757,7 +1743,7 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
 
         for (size_t i = 0; i < slots; ++i) {
             if (header->slotAt(i) == obj1) {
-                header->slotAtPut(i, obj2);
+                slotAtPutBarriered(header, i, obj2);
                 becomeReplacedCount++;
                 if (becomeTrace && becomeReplacedCount <= 12) {
                     fprintf(stderr,
@@ -1809,7 +1795,7 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
             && obj1.asObjectPtr()->slotCount() >= 1
             && !obj1.asObjectPtr()->isForwarded()) {
         ObjectHeader* h1 = obj1.asObjectPtr();
-        h1->slotAtPut(0, obj2);
+        slotAtPutBarriered(h1, 0, obj2);
         h1->setClassIndex(ObjectHeader::ForwardedClassIndex);
     }
 
@@ -1918,7 +1904,7 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
             if (!slot.isObject()) continue;
             Oop target;
             if (!lookup(slot.rawBits(), target)) continue;
-            header->slotAtPut(i, target);
+            slotAtPutBarriered(header, i, target);
             becomeReplacedCount++;
         }
     });
@@ -1953,7 +1939,7 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
             if (!obj1.isObject() || obj1.rawBits() == obj2.rawBits()) continue;
             ObjectHeader* h1 = obj1.asObjectPtr();
             if (h1->slotCount() < 1 || h1->isForwarded()) continue;
-            h1->slotAtPut(0, obj2);
+            slotAtPutBarriered(h1, 0, obj2);
             h1->setClassIndex(ObjectHeader::ForwardedClassIndex);
         }
     }
@@ -2066,6 +2052,37 @@ uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
 // Bumped by every scavenge and full GC: raw oops recorded before a change of
 // epoch may now name a different object (debug-only consumers).
 uint64_t g_gcEpoch = 0;
+// PHARO_BARRIER_WHO: first raw slotAtPut that put a young pointer into an
+// old, un-remembered holder.  storePointer remembers BEFORE it calls
+// slotAtPut, so a barriered store never lands here.  Audit builds only.
+namespace {
+struct BarrierWho { void* frames[6]; int n; };
+std::unordered_map<const ObjectHeader*, BarrierWho>* g_barrierWho = nullptr;
+ObjectMemory* g_barrierWhoMem = nullptr;
+}
+void ObjectHeader::barrier_who_note(const ObjectHeader* hdr, Oop value) {
+    ObjectMemory* m = g_barrierWhoMem;
+    if (!m || hdr->isRemembered() || !value.isObject()) return;
+    if (!m->isOldObject(hdr) || !m->isYoungObject(value.asObjectPtr())) return;
+    if (!g_barrierWho) g_barrierWho = new std::unordered_map<const ObjectHeader*, BarrierWho>();
+    if (g_barrierWho->size() > 200000 || g_barrierWho->count(hdr)) return;
+    BarrierWho w;
+    w.n = backtrace(w.frames, 6);
+    (*g_barrierWho)[hdr] = w;
+}
+static void barrierWhoReport(const ObjectHeader* hdr) {
+    if (!g_barrierWho) return;
+    auto it = g_barrierWho->find(hdr);
+    if (it == g_barrierWho->end()) { fprintf(stderr, "    who: (no raw slotAtPut seen)\n"); return; }
+    for (int i = 1; i < it->second.n; i++) {
+        Dl_info info;
+        if (dladdr(it->second.frames[i], &info) && info.dli_sname)
+            fprintf(stderr, "    who[%d]: %s+%ld\n", i, info.dli_sname,
+                (long)((char*)it->second.frames[i] - (char*)info.dli_saddr));
+        else fprintf(stderr, "    who[%d]: %p\n", i, it->second.frames[i]);
+    }
+}
+
 GCResult ObjectMemory::scavenge() {
     // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young
     // exists anymore (allocation falls back to old space) — later scavenge
@@ -2324,6 +2341,13 @@ GCResult ObjectMemory::scavenge() {
     size_t auditBitUnsetHit = 0;   // bit unset + ≥1 young ref (audit-gap MISS!)
     size_t auditBitUnsetSafe = 0;  // bit unset + no young ref (true negative)
     size_t auditGapRecent = 0;     // ... of the gaps: holder allocated in old space since the last scavenge
+    // Remembered-SET coverage (what a trusted scavenge would scan), as
+    // opposed to the bit: a holder with a young ref must be IN rememberedSet_.
+    size_t auditInVec = 0;         // young ref, holder recorded: covered
+    size_t auditGapBitOnly = 0;    // young ref, bit set, not recorded (inline JIT barrier)
+    size_t auditGapNoBarrier = 0;  // young ref, bit clear, not recorded, not recent: a store with no barrier
+    std::unordered_set<ObjectHeader*> auditVec;
+    if (bitAudit) auditVec.insert(rememberedSet_.begin(), rememberedSet_.end());
 
     // For audit-gap miss logging (first N per scavenge).
     static thread_local size_t auditMissLogCount = 0;
@@ -2348,6 +2372,24 @@ GCResult ObjectMemory::scavenge() {
                     slots[i] = newS;
                     if (newS.rawBits() != s.rawBits()) {
                         scanQueue.push_back(newS.asObjectPtr());
+                    }
+                }
+            }
+            if (bitAudit && foundYoungRef) {
+                const bool recentH = oldFreeAtLastScavenge_
+                    && reinterpret_cast<uint8_t*>(obj) >= oldFreeAtLastScavenge_
+                    && reinterpret_cast<uint8_t*>(obj) < oldSpaceEnd_;
+                if (auditVec.count(obj)) auditInVec++;
+                else if (recentH) { /* covered by the recent-region scan */ }
+                else if (obj->isRemembered()) auditGapBitOnly++;
+                else auditGapNoBarrier++;
+                if (!auditVec.count(obj) && !recentH && obj->isRemembered()) {
+                    static size_t bitOnlyLog = 0;
+                    if (bitOnlyLog++ < 40) {
+                        Oop c = classAtIndex(obj->classIndex());
+                        fprintf(stderr, "[SCAV-BITONLY] obj=%p cls=%s slot=%d\n",
+                            (void*)obj, c.isObject() ? nameOfClass(c).c_str() : "?",
+                            firstYoungSlot);
                     }
                 }
             }
@@ -2390,10 +2432,17 @@ GCResult ObjectMemory::scavenge() {
                             "slotCount=%zu firstYoungSlot=%d val.cls=%s\n",
                             auditMissLogCount, (void*)obj, space, cn.c_str(),
                             cls, cnt, firstYoungSlot, vcn.c_str());
+                        if (GET_DEBUG_BOOL(PHARO_BARRIER_WHO)) barrierWhoReport(obj);
                     }
                 }
                 else auditBitUnsetSafe++;
             }
+            // Every young object this holder pointed at is tenured by the
+            // end of this scavenge, so the holder has no old->young pointer
+            // left.  Clear the bit: it then means exactly "written by the
+            // barrier since the last scavenge" (it used to stay set forever
+            // once set, so rememberObject never re-recorded the object).
+            if (obj->isRemembered()) obj->setRemembered(false);
         }
     };
     // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
@@ -2407,11 +2456,15 @@ GCResult ObjectMemory::scavenge() {
     if (bitAudit) {
         fprintf(stderr,
             "[SCAV-AUDIT] bit accuracy: setHit=%zu setMiss=%zu "
-            "unsetHit=%zu (gap!) unsetSafe=%zu gapRecent=%zu\n",
+            "unsetHit=%zu (gap!) unsetSafe=%zu gapRecent=%zu | set: inVec=%zu "
+            "gapBitOnly=%zu gapNoBarrier=%zu vec=%zu\n",
             auditBitSetHit, auditBitSetMiss,
-            auditBitUnsetHit, auditBitUnsetSafe, auditGapRecent);
+            auditBitUnsetHit, auditBitUnsetSafe, auditGapRecent,
+            auditInVec, auditGapBitOnly, auditGapNoBarrier, rememberedSet_.size());
     }
     rememberedSet_.clear();
+    if (g_barrierWho) g_barrierWho->clear();
+    g_barrierWhoMem = this;
 
     // Roots: mourn queue (ephemerons pending finalization hold
     // their fields alive).
@@ -3295,6 +3348,14 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             }
         }
     }
+
+    // Compaction moved oldSpaceFree_ (usually down).  Old-space allocation
+    // from here on starts at the new top, so that is where the "allocated
+    // since the last GC" region starts too; leaving the scavenge-time mark
+    // above it misfiled every object allocated in between as an older
+    // holder (PHARO_SCAV_BIT_AUDIT).  Eden is empty here (the scavenge at
+    // the top of fullGC), so no old->young pointer exists at this point.
+    oldFreeAtLastScavenge_ = oldSpaceFree_;
 
     // PHARO_DELAY_DEBUG: log any GC over 10ms. Long GCs stall the main
     // interpreter loop, which is what blocks checkTimerSemaphore and
@@ -4905,7 +4966,7 @@ void ObjectMemory::syncClassTableToHeap() {
     // Step 1: Update hiddenRoots page pointer slots from classTablePages_
     for (size_t p = 0; p < classTablePages_.size(); ++p) {
         if (p < hr->slotCount()) {
-            hr->slotAtPut(p, classTablePages_[p]);
+            slotAtPutBarriered(hr, p, classTablePages_[p]);
         }
     }
 
@@ -4954,7 +5015,7 @@ void ObjectMemory::syncClassTableToHeap() {
                 newPage.asObjectPtr()->slotAtPut(sl, nilObject_);
             setClassTablePage(pg, newPage);
             if (pg < hr->slotCount()) {
-                hr->slotAtPut(pg, newPage);
+                slotAtPutBarriered(hr, pg, newPage);
             } else {
                 fprintf(stderr,
                         "[CLASSTABLE] hiddenRoots has only %zu slots but page %zu "
@@ -4988,7 +5049,7 @@ void ObjectMemory::syncClassTableToHeap() {
         if (p < oldSpaceStart_ || p >= oldSpaceFree_) continue;
 
         if (slotNum < page->slotCount()) {
-            page->slotAtPut(slotNum, classTable_[i]);
+            slotAtPutBarriered(page, slotNum, classTable_[i]);
         }
     }
 }
@@ -5580,20 +5641,12 @@ size_t ObjectMemory::copyAndUnmark(const CompactPass& pass, bool clearMarks) {
 // defined here so the header stays free of <cstdio>.  Fires for every
 // slotAtPut(0, nil) on a context-shaped object, including fast-path writes
 // that bypass ObjectMemory::storePointer.  Enabled by PHARO_SLOT_TRIPWIRE=1.
-bool ObjectHeader::slot_tripwire_enabled() {
-    return GET_DEBUG_BOOL(PHARO_SLOT_TRIPWIRE);
-}
-
 void ObjectHeader::slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oop method) {
     fprintf(stderr, "[SLOT-TRIPWIRE] ctx=0x%llx oldSender=0x%llx method=0x%llx slots=%zu\n",
             (unsigned long long)reinterpret_cast<uintptr_t>(hdr),
             (unsigned long long)oldSender.rawBits(),
             (unsigned long long)method.rawBits(),
             (size_t)hdr->slotCount());
-}
-
-bool ObjectHeader::slot_run_tripwire_enabled() {
-    return GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE);
 }
 
 void ObjectHeader::slot_run_tripwire_fire(const ObjectHeader* hdr, size_t index, Oop value) {

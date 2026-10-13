@@ -393,6 +393,23 @@ endif()
 target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=${_PHARO_JIT_ON})
 message(STATUS "JIT: ${_PHARO_JIT_ON} (native/Catalyst=on, iOS-device=off; -DPHARO_JIT_ENABLED overrides)")
 
+# Diagnostic knobs (src/vm/debug_vars.h).  OFF compiles every plain
+# DEBUG_BOOL knob to constant false -- its default behaviour -- and deletes
+# the trace/check code behind it; DEBUG_BOOL_RT knobs stay runtime switches.
+# Same idea as Cog's assert VM vs production VM.  Measured 2026-10-13: 12-22%
+# faster on send-heavy code.  Default ON only for Debug builds; configure a
+# bug-hunting tree with -DPHARO_DIAG_KNOBS=ON to use the other knobs.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_PHARO_DIAG_KNOBS_DEFAULT ON)
+else()
+    set(_PHARO_DIAG_KNOBS_DEFAULT OFF)
+endif()
+option(PHARO_DIAG_KNOBS "Keep diagnostic DEBUG_BOOL knobs as runtime switches" ${_PHARO_DIAG_KNOBS_DEFAULT})
+if(NOT PHARO_DIAG_KNOBS)
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_FAST_KNOBS=1)
+endif()
+message(STATUS "Diagnostic knobs: ${PHARO_DIAG_KNOBS} (OFF = compiled out; -DPHARO_DIAG_KNOBS=ON keeps them)")
+
 # PHARO_ASM_TRAMPOLINE: use the hand-written ARM64 J2J trampoline instead of
 # the C++ while-loop inside Interpreter::tryJITActivation. Default OFF so
 # baseline behavior is preserved; flip ON for benchmarking and correctness

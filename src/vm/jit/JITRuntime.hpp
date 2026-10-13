@@ -33,6 +33,9 @@ namespace pharo {
 
 class Interpreter;
 class ObjectMemory;
+namespace sista { class Runtime; }
+extern sista::Runtime* sistaRuntimeForGCHook_;   // Interpreter.cpp
+extern bool g_sistaAnySplice;                     // SistaRuntime.cpp
 
 namespace jit {
 
@@ -57,6 +60,15 @@ extern volatile uint64_t g_resolverSetAtStep;
 void noteLitVarStore(uint64_t assocBits, ObjectMemory& memory);
 
 static constexpr size_t CountMapSize = 16384;
+// Home slot of a CompiledMethod oop in the count map.  Fibonacci hashing:
+// `(oop >> 3) & mask` put methods allocated next to each other in adjacent
+// slots, the linear probe then ran past its 8-slot limit inside those
+// clusters, and such a method was never counted -- every send to it took
+// noteMethodEntrySlow's full probe and gave up (2026-10-13).
+inline size_t countMapIndex(uint64_t key) {
+    static_assert(CountMapSize == (size_t(1) << 14), "countMapIndex shift assumes 16384");
+    return static_cast<size_t>(((key >> 3) * 11400714819323198485ULL) >> (64 - 14));
+}
 
 // FSR M0 (docs/frame-state-residency.md): the ONE sanctioned C++ writer
 // of the JM-derived JITState mirror fields.  M4 deletes the per-call
@@ -178,7 +190,36 @@ public:
 
     // Called by the interpreter on each method activation. Increments the
     // execution counter and triggers compilation at the threshold.
-    void noteMethodEntry(Oop compiledMethod);
+    //
+    // Inline fast path: a method whose counter is already PAST the threshold
+    // has had its compile decided (compiled, queued or refused), and the slow
+    // path would only bump the counter.  Do that here.  The slow path still
+    // runs on a miss in the first 4 probe slots, while any Sista splice
+    // exists (it must see splice targets), and once
+    // per 64K entries so the stats line and the code-zone LRU epoch advance.
+    void noteMethodEntry(Oop compiledMethod) {
+        uint64_t key = compiledMethod.rawBits();
+        const size_t n = ++totalEntries_;
+        if (__builtin_expect(countThresholdCache_ != 0
+                && !g_sistaAnySplice
+                && (n & 0xFFFF) != 0, 1)) {
+            // Same linear probe as the slow path, first 4 slots.
+            size_t idx = countMapIndex(key);
+            for (int probe = 0; probe < 4; probe++) {
+                CountEntry& ce = countMap_[(idx + probe) & (CountMapSize - 1)];
+                if (ce.key == key) {
+                    if (__builtin_expect(ce.count > countThresholdCache_, 1)) {
+                        ce.count++;
+                        return;
+                    }
+                    break;
+                }
+                if (ce.key == 0) break;
+            }
+        }
+        noteMethodEntrySlow(compiledMethod);
+    }
+    void noteMethodEntrySlow(Oop compiledMethod);
 
     // OSR-driven recompile (2026-04-30).  When OSR fires for a method that
     // was already T1-compiled but never reached the recompile threshold,
@@ -376,7 +417,9 @@ public:
     }
 
     // Add entry to mega cache (called by interpreter after method lookup)
-    void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex,
+    // Answers false when the entry was refused (a young oop), so the caller
+    // does not stamp its method-cache entry as filled.
+    bool megaCacheAdd(uint64_t selectorBits, uint64_t classIndex,
                       uint64_t methodBits, uint64_t jitEntry = 0) {
         // TENURE GUARD (2026-06-10): the megaCache is NOT a GC root and
         // is only cleared on FULL GC — a scavenge moves young objects
@@ -391,7 +434,7 @@ public:
         // address would false-hit someone else's methodBits.
         if ((methodBits >= youngStart_ && methodBits < youngEnd_)
             || (selectorBits >= youngStart_ && selectorBits < youngEnd_)) {
-            return;
+            return false;
         }
         // Primary probe (matches stencil hash)
         size_t h = static_cast<size_t>(selectorBits ^ classIndex) & (MegaCacheSize - 1);
@@ -410,9 +453,12 @@ public:
         } else if (megaCache_[h2].selectorBits == 0) {
             megaCache_[h2] = {selectorBits, classIndex, methodBits, jitEntry};
         } else {
-            // Both occupied — evict primary
+            // Both occupied — evict primary.  The evicted pair's method-cache
+            // entry is stamped as filled; the epoch bump makes it refill.
             megaCache_[h] = {selectorBits, classIndex, methodBits, jitEntry};
+            ++g_jitStateEpoch;
         }
+        return true;
     }
 
     // FullBlockClosure's classIndex, resolved lazily on first request
@@ -471,6 +517,8 @@ private:
 
     // Execution count tracking for compilation triggering
     CountEntry countMap_[CountMapSize];
+    size_t     totalEntries_ = 0;          // method entries seen (noteMethodEntry)
+    uint32_t   countThresholdCache_ = 0;   // compile threshold, set by the slow path
 
     // Per-JITMethod bcOffset → SimStack entry state. Keyed by JITMethod*
     // (GC-stable). Used by tryResume to reject resume at register-reading

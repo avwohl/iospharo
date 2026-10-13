@@ -15,6 +15,45 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-13, 02:40) -- interpreter send path, ~40% fewer instructions
+
+**Speed work on the interpreter, every change measured by instruction count
+(`/usr/bin/time -l`, deterministic; wall clock swings 10-20% here).**  3M
+printString: 210.8 -> 104.3 billion instructions with the JIT on, 173.4 ->
+~93 with it off.  `bench_ast_phases.st` phases 36-50% faster than this
+morning's binary; cormas analysis 1.6 s -> ~1.1 s; myprecious round trip
+23 -> ~11 ms; deeptraverser `testCollectionStart` 66 s (limit 50 s, Cog 6 s).
+Sweep B (first half of the changes): 2047 classes, 27875 P / 12 F / 3 E in
+45 min, no batch needed a retry; the three new names (RSLinesTest #22 flake,
+SpDemoTest fake-display order, ZnStaticFileServerDelegateTest second-boundary
+timestamp) pass alone on both binaries.  Sweep C (everything) is next.
+
+What changed, biggest first (details: `docs/perf-activation-measurements.md`,
+"The send path, measured by instruction count"):
+
+- Release builds compile diagnostic knobs out (`PHARO_DIAG_KNOBS`, CLAUDE.md);
+  `DIAG_FLAG()` does the same for runtime trace globals in hot paths, and the
+  four per-bytecode trace-flag loads in `DISPATCH_NEXT` are gone (-23% per send).
+- T1 compiles only code with a loop (`PHARO_T1_COMPILE_ALL` restores all):
+  entering emitted code for a small leaf cost more than it saved.
+- Direct dispatch for returns, special-selector sends, Extend A/B, extended
+  jumps and integer/character pushes (they went through `dispatchBytecode`).
+- Per-send JIT bookkeeping: mega-cache refill gated on `jit::g_jitStateEpoch`,
+  inline `noteMethodEntry`, Sista skip memo, method-map presence filter, lazy
+  J2J-slice clearing, `[JIT] Stats` every 16M entries instead of 64K.
+- Plain method returns skip the home-method walk; `classOf`, `specialObject`,
+  `isOld`/`isYoung` inline; no thread_local on the back-jump path.
+- Remembered-set groundwork (`docs/deferred.md`, the old-space-scan item):
+  exact remembered bits, the recent-region mark reset by full GC, barriers on
+  setSpecialObject / become / class-table pages.  The audit now shows zero
+  interpreter-side gaps; the JIT's store emits are what still block trusting
+  the set.  Perm space is empty (it always was; scans no longer walk 8 MB).
+
+New finding, not fixed: a process switch materializes the whole stack, so a
+long-running method that is ever preempted finishes in "context mode" (frame
+depth 0: temps mirrored into the Context, pc stored on every send).  Cog's
+married contexts avoid this; it is the next structural lever after the JIT.
+
 ## Right now (2026-10-12, 23:50) -- stopped for a reboot
 
 **Tree clean, everything pushed (`8b71c753`).  No sweep or package run is in

@@ -1007,7 +1007,8 @@ int main(int argc, char* argv[]) {
         // hang at high priority and block the eval from completing).
         // Coupled to our runner-script's marker convention; harmless on
         // images without it.  2026-05-09 A3 fix.
-        if (FILE* f = std::fopen("/tmp/sunit_run_completed.txt", "w")) {
+        if (FILE* f = GET_DEBUG_BOOL(PHARO_EVAL_NO_SUNIT_MARKER) ? nullptr
+                      : std::fopen("/tmp/sunit_run_completed.txt", "w")) {
             std::fprintf(f, "eval-mode marker — set by test_load_image to skip SUnitRunner auto-restart\n");
             std::fclose(f);
         }

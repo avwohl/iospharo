@@ -160,6 +160,11 @@ extern "C" uint64_t g_sistaShortcut_evenOdd_hits;
 // bytecode / build — IS the reverse-exec data: dump the whole timeline at the
 // first corrupt build and read backward to the first moment fp1 becomes a
 // (heap) tuple instead of the from.model immediate.  Gated on FINDNODE_WATCH.
+// A runtime trace flag that only diagnostic knobs ever set.  In a fast build
+// (PHARO_DIAG_KNOB_LIVE false) the test folds away, so hot paths stop loading
+// these globals at all.
+#define DIAG_FLAG(x) (PHARO_DIAG_KNOB_LIVE && __builtin_expect(!!(x), 0))
+
 namespace {
 bool     g_fpushArm = false;   // cascade-#3 residual: frame push/pop tape armed
 int      g_fpushN = 0;         //   at the first widthOf: tryResume; capped
@@ -786,6 +791,16 @@ static constexpr uint8_t kSistaGateAdmitted    = 0;
 static constexpr uint8_t kSistaGateRejected    = 1;
 static constexpr uint8_t kSistaGateBlacklisted = 2;
 
+// Direct-mapped memo of methods the activation hook has decided to skip
+// (negative fn cache, or gate Rejected / Blacklisted / Admitted), so a warm
+// method pays one compare instead of two unordered_map probes per
+// activation (~5% of a send-bound run, 2026-10-13).  Trusted only while
+// `epoch` equals g_sistaEpoch.  A stale hit only skips Sista for one
+// activation -- the method then runs in T1 or the interpreter, which is
+// always correct -- so the memo can never change a result.
+struct SistaSkipMemo { uint64_t method; uint32_t epoch; };
+static SistaSkipMemo sistaSkipMemo_[4096];
+
 // Per-method consecutive-bail counter.  When a method ExitSends 8
 // times in a row without a single ExitReturn, mark it ineligible
 // so we stop paying the dispatch overhead on it.  Any subsequent
@@ -835,6 +850,7 @@ void Interpreter::recoverSistaAfterGC() {
         sistaRuntimeForGCHook_->reset();
     }
     sistaGateCache_.clear();
+    ++g_sistaEpoch;
     sistaBailCounter_.clear();
     for (size_t i = 0; i < kSistaRingSize; i++) sistaRing_[i] = {};
     // interpHints_ holds RAW oop bits (method keys AND targetMethod values)
@@ -930,7 +946,12 @@ Interpreter::Interpreter(ObjectMemory& memory)
         entry.method = Oop::nil();
         entry.primitive = nullptr;
         entry.primitiveIndex = 0;
+        entry.megaEpoch = 0;
     }
+#if PHARO_JIT_ENABLED
+    clearJ2JSlice(0, MaxJ2JPoolSize);
+    j2jPoolDirtyHW_ = 0;
+#endif
 
     initializePrimitives();
 
@@ -3906,6 +3927,26 @@ void Interpreter::interpret() {
         for (int i = 0xD0; i <= 0xD7; i++) dispatchTable[i] = &&op_popStoreTemp;
         dispatchTable[0xD8] = &&op_pop;
         dispatchTable[0x76] = &&op_identityEq;   // spec== (2.4M total)
+        // Method returns and the commonSend special selectors used to take
+        // op_slow -> dispatchBytecode (an out-of-line call and a second
+        // switch) on every execution; every method ends in a return.
+        dispatchTable[jit::SistaV1::ReturnReceiver] = &&op_returnReceiver;
+        dispatchTable[jit::SistaV1::ReturnTrue]     = &&op_returnTrue;
+        dispatchTable[jit::SistaV1::ReturnFalse]    = &&op_returnFalse;
+        dispatchTable[jit::SistaV1::ReturnNil]      = &&op_returnNil;
+        dispatchTable[jit::SistaV1::ReturnTop]      = &&op_returnTop;
+        for (int i = 0x70; i <= 0x7F; i++)
+            if (i != 0x76 && i != 0x79 && i != 0x7A)
+                dispatchTable[i] = &&op_specialSend;
+        // Extension prefixes, extended jumps (every loop's back-jump is an
+        // ExtJump after an ExtendB) and small-integer / character pushes.
+        dispatchTable[jit::SistaV1::ExtendA]       = &&op_extendA;
+        dispatchTable[jit::SistaV1::ExtendB]       = &&op_extendB;
+        dispatchTable[jit::SistaV1::ExtJump]       = &&op_extJump;
+        dispatchTable[jit::SistaV1::ExtJumpTrue]   = &&op_extJumpTrue;
+        dispatchTable[jit::SistaV1::ExtJumpFalse]  = &&op_extJumpFalse;
+        dispatchTable[jit::SistaV1::PushInteger]   = &&op_pushInteger;
+        dispatchTable[jit::SistaV1::PushCharacter] = &&op_pushCharacter;
         tableInit = true;
     }
 
@@ -4009,13 +4050,18 @@ void Interpreter::interpret() {
         if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
         DISPATCH_NEXT_HOT_PATH_DIAG \
         bytecode = *instructionPointer_++; \
-        if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) \
+        /* Per-bytecode traces: all set only from diagnostic knobs, so a \
+         * fast build (PHARO_DIAG_KNOB_LIVE false) drops the four flag \
+         * loads from every dispatch. */ \
+        if (PHARO_DIAG_KNOB_LIVE) { \
+        if (DIAG_FLAG(g_atRecOn) && g_atOop && method_.rawBits() == g_atOop) \
             atRec(0, bytecode, (int)(instructionPointer_ - 1 - g_atBcBase), \
                   framePointer_ ? framePointer_[1].rawBits() : 0, \
                   framePointer_ ? framePointer_[2].rawBits() : 0); \
-        if (__builtin_expect(g_traceExtentActive, 0)) traceExtentBytecode(bytecode); \
-        if (__builtin_expect(g_doOn, 0)) depthOracleCheck(); \
-        if (__builtin_expect(g_ipRingOn, 0)) ipRingStep(bytecode); \
+        if (DIAG_FLAG(g_traceExtentActive)) traceExtentBytecode(bytecode); \
+        if (DIAG_FLAG(g_doOn)) depthOracleCheck(); \
+        if (DIAG_FLAG(g_ipRingOn)) ipRingStep(bytecode); \
+        } \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
             recentBytecodeIdx_++; \
@@ -4048,7 +4094,7 @@ void Interpreter::interpret() {
         if (!running_) { goto cg_exit; }
     }
     bytecode = *instructionPointer_++;
-    if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop)
+    if (DIAG_FLAG(g_atRecOn) && g_atOop && method_.rawBits() == g_atOop)
         atRec(0, bytecode, (int)(instructionPointer_ - 1 - g_atBcBase),
               framePointer_ ? framePointer_[1].rawBits() : 0,
               framePointer_ ? framePointer_[2].rawBits() : 0);
@@ -4375,6 +4421,128 @@ void Interpreter::interpret() {
     op_pop:
         pop();
         DISPATCH_NEXT();
+
+    // Same work as dispatchBytecode's cases for these opcodes.
+    op_returnReceiver:
+        push(receiver_);
+        returnFromMethod();
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    op_returnTrue:
+        push(memory_.trueObject());
+        returnFromMethod();
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    op_returnFalse:
+        push(memory_.falseObject());
+        returnFromMethod();
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    op_returnNil:
+        push(memory_.nil());
+        returnFromMethod();
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    op_returnTop:
+        returnFromMethod();
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    op_specialSend:
+        commonSend(bytecode - 0x70);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+
+    // Copies of the dispatchBytecode cases for these opcodes.  The prefixes
+    // set inExtension_ so the periodic checks in the next DISPATCH_NEXT do
+    // not switch process between a prefix and the bytecode it extends.
+    op_extendA: {
+        uint8_t extByte = fetchByte();
+        extA_ = (extA_ << 8) | extByte;
+        inExtension_ = true;
+        DISPATCH_NEXT();
+    }
+    op_extendB: {
+        uint8_t extByte = fetchByte();
+        if (extByte >= 128)
+            extB_ = (extB_ << 8) | extByte | 0xFFFFFF00;
+        else
+            extB_ = (extB_ << 8) | extByte;
+        inExtension_ = true;
+        DISPATCH_NEXT();
+    }
+    op_extJump: {
+        uint8_t offsetByte = fetchByte();
+        int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extB_ = 0;
+        instructionPointer_ += offset;
+        if (offset < 0) {
+#if PHARO_JIT_ENABLED
+            tryOSRAtBackwardJump();
+            tryPerBcSistaAtBackwardJump();
+#endif
+            backwardBranchInterruptCheck();
+        }
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+    op_extJumpTrue: {
+        uint8_t offsetByte = fetchByte();
+        int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extA_ = 0;
+        extB_ = 0;
+        Oop value = pop();
+        if (isTrue(value)) {
+            instructionPointer_ += offset;
+            if (offset < 0) {
+#if PHARO_JIT_ENABLED
+                tryOSRAtBackwardJump();
+                tryPerBcSistaAtBackwardJump();
+#endif
+                backwardBranchInterruptCheck();
+            }
+        } else if (!isFalse(value)) {
+            push(value);
+            sendMustBeBoolean(value);
+        }
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+    op_extJumpFalse: {
+        uint8_t offsetByte = fetchByte();
+        int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extA_ = 0;
+        extB_ = 0;
+        Oop value = pop();
+        if (isFalse(value)) {
+            instructionPointer_ += offset;
+            if (offset < 0) {
+#if PHARO_JIT_ENABLED
+                tryOSRAtBackwardJump();
+                tryPerBcSistaAtBackwardJump();
+#endif
+                backwardBranchInterruptCheck();
+            }
+        } else if (!isTrue(value)) {
+            push(value);
+            sendMustBeBoolean(value);
+        }
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+    op_pushInteger: {
+        uint8_t intByte = fetchByte();
+        int value = intByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extB_ = 0;
+        push(Oop::fromSmallInteger(value));
+        DISPATCH_NEXT();
+    }
+    op_pushCharacter: {
+        uint8_t charByte = fetchByte();
+        int codePoint = charByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extB_ = 0;
+        push(Oop::fromCharacter(codePoint));
+        DISPATCH_NEXT();
+    }
 
     // --- Arithmetic sends: inline SmallInteger fast paths ---
     op_arith: {
@@ -4899,7 +5067,7 @@ void Interpreter::interpret() {
             inExtension_ = false;
             checkCountdown_ = 1;
             bytecode = *instructionPointer_++;
-            if (__builtin_expect(g_doOn, 0)) depthOracleCheck();
+            if (DIAG_FLAG(g_doOn)) depthOracleCheck();
             if constexpr (ENABLE_DEBUG_LOGGING) {
                 recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
                 recentBytecodeIdx_++;
@@ -5272,7 +5440,7 @@ void Interpreter::interpret() {
         // Resume dispatch after checks
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         bytecode = *instructionPointer_++;
-        if (__builtin_expect(g_doOn, 0)) depthOracleCheck();
+        if (DIAG_FLAG(g_doOn)) depthOracleCheck();
         if constexpr (ENABLE_DEBUG_LOGGING) {
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
             recentBytecodeIdx_++;
@@ -7747,7 +7915,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         push(array);
         // REVERSE-EXEC TAPE: record asTuple build (element-0) + dump whole tape
         // at the 1st corrupt build (element-0 = heap tuple).
-        if (__builtin_expect(g_atRecOn, 0) && arraySize == 3 && popIntoArray
+        if (DIAG_FLAG(g_atRecOn) && arraySize == 3 && popIntoArray
                 && method_.isObject() && memory_.selectorOf(method_) == "asTuple") {
             if (g_atOop == 0) {
                 g_atOop = method_.rawBits();
@@ -8392,7 +8560,7 @@ void Interpreter::pushSpecial(int which) {
     }
 }
 
-bool g_retValArmed = true;
+bool g_retValArmed = false;  // [RV] return-value trace (x86 diagnosis, bd7ed1bc); was armed by default and printed 400 lines per run
 int  g_retValN = 0;
 void Interpreter::returnValue(Oop value) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
@@ -8414,7 +8582,7 @@ void Interpreter::returnValue(Oop value) {
             }
         }
     }
-    if (__builtin_expect(g_retValArmed, 0) && g_retValN < 400
+    if (DIAG_FLAG(g_retValArmed) && g_retValN < 400
             && method_.isObject() && method_.rawBits() > 0x10000
             && receiver_.isObject() && receiver_.rawBits() > 0x10000
             && [&]{ std::string c = memory_.classNameOf(receiver_);
@@ -8925,7 +9093,7 @@ void Interpreter::returnValue(Oop value) {
                         if (pastValue > stackPointer_) {
                             stackPointer_ = pastValue;
                         }
-                        if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+                        if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
                             doRec("RET-INTO", sender.rawBits(), origSp,
                                   (int)(stackPointer_ - framePointer_ - 1),
                                   (int)(instructionPointer_ - g_doBase), g_stepNum);
@@ -9359,7 +9527,7 @@ void Interpreter::returnFromMethod() {
     // kFpushCap was declared but never tested, so the "capped" tape at
     // Interpreter.cpp:165 was in fact unbounded: once a widthOf: send arms
     // g_fpushArm, every block ^-return traced forever.  Enforce it.
-    if (__builtin_expect(g_fpushArm, 0)
+    if (DIAG_FLAG(g_fpushArm)
             && g_fpushN < kFpushCap
             && method_.isObject() && method_.rawBits() > 0x10000
             && method_.asObjectPtr()->classIndex()
@@ -9428,6 +9596,20 @@ void Interpreter::returnFromMethod() {
                         frameDepth_, corrupt ? " *** CORRUPT ***" : "");
             }
         }
+    }
+
+    // Plain method return: a CompiledMethod activation (not a block, so no
+    // home to find) whose frame carries no paused-NLR marker.  Everything
+    // below reduces to returnValue(value) for it -- the last-literal walks
+    // find no enclosing code, and the closure_ fallback needs a closure whose
+    // compiledBlock IS method_, which a CompiledMethod never is -- so skip
+    // them; they were ~4% of a send-bound run.
+    if (__builtin_expect(frameDepth_ > 0
+            && savedFrames_[frameDepth_ - 1].homeFrameDepth == SIZE_MAX
+            && method_.isObject()
+            && method_.asObjectPtr()->classIndex() == compiledMethodClassIndex_, 1)) {
+        returnValue(value);
+        return;
     }
 
     // Check if we're executing inside a block (CompiledBlock).
@@ -11052,7 +11234,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         checkIpCoherence("sendSelector");
     // Send-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): address-independent
     // "selector<TAB>receiverClass" stream; diff failing vs passing runs.
-    if (__builtin_expect(g_traceSendsActive, 0)) {
+    if (DIAG_FLAG(g_traceSendsActive)) {
         static FILE* tf = fopen("C:/tmp/sendtrace.txt", "w");
         if (tf) {
             Oop rcvr = stackValue(argCount);
@@ -11778,57 +11960,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Selector sanity check: must be a bytes object (Symbol/ByteString)
-    if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (__builtin_expect(!selHdr->isBytesObject(), 0)) {
-            static int badSelCount = 0;
-            if (badSelCount++ < 10) {
-                // Decode the send bytecode to find the literal index
-                uint8_t bc = instructionPointer_ ? *instructionPointer_ : 0;
-                int litIdx = -1;
-                if (bc >= 0x80 && bc <= 0x8F) litIdx = bc & 0xF; // send short
-                else if (bc >= 0x90 && bc <= 0x9F) litIdx = bc & 0xF;
-                else if (bc >= 0xA0 && bc <= 0xAF) litIdx = bc & 0xF;
-                else if (bc == 0xEA || bc == 0xEB) {
-                    uint8_t ext = instructionPointer_ ? instructionPointer_[1] : 0;
-                    litIdx = ext & 0x1F;
-                }
-                fprintf(stderr, "[SEL-CORRUPT #%d] selector fmt=%d cls=%u slots=%zu raw=0x%llx "
-                        "bc=0x%02X litIdx=%d method=0x%llx (#%s) fd=%zu\n",
-                        badSelCount, (int)selHdr->format(), selHdr->classIndex(),
-                        selHdr->slotCount(), (unsigned long long)selector.rawBits(),
-                        bc, litIdx, (unsigned long long)method_.rawBits(),
-                        memory_.selectorOf(method_).c_str(), frameDepth_);
-                // Dump the first 10 literals of the method
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mH = method_.asObjectPtr();
-                    Oop hdr = mH->slots()[0];
-                    int nLit = hdr.isSmallInteger() ? ((int)hdr.asSmallInteger() & 0x7FFF) : 0;
-                    fprintf(stderr, "[SEL-CORRUPT]   %d literals:", nLit);
-                    for (int i = 0; i < nLit && i < 15; i++) {
-                        Oop lit = mH->slots()[1 + i];
-                        ObjectHeader* lH = lit.isObject() && lit.rawBits() > 0x10000
-                            ? lit.asObjectPtr() : nullptr;
-                        if (lH && lH->isBytesObject() && lH->byteSize() < 64)
-                            fprintf(stderr, " [%d]='%.*s'", i,
-                                    (int)lH->byteSize(), (const char*)lH->bytes());
-                        else
-                            fprintf(stderr, " [%d]=0x%llx", i,
-                                    (unsigned long long)lit.rawBits());
-                    }
-                    fprintf(stderr, "\n");
-                }
-#if PHARO_JIT_ENABLED
-                // Check if we just came from JIT
-                fprintf(stderr, "[SEL-CORRUPT]   IP=0x%llx method bytes=%p\n",
-                        (unsigned long long)(uintptr_t)instructionPointer_,
-                        method_.isObject() ? (void*)method_.asObjectPtr()->bytes() : nullptr);
-#endif
-            }
-        }
-    }
-
     // Corruption check (cold path)
     if (__builtin_expect(rcvr.rawBits() == 0, 0)) {
         std::string selName = "(unknown)";
@@ -11924,8 +12055,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Count ALL sends for JIT compilation, not just activateMethod calls
         jitRuntime_.noteMethodEntry(cached->method);
 
-        // Populate megamorphic cache for JIT stencil probes
-        {
+        // Populate megamorphic cache for JIT stencil probes -- only when
+        // the JIT state changed since this entry last did it (see
+        // jit::g_jitStateEpoch); the refill is a method-map probe and a
+        // write into a 2 MB table, ~7% of a send-bound run.
+        if (__builtin_expect(cached->megaEpoch != jit::g_jitStateEpoch, 0)) {
+            const uint32_t epochAtFill = jit::g_jitStateEpoch;
             uint64_t tag = rcvr.rawBits() & 0x7;
             uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
                 ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
@@ -11940,8 +12075,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     if (!hasPrim || jm->hasPrimPrologue)
                         jitAddr = reinterpret_cast<uint64_t>(jm->codeStart());
                 }
-                jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey,
-                                        cached->method.rawBits(), jitAddr);
+                if (jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey,
+                                        cached->method.rawBits(), jitAddr))
+                    cached->megaEpoch = epochAtFill;
             }
         }
 #endif
@@ -12175,6 +12311,60 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
         activateMethod(cached->method, argCount);
         return;
+    }
+
+    // Selector sanity check: must be a bytes object (Symbol/ByteString).
+    // On the miss path only: a method-cache hit means this selector was
+    // already checked when its entry was made, and reading the Symbol's
+    // header on every send was a load the hit path does not otherwise need.
+    if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (__builtin_expect(!selHdr->isBytesObject(), 0)) {
+            static int badSelCount = 0;
+            if (badSelCount++ < 10) {
+                // Decode the send bytecode to find the literal index
+                uint8_t bc = instructionPointer_ ? *instructionPointer_ : 0;
+                int litIdx = -1;
+                if (bc >= 0x80 && bc <= 0x8F) litIdx = bc & 0xF; // send short
+                else if (bc >= 0x90 && bc <= 0x9F) litIdx = bc & 0xF;
+                else if (bc >= 0xA0 && bc <= 0xAF) litIdx = bc & 0xF;
+                else if (bc == 0xEA || bc == 0xEB) {
+                    uint8_t ext = instructionPointer_ ? instructionPointer_[1] : 0;
+                    litIdx = ext & 0x1F;
+                }
+                fprintf(stderr, "[SEL-CORRUPT #%d] selector fmt=%d cls=%u slots=%zu raw=0x%llx "
+                        "bc=0x%02X litIdx=%d method=0x%llx (#%s) fd=%zu\n",
+                        badSelCount, (int)selHdr->format(), selHdr->classIndex(),
+                        selHdr->slotCount(), (unsigned long long)selector.rawBits(),
+                        bc, litIdx, (unsigned long long)method_.rawBits(),
+                        memory_.selectorOf(method_).c_str(), frameDepth_);
+                // Dump the first 10 literals of the method
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mH = method_.asObjectPtr();
+                    Oop hdr = mH->slots()[0];
+                    int nLit = hdr.isSmallInteger() ? ((int)hdr.asSmallInteger() & 0x7FFF) : 0;
+                    fprintf(stderr, "[SEL-CORRUPT]   %d literals:", nLit);
+                    for (int i = 0; i < nLit && i < 15; i++) {
+                        Oop lit = mH->slots()[1 + i];
+                        ObjectHeader* lH = lit.isObject() && lit.rawBits() > 0x10000
+                            ? lit.asObjectPtr() : nullptr;
+                        if (lH && lH->isBytesObject() && lH->byteSize() < 64)
+                            fprintf(stderr, " [%d]='%.*s'", i,
+                                    (int)lH->byteSize(), (const char*)lH->bytes());
+                        else
+                            fprintf(stderr, " [%d]=0x%llx", i,
+                                    (unsigned long long)lit.rawBits());
+                    }
+                    fprintf(stderr, "\n");
+                }
+#if PHARO_JIT_ENABLED
+                // Check if we just came from JIT
+                fprintf(stderr, "[SEL-CORRUPT]   IP=0x%llx method bytes=%p\n",
+                        (unsigned long long)(uintptr_t)instructionPointer_,
+                        method_.isObject() ? (void*)method_.asObjectPtr()->bytes() : nullptr);
+#endif
+            }
+        }
     }
 
     // === FULL LOOKUP ===
@@ -13053,6 +13243,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.returnsSelf = trivial.returnsSelf;
         e1.evenOddKind = trivial.evenOddKind;
         e1.returnsLiteralKind = static_cast<int8_t>(trivial.returnsLiteral);
+        e1.megaEpoch = 0;
         return;
     }
 
@@ -13069,6 +13260,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.returnsSelf = trivial.returnsSelf;
     e2.evenOddKind = trivial.evenOddKind;
     e2.returnsLiteralKind = static_cast<int8_t>(trivial.returnsLiteral);
+    e2.megaEpoch = 0;
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
@@ -13241,7 +13433,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Activation-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): every real
     // activation, uniform regardless of send-path caching — diffable across
     // runs to find the first semantic divergence.
-    if (__builtin_expect(g_traceSendsActive, 0)) {
+    if (DIAG_FLAG(g_traceSendsActive)) {
         static FILE* tf = fopen("C:/tmp/acttrace.txt", "w");
         if (tf) {
             Oop rcvr = stackValue(argCount);
@@ -13688,7 +13880,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // method whose selector matches the knob. The extent (this method + every
     // method it calls) is then traced per-bytecode in DISPATCH_NEXT until
     // frameDepth_ falls back below the entry depth.
-    if (__builtin_expect(g_doOn, 0)) armDepthOracle(method);
+    if (DIAG_FLAG(g_doOn)) armDepthOracle(method);
     if (__builtin_expect(g_traceExtentSel != nullptr && !g_traceExtentActive, 0)
             && method.isObject() && method.rawBits() > 0x10000
             && memory_.selectorOf(method) == g_traceExtentSel) {
@@ -13923,7 +14115,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Set instruction pointer to start of bytecodes
     ObjectHeader* methodObj = method_.asObjectPtr();
 
-    Oop methodHeader = memory_.fetchPointer(0, method_);
+    // pushFrame already validated method_ as a CompiledMethod with a
+    // SmallInteger header; read slot 0 directly (fetchPointer re-ran the
+    // whole heap-bounds validity test on every activation).
+    Oop methodHeader = methodObj->slotAt(0);
     if (__builtin_expect(!methodHeader.isSmallInteger(), 0)) {
         // Method header must be a SmallInteger. If it's not, the method object
         // is corrupted (possibly by GC or by activating a non-method object).
@@ -14036,7 +14231,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // method hundreds of thousands of times.  Pairs with the
         // invalidateIfHintless fix in SistaRuntime.hpp that keeps
         // the negative-cache entry stable across IC patches.
+        SistaSkipMemo& skipMemo =
+            sistaSkipMemo_[(method.rawBits() >> 3) & 4095];
+        if (skipMemo.method == method.rawBits()
+                && skipMemo.epoch == g_sistaEpoch) {
+            goto past_sista_block;
+        }
         if (sista->wasCachedAsFail(method)) {
+            skipMemo = {method.rawBits(), g_sistaEpoch};
             goto past_sista_block;
         }
         // Hot-path early-reject: if the gate cache has already
@@ -14065,6 +14267,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // Skipping admitted methods kills that recompile churn (~30% of
                 // the compiler profile).  PHARO_SISTA_RECOMPILE_ADMITTED=1
                 // restores the old per-entry-recompile behavior for A/B.
+                skipMemo = {method.rawBits(), g_sistaEpoch};
                 goto past_sista_block;
             }
         }
@@ -15928,7 +16131,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
-    if (__builtin_expect(g_doOn, 0) && frame.savedMethod.rawBits() == g_doMethod)
+    if (DIAG_FLAG(g_doOn) && frame.savedMethod.rawBits() == g_doMethod)
         doRec("PUSH", frame.savedActiveContext.rawBits(),
               (int)(frame.savedFP ? (stackPointer_ - frame.savedFP - 1) : -1),
               argCount, (int)(frame.savedIP - g_doBase), g_stepNum);
@@ -15957,12 +16160,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000, 0)) {
         ObjectHeader* mObj = frame.savedMethod.asObjectPtr();
         uint8_t* mBytes = mObj->bytes();
-        if (frame.savedIP >= mBytes && frame.savedIP < mBytes + mObj->byteSize()) {
+        // savedBytecodeEnd IS mBytes + byteSize() (activateMethod sets
+        // bytecodeEnd_ that way); byteSize() decoded the header each send.
+        if (frame.savedIP >= mBytes && frame.savedIP < frame.savedBytecodeEnd) {
             int64_t pc = static_cast<int64_t>(frame.savedIP - mBytes) + 1;
             if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
                 checkPcBoundary("pushFrame-fd1", frame.savedMethod, frame.savedIP,
                                 frame.pushSite);
-            memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
+            // A SmallInteger into a known Context: the inline store, not
+            // the out-of-line storePointer, on every send at depth 0.
+            memory_.storePointerUnchecked(1, activeContext_, Oop::fromSmallInteger(pc));
         }
     }
 
@@ -16151,7 +16358,7 @@ bool Interpreter::popFrame() {
     checkSortstrWatch("popFrame", frameDepth_);
     // Disarm temp 0 watcher when sortStructs:into: itself returns —
     // the slot becomes invalid once the frame is gone.
-    if (__builtin_expect(pharo::g_sortstrWatchT0Active, 0)
+    if (DIAG_FLAG(pharo::g_sortstrWatchT0Active)
             && frameDepth_ == pharo::g_sortstrWatchT0FD
             && method_.isObject()) {
         std::string sel = memory_.selectorOf(method_);
@@ -16423,7 +16630,7 @@ bool Interpreter::popFrame() {
         checkIpCoherence(lbl, true);
     }
 
-    if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+    if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
         doRec("POP", activeContext_.rawBits(),
               (int)(stackPointer_ - framePointer_ - 1), (int)frameDepth_,
               (int)(instructionPointer_ - g_doBase), g_stepNum);
@@ -16478,7 +16685,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     (void)state;
 
     // Disarm temp 0 watcher if this is sortStructs:into: popping.
-    if (__builtin_expect(pharo::g_sortstrWatchT0Active, 0)
+    if (DIAG_FLAG(pharo::g_sortstrWatchT0Active)
             && frameDepth_ == pharo::g_sortstrWatchT0FD
             && method_.isObject()) {
         std::string sel = memory_.selectorOf(method_);
@@ -16673,7 +16880,8 @@ void Interpreter::setTemporary(int index, Oop value) {
     if (frameDepth_ == 0 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
         if (static_cast<size_t>(6 + index) < ctxHdr->slotCount()) {
-            memory_.storePointer(6 + index, activeContext_, value);
+            // Inline store (bounds checked just above; still barriered).
+            memory_.storePointerUnchecked(6 + index, activeContext_, value);
             raiseContextStackpTo(activeContext_, index + 1);
         }
     }
@@ -20426,7 +20634,7 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
-    if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+    if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
         doRec("MATFS-IN", activeContext_.rawBits(), (int)frameDepth_,
               framePointer_ ? (int)(stackPointer_ - framePointer_ - 1) : -1,
               (int)(instructionPointer_ - g_doBase), g_stepNum);
@@ -20585,7 +20793,7 @@ Oop Interpreter::materializeFrameStack() {
             // the new top, so no stale pointer survives where the GC no longer
             // traces (and therefore no longer updates after a compaction).
             storeContextStackp(activeContext_, numItems);
-            if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+            if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
                 doRec("SAVE-FD0", activeContext_.rawBits(), numItems, -1,
                       (int)(pc - 1), g_stepNum);
 
@@ -20773,7 +20981,7 @@ Oop Interpreter::materializeFrameStack() {
             // That matters now that pointerSlotsOf stops at stackp: residue
             // here is neither traced NOR relocated by a compaction.
             storeContextStackp(activeContext_, savedCount);
-            if (__builtin_expect(g_doOn, 0) && frame0.savedMethod.rawBits() == g_doMethod)
+            if (DIAG_FLAG(g_doOn) && frame0.savedMethod.rawBits() == g_doMethod)
                 doRec("SAVE-F0", activeContext_.rawBits(), savedCount, numTemps,
                       (int)(frame0.savedIP - g_doBase), g_stepNum);
             if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
@@ -21037,7 +21245,7 @@ Oop Interpreter::materializeFrameStack() {
         // Set stackp to actual number of items saved, clearing anything a
         // deeper earlier sync of this same (reused) context left above it.
         storeContextStackp(context, savedCount);
-        if (__builtin_expect(g_doOn, 0) && frame.savedMethod.rawBits() == g_doMethod)
+        if (DIAG_FLAG(g_doOn) && frame.savedMethod.rawBits() == g_doMethod)
             doRec("SAVE-FRM", context.rawBits(), savedCount, numTemps, ipOffset,
                   g_stepNum);
         // DIAG: pair with [MAT-RESTORE] to see save/restore depth diverge.
@@ -21160,7 +21368,7 @@ Oop Interpreter::materializeFrameStack() {
                 // Set stackp to actual number of items saved, clearing anything
                 // a deeper earlier sync of this reused context left above it.
                 storeContextStackp(context, savedCount);
-                if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+                if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
                     doRec("SAVE-CUR", context.rawBits(), savedCount, numTemps,
                           ipOffset, g_stepNum);
                 if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
@@ -21172,7 +21380,7 @@ Oop Interpreter::materializeFrameStack() {
                 }
 
                 // REVERSE-EXEC TAPE: record asTuple save (fp1 = operand-0 captured).
-                if (__builtin_expect(g_atRecOn, 0) && g_atOop != 0
+                if (DIAG_FLAG(g_atRecOn) && g_atOop != 0
                         && method_.isObject() && method_.rawBits() == g_atOop) {
                     int ipOff = (instructionPointer_ >= methodHdr->bytes())
                         ? (int)(instructionPointer_ - g_atBcBase) : -1;
@@ -21239,7 +21447,7 @@ Oop Interpreter::materializeFrameStack() {
 
 void Interpreter::transferTo(Oop newProcess) {
     processSwitchCount_++;
-    if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+    if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
         doRec("XFER", activeContext_.rawBits(), (int)frameDepth_,
               framePointer_ ? (int)(stackPointer_ - framePointer_ - 1) : -1,
               (int)(instructionPointer_ - g_doBase), g_stepNum);
@@ -22974,7 +23182,7 @@ bool Interpreter::executeFromContext(Oop context) {
                         (unsigned long long)context.rawBits(), rs.c_str(), (long long)stackp, numTemps, numSaved,
                         numSaved - numTemps);
         }
-        if (__builtin_expect(g_doOn, 0)) {
+        if (DIAG_FLAG(g_doOn)) {
             armDepthOracle(method_);
             if (method_.rawBits() == g_doMethod)
                 doRec("RESTORE", context.rawBits(), stackp, numTemps,
@@ -22990,7 +23198,7 @@ bool Interpreter::executeFromContext(Oop context) {
             push(memory_.nil());
         }
         // REVERSE-EXEC TAPE: record asTuple resume (op0 = restored element-0).
-        if (__builtin_expect(g_atRecOn, 0) && method_.isObject()) {
+        if (DIAG_FLAG(g_atRecOn) && method_.isObject()) {
             if (g_atOop == 0 && memory_.selectorOf(method_) == "asTuple") {
                 g_atOop = method_.rawBits();
                 ObjectHeader* mo = method_.asObjectPtr();
@@ -23762,9 +23970,14 @@ void Interpreter::raiseContextStackpTo(Oop context, int slots) {
     // (docs/aws-closeout-2026-08-11.md section 1).  PHARO_NO_CTX_STACKP_RAISE=1
     // takes it out of the picture.
     if (GET_DEBUG_BOOL(PHARO_NO_CTX_STACKP_RAISE)) return;
-    Oop sp = memory_.fetchPointer(2, context);
+    // Direct slot access: callers pass a live Context (more than 3 slots) and
+    // the value is a SmallInteger, so neither the validity test of
+    // fetchPointer nor the barrier of storePointer applies.  Runs on every
+    // temp store at frame depth 0.
+    ObjectHeader* h = context.asObjectPtr();
+    Oop sp = h->slotAt(2);
     if (!sp.isSmallInteger() || sp.asSmallInteger() < slots)
-        memory_.storePointer(2, context, Oop::fromSmallInteger(slots));
+        h->slotAtPut(2, Oop::fromSmallInteger(slots));
 }
 
 void Interpreter::storeContextStackp(Oop context, int stackp) {
@@ -24958,9 +25171,11 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     // backward jumps to amortize the hook's per-call overhead.
     // Without sampling, tinyBenchmarks-style microbenchmarks regress
     // 5× from the per-call hash lookup + counter bump alone.
-    static thread_local uint32_t perBcCountdown = 0;
-    if (perBcCountdown-- > 0) return;
-    perBcCountdown = 64;
+    // A member, not a static thread_local: on Darwin every thread_local
+    // access is a call to _tlv_get_addr, and this runs on every backward
+    // jump.  Smalltalk executes on one interpreter thread.
+    if (perBcSistaCountdown_-- > 0) return;
+    perBcSistaCountdown_ = 64;
 
     if (!sistaRuntimeForGCHook_) return;
     if (!method_.isObject() || method_.rawBits() < 0x10000) return;
@@ -25099,7 +25314,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // by the bail (matches kSendUnspeculated lowering).  Anomalous
         // deltas point to a buggy bail path.
         Oop* spBefore = stackPointer_;  // = sstate.sp at entry (set above)
-        if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+        if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
             doRec("SISTA-IN", activeContext_.rawBits(), (int)bcOff,
                   (int)(stackPointer_ - framePointer_ - 1), (int)frameDepth_,
                   g_stepNum);
@@ -25270,7 +25485,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
             checkIpCoherence("perBcSista-out", true);
 
-        if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+        if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
             doRec("SISTA-OUT", activeContext_.rawBits(),
                   (int)(instructionPointer_ - g_doBase),
                   (int)(stackPointer_ - framePointer_ - 1),
@@ -25299,7 +25514,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                         (unsigned long long)method_.rawBits());
                 }
             }
-            if (__builtin_expect(g_retValArmed, 0) && g_retValN < 400
+            if (DIAG_FLAG(g_retValArmed) && g_retValN < 400
                     && method_.isObject() && method_.rawBits() > 0x10000
                     && receiver_.isObject() && receiver_.rawBits() > 0x10000
                     && [&]{ std::string c = memory_.classNameOf(receiver_);
@@ -25570,15 +25785,17 @@ void Interpreter::tryJITResumeInCaller() {
     if (resumeInternalJ2J) {
         j2jPoolCursor_ += kResumeSliceSlots;
         // forEachRoot visits receiver/cachedTarget of every slot below
-        // the cursor; j2jPool_ is an uninitialized member, so a fresh
-        // session's slice slots hold indeterminate memory (and reused
-        // slots hold stale oops from released chains).
-        clearJ2JSlice(resumeSliceBase, resumeSliceBase + kResumeSliceSlots);
+        // the cursor; reused slots hold stale oops from released chains.
+        reserveJ2JSlice(resumeSliceBase, resumeSliceBase + kResumeSliceSlots);
     }
     struct ResumeSliceGuard {
-        int& cursor; int base; bool active;
-        ~ResumeSliceGuard() { if (active) cursor = base; }
-    } resumeSliceGuard{j2jPoolCursor_, resumeSliceBase, resumeInternalJ2J};
+        Interpreter* self; int base; bool active;
+        ~ResumeSliceGuard() {
+            if (!active) return;
+            self->j2jPoolCursor_ = base;
+            self->releaseJ2JSlice(base, base + kResumeSliceSlots, base);
+        }
+    } resumeSliceGuard{this, resumeSliceBase, resumeInternalJ2J};
     while (running_ && jitRuntime_.isInitialized()) {
         if (++resumeIter > 10000) break;  // Safety limit
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_A1_TRACE), 0)
@@ -26022,7 +26239,7 @@ void Interpreter::tryJITResumeInCaller() {
             // tryJITActivation reservation at ~21750.  Every exit path
             // below already releases via `j2jPoolCursor_ = rj2jBase`.
             j2jPoolCursor_ = rj2jBase + rj2jMaxDepth;
-            clearJ2JSlice(rj2jBase, rj2jBase + rj2jMaxDepth);  // reserved != written
+            reserveJ2JSlice(rj2jBase, rj2jBase + rj2jMaxDepth);  // reserved != written; never released, so the mark stays up
             // No flip — codebase invariant (W^X audit 2026-04-26): thread is in X mode.
             // PHARO_RJ2J_VALIDATE=1 enables state validation around every
             // JIT_CALL in the chain loop.  Catches the moment state.
@@ -29947,11 +30164,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         : j2jPoolEnd;
     J2JSave* j2jStack = &j2jPool_[j2jPoolBase];
     j2jPoolCursor_ = j2jStateEnd;  // Reserve our slice; recursive entries continue after
-    clearJ2JSlice(j2jPoolBase, j2jStateEnd);  // reserved != written: wipe stale oops
+    reserveJ2JSlice(j2jPoolBase, j2jStateEnd);  // reserved != written: wipe stale oops
     struct J2JPoolGuard {
-        int& cursor; int base;
-        ~J2JPoolGuard() { cursor = base; }
-    } j2jPoolGuard{j2jPoolCursor_, j2jPoolBase};
+        Interpreter* self; int base; int end; int firstSlot; bool split;
+        ~J2JPoolGuard() {
+            self->j2jPoolCursor_ = base;
+            // Split pool: the chain loop writes from base, the JIT from the
+            // state base -- two write fronts, so never lower the mark.
+            if (!split) self->releaseJ2JSlice(base, end, firstSlot);
+        }
+    } j2jPoolGuard{this, j2jPoolBase, j2jStateEnd, j2jStateBase, splitPool};
 
     state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
     state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
@@ -31128,7 +31350,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         push(state.returnValue);
                     }
                 }
-                if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
+                if (DIAG_FLAG(g_atRecOn) && g_atOop && method_.rawBits() == g_atOop) {
                     int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
                     atRec(4, 0xA0, ipOff, state.returnValue.rawBits(),
                           stackPointer_ ? stackPointer_[0].rawBits() : 0);
@@ -31306,7 +31528,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             } else {
                 push(state.returnValue);
             }
-            if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
+            if (DIAG_FLAG(g_atRecOn) && g_atOop && method_.rawBits() == g_atOop) {
                 int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
                 atRec(4, 0xA1, ipOff, state.returnValue.rawBits(),
                       stackPointer_ ? stackPointer_[0].rawBits() : 0);
@@ -32016,7 +32238,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Try to resume JIT at next bytecode
             method = method_;  // Refresh: GC may have moved the method
             uint32_t bcOffset = computeCurrentBCOffset();
-            if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
+            if (DIAG_FLAG(g_atRecOn) && g_atOop && method_.rawBits() == g_atOop) {
                 int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
                 // fp1 = state.ip offset (asmjit set it to the E7 bytecode);
                 // ctx = state.jitMethod tier (1 = asmjit-T1; the guard at the
@@ -32439,7 +32661,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             && (!gateBailMid || !chainJM->canBailMidMethod)
                             && (inlineStubs || !chainJM->isStubOnEntry)) {
                         // --- Save caller state + precompute resume ---
-                        if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                        if (DIAG_FLAG(g_atRecOn) && g_atOop &&
                             state.method.rawBits() == g_atOop)
                             atRec(15, (uint8_t)nArgs, primitiveIndexOf(chainTarget),
                                   chainTarget.rawBits(), state.sp[-(nArgs + 1)].rawBits());
@@ -32880,7 +33102,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
 
                             // Pop receiver+args, push return value
-                            if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                            if (DIAG_FLAG(g_atRecOn) && g_atOop &&
                                 savedMethod.rawBits() == g_atOop) {
                                 int spOff = (int)(state.sp - savedTempBase);
                                 atRec(9, (uint8_t)nArgs, spOff, retVal.rawBits(),
@@ -33371,7 +33593,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                         // Set up interpreter state from innermost exit frame
                         Oop exitMethod = (state.j2jDepth > 0) ? state.method : chainTarget;
-                        if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                        if (DIAG_FLAG(g_atRecOn) && g_atOop &&
                             (savedMethod.rawBits() == g_atOop || exitMethod.rawBits() == g_atOop)) {
                             int spOff = (int)(state.tempBase - savedTempBase);
                             atRec(10, (uint8_t)state.exitReason, spOff,
@@ -33411,7 +33633,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // execute their primitive, not fallback bytecodes.
             {
                 int primIdx = primitiveIndexOf(chainTarget);
-                if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                if (DIAG_FLAG(g_atRecOn) && g_atOop &&
                     state.method.rawBits() == g_atOop)
                     atRec(13, (uint8_t)nArgs, primIdx, chainTarget.rawBits(),
                           stackPointer_ ? stackPointer_[-1].rawBits() : 0);
@@ -33620,7 +33842,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // Fallback: non-JIT target or unsafe prim — use activateMethod
                 size_t callerDepth = frameDepth_;
                 const uint64_t actSwitchesBefore = processSwitchCount_;
-                if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                if (DIAG_FLAG(g_atRecOn) && g_atOop &&
                     state.method.rawBits() == g_atOop)
                     atRec(14, (uint8_t)nArgs, primitiveIndexOf(chainTarget),
                           chainTarget.rawBits(),
