@@ -2640,6 +2640,12 @@ GCResult ObjectMemory::scavenge() {
         }
     };
 
+    // PHARO_SCAV_STATS: time per phase, averaged every 64 scavenges.
+    const bool scavStats = GET_DEBUG_BOOL(PHARO_SCAV_STATS);
+    using ScavClock = std::chrono::steady_clock;
+    ScavClock::time_point scavT0, scavT1, scavT2, scavT3, scavT4;
+    size_t scavRecentBytes = 0, scavRemembered = rememberedSet_.size();
+    if (scavStats) scavT0 = ScavClock::now();
     // Roots: interpreter
     if (interpreter_) {
         interpreter_->forEachRoot(visitRoot);
@@ -2676,6 +2682,12 @@ GCResult ObjectMemory::scavenge() {
 
     // Roots: memory (class table, special objects, etc.)
     forEachMemoryRoot(visitRoot, /*includeClassTable*/ true);
+    if (scavStats) {
+        scavT1 = ScavClock::now();
+        uint8_t* rs = (oldFreeAtLastScavenge_ && oldFreeAtLastScavenge_ > oldSpaceStart_)
+            ? oldFreeAtLastScavenge_ : oldSpaceStart_;
+        scavRecentBytes = oldSpaceFree_ > rs ? (size_t)(oldSpaceFree_ - rs) : 0;
+    }
 
     // Roots: full old-space scan for old→young pointers.  This is
     // O(oldSpace) per scavenge — slower than a maintained remembered
@@ -2857,6 +2869,7 @@ GCResult ObjectMemory::scavenge() {
     if (g_barrierWho) g_barrierWho->clear();
     g_barrierWhoMem = this;
 
+    if (scavStats) scavT2 = ScavClock::now();
     // Roots: mourn queue (ephemerons pending finalization hold
     // their fields alive).
     for (Oop& m : mournQueue_) {
@@ -2924,6 +2937,7 @@ GCResult ObjectMemory::scavenge() {
                             (unsigned long long)g_scavengeCount, missed);
     }
 
+    if (scavStats) scavT3 = ScavClock::now();
     oldFreeAtLastScavenge_ = oldSpaceFree_;
 
     // Update nil/true/false bits if they moved (they shouldn't —
@@ -3245,6 +3259,24 @@ GCResult ObjectMemory::scavenge() {
     // declared and printed by five diagnostics but never assigned, so every
     // GC report claimed "moved 0 objects".
     result.objectsMoved = forward.size();
+    if (scavStats) {
+        scavT4 = ScavClock::now();
+        static double sRoots = 0, sOld = 0, sDrain = 0, sPost = 0;
+        static uint64_t sN = 0, sMoved = 0, sRecent = 0, sRem = 0, sEden = 0;
+        auto us = [](ScavClock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); };
+        sRoots += us(scavT1 - scavT0); sOld += us(scavT2 - scavT1);
+        sDrain += us(scavT3 - scavT2); sPost += us(scavT4 - scavT3);
+        sMoved += forward.size(); sRecent += scavRecentBytes; sRem += scavRemembered;
+        sEden += edenUsedBefore;
+        if ((++sN & 63) == 0) {
+            fprintf(stderr, "[SCAV-STATS] n=%llu avg us: roots %.0f oldscan %.0f drain %.0f post %.0f | "
+                    "moved %llu objs, recent %llu KB, remembered %llu, eden %llu KB\n",
+                    (unsigned long long)sN, sRoots / 64, sOld / 64, sDrain / 64, sPost / 64,
+                    (unsigned long long)(sMoved / 64), (unsigned long long)(sRecent / 64 / 1024),
+                    (unsigned long long)(sRem / 64), (unsigned long long)(sEden / 64 / 1024));
+            sRoots = sOld = sDrain = sPost = 0; sMoved = sRecent = sRem = sEden = 0;
+        }
+    }
 
     // Rebuild ips from the offsets stashed at scavenge entry (skips
     // the full-GC-only methodCache/IC flush tail).

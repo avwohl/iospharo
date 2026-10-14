@@ -1415,7 +1415,9 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor, bool includeClassTable) 
                 visitor(pageOop);
             }
         }
-        for (size_t i = 1; i < classTable_.size(); ++i) {
+        // Only the used prefix: the table has 4M entries (22-bit index
+        // space), and walking all of them was 6.5 ms of every scavenge.
+        for (size_t i = 1, end = classTableUsedEnd(); i < end; ++i) {
             if (classTable_[i].isObject()) {
                 visitor(classTable_[i]);
             }

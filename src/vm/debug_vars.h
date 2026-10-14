@@ -52,6 +52,7 @@ DEBUG_BOOL_RT(PHARO_DET_SCHED)
 DEBUG_INT(PHARO_DET_SCHED_QUANTUM, 1)   // × the 1024-bytecode checkpoint
 DEBUG_BOOL(PHARO_FINDNODE_WATCH)        // aigraph curEdge corruption capture
 DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK)     // post-scavenge: log pointers still aimed into eden (missed roots)
+DEBUG_BOOL(PHARO_SCAV_STATS)            // per-phase scavenge time (roots, old->young scan, drain, post), objects moved, recent old-space bytes, remembered-set size; averaged every 64 scavenges
 DEBUG_BOOL(PHARO_HEAP_CHECK)            // post-fullGC: walk all objects, flag pointer slots aimed at out-of-heap/free/garbage targets
 DEBUG_STR(PHARO_TRACE_EXTENT_SEL)       // trace every bytecode (sel+opcode+relDepth+TOS) within the dynamic extent of a method matching this selector
 DEBUG_BOOL(PHARO_NO_METHOD_CACHE)       // bisect: force probeCache to always miss (every send does a full lookup) — isolates stale-method-cache corruption from lower-level bugs
