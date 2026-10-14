@@ -144,6 +144,29 @@ static bool mcfPrimCallable(int p) {
     }
 }
 
+// May T1 code run this primitive method's primitive without leaving machine
+// code?  mcfPrimCallable, plus named primitive 117 for the pure string
+// functions of MiscPrimitivePlugin (no Smalltalk, no allocation; lexicon
+// sent indexOfAscii:inString:startingAt: and friends 5M times).
+bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
+    if (mcfPrimCallable(p)) return true;
+    if (p != 117) return false;
+    ObjectHeader* mo = method.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger() || (hdr.asSmallInteger() & 0x7FFF) < 1) return false;
+    Oop spec = mo->slotAt(1);
+    if (!spec.isObject() || spec.isNil() || !spec.asObjectPtr()->isPointersObject()
+            || spec.asObjectPtr()->slotCount() < 2) return false;
+    Oop module = spec.asObjectPtr()->slotAt(0);
+    Oop fn = spec.asObjectPtr()->slotAt(1);
+    if (!memory_.symbolEquals(module, "MiscPrimitivePlugin")) return false;
+    return memory_.symbolEquals(fn, "primitiveStringHash")
+        || memory_.symbolEquals(fn, "primitiveIndexOfAsciiInString")
+        || memory_.symbolEquals(fn, "primitiveFindSubstring")
+        || memory_.symbolEquals(fn, "primitiveFindFirstInString")
+        || memory_.symbolEquals(fn, "primitiveTranslateStringWithTable");
+}
+
 // Called from T1 code (pharo_mcf_prim) at an inline-cache hit whose method
 // is a callable primitive.  Answers 1 = success (result on the stack, sp in
 // the state), 0 = failure (stack unchanged; the send exits to the
@@ -512,6 +535,15 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     if (!target.isObject() || target.isNil()) return nullptr;
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
     if (e && e->jm && !e->prim && mcfReceiverOk(e->jm, rcv)) return e;
+    if (e && !e->jm && e->prim && e->prim < 1024) {
+        // A primitive entry (mcfNotePrimitiveTarget): run it.
+        st->cachedTarget = target;
+        switch (mcfCallPrimitive(st, (int)e->prim, nArgs)) {
+        case 1: return kMcfExtDone;
+        case 2: return kMcfExtDeopt;
+        default: return nullptr;
+        }
+    }
     // Not a native call.  The sends cacheMethod shortcuts (they never
     // activate, so never reach the call cache) run here: ^self, getter.
     if (MethodCacheEntry* ce = probeCache(selector, cls)) {
@@ -535,7 +567,8 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     if (target.asObjectPtr()->classIndex() == compiledMethodClassIndex_
             && thdr.isSmallInteger() && ((thdr.asSmallInteger() >> 16) & 1)) {
         const int p = primitiveIndexOf(target);
-        if (mcfPrimCallable(p)) {
+        if (mcfPrimMethodCallable(target, p)) {
+            mcfNotePrimitiveTarget(target);   // next time: the entry above
             st->cachedTarget = target;
             switch (mcfCallPrimitive(st, p, nArgs)) {
             case 1: return kMcfExtDone;
@@ -569,7 +602,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method) {
         e.prim = jit::kMcfBlockValueMethod;
         return;
     }
-    if (!mcfPrimCallable(p)) return;
+    if (!mcfPrimMethodCallable(method, p)) return;
     jit::McfCallEntry* ep = jit::mcfCallSlotForPrim(method.rawBits());
     if (!ep) return;   // has an entry, or both are native-call entries
     jit::McfCallEntry& e = *ep;
