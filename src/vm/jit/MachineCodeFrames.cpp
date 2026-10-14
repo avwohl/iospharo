@@ -465,6 +465,17 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method) {
     if (!hdr.isSmallInteger() || !((hdr.asSmallInteger() >> 16) & 1)) return;
     if (memory_.isYoung(method)) return;
     const int p = primitiveIndexOf(method);
+    if (p == 207 && ((hdr.asSmallInteger() >> 24) & 0xF) >= 2) {
+        // value:value: and longer: T1 code calls the closure's block natively.
+        jit::McfCallEntry& e = jit::g_mcfCallCache[
+            (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
+        if (e.methodBits == method.rawBits() || (e.methodBits && e.jm)) return;
+        e.methodBits = method.rawBits();
+        e.jm = nullptr;
+        e.bcEndOff = 0;
+        e.prim = jit::kMcfBlockValueMethod;
+        return;
+    }
     if (!mcfPrimCallable(p)) return;
     jit::McfCallEntry& e = jit::g_mcfCallCache[
         (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];

@@ -10332,6 +10332,53 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 asmjit::Label mcfPrim = a.new_label();
                 a.ldr(x10, ptr(x7, 24));                     // entry.prim
+                if (nArgs >= 2 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)) {
+                    // value:value: and longer (a primitive-207 method): call
+                    // the receiver closure's block natively, as at value: sites.
+                    asmjit::Label notBV = a.new_label();
+                    a.mov(x11, asmjit::Imm(kMcfBlockValueMethod));
+                    a.cmp(x10, x11);
+                    a.b_ne(notBV);
+                    emitLoadSp(a, x2);
+                    a.ldur(x1, ptr(x2, -8 * (nArgs + 1)));   // the closure
+                    a.tst(x1, asmjit::Imm(0x7));
+                    a.b_ne(mcfSlow);
+                    a.ldr(w4, ptr(x1));
+                    a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
+                    a.mov(w11, asmjit::Imm(g_mcfFbcClassIndex));
+                    a.cmp(w4, w11);
+                    a.b_ne(mcfSlow);
+                    a.ldrb(w12, ptr(x1, 7));
+                    a.cmp(w12, asmjit::Imm(255));
+                    a.b_eq(mcfSlow);
+                    a.cmp(w12, asmjit::Imm(4));
+                    a.b_lo(mcfSlow);
+                    a.ldr(x6, ptr(x1, 16));                  // its CompiledBlock
+                    a.tst(x6, asmjit::Imm(0x7));
+                    a.b_ne(mcfSlow);
+                    a.ldr(x7, ptr(x0, OFF_MCF_CALL_CACHE));
+                    a.lsr(x8, x6, asmjit::Imm(3));
+                    a.and_(x8, x8, asmjit::Imm(kMcfCallCacheSize - 1));
+                    a.add(x7, x7, x8, asmjit::a64::lsl(5));
+                    a.ldp(x8, x9, ptr(x7));
+                    a.cmp(x8, x6);
+                    a.b_ne(mcfSlow);
+                    a.ldr(x10, ptr(x7, 24));
+                    a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
+                    a.cmp(x10, x11);
+                    a.b_ne(mcfSlow);
+                    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                    a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                    a.adr(x14, mcfCont);
+                    a.adr(x15, mcfSlow);
+                    a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
+                    a.mov(x16, asmjit::Imm(g_mcfBlockStub));
+                    a.br(x16);
+                    a.bind(notBV);
+                }
+                // Only real primitive indices reach the primitive path.
+                a.cmp(x10, asmjit::Imm(1024));
+                a.b_hs(mcfSlow);
                 a.cbnz(x10, mcfPrim);
                 // The call itself is the shared stub (emitMcfCallStub).
                 a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
