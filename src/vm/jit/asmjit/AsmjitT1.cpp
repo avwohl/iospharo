@@ -7530,7 +7530,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // suite-validate before making this the default).
             asmjit::Label LmissNoX5 = a.new_label();   // PMS: leak-guard edge
             asmjit::Label Lprobe    = a.new_label();   // PMS: in-site generic probe
-            if (!GET_DEBUG_BOOL(PHARO_T1_LEAK_GUARD_OFF)) {
+            // Machine-code frames drop it (2 instructions per send); a
+            // diagnostic build can put it back with PHARO_T1_LEAK_GUARD.
+            if (::pharo::mcfEnabled() ? GET_DEBUG_BOOL(PHARO_T1_LEAK_GUARD)
+                                      : !GET_DEBUG_BOOL(PHARO_T1_LEAK_GUARD_OFF)) {
                 a.lsr(x4, x1, asmjit::Imm(48));
                 a.cbnz(x4, patchedShape ? LmissNoX5 : miss);
             }
