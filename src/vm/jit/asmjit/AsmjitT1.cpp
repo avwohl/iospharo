@@ -5084,12 +5084,23 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
     mcfFieldStr(a, x13, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10, false);
     // Result into the callee's receiver slot; sp just above it.
-    emitLoadTempBase(a, x8);
-    a.stur(x1, ptr(x8, -8));
-    emitStoreSp(a, x8);
-    // Caller's view.
-    a.add(x8, x11, asmjit::Imm(8));           // savedFP + 8
-    emitStoreTempBase(a, x8);
+#if PHARO_T1_SP_IN_X25 && !PHARO_T1_TB_IN_X26
+    if (t1TbReg()) {
+        a.stur(x1, ptr(x22, -8));
+        a.mov(x25, x22);
+        // Caller's view.
+        a.add(x22, x11, asmjit::Imm(8));      // savedFP + 8
+        a.str(x22, ptr(x0, OFF_TEMPBASE));
+    } else
+#endif
+    {
+        emitLoadTempBase(a, x8);
+        a.stur(x1, ptr(x8, -8));
+        emitStoreSp(a, x8);
+        // Caller's view.
+        a.add(x8, x11, asmjit::Imm(8));       // savedFP + 8
+        emitStoreTempBase(a, x8);
+    }
     ldp2(x13, L.savedReceiver, x14, L.savedClosure);
     a.str(x13, ptr(x0, OFF_RECEIVER));
     if (t1TbReg()) a.mov(x21, x13);
@@ -6383,6 +6394,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ret(x30);
             return true;
         }
+#if PHARO_T1_SP_IN_X25
+        // Machine-code frames: the native return resets sp to the callee's
+        // receiver slot, so only its fall-through needs the pop.
+        if (::pharo::mcfEnabled() && !g_sharedRetPreludeStub
+                && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_RET_POP)) {
+            a.ldur(x1, ptr(x25, -8));    // x1 = retval (TOS)
+            emitJ2JReturnPreludeIfEnabled();
+            a.sub(x25, x25, asmjit::Imm(8));
+            a.str(x1, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
+            a.ret(x30);
+            return true;
+        }
+#endif
         emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);

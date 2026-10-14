@@ -2400,44 +2400,30 @@ void ObjectMemory::discardRememberedSet() {
     rememberedSet_.clear();
 }
 
-// Scavenge forwarding table: young header -> tenured header.  Open
-// addressing over a power-of-two index table, entries kept in insertion order
-// (iteration and O(n) clearing), storage reused across scavenges.  Replaces a
-// std::unordered_map whose per-insert node allocation and probe made the
-// table most of tenureIfYoung's cost.  The subset of the map API the
-// scavenger uses: find/end, operator[], size/empty, range-for.
+// Scavenge forwarding: young header -> tenured header.  A tenured eden
+// object is marked in place: class index kForwardedPun (an unused Spur pun;
+// no class has an index below 32) and its new address in slot 0 (every
+// object has one: the minimum size is 16 bytes).  The eden copy is dead
+// once copied, and eden is reset at the end of the scavenge.  A lookup reads
+// the object itself; the hash table this replaces cost two cache misses per
+// young reference.  The list keeps the pairs for size and the diagnostics.
 namespace {
 class ScavForwardMap {
 public:
     using Entry = std::pair<ObjectHeader*, ObjectHeader*>;
     using const_iterator = std::vector<Entry>::const_iterator;
+    static constexpr uint32_t kForwardedPun = 9;
 
-    // Newest first: an entry's probe chain only crosses slots of entries
-    // inserted before it (grow() re-inserts in order), so those are still
-    // occupied when slotOf walks it.
-    void clear() {
-        for (size_t n = list_.size(); n-- > 0;) table_[slotOf(list_[n].first)] = 0;
-        list_.clear();
+    void clear() { list_.clear(); }
+    // The tenured copy of eden object k, or nullptr.
+    ObjectHeader* to(ObjectHeader* k) const {
+        if (k->classIndex() != kForwardedPun) return nullptr;
+        return reinterpret_cast<ObjectHeader*>(k->slots()[0].rawBits());
     }
-    const_iterator find(ObjectHeader* k) const {
-        if (table_.empty()) return list_.end();
-        for (size_t i = hash(k);; i = (i + 1) & mask_) {
-            uint32_t v = table_[i];
-            if (v == 0) return list_.end();
-            if (list_[v - 1].first == k) return list_.begin() + (v - 1);
-        }
-    }
-    ObjectHeader*& operator[](ObjectHeader* k) {
-        if ((list_.size() + 1) * 2 > table_.size()) grow();
-        size_t i = hash(k);
-        for (;; i = (i + 1) & mask_) {
-            uint32_t v = table_[i];
-            if (v == 0) break;
-            if (list_[v - 1].first == k) return list_[v - 1].second;
-        }
-        list_.emplace_back(k, nullptr);
-        table_[i] = static_cast<uint32_t>(list_.size());
-        return list_.back().second;
+    void add(ObjectHeader* k, ObjectHeader* v) {
+        list_.emplace_back(k, v);
+        k->slots()[0] = Oop::fromRawBits(reinterpret_cast<uint64_t>(v));
+        k->setClassIndex(kForwardedPun);
     }
     const_iterator begin() const { return list_.begin(); }
     const_iterator end() const { return list_.end(); }
@@ -2445,31 +2431,7 @@ public:
     bool empty() const { return list_.empty(); }
 
 private:
-    size_t hash(ObjectHeader* k) const {
-        return static_cast<size_t>(
-            (reinterpret_cast<uintptr_t>(k) >> 3) * 0x9E3779B97F4A7C15ull >> shift_);
-    }
-    // The table slot holding k (k must be present).
-    size_t slotOf(ObjectHeader* k) const {
-        size_t i = hash(k);
-        while (list_[table_[i] - 1].first != k) i = (i + 1) & mask_;
-        return i;
-    }
-    void grow() {
-        size_t cap = table_.empty() ? (size_t(1) << 16) : table_.size() * 2;
-        table_.assign(cap, 0);
-        mask_ = cap - 1;
-        shift_ = 64 - static_cast<unsigned>(__builtin_ctzll(cap));
-        for (size_t n = 0; n < list_.size(); ++n) {
-            size_t i = hash(list_[n].first);
-            while (table_[i] != 0) i = (i + 1) & mask_;
-            table_[i] = static_cast<uint32_t>(n + 1);
-        }
-    }
     std::vector<Entry> list_;
-    std::vector<uint32_t> table_;
-    size_t mask_ = 0;
-    unsigned shift_ = 64;
 };
 ScavForwardMap g_scavForward;
 }  // namespace
@@ -2542,8 +2504,7 @@ GCResult ObjectMemory::scavenge() {
         ObjectHeader* obj = oop.asObjectPtr();
         uint8_t* p = reinterpret_cast<uint8_t*>(obj);
         if (p < edenAllocBase_ || p >= edenFree_) return oop;
-        auto it = forward.find(obj);
-        if (it != forward.end()) return Oop::fromObject(it->second);
+        if (ObjectHeader* to = forward.to(obj)) return Oop::fromObject(to);
 
         // Copy to old space.  Use raw bytes so overflow-slot
         // prefix (if any) and header are preserved.
@@ -2631,7 +2592,7 @@ GCResult ObjectMemory::scavenge() {
         std::memcpy(destStart, srcStart, copySize);
         ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
             destStart + (overflow ? 8 : 0));
-        forward[obj] = newHdr;
+        forward.add(obj, newHdr);
         // Smear forensics (PHARO_WATCH_OLDOFF armed): if a young pointer
         // array carried a >=4 run of one object ref INTO tenure, the run was
         // formed in eden before this scavenge.
@@ -2691,13 +2652,14 @@ GCResult ObjectMemory::scavenge() {
 #if PHARO_JIT_ENABLED
         if (GET_DEBUG_BOOL(PHARO_SISTA_REKEY_AFTER_GC)) {
             interpreter_->rekeySistaCacheViaForwarders(
-                [&forward](uint64_t oldBits) -> uint64_t {
+                [&forward, this](uint64_t oldBits) -> uint64_t {
                     Oop o = Oop::fromRawBits(oldBits);
                     if (!o.isObject() || o.rawBits() <= 0x10000) return 0;
                     ObjectHeader* obj = o.asObjectPtr();
-                    auto it = forward.find(obj);
-                    if (it != forward.end()) {
-                        return Oop::fromObject(it->second).rawBits();
+                    const uint8_t* op = reinterpret_cast<const uint8_t*>(obj);
+                    if (op >= edenAllocBase_ && op < edenFree_) {
+                        if (ObjectHeader* to = forward.to(obj))
+                            return Oop::fromObject(to).rawBits();
                     }
                     // Not in the forward map.  If it's still a
                     // valid old-space pointer, keep it.  Otherwise
@@ -2967,9 +2929,11 @@ GCResult ObjectMemory::scavenge() {
     // Update nil/true/false bits if they moved (they shouldn't —
     // permanent specials are in old/perm space — but defensive).
     if (nilObject_.isObject()) {
-        auto it = forward.find(nilObject_.asObjectPtr());
-        if (it != forward.end()) {
-            nilObject_ = Oop::fromObject(it->second);
+        const uint8_t* np = reinterpret_cast<const uint8_t*>(nilObject_.asObjectPtr());
+        ObjectHeader* to = (np >= edenAllocBase_ && np < edenFree_)
+            ? forward.to(nilObject_.asObjectPtr()) : nullptr;
+        if (to) {
+            nilObject_ = Oop::fromObject(to);
             Oop::setNilBits(nilObject_.rawBits());
         }
     }
@@ -2989,7 +2953,7 @@ GCResult ObjectMemory::scavenge() {
             if (hp < edenAllocBase_ || hp >= edenFree_) return;
             dangCount++;
             if (dangCount > 15) return;
-            bool tenured = forward.find(v.asObjectPtr()) != forward.end();
+            bool tenured = forward.to(v.asObjectPtr()) != nullptr;   // v is in eden (checked above)
             std::string hcls = "?";
             if (holder) {
                 Oop hc = classAtIndex(holder->classIndex());
@@ -3079,8 +3043,9 @@ GCResult ObjectMemory::scavenge() {
             // pointerSlotsOf() = the scavenge blind spot).
             for (uint8_t* p : hitAddrs) {
                 uint64_t w = *reinterpret_cast<uint64_t*>(p);
-                bool tenured =
-                    forward.find(reinterpret_cast<ObjectHeader*>(w)) != forward.end();
+                bool tenured = w >= reinterpret_cast<uint64_t>(edenAllocBase_)
+                    && w < reinterpret_cast<uint64_t>(edenFree_) && (w & 7) == 0
+                    && forward.to(reinterpret_cast<ObjectHeader*>(w)) != nullptr;
                 uint8_t* base = (p >= permSpaceStart_ && p < permSpaceEnd_)
                     ? permSpaceStart_ : oldSpaceStart_;
                 uint8_t* limit = (base == permSpaceStart_) ? permSpaceEnd_ : oldSpaceFree_;
