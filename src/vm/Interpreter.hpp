@@ -891,6 +891,14 @@ private:
     // and the periodic check says WHEN (within 1024 bytecodes).
     uint64_t framesCanary_ = 0xF00DFACE5A7EDF00ULL;
     size_t frameDepth_;
+    // Machine-code frames: the state T1 code runs with (x0 points here).
+    // It sits between the fields a native call and return touch, so the
+    // machine code reaches them at fixed offsets from x0 instead of through
+    // pointers in the state (mcfInit checks the offsets).
+    jit::JITState mcfStateStorage_{};
+    Oop activeContext_;  // Current Smalltalk context (for sender chain)
+    Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
+    int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     // jit-may24 Step 2: counter of SavedFrames currently on the stack
     // with materializedRetSlot != nullptr.  Used by canJITActivate's
     // fast-skip check.  Incremented at each materialize-bail push
@@ -1001,8 +1009,6 @@ private:
     Oop homeMethod_;        // Home CompiledMethod (for literal access in blocks)
     Oop receiver_;
     Oop closure_;        // Current FullBlockClosure if executing a block, nil for methods
-    Oop activeContext_;  // Current Smalltalk context (for sender chain)
-    Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
     // Set when lazyOuterContext() made a context stub whose sender, temps
     // and stack are not filled in; cleared by a complete materializeFrameStack.
     bool lazyCtxPending_ = false;
@@ -1118,7 +1124,6 @@ private:
         }
     }
 
-    int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     uint32_t perBcSistaCountdown_ = 0;    // tryPerBcSistaAtBackwardJump: back-jumps until the next look
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     static constexpr bool dispatchTraceLeakOn_ = false;

@@ -319,7 +319,11 @@ struct McfFrameLayout {
              savedReceiver, savedClosure, savedActiveContext,
              materializedContext, ctxSynced, savedFP, materializedRetSlot,
              savedArgCount, homeFrameDepth, mcReturn, mcKeyIP, mcJM, mcEpoch;
+    // Interpreter fields as byte offsets from the JITState (x0), or
+    // kMcfNoDirect: reach them through the state's pointers instead.
+    int32_t dirDepth, dirMatCtx, dirActCtx, dirCtdn;
 };
+constexpr int32_t kMcfNoDirect = INT32_MIN;
 inline McfFrameLayout g_mcfLayout{};
 // JITRuntime::megaCache() (MegaCacheEntry[MegaCacheSize]); T1 code probes it
 // at an inline-cache miss under machine-code frames.  Set by mcfInit.

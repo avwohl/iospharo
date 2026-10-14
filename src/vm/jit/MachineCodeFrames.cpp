@@ -1007,6 +1007,23 @@ void Interpreter::mcfInit() {
     L.mcJM = offsetof(SavedFrame, mcJM);
     L.mcEpoch = offsetof(SavedFrame, mcEpoch);
 #pragma GCC diagnostic pop
+    // The fields T1 call and return code touch, as offsets from the state
+    // (mcfStateStorage_ is a member, so they are fixed): usable when a
+    // single ldr/ldur reaches them.
+    {
+        const char* base = reinterpret_cast<const char*>(&mcfStateStorage_);
+        auto direct = [&](const void* field, int size) -> int32_t {
+            const ptrdiff_t d = reinterpret_cast<const char*>(field) - base;
+            if (GET_DEBUG_BOOL(PHARO_MCF_NO_DIRECT_FIELDS)) return jit::kMcfNoDirect;
+            if (d >= -256 && d < 0) return (int32_t)d;
+            if (d >= 0 && d % size == 0 && d / size <= 4095) return (int32_t)d;
+            return jit::kMcfNoDirect;
+        };
+        L.dirDepth = direct(&frameDepth_, 8);
+        L.dirMatCtx = direct(&currentFrameMaterializedCtx_, 8);
+        L.dirActCtx = direct(&activeContext_, 8);
+        L.dirCtdn = direct(&checkCountdown_, 4);
+    }
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
     g_mcfInterp = this;
     jit::g_mcfClearMemosHook = [] { g_mcfInterp->mcfClearMemos(); };
@@ -1235,7 +1252,7 @@ void Interpreter::mcfFillICAtExit(jit::JITState& st) {
 void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
     if (!mcfState_) {
         // Fields that never change for this interpreter.
-        mcfState_ = new jit::JITState();
+        mcfState_ = &mcfStateStorage_;
         std::memset(mcfState_, 0, sizeof(jit::JITState));
         jit::JITState& c = *mcfState_;
         c.memory = &memory_;

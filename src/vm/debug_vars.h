@@ -195,6 +195,7 @@ DEBUG_BOOL(PHARO_MCF_NO_EAGER_IC_FILL)          // MCF: an IC-miss exit leaves t
 DEBUG_BOOL(PHARO_MCF_NO_YOUNG_CALL)             // MCF: young methods and CompiledBlocks get no call-cache entry (machine code calls them through an exit)
 DEBUG_BOOL(PHARO_MCF_NO_PROMPT_YIELD)           // MCF: a bytecode exit taken for a heartbeat yield leaves the yield to the interpreter countdown
 DEBUG_BOOL(PHARO_MCF_NO_EXTRAS_SHORTCUT)        // MCF: an IC hit walks the whole specialization chain even when no tested extras bit is set
+DEBUG_BOOL(PHARO_MCF_NO_DIRECT_FIELDS)          // MCF: T1 call/return reach frameDepth_, the contexts and the countdown through state pointers, not at fixed offsets from x0
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read

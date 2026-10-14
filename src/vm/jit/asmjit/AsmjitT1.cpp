@@ -4973,15 +4973,35 @@ static_assert(OFF_MCF_CALL_CACHE == offsetof(JITState, mcfCallCache), "OFF_MCF_C
 static_assert(OFF_MCF_BCEND_OFF == offsetof(JITState, mcfBcEndOff), "OFF_MCF_BCEND_OFF");
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+// An interpreter field the native call and return touch (frameDepth_, the
+// two contexts, the countdown): at its fixed offset from x0 when mcfInit
+// found one (McfFrameLayout::dir*), else through the state's pointer at
+// ptrOff, loaded into tmp.  A store with tmpLoaded reuses tmp from the
+// matching load.
+static void mcfFieldLdr(asmjit::a64::Assembler& a, const asmjit::a64::Gp& r,
+                        int32_t dir, int ptrOff, const asmjit::a64::Gp& tmp) {
+    using namespace asmjit::a64;
+    if (dir == kMcfNoDirect) { a.ldr(tmp, ptr(x0, ptrOff)); a.ldr(r, ptr(tmp)); }
+    else if (dir < 0) a.ldur(r, ptr(x0, dir));
+    else a.ldr(r, ptr(x0, dir));
+}
+static void mcfFieldStr(asmjit::a64::Assembler& a, const asmjit::a64::Gp& r,
+                        int32_t dir, int ptrOff, const asmjit::a64::Gp& tmp, bool tmpLoaded) {
+    using namespace asmjit::a64;
+    if (dir == kMcfNoDirect) {
+        if (!tmpLoaded) a.ldr(tmp, ptr(x0, ptrOff));
+        a.str(r, ptr(tmp));
+    } else if (dir < 0) a.stur(r, ptr(x0, dir));
+    else a.str(r, ptr(x0, dir));
+}
+
 static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
     asmjit::Label fall = a.new_label();
-    a.ldr(x2, ptr(x0, OFF_MCF_DEPTH_PTR));
-    a.ldr(x3, ptr(x2));                       // frameDepth_
+    mcfFieldLdr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2);      // frameDepth_
     a.cbz(x3, fall);
-    a.ldr(x4, ptr(x0, OFF_MCF_MATCTX_PTR));
-    a.ldr(x5, ptr(x4));                       // currentFrameMaterializedCtx_
+    mcfFieldLdr(a, x5, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4);    // currentFrameMaterializedCtx_
     a.ldr(x6, ptr(x0, OFF_MCF_NIL));
     // A frame with a context (it made a block) widows it below, unless a
     // widow diagnostic wants the interpreter's widowReturningContext.
@@ -5059,11 +5079,10 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.str(x6, ptr(x5, OBJ_SLOT_0 + 8));
         a.bind(noCtx);
     }
-    a.str(x3, ptr(x2));
+    mcfFieldStr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2, true);
     ldp2(x13, L.savedActiveContext, x14, L.materializedContext);
-    a.str(x14, ptr(x4));
-    a.ldr(x10, ptr(x0, OFF_MCF_ACTCTX_PTR));
-    a.str(x13, ptr(x10));
+    mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
+    mcfFieldStr(a, x13, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10, false);
     // Result into the callee's receiver slot; sp just above it.
     emitLoadTempBase(a, x8);
     a.stur(x1, ptr(x8, -8));
@@ -5345,13 +5364,11 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     // 10-50 us.  Charging the callee's numBytecodes made a small hot callee
     // exit every ~50 calls, about once a microsecond, and each exit runs
     // the send through the interpreter.
-    a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));
-    a.ldr(w11, ptr(x10));
+    mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
     a.subs(w11, w11, asmjit::Imm(1));
     a.b_le(fail);
-    a.str(w11, ptr(x10));
-    a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
-    a.ldr(x11, ptr(x10));
+    mcfFieldStr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10, true);
+    mcfFieldLdr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10);
     // At depth 0 the caller lives in activeContext_: store the caller's pc
     // into it, as pushFrame does on its 0 -> 1 push.  Refusing here instead
     // sent every send of a method resumed at depth 0 (after a process
@@ -5362,8 +5379,7 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     } else {
         asmjit::Label notDepth0 = a.new_label();
         a.cbnz(x11, notDepth0);
-        a.ldr(x16, ptr(x0, OFF_MCF_ACTCTX_PTR));
-        a.ldr(x16, ptr(x16));                      // activeContext_
+        mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x16);  // activeContext_
         a.ldr(x17, ptr(x0, OFF_MCF_NIL));
         a.cmp(x16, x17);
         a.b_eq(fail);
@@ -5388,7 +5404,7 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.mov(x16, asmjit::Imm(L.size));
     a.madd(x8, x11, x16, x8);                      // x8 = &savedFrames_[depth]
     a.add(x11, x11, asmjit::Imm(1));
-    a.str(x11, ptr(x10));                          // frameDepth_++
+    mcfFieldStr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10, true);  // frameDepth_++
     // The caller's state (pushFrame).  Adjacent fields go in pairs.
     auto put2 = [&](asmjit::a64::Gp r1, uint32_t o1, asmjit::a64::Gp r2, uint32_t o2) {
         if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.stp(r1, r2, ptr(x8, o1));
@@ -5411,11 +5427,9 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.ldr(x17, ptr(x0, OFF_CLOSURE));
     put2(x16, L.savedReceiver, x17, L.savedClosure);
     a.ldr(x4, ptr(x0, OFF_MCF_NIL));               // x4 = nil from here on
-    a.ldr(x10, ptr(x0, OFF_MCF_MATCTX_PTR));
-    a.ldr(x17, ptr(x10));                          // the caller's context
-    a.str(x4, ptr(x10));                           // the callee has no context
-    a.ldr(x10, ptr(x0, OFF_MCF_ACTCTX_PTR));
-    a.ldr(x16, ptr(x10));
+    mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
+    mcfFieldStr(a, x4, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
+    mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
     put2(x16, L.savedActiveContext, x17, L.materializedContext);
     a.strb(wzr, ptr(x8, L.ctxSynced));
     if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
