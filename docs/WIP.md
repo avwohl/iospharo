@@ -15,6 +15,35 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, night 5) -- primitive stub holes; sweep L19 on `1ad9a30d`
+
+Pushed: origin/jit at `c6e7182a` (sweep L18: 27802 / 8 / 2; its three new
+entries pass 3 of 3 alone, run while I benchmarked).
+
+Wall time against stock Cog (Rosetta), quiet machine: lexicon 21.9 s vs
+11.3 s (was 28.3 s this morning).  Suite (ms, ours / Cog): fib30 14/7,
+loop30M 119/133, collect3M 93/135, inject3M 45/31, printString 50/47,
+dict 136/122, ocAdd 75/101, string 80/49, float 222/199, sort 232/155,
+compile 20/88, setStr 169/135.
+
+lexicon instructions (billions): 451 -> 452 (interrupt points) -> 432
+(String>>at: inline: asmjit had dropped `ccmp w10, #63` from the
+primitive stub, so 63 always took the C call) -> 416 (at:/size on
+formats 3-5: MethodDictionary basicAt:, WeakArray) -> 411 (basicNew
+inline under MCF; objectAt:).
+
+Scheduling fixes: the prompt yield at bytecode exits is gone (it made
+myprecious RPC tests time out 1 run in 3), and the interpreter's
+periodic check switches process only at interrupt points (sends, back
+jumps, frame entry), as Cog.  SocketPlugin's io thread no longer spins
+on signaled sockets.  Open: ProcessSpecificTest>>testLocalVariable, a
+Delay that never wakes on the fake-GUI image (vm-compat-bugs.md).
+
+The diagnostic primitive census (PHARO_MCF_PRIM_CENSUS) now names each
+C-called primitive's target, receiver kind and caller path; it found
+all of the above.  PHARO_JIT_PERF_MAP also dumps the primitive stub
+pages (`.primstubN.bin`) for a disassembler.
+
 ## Right now (2026-10-14, night 4) -- call-site shapes; sweep L17 finishing
 
 Since `08deb8cf` (not yet swept):
