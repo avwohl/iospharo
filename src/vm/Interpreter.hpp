@@ -1869,6 +1869,7 @@ public:
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
     bool mcfCacheableOop(Oop m) const;
     bool mcfConstantReturn(Oop method, Oop& value);
+    jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
     void mcfFillICAtExit(jit::JITState& st);
     void mcfDeriveView(jit::JITState& st);
     static constexpr size_t kBcEndMemoSize = 256;

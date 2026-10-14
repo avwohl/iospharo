@@ -898,6 +898,14 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         return kMcfExtDone;
     }
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
+    if (!e && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_NOTE)) {
+        // An ExtSend site's miss exits as ExitSend, which never records a
+        // primitive or constant target (only ExitSendCached does): record it
+        // here, or the site misses at every execution (4-argument
+        // translate:from:to:table:, once per asUppercase).
+        mcfNotePrimitiveTarget(target, rcv);
+        e = jit::mcfCallFind(target.rawBits());
+    }
     if (e && e->jm && !e->prim && mcfReceiverOk(e->jm, rcv)) return e;
     if (e && e->prim == jit::kMcfReturnsValue) {
         // A method answering one constant (mcfConstantReturn).
@@ -905,13 +913,30 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         st->sp -= nArgs;
         return kMcfExtDone;
     }
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_EXTSEND_CENSUS), 0)) {
+        static std::unordered_map<std::string, uint64_t> outcome;
+        static uint64_t n = 0;
+        std::string k = memory_.oopToString(selector) + (!e ? " no-entry"
+            : e->prim == jit::kMcfReturnsValue ? " const"
+            : (e->jm && !e->prim) ? (mcfReceiverOk(e->jm, rcv) ? " native" : " native-rcv-refused")
+            : (!e->jm && e->prim && e->prim < 1024) ? " prim" + std::to_string(e->prim)
+            : " other prim=" + std::to_string(e->prim) + " jm=" + std::to_string(e->jm != nullptr));
+        outcome[k]++;
+        if ((++n & 0xFFFFF) == 0)
+            for (auto& kv : outcome)
+                if (kv.second > 1000) fprintf(stderr, "[EXTSEND-OUT] %llu %s\n",
+                                              (unsigned long long)kv.second, kv.first.c_str());
+    }
     if (e && !e->jm && e->prim && e->prim < 1024) {
         // A primitive entry (mcfNotePrimitiveTarget): run it.
         st->cachedTarget = target;
         switch (mcfCallPrimitive(st, (int)e->prim, nArgs)) {
         case 1: return kMcfExtDone;
         case 2: return kMcfExtDeopt;
-        default: return nullptr;
+        default:
+            // Failed, stack unchanged: run the method body, as the
+            // interpreter would after the failure.
+            return mcfPrimFailBodyEntry(target, rcv);
         }
     }
     // Not a native call.  The sends cacheMethod shortcuts (they never
@@ -973,11 +998,41 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
             switch (mcfCallPrimitive(st, p, nArgs)) {
             case 1: return kMcfExtDone;
             case 2: return kMcfExtDeopt;
-            default: return nullptr;   // failed: the interpreter retries it
+            default: return mcfPrimFailBodyEntry(target, rcv);   // or nullptr: the interpreter retries it
             }
         }
     }
     return nullptr;
+}
+
+// The primitive of `method` failed and left the stack as it was: a call entry
+// that runs the method body natively (T1 code for a primitive method starts
+// at the body; the primitive itself is not in it), or nullptr.  Not when the
+// body first stores the primitive's error code, which only the interpreter
+// supplies.  The entry is scratch storage the call stub reads at once.
+jit::McfCallEntry* Interpreter::mcfPrimFailBodyEntry(Oop method, Oop rcv) {
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_PRIM_FAIL_BODY)) return nullptr;
+    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+    if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return nullptr;
+    if (!mcfReceiverOk(jm, rcv)) return nullptr;
+    ObjectHeader* mo = method.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return nullptr;
+    const uint8_t* bc = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    if (bc[0] != jit::SistaV1::CallPrimitive) return nullptr;
+    const uint8_t op = bc[3];   // first bytecode after CallPrimitive
+    if (op == jit::SistaV1::ExtStoreTemp || op == jit::SistaV1::ExtPopStoreTemp
+            || (op >= jit::SistaV1::PopStoreTempBase && op <= jit::SistaV1::PopStoreTempLast))
+        return nullptr;
+    const uint64_t bcInfo = mcfPackBcInfo(method.rawBits(),
+                                          mo->bytes() + mo->compiledCodeByteSize(), jm);
+    if (!bcInfo) return nullptr;
+    static jit::McfCallEntry scratch;
+    scratch.methodBits = method.rawBits();
+    scratch.jm = jm;
+    scratch.bcEndOff = bcInfo;
+    scratch.prim = 0;
+    return &scratch;
 }
 
 // A send left machine code for this method.  When it is a primitive T1 code
