@@ -345,6 +345,18 @@ constexpr uint64_t kMcfBlockNLR = 0x40000;
 // oop bits) in the receiver slot instead of calling.  jm stays set, so
 // every other reader of the entry treats it as no native call.
 constexpr uint64_t kMcfReturnsValue = 0x80000;
+// McfCallEntry.prim low 24 bits for a unary method of a few field-reading
+// bytecodes that T1 code answers at the call site through a shared stub
+// (g_mcfTinyStub), with the method's own call as the fallback (jm and
+// bcEndOff stay those of a native-call entry).  Above bit 24:
+//   bits 24-27 shape: 1 `^ f ifNil: [...]` (answers a non-nil f),
+//                     2 `^ fa OP fb`, 3 `^ (fa OP fb) and: [...]` (answers
+//                     false when the comparison is false); fields are
+//                     SmallIntegers for 2 and 3
+//   bits 28-31 OP: 0 < 1 > 2 <= 3 >= 4 = 5 ~=
+//   bits 32-47 field a, bits 48-63 field b
+constexpr uint64_t kMcfTinyShape = 0x100000;
+inline uint64_t g_mcfTinyStub = 0;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
 // PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and

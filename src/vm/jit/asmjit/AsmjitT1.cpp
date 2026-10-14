@@ -5856,6 +5856,73 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
     a.ret(x30);
 }
 static void emitMcfInlinePrims0(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 0); }
+
+// Machine-code frames: a unary method of field-reading bytecodes answered
+// at the call site (kMcfTinyShape, decoded from x10 = entry.prim).  Called
+// with blr from a 0-argument IC-hit site whose receiver passed the class
+// check (a heap object of a class with the fields).  x8 = 1: the result is
+// in the receiver slot and in x26; x8 = 0: make the call.  Keeps x5-x7,
+// x9, x10.
+static void emitMcfTinyShapes(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    asmjit::Label fail = a.new_label(), notLazy = a.new_label();
+    asmjit::Label haveBool = a.new_label(), answer = a.new_label();
+    a.ldur(x1, ptr(x25, -8));                      // receiver
+    a.ubfx(x11, x10, asmjit::Imm(24), asmjit::Imm(4));   // shape
+    a.ubfx(x12, x10, asmjit::Imm(32), asmjit::Imm(16));  // field a
+    a.add(x13, x1, x12, lsl(3));
+    a.ldr(x13, ptr(x13, 8));
+    a.cmp(x11, asmjit::Imm(1));
+    a.b_ne(notLazy);
+    // 1: `^ f ifNil: [...]` -- a non-nil field is the answer.
+    a.ldr(x14, ptr(x0, OFF_MCF_NIL));
+    a.cmp(x13, x14);
+    a.b_eq(fail);
+    a.mov(x15, x13);
+    a.b(answer);
+    a.bind(notLazy);
+    // 2, 3: compare two SmallInteger fields (tagged compare is monotonic).
+    a.ubfx(x12, x10, asmjit::Imm(48), asmjit::Imm(16));  // field b
+    a.add(x14, x1, x12, lsl(3));
+    a.ldr(x14, ptr(x14, 8));
+    a.and_(x15, x13, asmjit::Imm(7));
+    a.cmp(x15, asmjit::Imm(1));
+    a.b_ne(fail);
+    a.and_(x15, x14, asmjit::Imm(7));
+    a.cmp(x15, asmjit::Imm(1));
+    a.b_ne(fail);
+    a.ldp(x16, x17, ptr(x0, OFF_TRUEOOP));         // x16 true, x17 false
+    a.ubfx(x12, x10, asmjit::Imm(28), asmjit::Imm(4));   // op
+    {
+        static const CondCode conds[6] = {CondCode::kLT, CondCode::kGT, CondCode::kLE,
+                                          CondCode::kGE, CondCode::kEQ, CondCode::kNE};
+        for (int k = 0; k < 6; k++) {
+            asmjit::Label next = a.new_label();
+            if (k < 5) {
+                a.cmp(x12, asmjit::Imm(k));
+                a.b_ne(next);
+            }
+            a.cmp(x13, x14);                   // after the op test: its flags are gone
+            a.csel(x15, x16, x17, conds[k]);
+            a.b(haveBool);
+            a.bind(next);
+        }
+    }
+    a.bind(haveBool);
+    // 3: `^ (fa OP fb) and: [...]` -- answered only when the test is false.
+    a.cmp(x11, asmjit::Imm(3));
+    a.b_ne(answer);
+    a.cmp(x15, x16);
+    a.b_eq(fail);
+    a.bind(answer);
+    a.stur(x15, ptr(x25, -8));
+    a.mov(x26, x15);
+    a.mov(x8, asmjit::Imm(1));
+    a.ret(x30);
+    a.bind(fail);
+    a.mov(x8, asmjit::Imm(0));
+    a.ret(x30);
+}
 static void emitMcfInlinePrims1(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 1); }
 static void emitMcfInlinePrims2(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 2); }
 #endif
@@ -11139,7 +11206,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // An ordinary compiled callee (prim 0) goes straight to the
                 // call; every other entry kind is decided out of line.
                 asmjit::Label mcfSpecial = a.new_label();
+                asmjit::Label mcfNativeCall = a.new_label();
                 a.cbnz(x10, mcfSpecial);
+                a.bind(mcfNativeCall);
                 // The call itself is the shared stub (emitMcfCallStub).
                 a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
                 a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
@@ -11149,6 +11218,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(x16, asmjit::Imm(g_mcfCallStub));
                 a.br(x16);
                 a.bind(mcfSpecial);
+                if (nArgs == 0 && g_mcfTinyStub != 0 && !GET_DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)) {
+                    // A unary field-reading method: the shared stub answers
+                    // it, or the method is called after all.
+                    asmjit::Label notTiny = a.new_label();
+                    a.and_(x11, x10, asmjit::Imm(0xFFFFFF));
+                    a.mov(x12, asmjit::Imm(kMcfTinyShape));
+                    a.cmp(x11, x12);
+                    a.b_ne(notTiny);
+                    a.str(x30, ptr_pre(sp, -16));
+                    a.mov(x16, asmjit::Imm(g_mcfTinyStub));
+                    a.blr(x16);
+                    a.ldr(x30, ptr_post(sp, 16));
+                    a.cbnz(x8, mcfCont);
+                    a.b(mcfNativeCall);
+                    a.bind(notTiny);
+                }
                 if (nArgs >= 2 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)) {
                     // value:value: and longer (a primitive-207 method): call
                     // the receiver closure's block natively, as at value: sites.
@@ -14914,6 +14999,7 @@ void pharo::jit::mcfBuildStubs() {
         g_mcfPrimStub[2] = buildMcfStubPage(emitMcfInlinePrims2);
     }
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
+    if (!g_mcfTinyStub) g_mcfTinyStub = buildMcfStubPage(emitMcfTinyShapes);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
     if (GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) {
         static bool stubsMapped = false;

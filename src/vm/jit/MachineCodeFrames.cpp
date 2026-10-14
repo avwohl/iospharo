@@ -559,6 +559,49 @@ bool Interpreter::mcfConstantReturn(Oop method, Oop& value) {
     return !value.isObject() || !memory_.isYoung(value);
 }
 
+// A unary method T1 code answers through g_mcfTinyStub (kMcfTinyShape):
+// `^ f ifNil: [...]`, `^ fa OP fb`, `^ (fa OP fb) and: [...]`.  Not for the
+// Context hierarchy: lazy contexts sync their fields before a read.
+bool Interpreter::mcfTinyShape(Oop method, uint64_t& prim) {
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES) || !jit::g_mcfTinyStub) return false;
+    ObjectHeader* mo = method.asObjectPtr();
+    if (mo->classIndex() != compiledMethodClassIndex_) return false;
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger() || ((hdr.asSmallInteger() >> 24) & 0xF) != 0) return false;
+    if ((hdr.asSmallInteger() >> 16) & 1) return false;               // a primitive
+    const uint8_t* bc = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
+    const size_t n = (size_t)(end - bc);
+    namespace S = jit::SistaV1;
+    auto isRecvVar = [](uint8_t op) { return op <= S::PushRecvVarLast; };
+    auto jumpFalseTarget = [&](size_t at) -> size_t {   // index the jump at `at` goes to
+        return at + 1 + (size_t)(bc[at] - S::ShortJumpFalseBase) + 1;
+    };
+    uint64_t shape = 0, op = 0, fa = 0, fb = 0;
+    if (n >= 5 && isRecvVar(bc[0]) && bc[1] == S::Dup && bc[2] == S::PushNil
+            && bc[3] == S::SpecialSendBase + 6
+            && bc[4] >= S::ShortJumpFalseBase && bc[4] <= S::ShortJumpFalseLast) {
+        const size_t t = jumpFalseTarget(4);
+        if (t < n && bc[t] == S::ReturnTop) { shape = 1; fa = bc[0]; }
+    } else if (n >= 4 && isRecvVar(bc[0]) && isRecvVar(bc[1])
+               && bc[2] >= S::ArithBase + 2 && bc[2] <= S::ArithBase + 7) {
+        fa = bc[0]; fb = bc[1]; op = bc[2] - (S::ArithBase + 2);
+        if (bc[3] == S::ReturnTop) shape = 2;
+        else if (bc[3] >= S::ShortJumpFalseBase && bc[3] <= S::ShortJumpFalseLast) {
+            const size_t t = jumpFalseTarget(3);
+            if (t + 1 < n && bc[t] == S::PushFalse && bc[t + 1] == S::ReturnTop) shape = 3;
+        }
+    }
+    if (!shape) return false;
+    // Not a method of Context or one of its superclasses.
+    Oop mc = methodClassOf(method);
+    Oop ctxClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+    for (Oop c = ctxClass; c.isObject() && !c.isNil(); c = superclassOf(c))
+        if (c.rawBits() == mc.rawBits()) return false;
+    prim = jit::kMcfTinyShape | (shape << 24) | (op << 28) | (fa << 32) | (fb << 48);
+    return true;
+}
+
 // May a call-cache entry be keyed by this method or CompiledBlock?  Young
 // ones may: the scavenge purges their entries (mcfPurgeCallCacheRange).
 // Methods compiled at run time stayed young until the next scavenge, and
@@ -733,9 +776,12 @@ bool Interpreter::mcfActivate(Oop method) {
             e.prim = 0;
             e.bcEndOff = mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm);
             Oop constant;
+            uint64_t tiny;
             if (!hasPrim && mcfConstantReturn(method, constant)) {
                 e.prim = jit::kMcfReturnsValue;
                 e.bcEndOff = constant.rawBits();
+            } else if (!hasPrim && mcfTinyShape(method, tiny)) {
+                e.prim = tiny;
             }
         }
     }
@@ -907,7 +953,8 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         mcfNotePrimitiveTarget(target, rcv);
         e = jit::mcfCallFind(target.rawBits());
     }
-    if (e && e->jm && !e->prim && mcfReceiverOk(e->jm, rcv)) return e;
+    if (e && e->jm && (!e->prim || (e->prim & 0xFFFFFF) == jit::kMcfTinyShape)
+            && mcfReceiverOk(e->jm, rcv)) return e;   // a tiny shape is also a native call
     if (e && e->prim == jit::kMcfReturnsValue) {
         // A method answering one constant (mcfConstantReturn).
         st->sp[-(nArgs + 1)] = Oop::fromRawBits(e->bcEndOff);
@@ -1072,6 +1119,8 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
         e.jm = jm;
         e.prim = 0;
         e.bcEndOff = bcInfo;
+        uint64_t tiny;
+        if (mcfTinyShape(method, tiny)) e.prim = tiny;
         return;
     }
     const int p = primitiveIndexOf(method);
