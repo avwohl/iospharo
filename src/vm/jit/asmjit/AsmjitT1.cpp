@@ -13905,6 +13905,25 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
     }
+    // PHARO_JIT_PERF_MAP=<path>: append "start size Class>>#sel" per compile
+    // (perf-map format), to attribute `sample` addresses in JIT code.
+    if (jm && GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) {
+        static FILE* mapf = std::fopen(GET_DEBUG_STR(PHARO_JIT_PERF_MAP), "w");
+        if (mapf) {
+            std::string cls = "?";
+            ObjectHeader* mo = compiledMethod.asObjectPtr();
+            const size_t nl = (size_t)(headerBits & 0x7FFF);
+            if (nl >= 1) {
+                Oop assoc = mo->slotAt(nl);
+                if (assoc.isObject() && !assoc.isNil() && assoc.asObjectPtr()->slotCount() >= 2)
+                    cls = memory.nameOfClass(assoc.asObjectPtr()->slotAt(1));
+            }
+            std::fprintf(mapf, "%llx %zx %s>>#%s\n",
+                         (unsigned long long)(uintptr_t)jm->codeStart(), emitted,
+                         cls.c_str(), memory.selectorOf(compiledMethod).c_str());
+            std::fflush(mapf);
+        }
+    }
     // E2 2026-05-24: log every successful asmjit-T1 compile when
     // PHARO_T1_TRACE_COMPILE=1 (env var → DebugSettings).  Used to
     // bisect WHICH method's JIT-compilation breaks SessionManager

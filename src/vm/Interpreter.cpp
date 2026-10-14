@@ -25752,6 +25752,14 @@ void Interpreter::tryOSRAtBackwardJump() {
     if (!method_.isObject() || method_.rawBits() < 0x10000) return;
 
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_OSR_TRACE), 0)) {
+        static int n = 0;
+        if (!closure_.isNil() && ++n <= 20)
+            fprintf(stderr, "[OSR] #%s jm=%p exec=%d closure=%d mcfActive=%d inResume=%d\n",
+                    memory_.selectorOf(method_).c_str(), (void*)jm,
+                    jm ? (int)jm->isExecutable() : -1, (int)!closure_.isNil(),
+                    (int)mcfActive_, (int)inJITResume_);
+    }
     if (!jm || !jm->isExecutable()) {
         // Not compiled yet — trigger compilation via noteMethodEntry.
         // With threshold=2, this compiles after 2 backward jumps of the

@@ -835,10 +835,29 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
     } else {
         if (!method_.isObject() || method_.rawBits() < 0x10000) return;
         jm = jitRuntime_.methodMap().lookup(method_.rawBits());
-        if (!jm || !jm->isExecutable()) return;
-        if (!(mcfIsMethodFrame() || mcfIsBlockFrame()) || !mcfReceiverOk(jm, receiver_)) return;
+        const bool tr = __builtin_expect(GET_DEBUG_BOOL(PHARO_OSR_TRACE), 0) && !closure_.isNil();
+        if (!jm || !jm->isExecutable()) { if (tr) fprintf(stderr, "[OSR-R] nojm\n"); return; }
+        // OSR (popped == nullptr, from a backward jump): a block frame may
+        // enter too.  A loop in a block run once (a test method's or a
+        // DoIt's) otherwise ran interpreted, 4x slower.  Block frames
+        // elsewhere stay behind PHARO_MCF_BLOCKS (measured slower).
+        const bool osrBlock = !popped && !GET_DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)
+            && !closure_.isNil()
+            && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
+        if (!(mcfIsMethodFrame() || mcfIsBlockFrame() || osrBlock)
+                || !mcfReceiverOk(jm, receiver_)) {
+            if (tr) fprintf(stderr, "[OSR-R] frame m=%d b=%d rcv=%d\n", (int)mcfIsMethodFrame(),
+                            (int)mcfIsBlockFrame(), (int)mcfReceiverOk(jm, receiver_));
+            return;
+        }
         entry = mcfEntryFor(jm, instructionPointer_);
-        if (!entry) return;
+        if (!entry) {
+            if (tr) fprintf(stderr, "[OSR-R] noentry bcOff=%ld numBc=%u\n",
+                            (long)(instructionPointer_ - (const uint8_t*)jm->bcStart()),
+                            jm->numBytecodes);
+            return;
+        }
+        if (tr) fprintf(stderr, "[OSR-R] enter\n");
     }
     mcfRun(jm, entry);
 }

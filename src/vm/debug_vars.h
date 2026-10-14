@@ -97,6 +97,7 @@ DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX)   // log [INLINE-METHOD] idx+methodOop fo
 DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX, -1) // bisect: compile ONLY the inline-method with this compile-order idx; bail all other inline methods
 DEBUG_STR(PHARO_SISTA_KEEP_METHOD_OOP)    // bisect: compile ONLY the inline method with this method oop (hex); bail all other inline methods (stable across runs)
 DEBUG_STR(PHARO_T1_RESUME_ONLY_SEL)       // debug isolation: force send-resume ON only for T1 methods whose selector == this value (resume stays OFF for all others, incl. startup). Repro/validate the send-resume protocol on one controlled method without breaking startup.
+DEBUG_STR(PHARO_JIT_PERF_MAP)               // write "start size Class>>#sel" for every T1 compile to this file (attribute sample addresses)
 DEBUG_BOOL(PHARO_J2J_LOG_FILL)            // log every IC J2J bit-60 fill/upgrade as [J2JFILL] caller->callee (+selfrec flag), capped. Used to enumerate engaged (caller,callee) pairs under global inline-J2J for bisecting the startup corruptor.
 DEBUG_BOOL(PHARO_J2J_MAT_LOG)             // log every J2J-save materialize (site, saveJM selector, receiver class, sendArgs, ip) + flag IP-OUT-OF-RANGE saves whose ip isn't inside saveJM's bytecode range = stale save.jitMethod written by the xmethod save-push
 DEBUG_STR(PHARO_J2J_MAT_SEL)              // substring filter: J2J-MAT entries whose saveJM selector matches are logged UNCAPPED (the general log caps at 200 lines, before the corruption window)
@@ -170,6 +171,7 @@ DEBUG_BOOL_RT(PHARO_NO_LAZY_OUTER)             // opt-out of lazy outer contexts
 DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit (target compiled / primitive / not compiled / IC miss) and print the counts every 4M exits
 DEBUG_BOOL(PHARO_MATFS_CENSUS)                 // count materializeFrameStack calls, frames walked and frames already synced (printed every 64K calls)
 DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also enter / resume block frames in machine code from the interpreter (activateBlock, after a return).  Off: measured slower (block microbenchmark 9.57 -> 9.89 billion instructions, deeptraverser 918 -> 925); native block calls from machine code happen either way
+DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)            // MCF: OSR at a backward jump does not enter block frames (a loop in a block run once stays interpreted)
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)
@@ -476,6 +478,7 @@ DEBUG_BOOL(PHARO_NO_MEGAHIT_IC_FILL)
 DEBUG_BOOL(PHARO_NO_MULTISLOT_GETTER)
 DEBUG_BOOL(PHARO_NO_OSR)
 DEBUG_BOOL(PHARO_NO_OSR_RECOMPILE)
+DEBUG_BOOL(PHARO_OSR_TRACE)                  // trace the first 20 OSR checks at backward jumps (method, compiled?, block?)
 DEBUG_BOOL(PHARO_NO_QUEUE_COMPILE)
 DEBUG_BOOL(PHARO_NO_RESUME)
 DEBUG_BOOL(PHARO_NO_RETLIT)
