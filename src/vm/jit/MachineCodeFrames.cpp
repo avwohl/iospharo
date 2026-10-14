@@ -1534,6 +1534,10 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         c.mcfDepthLimit = StackOverflowLimit - 64;
         c.mcfEpochPtr = &jit::g_mcCodeEpoch;
         c.mcfCallCache = jit::g_mcfCallCache;
+        c.mcfCallStubAddr = jit::g_mcfCallStub;
+        c.mcfBlockStubAddr = jit::g_mcfBlockStub;
+        for (int k = 0; k < 3; k++) c.mcfPrimStubAddr[k] = jit::g_mcfPrimStub[k];
+        c.mcfTinyStubAddr = jit::g_mcfTinyStub;
         mcfConstEpoch_ = 0;
     }
     jit::JITState& st = *mcfState_;

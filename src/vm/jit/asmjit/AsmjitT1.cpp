@@ -4961,6 +4961,10 @@ constexpr int OFF_MCF_EPOCH_PTR    = 400;
 constexpr int OFF_MCF_CALL_CACHE   = 408;
 constexpr int OFF_MCF_BCEND_OFF    = 416;
 constexpr int OFF_MCF_SITE_CACHE   = 424;
+constexpr int OFF_MCF_CALL_STUB    = 432;
+constexpr int OFF_MCF_BLOCK_STUB   = 440;
+constexpr int OFF_MCF_PRIM_STUB    = 448;   // + 8 * nArgs
+constexpr int OFF_MCF_TINY_STUB    = 472;
 static_assert(OFF_MCF_FRAMES == offsetof(JITState, mcfFrames), "OFF_MCF_FRAMES");
 static_assert(OFF_MCF_DEPTH_PTR == offsetof(JITState, mcfFrameDepthPtr), "OFF_MCF_DEPTH_PTR");
 static_assert(OFF_MCF_MATCTX_PTR == offsetof(JITState, mcfMatCtxPtr), "OFF_MCF_MATCTX_PTR");
@@ -5368,7 +5372,8 @@ static uint64_t getSharedReturnPreludeStub() {
 //   x0 state, x19 caller JM, x25 sp, x9 callee JM, x7 its McfCallEntry,
 //   x13 the caller's savedIP (ip after the send), x14 mcReturn (the send's
 //   continuation), x15 the site's fallback address,
-//   w12 = nArgs | callerArgCount << 8,
+//   w12 = callerArgCount | nArgs << 8 (the low byte is stored as the
+//   record's savedArgCount with one strb),
 //   method stub: x6 the callee CompiledMethod;
 //   block stub:  x1 the FullBlockClosure, x6 its CompiledBlock.
 // x5 (the site's IC entry) is preserved: the fallback may exit with it.
@@ -5453,9 +5458,8 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
     else { emitLoadTempBase(a, x16); a.sub(x16, x16, asmjit::Imm(8)); }
     put2(x16, L.savedFP, xzr, L.materializedRetSlot);
-    a.lsr(w16, w12, asmjit::Imm(8));
-    a.and_(w16, w16, asmjit::Imm(0xFF));
-    a.str(w16, ptr(x8, L.savedArgCount));
+    // savedArgCount < 256 and its upper bytes are always 0: one byte store.
+    a.strb(w12, ptr(x8, L.savedArgCount));
     a.movn(x16, asmjit::Imm(0));                   // SIZE_MAX: no non-local return
     a.str(x16, ptr(x8, L.homeFrameDepth));
     put2(x14, L.mcReturn, x13, L.mcKeyIP);
@@ -5467,7 +5471,7 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
 // ip, bytecode end.  x11 = nArgs on exit.
 static void emitMcfCalleeView(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
-    a.and_(w11, w12, asmjit::Imm(0xFF));           // nArgs
+    a.lsr(w11, w12, asmjit::Imm(8));               // nArgs
     const bool lazy = ::pharo::mcfLazyView();
     if (!lazy) {
         a.str(x6, ptr(x0, OFF_METHOD));
@@ -5586,7 +5590,7 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     // The temporaries must hold the arguments and the copied values.
     a.ldrb(w16, ptr(x1, 7));                       // closure slot count (< 255, site)
     a.sub(w16, w16, asmjit::Imm(4));               // copied values
-    a.and_(w17, w12, asmjit::Imm(0xFF));
+    a.lsr(w17, w12, asmjit::Imm(8));               // nArgs
     a.add(w17, w17, w16);
     a.ldrb(w8, ptr(x9, (int)offsetof(JITMethod, tempCount)));
     a.cmp(w8, w17);
@@ -6316,8 +6320,8 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
     a.add(x13, x13, asmjit::Imm(globalIdx + sendLen));   // ip after the send
     a.adr(x14, cont);
     a.adr(x15, extExit);
-    a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
-    a.mov(x16, asmjit::Imm(g_mcfCallStub));
+    a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+    a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
     a.br(x16);
     a.bind(extDone);                         // result on the stack
     emitReloadSpFromState(a);
@@ -7916,8 +7920,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                 a.adr(x14, mcfCont);
                 a.adr(x15, notBlock);
-                a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
-                a.mov(x16, asmjit::Imm(g_mcfBlockStub));
+                a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                a.ldr(x16, ptr(x0, OFF_MCF_BLOCK_STUB));
                 a.br(x16);
                 a.bind(notBlock);
             }
@@ -11606,8 +11610,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                 a.adr(x14, mcfCont);
                 a.adr(x15, mcfSlow);
-                a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
-                a.mov(x16, asmjit::Imm(g_mcfCallStub));
+                a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
                 a.br(x16);
                 a.bind(mcfSpecial);
                 if (nArgs == 0 && g_mcfTinyStub != 0 && !GET_DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)) {
@@ -11619,7 +11623,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.cmp(x11, x12);
                     a.b_ne(notTiny);
                     a.str(x30, ptr_pre(sp, -16));
-                    a.mov(x16, asmjit::Imm(g_mcfTinyStub));
+                    a.ldr(x16, ptr(x0, OFF_MCF_TINY_STUB));
                     a.blr(x16);
                     a.ldr(x30, ptr_post(sp, 16));
                     a.cbnz(x8, mcfCont);
@@ -11661,8 +11665,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                     a.adr(x14, mcfCont);
                     a.adr(x15, mcfSlow);
-                    a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
-                    a.mov(x16, asmjit::Imm(g_mcfBlockStub));
+                    a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                    a.ldr(x16, ptr(x0, OFF_MCF_BLOCK_STUB));
                     a.br(x16);
                     a.bind(notBV);
                 }
@@ -11696,7 +11700,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (nArgs <= 2 && g_mcfPrimStub[nArgs] != 0
                             && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)) {
                         a.str(x30, ptr_pre(sp, -16));
-                        a.mov(x16, asmjit::Imm(g_mcfPrimStub[nArgs]));
+                        a.ldr(x16, ptr(x0, OFF_MCF_PRIM_STUB + 8 * nArgs));
                         a.blr(x16);
                         a.ldr(x30, ptr_post(sp, 16));
                         a.cbnz(x7, mcfCont);

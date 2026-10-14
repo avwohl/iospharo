@@ -239,6 +239,12 @@ struct JITState {
     void*     mcfCallCache;       // offset 408: McfCallEntry[kMcfCallCacheSize]
     uint64_t  mcfBcEndOff;        // offset 416: current frame: bytecodeEnd - method
     uint64_t* mcfSiteCache;       // offset 424: the = site cache pharo_mcf_extsend may fill
+    // The shared MCF stubs, so a send site loads the address in one
+    // instruction instead of building a 48-bit immediate (mov + 2 movk).
+    uint64_t  mcfCallStubAddr;    // offset 432: g_mcfCallStub
+    uint64_t  mcfBlockStubAddr;   // offset 440: g_mcfBlockStub
+    uint64_t  mcfPrimStubAddr[3]; // offset 448: g_mcfPrimStub[0..2]
+    uint64_t  mcfTinyStubAddr;    // offset 472: g_mcfTinyStub
 };
 static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
 static_assert(offsetof(JITState, closure) == 320, "JITState.closure offset (JS_CLOSURE in asm)");
@@ -247,6 +253,10 @@ static_assert(offsetof(JITState, gcIpOffset) == 336, "JITState.gcIpOffset offset
 static_assert(offsetof(JITState, mcfFrames) == 344, "JITState.mcfFrames offset");
 static_assert(offsetof(JITState, mcfBcEndOff) == 416, "JITState.mcfBcEndOff offset");
 static_assert(offsetof(JITState, mcfSiteCache) == 424, "JITState.mcfSiteCache offset");
+static_assert(offsetof(JITState, mcfCallStubAddr) == 432, "JITState.mcfCallStubAddr offset");
+static_assert(offsetof(JITState, mcfBlockStubAddr) == 440, "JITState.mcfBlockStubAddr offset");
+static_assert(offsetof(JITState, mcfPrimStubAddr) == 448, "JITState.mcfPrimStubAddr offset");
+static_assert(offsetof(JITState, mcfTinyStubAddr) == 472, "JITState.mcfTinyStubAddr offset");
 
 // Verify expected offsets (stencils depend on these)
 static_assert(offsetof(JITState, sp)        == 0,  "sp offset");
