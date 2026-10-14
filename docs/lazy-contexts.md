@@ -96,7 +96,14 @@ Instructions retired, in billions (Apple M-series, arm64 build-rel):
 | 3M printString | 38.1 | 38.7 |
 
 lexicon wall time on a quiet machine: 57.0 s before, about 50.6 s
-after (time limit 50 s, Cog 11 s).
+after (time limit 50 s, Cog 11 s).  The machine-code-frame fixes that
+followed (docs/mc-frames-design.md, exit census) took lexicon to 838
+billion instructions.
+
+Validation: sweep L2 (`d90a1150`): 27875 pass, 13 fail, 1 error, against
+27879 / 9 / 2 for the baseline.  The three non-passes outside the
+baseline lists (StDebuggerTest testDynamicVariableEvaluation, TestCaseTest
+testAnnouncement timeout, TraitTest timeout) pass alone 3 of 3.
 
 ## Behaviour changes
 

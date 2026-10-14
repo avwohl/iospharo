@@ -330,10 +330,36 @@ testClear), which pass alone in both modes.
 | lexicon test | 1699 | 1081 |
 | myprecious round trips | 44.3 | ~44 (network-bound) |
 
+**Exit census, 2026-10-14.**  After lazy outer contexts
+(docs/lazy-contexts.md), `PHARO_MCF_CENSUS` on lexicon showed that two
+thirds of the send exits went to methods that were already compiled.
+Three causes, all fixed in `ed0c202e`:
+
+1. The native call refused at frame depth 0.  A method that resumes at
+   depth 0 (after a process switch or a `thisContext` collapse) then
+   exited on every send until it returned.  The call stub now stores the
+   pc of the caller into `activeContext_`, as `pushFrame` does on its
+   push from depth 0 (opt-out `PHARO_MCF_NO_DEPTH0_CALL`, diagnostic
+   builds).
+2. The call cache was direct-mapped.  Pairs that call each other, for
+   example `at:ifPresent:` and `findElementOrNil:`, used the same entry
+   and removed each other at every call.  The cache is now two-way set
+   associative (`mcfCallSet`, `emitMcfCacheProbe`).
+3. A native call spent all of `numBytecodes` of the callee from the
+   checkpoint countdown.  A small hot callee then went to a checkpoint
+   (an exit) about every 50 calls.  A call now spends
+   1 + numBytecodes/8.
+
+Also, a scavenge no longer clears the call cache: the cache holds only
+old-space methods, which a scavenge does not move or free.
+
+| Workload (instructions, billion) | `d90a1150` (lazy outer contexts) | `ed0c202e` |
+|---|---|---|
+| lexicon test | 954 | 838 |
+| printString (3M) | 38.7 | 34.8 |
+
 Open items:
 
-- lexicon is now limited by block creation materializing the frame stack
-  (docs/deferred.md: married, read-through contexts).
 - The default mode with `PHARO_NO_MCF` pays the larger SavedFrame
   (printString 83.7 -> 84.7).
 
@@ -352,7 +378,9 @@ only in a build with `-DPHARO_DIAG_KNOBS=ON` (build-dbg, build-dbg2).
 | `PHARO_MCF_COMPILE_MOD` / `_REM` | Only matching methods run in machine code. |
 | `PHARO_MCF_WATCH_OOP` | Log every primitive store of this oop, with the frame chain. |
 | `PHARO_MCF_BLOCKS` | Also enter / resume block frames from the interpreter (off: slower). |
-| `PHARO_MATFS_CENSUS` | Count materializeFrameStack calls and frames walked. |
+| `PHARO_MATFS_CENSUS` | Count materializeFrameStack calls and frames walked, and the calls by caller. |
+| `PHARO_MCF_NO_INLINE_WIDOW` | The native return falls back to the interpreter for a frame that has a context. |
+| `PHARO_MCF_NO_DEPTH0_CALL` | The native call refuses at frame depth 0. |
 
 How the stale-receiver bug was found (2026-10-13), as a pattern: the five
 value oracles were silent; the receiver invariant caught it in one run.

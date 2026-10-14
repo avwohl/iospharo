@@ -15,6 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, 14:00) -- lazy outer contexts, MCF exit census
+
+After machine-code frames, the user approved the next step: lazy
+contexts.  Phase 1 is in: lazy outer contexts (docs/lazy-contexts.md).
+Block creation no longer materializes the frame stack; image code that
+reads a Context syncs first.  A five-reader map plus an adversarial
+review (three lenses, each claim verified) shaped the design; all
+confirmed holes are fixed except two documented ones (opt-in Sista,
+allocation failure).  Then an MCF exit census found three call-path
+defects (depth-0 refusal, direct-mapped call cache, countdown charge),
+fixed in `ed0c202e` (docs/mc-frames-design.md, exit census).
+
+lexicon instructions: 1081 (MCF) -> 954 (lazy outer contexts) -> 838.
+printString: 38.4 -> 34.8.
+
+Validation: sweep L2 (`d90a1150`) 27875 / 13 / 1, three non-baseline
+non-passes all pass alone 3/3.  Sweep L3 (`ed0c202e`) running; package
+batch on L2 running.  Both commits are local only: push after L3 is
+clean.
+
 ## Right now (2026-10-14, 09:00) -- machine-code frames: done, default, pushed
 
 The user asked for the redesign of how compiled code calls and returns into
