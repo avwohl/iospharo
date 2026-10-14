@@ -5240,6 +5240,206 @@ static uint64_t getSharedReturnPreludeStub() {
     cached = reinterpret_cast<uint64_t>(page);
     return cached;
 }
+
+// ===== Machine-code frames: shared call stubs (docs/mc-frames-design.md) =====
+// One copy each instead of ~70 / ~100 instructions at every send site.
+// Entered with `br`, never `bl` (x30 is the live link back to C++).  Inputs:
+//   x0 state, x19 caller JM, x25 sp, x9 callee JM, x7 its McfCallEntry,
+//   x13 the caller's savedIP (ip after the send), x14 mcReturn (the send's
+//   continuation), x15 the site's fallback address,
+//   w12 = nArgs | callerArgCount << 8,
+//   method stub: x6 the callee CompiledMethod;
+//   block stub:  x1 the FullBlockClosure, x6 its CompiledBlock.
+// x5 (the site's IC entry) is preserved: the fallback may exit with it.
+// Any refusal (interrupt countdown, depth, temps) is `br x15` with nothing
+// written but the countdown.
+static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
+    using namespace asmjit::a64;
+    const McfFrameLayout& L = g_mcfLayout;
+    a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));        // interrupt checks
+    a.ldr(w11, ptr(x10));
+    a.ldrh(w8, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
+    a.subs(w11, w11, w8);
+    a.b_le(fail);
+    a.str(w11, ptr(x10));
+    a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
+    a.ldr(x11, ptr(x10));
+    // At depth 0 the caller lives in activeContext_, and pushFrame must
+    // store the caller's pc into it.
+    a.cbz(x11, fail);
+    a.ldr(x8, ptr(x0, OFF_MCF_DEPTH_LIMIT));
+    a.cmp(x11, x8);
+    a.b_hs(fail);                                  // near overflow: interpreter
+    a.ldr(x8, ptr(x0, OFF_MCF_FRAMES));
+    a.mov(x16, asmjit::Imm(L.size));
+    a.madd(x8, x11, x16, x8);                      // x8 = &savedFrames_[depth]
+    a.add(x11, x11, asmjit::Imm(1));
+    a.str(x11, ptr(x10));                          // frameDepth_++
+    // The caller's state (pushFrame).
+    a.str(x13, ptr(x8, L.savedIP));
+    a.str(x13, ptr(x8, L.mcKeyIP));
+    a.ldr(x16, ptr(x0, OFF_METHOD));
+    a.str(x16, ptr(x8, L.savedMethod));
+    a.str(x16, ptr(x8, L.savedHomeMethod));
+    a.ldr(x17, ptr(x0, OFF_MCF_BCEND_OFF));
+    a.add(x17, x16, x17);
+    a.str(x17, ptr(x8, L.savedBytecodeEnd));
+    a.ldr(x16, ptr(x0, OFF_RECEIVER));
+    a.str(x16, ptr(x8, L.savedReceiver));
+    a.ldr(x16, ptr(x0, OFF_CLOSURE));
+    a.str(x16, ptr(x8, L.savedClosure));
+    a.ldr(x4, ptr(x0, OFF_MCF_NIL));               // x4 = nil from here on
+    a.ldr(x10, ptr(x0, OFF_MCF_MATCTX_PTR));
+    a.ldr(x16, ptr(x10));
+    a.str(x16, ptr(x8, L.materializedContext));
+    a.str(x4, ptr(x10));                           // the callee has no context
+    a.ldr(x10, ptr(x0, OFF_MCF_ACTCTX_PTR));
+    a.ldr(x16, ptr(x10));
+    a.str(x16, ptr(x8, L.savedActiveContext));
+    a.strb(wzr, ptr(x8, L.ctxSynced));
+    emitLoadTempBase(a, x16);
+    a.sub(x16, x16, asmjit::Imm(8));
+    a.str(x16, ptr(x8, L.savedFP));
+    a.str(xzr, ptr(x8, L.materializedRetSlot));
+    a.lsr(w16, w12, asmjit::Imm(8));
+    a.and_(w16, w16, asmjit::Imm(0xFF));
+    a.str(w16, ptr(x8, L.savedArgCount));
+    a.movn(x16, asmjit::Imm(0));                   // SIZE_MAX: no non-local return
+    a.str(x16, ptr(x8, L.homeFrameDepth));
+    a.str(x14, ptr(x8, L.mcReturn));
+    a.str(x19, ptr(x8, L.mcJM));
+    a.ldr(x10, ptr(x0, OFF_MCF_EPOCH_PTR));
+    a.ldr(w16, ptr(x10));
+    a.str(w16, ptr(x8, L.mcEpoch));
+}
+
+// The callee view shared by both stubs: method, literals, arg count, JM,
+// ip, bytecode end.  x11 = nArgs on exit.
+static void emitMcfCalleeView(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    a.and_(w11, w12, asmjit::Imm(0xFF));           // nArgs
+    a.str(x6, ptr(x0, OFF_METHOD));
+    a.add(x17, x6, asmjit::Imm(16));
+    a.str(x17, ptr(x0, OFF_LITERALS));
+    a.str(w11, ptr(x0, OFF_ARGCOUNT));
+    a.mov(x19, x9);
+    a.str(x9, ptr(x0, OFF_JITMETHOD));
+    a.ldr(x17, ptr(x9, (int)offsetof(JITMethod, bcStartCache)));
+    a.str(x17, ptr(x0, OFF_IP));
+    a.ldr(x17, ptr(x7, 16));                       // entry.bcEndOff
+    a.str(x17, ptr(x0, OFF_MCF_BCEND_OFF));
+}
+
+static void emitMcfVerifyPushCall(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    if (!GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) return;
+    a.stp(x0, x30, ptr_pre(sp, -32));
+    a.str(x9, ptr(sp, 16));
+    emitSyncSpToState(a);
+    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_push));
+    a.blr(x16);
+    a.ldr(x9, ptr(sp, 16));
+    a.ldp(x0, x30, ptr_post(sp, 32));
+}
+
+static void emitMcfCallStub(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    asmjit::Label fail = a.new_label(), tInit = a.new_label(), tDone = a.new_label();
+    emitMcfPushRecord(a, fail);
+    emitMcfCalleeView(a);
+    a.sub(x16, x25, x11, asmjit::a64::lsl(3));    // callee tempBase (first arg)
+    a.ldur(x1, ptr(x16, -8));                      // receiver
+    emitStoreTempBase(a, x16);
+    a.str(x1, ptr(x0, OFF_RECEIVER));
+    a.str(x4, ptr(x0, OFF_CLOSURE));               // a method frame
+    // Temporaries beyond the arguments start as nil.
+    a.ldrb(w17, ptr(x9, (int)offsetof(JITMethod, tempCount)));
+    a.subs(w17, w17, w11);
+    a.b_le(tDone);
+    a.bind(tInit);
+    a.str(x4, ptr_post(x25, 8));
+    a.subs(w17, w17, asmjit::Imm(1));
+    a.b_gt(tInit);
+    a.bind(tDone);
+    emitMcfVerifyPushCall(a);
+    a.ldur(x26, ptr(x25, -8));                     // TOS mirror
+    a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
+    a.br(x17);
+    a.bind(fail);
+    a.br(x15);
+}
+
+static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    asmjit::Label fail = a.new_label();
+    asmjit::Label copyLoop = a.new_label(), copyDone = a.new_label();
+    asmjit::Label nilLoop = a.new_label(), nilDone = a.new_label();
+    // The temporaries must hold the arguments and the copied values.
+    a.ldrb(w16, ptr(x1, 7));                       // closure slot count (< 255, site)
+    a.sub(w16, w16, asmjit::Imm(4));               // copied values
+    a.and_(w17, w12, asmjit::Imm(0xFF));
+    a.add(w17, w17, w16);
+    a.ldrb(w8, ptr(x9, (int)offsetof(JITMethod, tempCount)));
+    a.cmp(w8, w17);
+    a.b_lo(fail);
+    emitMcfPushRecord(a, fail);
+    emitMcfCalleeView(a);
+    a.sub(x16, x25, x11, asmjit::a64::lsl(3));    // block tempBase (first arg)
+    emitStoreTempBase(a, x16);
+    a.ldr(x17, ptr(x1, 32));                       // slot 3: outer receiver
+    a.str(x17, ptr(x0, OFF_RECEIVER));
+    a.str(x1, ptr(x0, OFF_CLOSURE));
+    // Copied values (closure slots 4..) after the arguments, then nil.
+    a.ldrb(w10, ptr(x1, 7));
+    a.sub(w10, w10, asmjit::Imm(4));
+    a.add(x17, x1, asmjit::Imm(8 + 4 * 8));
+    a.bind(copyLoop);
+    a.cbz(w10, copyDone);
+    a.ldr(x8, ptr_post(x17, 8));
+    a.str(x8, ptr_post(x25, 8));
+    a.sub(w10, w10, asmjit::Imm(1));
+    a.b(copyLoop);
+    a.bind(copyDone);
+    a.ldrb(w17, ptr(x9, (int)offsetof(JITMethod, tempCount)));
+    a.add(x17, x16, x17, asmjit::a64::lsl(3));    // tempBase + tempCount
+    a.bind(nilLoop);
+    a.cmp(x25, x17);
+    a.b_hs(nilDone);
+    a.str(x4, ptr_post(x25, 8));
+    a.b(nilLoop);
+    a.bind(nilDone);
+    emitMcfVerifyPushCall(a);
+    a.ldur(x26, ptr(x25, -8));                     // TOS mirror
+    a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
+    a.br(x17);
+    a.bind(fail);
+    a.br(x15);
+}
+
+static uint64_t buildMcfStubPage(void (*emit)(asmjit::a64::Assembler&)) {
+    using namespace asmjit;
+    Environment env = Environment::host();
+    CodeHolder code;
+    if (code.init(env) != kErrorOk) return 0;
+    a64::Assembler a(&code);
+    emit(a);
+    if (code.flatten() != kErrorOk) return 0;
+    size_t sz = code.code_size();
+    if (sz == 0 || sz > 4096) return 0;
+    uint8_t tmp[4096];
+    std::memset(tmp, 0, sizeof(tmp));
+    if (code.copy_flattened_data(tmp, sizeof(tmp),
+            CopySectionFlags::kPadSectionBuffer) != kErrorOk)
+        return 0;
+    void* page = pharo::jit::allocateCodeMemory(4096);
+    if (!page) return 0;
+    pharo::jit::makeWritable(page, 4096);
+    std::memcpy(page, tmp, sz);
+    pharo::jit::flushICache(page, sz);
+    pharo::jit::makeExecutable(page, 4096);
+    return reinterpret_cast<uint64_t>(page);
+}
+
 #endif
 
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
@@ -6471,6 +6671,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // (st.closure), and savedHomeMethod is only ever restored into
             // homeMethod_, which execution does not read.
             const bool mcfNative = ::pharo::mcfEnabled() && nArgs <= 15
+                && g_mcfCallStub != 0 && g_mcfBlockStub != 0
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_CALL);
             // Machine-code frames, phase 3b: `value` / `value:` to a
             // FullBlockClosure whose CompiledBlock is in the call cache
@@ -6515,108 +6716,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
                 a.cmp(x10, x11);
                 a.b_ne(notBlock);                            // not a block entry, or arity
-                a.ldrb(w11, ptr(x9, (int)offsetof(JITMethod, tempCount)));
-                a.sub(w10, w12, asmjit::Imm(4));             // copied values
-                a.add(w10, w10, asmjit::Imm(nArgs));
-                a.cmp(w11, w10);
-                a.b_lo(notBlock);                            // temps cannot hold them
-                a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));
-                a.ldr(w11, ptr(x10));
-                a.ldrh(w13, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
-                a.subs(w11, w11, w13);
-                a.b_le(notBlock);
-                a.str(w11, ptr(x10));
-                a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
-                a.ldr(x11, ptr(x10));
-                a.cbz(x11, notBlock);
-                a.ldr(x13, ptr(x0, OFF_MCF_DEPTH_LIMIT));
-                a.cmp(x11, x13);
-                a.b_hs(notBlock);
-                a.ldr(x13, ptr(x0, OFF_MCF_FRAMES));
-                a.mov(x14, asmjit::Imm(L.size));
-                a.madd(x13, x11, x14, x13);                  // x13 = &savedFrames_[depth]
-                a.add(x11, x11, asmjit::Imm(1));
-                a.str(x11, ptr(x10));                        // frameDepth_++
-                // The caller's state (pushFrame), as for a method call.
-                a.ldr(x14, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                a.add(x14, x14, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
-                a.str(x14, ptr(x13, L.savedIP));
-                a.str(x14, ptr(x13, L.mcKeyIP));
-                a.ldr(x14, ptr(x0, OFF_METHOD));
-                a.str(x14, ptr(x13, L.savedMethod));
-                a.str(x14, ptr(x13, L.savedHomeMethod));
-                a.ldr(x15, ptr(x0, OFF_MCF_BCEND_OFF));
-                a.add(x15, x14, x15);
-                a.str(x15, ptr(x13, L.savedBytecodeEnd));
-                a.ldr(x14, ptr(x0, OFF_RECEIVER));
-                a.str(x14, ptr(x13, L.savedReceiver));
-                a.ldr(x14, ptr(x0, OFF_CLOSURE));            // the caller's closure
-                a.str(x14, ptr(x13, L.savedClosure));
-                a.ldr(x14, ptr(x0, OFF_MCF_NIL));            // x14 = nil from here on
-                a.ldr(x15, ptr(x0, OFF_MCF_MATCTX_PTR));
-                a.ldr(x10, ptr(x15));
-                a.str(x10, ptr(x13, L.materializedContext));
-                a.str(x14, ptr(x15));
-                a.ldr(x15, ptr(x0, OFF_MCF_ACTCTX_PTR));
-                a.ldr(x10, ptr(x15));
-                a.str(x10, ptr(x13, L.savedActiveContext));
-                a.strb(wzr, ptr(x13, L.ctxSynced));
-                emitLoadTempBase(a, x10);
-                a.sub(x10, x10, asmjit::Imm(8));
-                a.str(x10, ptr(x13, L.savedFP));
-                a.str(xzr, ptr(x13, L.materializedRetSlot));
-                a.mov(w10, asmjit::Imm(callerArgCount));
-                a.str(w10, ptr(x13, L.savedArgCount));
-                a.movn(x10, asmjit::Imm(0));                 // no non-local return
-                a.str(x10, ptr(x13, L.homeFrameDepth));
-                a.adr(x10, mcfCont);
-                a.str(x10, ptr(x13, L.mcReturn));
-                a.str(x19, ptr(x13, L.mcJM));
-                a.ldr(x15, ptr(x0, OFF_MCF_EPOCH_PTR));
-                a.ldr(w10, ptr(x15));
-                a.str(w10, ptr(x13, L.mcEpoch));
-                // The block's view (activateBlock).
-                emitLoadSp(a, x13);
-                if (nArgs) a.sub(x13, x13, asmjit::Imm(8 * nArgs));   // first arg
-                emitStoreTempBase(a, x13);
-                a.ldr(x15, ptr(x1, 32));                     // slot 3: outer receiver
-                a.str(x15, ptr(x0, OFF_RECEIVER));
-                a.str(x1, ptr(x0, OFF_CLOSURE));
-                a.str(x6, ptr(x0, OFF_METHOD));
-                a.add(x15, x6, asmjit::Imm(16));
-                a.str(x15, ptr(x0, OFF_LITERALS));
-                a.mov(w15, asmjit::Imm(nArgs));
-                a.str(w15, ptr(x0, OFF_ARGCOUNT));
-                a.mov(x19, x9);
-                a.str(x9, ptr(x0, OFF_JITMETHOD));
-                a.ldr(x15, ptr(x9, (int)offsetof(JITMethod, bcStartCache)));
-                a.str(x15, ptr(x0, OFF_IP));
-                a.ldr(x15, ptr(x7, 16));                     // entry.bcEndOff
-                a.str(x15, ptr(x0, OFF_MCF_BCEND_OFF));
-                // Copied values (closure slots 4..) after the arguments.
-                emitLoadSp(a, x10);                          // = first temp after args
-                a.sub(w12, w12, asmjit::Imm(4));
-                a.add(x15, x1, asmjit::Imm(8 + 4 * 8));
-                a.bind(copyLoop);
-                a.cbz(w12, copyDone);
-                a.ldr(x16, ptr_post(x15, 8));
-                a.str(x16, ptr_post(x10, 8));
-                a.sub(w12, w12, asmjit::Imm(1));
-                a.b(copyLoop);
-                a.bind(copyDone);
-                // The other temporaries start as nil, up to tempCount.
-                a.ldrb(w15, ptr(x9, (int)offsetof(JITMethod, tempCount)));
-                a.add(x15, x13, x15, asmjit::a64::lsl(3));   // tempBase + tempCount
-                a.bind(nilLoop);
-                a.cmp(x10, x15);
-                a.b_hs(nilDone);
-                a.str(x14, ptr_post(x10, 8));
-                a.b(nilLoop);
-                a.bind(nilDone);
-                emitStoreSp(a, x10);
-                a.ldur(x26, ptr(x10, -8));                   // TOS mirror
-                a.add(x15, x9, asmjit::Imm((int)sizeof(JITMethod)));
-                a.br(x15);
+                // The call itself is the shared stub (emitMcfBlockStub).
+                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                a.adr(x14, mcfCont);
+                a.adr(x15, notBlock);
+                a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
+                a.mov(x16, asmjit::Imm(g_mcfBlockStub));
+                a.br(x16);
                 a.bind(notBlock);
             }
             // simStack B2c (design §5 RM-F1): when the send-result
@@ -10226,109 +10333,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label mcfPrim = a.new_label();
                 a.ldr(x10, ptr(x7, 24));                     // entry.prim
                 a.cbnz(x10, mcfPrim);
-                a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));       // interrupt checks
-                a.ldr(w11, ptr(x10));
-                a.ldrh(w12, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
-                a.subs(w11, w11, w12);
-                a.b_le(mcfSlow);
-                a.str(w11, ptr(x10));
-                a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
-                a.ldr(x11, ptr(x10));
-                // At depth 0 the caller lives in activeContext_, and
-                // pushFrame must store the caller's pc into it.
-                a.cbz(x11, mcfSlow);
-                a.ldr(x12, ptr(x0, OFF_MCF_DEPTH_LIMIT));
-                a.cmp(x11, x12);
-                a.b_hs(mcfSlow);                              // near overflow: interpreter
-                a.ldr(x12, ptr(x0, OFF_MCF_FRAMES));
-                a.mov(x13, asmjit::Imm(L.size));
-                a.madd(x12, x11, x13, x12);                  // x12 = &savedFrames_[depth]
-                a.add(x11, x11, asmjit::Imm(1));
-                a.str(x11, ptr(x10));                        // frameDepth_++
-                // The caller's state (pushFrame).
+                // The call itself is the shared stub (emitMcfCallStub).
                 a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
                 a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
-                a.str(x13, ptr(x12, L.savedIP));
-                a.str(x13, ptr(x12, L.mcKeyIP));
-                a.ldr(x14, ptr(x0, OFF_METHOD));
-                a.str(x14, ptr(x12, L.savedMethod));
-                a.str(x14, ptr(x12, L.savedHomeMethod));
-                a.ldr(x15, ptr(x0, OFF_MCF_BCEND_OFF));
-                a.add(x15, x14, x15);
-                a.str(x15, ptr(x12, L.savedBytecodeEnd));
-                a.ldr(x14, ptr(x0, OFF_RECEIVER));
-                a.str(x14, ptr(x12, L.savedReceiver));
-                a.ldr(x14, ptr(x0, OFF_CLOSURE));            // the caller's closure
-                a.str(x14, ptr(x12, L.savedClosure));
-                a.ldr(x14, ptr(x0, OFF_MCF_NIL));            // x14 = nil from here on
-                a.ldr(x15, ptr(x0, OFF_MCF_MATCTX_PTR));
-                a.ldr(x13, ptr(x15));
-                a.str(x13, ptr(x12, L.materializedContext));
-                a.str(x14, ptr(x15));                        // the callee has no context
-                a.ldr(x15, ptr(x0, OFF_MCF_ACTCTX_PTR));
-                a.ldr(x13, ptr(x15));
-                a.str(x13, ptr(x12, L.savedActiveContext));
-                a.strb(wzr, ptr(x12, L.ctxSynced));
-                emitLoadTempBase(a, x13);
-                a.sub(x13, x13, asmjit::Imm(8));
-                a.str(x13, ptr(x12, L.savedFP));
-                a.str(xzr, ptr(x12, L.materializedRetSlot));
-                // The caller's own argument count (a constant here): the
-                // interpreter's argCount_ is reused by primitives and can
-                // be stale.
-                a.mov(w13, asmjit::Imm(callerArgCount));
-                a.str(w13, ptr(x12, L.savedArgCount));
-                a.movn(x13, asmjit::Imm(0));                 // SIZE_MAX: not a block
-                a.str(x13, ptr(x12, L.homeFrameDepth));
-                a.adr(x13, mcfCont);
-                a.str(x13, ptr(x12, L.mcReturn));
-                a.str(x19, ptr(x12, L.mcJM));
-                a.ldr(x15, ptr(x0, OFF_MCF_EPOCH_PTR));
-                a.ldr(w13, ptr(x15));
-                a.str(w13, ptr(x12, L.mcEpoch));
-                // The callee's view (activateMethod).
-                emitLoadSp(a, x13);
-                if (nArgs) a.sub(x13, x13, asmjit::Imm(8 * nArgs));   // first arg slot
-                a.ldur(x1, ptr(x13, -8));                    // receiver
-                emitStoreTempBase(a, x13);
-                a.str(x1, ptr(x0, OFF_RECEIVER));
-                a.str(x14, ptr(x0, OFF_CLOSURE));            // a method frame
-                a.str(x6, ptr(x0, OFF_METHOD));
-                a.add(x15, x6, asmjit::Imm(16));
-                a.str(x15, ptr(x0, OFF_LITERALS));
-                a.mov(w15, asmjit::Imm(nArgs));
-                a.str(w15, ptr(x0, OFF_ARGCOUNT));
-                a.mov(x19, x9);
-                a.str(x9, ptr(x0, OFF_JITMETHOD));
-                a.ldr(x15, ptr(x9, (int)offsetof(JITMethod, bcStartCache)));
-                a.str(x15, ptr(x0, OFF_IP));
-                a.ldr(x15, ptr(x7, 16));                     // entry.bcEndOff
-                a.str(x15, ptr(x0, OFF_MCF_BCEND_OFF));
-                // Temporaries beyond the arguments start as nil.
-                a.ldrb(w15, ptr(x9, (int)offsetof(JITMethod, tempCount)));
-                emitLoadSp(a, x13);
-                a.subs(w15, w15, asmjit::Imm(nArgs));
-                a.b_le(mcfTDone);
-                a.bind(mcfTInit);
-                a.str(x14, ptr_post(x13, 8));
-                a.subs(w15, w15, asmjit::Imm(1));
-                a.b_gt(mcfTInit);
-                a.bind(mcfTDone);
-                emitStoreSp(a, x13);
-                if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
-                    // Oracle: the record just pushed must match pushFrame.
-                    a.stp(x0, x30, ptr_pre(sp, -32));
-                    a.str(x9, ptr(sp, 16));
-                    emitSyncSpToState(a);
-                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_push));
-                    a.blr(x16);
-                    a.ldr(x9, ptr(sp, 16));
-                    a.ldp(x0, x30, ptr_post(sp, 32));
-                    emitLoadSp(a, x13);
-                }
-                a.ldur(x26, ptr(x13, -8));                   // TOS mirror
-                a.add(x15, x9, asmjit::Imm((int)sizeof(JITMethod)));
-                a.br(x15);
+                a.adr(x14, mcfCont);
+                a.adr(x15, mcfSlow);
+                a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
+                a.mov(x16, asmjit::Imm(g_mcfCallStub));
+                a.br(x16);
                 // A primitive that only touches the stack: run it through
                 // pharo_mcf_prim and continue after the send.  x5 (the IC
                 // entry) is stashed for the failure path's SendCached exit.
@@ -13557,3 +13569,12 @@ size_t asmjitT1Failed()   { return g_failed;   }
 }  // namespace pharo
 
 #endif  // PHARO_JIT_ENABLED
+
+// Machine-code frames: called by Interpreter::mcfInit after g_mcfLayout is
+// set (the stubs bake its offsets in).
+void pharo::jit::mcfBuildStubs() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
+    if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
+#endif
+}

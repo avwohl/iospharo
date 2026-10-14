@@ -502,6 +502,7 @@ void Interpreter::mcfInit() {
     L.mcEpoch = offsetof(SavedFrame, mcEpoch);
 #pragma GCC diagnostic pop
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
+    if (::pharo::mcfEnabled()) jit::mcfBuildStubs();
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),
     // a 128 KB memset the default mode must not pay.

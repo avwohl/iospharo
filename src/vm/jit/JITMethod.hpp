@@ -269,6 +269,10 @@ inline uint32_t g_mcfFbcClassIndex = 0;
 // McfCallEntry.prim for a CompiledBlock T1 code may call natively:
 // kMcfBlockEntry | numArgs.  Never a primitive index (those are < 1024).
 constexpr uint64_t kMcfBlockEntry = 0x10000;
+// Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
+inline uint64_t g_mcfCallStub = 0;
+inline uint64_t g_mcfBlockStub = 0;
+void mcfBuildStubs();
 
 struct JITMethod {
     // --- Identity (link back to Smalltalk objects) ---
