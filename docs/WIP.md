@@ -15,7 +15,27 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, early) -- stalls and stubs; pushed `eebd43a3`, sweep L25 on `253d78f3`
+## Right now (2026-10-15) -- exits per call; pushed `253d78f3`, sweep L26 on `35ad5971`
+
+Pushed: origin/jit at `253d78f3` (sweep L25 27801 / 9 / 3; its new
+entries are known flakes: LinkInstallerTest, a fake-GUI keyboard-focus
+error).
+
+Two more exit-per-call shapes removed:
+- 35ad5971: a primitive that fails at an inline-cache hit runs the method
+  body natively (was one exit per failure).  The primitive stub answers
+  exact SmallInteger `/` and reports a sure failure for an inexact one,
+  and answers `class` of immediates.  Fraction loop 18.7 -> 14.3 billion.
+- d9b09985: ExtendA + ExtSend (a send to literal 32-255) is a helper
+  send; it took the prefix bail, so the rest of a big method (parsers)
+  ran interpreted.
+
+Next: a non-local return through ensure: costs ~16,000 instructions
+(Cog ~420 ns under Rosetta, ours ~650 ns); ~5,800 of them are frame
+materialization (at the return and again at resume:through:'s
+thisContext).  Profiling by source line with build-prof (-g).
+
+## Earlier (2026-10-15, early) -- stalls and stubs; pushed `eebd43a3`, sweep L25 on `253d78f3`
 
 Pushed: origin/jit at `eebd43a3` (sweeps L23 27799/10/3, L24 27800/10/2;
 every new entry passes alone; SpAthensAdapterTest>>testResize... is a
