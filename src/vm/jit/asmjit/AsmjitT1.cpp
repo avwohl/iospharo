@@ -4972,6 +4972,11 @@ static_assert(OFF_MCF_EPOCH_PTR == offsetof(JITState, mcfEpochPtr), "OFF_MCF_EPO
 static_assert(OFF_MCF_CALL_CACHE == offsetof(JITState, mcfCallCache), "OFF_MCF_CALL_CACHE");
 static_assert(OFF_MCF_BCEND_OFF == offsetof(JITState, mcfBcEndOff), "OFF_MCF_BCEND_OFF");
 
+// Machine-code frames dispatch the multi-slot getter (IC extras bit 57).
+static inline bool mcfMultiSlot() {
+    return ::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_MULTISLOT);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64)
 // An interpreter field the native call and return touch (frameDepth_, the
 // two contexts, the countdown): at its fixed offset from x0 when mcfInit
@@ -9496,6 +9501,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     uint64_t testedHi = 0x1F                   // primKind, bits 48-52
                         | (1u << (54 - 48)) | (1u << (58 - 48)) | (1u << (61 - 48))
                         | (nArgs == 0 ? (1u << (63 - 48)) : 0)
+                        | (nArgs == 0 && mcfMultiSlot() ? (1u << (57 - 48)) : 0)
                         | (nArgs == 1 ? (1u << (62 - 48)) : 0);
                     a.movz(x6, asmjit::Imm(testedHi), asmjit::Imm(48));
                     a.tst(x7, x6);
@@ -9551,6 +9557,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                }
+                // `^ a - b + 1` on two fields (OrderedCollection>>size).
+                // Under MCF bit 57 is only this shape: the J2J gate bit that
+                // shares it is not set (no inline J2J).
+                if (nArgs == 0 && mcfMultiSlot()) {
+                    a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
                 }
                 // Inline at: / at:put: / size for heap receivers
                 // (primKind 14/15/16).  Mirrors stencils.cpp:1538-1554.
@@ -10173,17 +10185,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // every nArgs-0 site — pure zone bloat.  Gate the body to match
             // (self-contained, exits via b endOfSend; label tryMultiSlot is
             // only referenced by the gated dispatch, so no unresolved link).
-            if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)) {
+            if (nArgs == 0 && (GET_DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT) || mcfMultiSlot())) {
                 a.bind(tryMultiSlot);
                 // Extract A (bits 0-7) → x3, B (bits 8-15) → x4.
                 a.and_(x3, x7, asmjit::Imm(0xFF));
                 a.lsr(x4, x7, asmjit::Imm(8));
                 a.and_(x4, x4, asmjit::Imm(0xFF));
-                // Load slots[A] → x6, slots[B] → x9 from receiver.
-                a.add(x5, x1, x3, asmjit::a64::lsl(3));
-                a.ldr(x6, ptr(x5, 8));                  // slot A
-                a.add(x5, x1, x4, asmjit::a64::lsl(3));
-                a.ldr(x9, ptr(x5, 8));                  // slot B
+                // Load slots[A] → x6, slots[B] → x9 from receiver.  x8, not
+                // x5: x5 is the IC entry, which the dispatchCached bails
+                // read the target from (`extent ^ corner - origin` on Points
+                // bailed with x5 = the receiver: the #extent bug that kept
+                // this shape off).
+                a.add(x8, x1, x3, asmjit::a64::lsl(3));
+                a.ldr(x6, ptr(x8, 8));                  // slot A
+                a.add(x8, x1, x4, asmjit::a64::lsl(3));
+                a.ldr(x9, ptr(x8, 8));                  // slot B
                 // Both must be SmI: low 3 bits == 1.
                 a.and_(x3, x6, asmjit::Imm(7));
                 a.sub(x3, x3, asmjit::Imm(1));
@@ -10231,11 +10247,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(op2Done);
                 // Write tagged result to receiver slot on stack.
                 a.stur(x6, ptr(x2, rcvrOffsetBytes));
-                // Bump hit counter.
-                a.mov(x14, asmjit::Imm((uint64_t)&g_t1MultiSlot_hits));
-                a.ldr(x15, ptr(x14));
-                a.add(x15, x15, asmjit::Imm(1));
-                a.str(x15, ptr(x14));
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)) {   // hit counter
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_t1MultiSlot_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                }
+                if (tosSendRes) a.mov(x26, x6);
                 a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
