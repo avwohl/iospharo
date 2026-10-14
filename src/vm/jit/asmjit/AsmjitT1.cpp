@@ -5818,9 +5818,10 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.csel(x7, x7, x8, CondCode::kEQ);
         a.b(result);
         // 170 Character class>>value: SmallInteger 0..2^30-1 -> Character.
+        asmjit::Label p68 = a.new_label();
         a.bind(p170);
         a.cmp(w10, asmjit::Imm(170));
-        a.b_ne(pAt);
+        a.b_ne(p68);
         a.and_(x3, x2, asmjit::Imm(7));
         a.cmp(x3, asmjit::Imm(1));
         a.b_ne(slow);
@@ -5829,6 +5830,33 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.cmp(x3, x4);
         a.b_hi(slow);                              // unsigned: negatives too
         a.orr(x7, x2, asmjit::Imm(2));             // (v << 3) | 3
+        a.b(result);
+        // 68 objectAt: on compiled code (CompiledCode>>header, literals):
+        // index 1..literals+1 answers slot index-1.
+        a.bind(p68);
+        a.cmp(w10, asmjit::Imm(68));
+        a.b_ne(pAt);
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.ldr(x4, ptr(x1));
+        a.ubfx(x4, x4, asmjit::Imm(24), asmjit::Imm(5));   // format
+        a.cmp(x4, asmjit::Imm(24));
+        a.b_lo(slow);                              // not CompiledMethod/Block
+        a.and_(x3, x2, asmjit::Imm(7));
+        a.cmp(x3, asmjit::Imm(1));
+        a.b_ne(slow);
+        a.asr(x3, x2, asmjit::Imm(3));             // index, 1-based
+        a.cmp(x3, asmjit::Imm(1));
+        a.b_lt(slow);
+        a.ldr(x4, ptr(x1, 8));                     // method header (a SmallInteger)
+        a.and_(x8, x4, asmjit::Imm(7));
+        a.cmp(x8, asmjit::Imm(1));
+        a.b_ne(slow);
+        a.ubfx(x4, x4, asmjit::Imm(3), asmjit::Imm(15));   // literal count
+        a.add(x4, x4, asmjit::Imm(1));
+        a.cmp(x3, x4);
+        a.b_hi(slow);
+        a.ldr(x7, ptr(x1, x3, lsl(3)));           // slot index-1 at 8*index
         a.b(result);
         // 60 at: (pointers, or bytes as SmallInteger) and 63 String>>at:
         // (bytes as Character).
@@ -9767,6 +9795,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_CLASS)) {
                             a.cmp(x6, asmjit::Imm(24));
                             a.b_eq(tryPrimClass);
+                        }
+                        // basicNew (primKind 17): the inline eden allocation
+                        // the inline-J2J chain has used all along; 17M C
+                        // primitive calls a lexicon run without it.
+                        if (g_debug.t1InlinePrimBasicNew && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)) {
+                            a.cmp(x6, asmjit::Imm(17));
+                            a.b_eq(tryPrimBasicNewZero);
                         }
                     }
                 }
