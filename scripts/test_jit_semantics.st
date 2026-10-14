@@ -16,7 +16,10 @@
    so the caller's frame was recorded with the wrong method; after a process
    switch it resumed as BlockClosure>>value on a CompiledMethod (DNU
    #numArgsError:).  Method proxies (methodproxies, OCSpecialSelectorTest)
-   reach it through valueUnpreemptively.
+   reach it through valueUnpreemptively;
+ - two-way become (primitive 128) moved the identity hash with the contents;
+   Spur keeps it with the references (copyHash false), so an IdentitySet
+   still finds what its slot now refers to (ReStore's exclusion sets).
 
  Written 2026-10-14."!
 
@@ -99,6 +102,21 @@ testExecuteMethodOnBlockAcrossProcessSwitch
   1 to: 20 do: [ :i |
     r add: ((BlockClosure >> #value) valueWithReceiver: [ Processor yield. i ] arguments: #()) ].
   self assert: r asArray equals: (1 to: 20) asArray!
+
+testTwoWayBecomeKeepsHashWithReferences
+  | a b h set |
+  a := Object new. b := Object new. h := a identityHash.
+  set := IdentitySet with: a.
+  a become: b.
+  self assert: a identityHash equals: h.
+  self assert: (set includes: a).
+  self deny: (set includes: b).
+  a := Array new: 3. b := 'xy' copy. h := a identityHash.
+  set := IdentitySet with: a.
+  a become: b.
+  self assert: a identityHash equals: h.
+  self assert: (set includes: a).
+  self assert: a class equals: ByteString!
 
 testSuperAndLongSends
   self assert: (self repeat: [ self three: 1 with: 2 and: 3 ]) equals: 6.

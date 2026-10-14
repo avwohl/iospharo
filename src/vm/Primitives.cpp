@@ -379,7 +379,12 @@ PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
 PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
     // Primitive 128: Two-way become - swaps object identities
     // receiver elementsExchangeIdentityWith: anotherArray
-    // Per official Spur VM: twoWay: true, copyHash: false
+    // Per official Spur VM: twoWay: true, copyHash: false -- the identity
+    // hashes stay with the references (an IdentitySet holding obj1 still
+    // finds whatever its slot now refers to).  Swapping whole headers moved
+    // the hash with the contents: ReStore's exclusion IdentitySets lost the
+    // proxies it swaps with become: (20 *WithExclusion tests).  Classes keep
+    // their hash: it is their class-table index.
     if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
@@ -441,11 +446,20 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
         size_t size1 = hdr1->slotCount();
         size_t size2 = hdr2->slotCount();
 
+        const uint32_t hash1 = hdr1->identityHash();
+        const uint32_t hash2 = hdr2->identityHash();
+        const bool keepHashWithRefs =
+            !(hash1 != 0 && memory_.classAtIndex(hash1).rawBits() == obj1.rawBits())
+            && !(hash2 != 0 && memory_.classAtIndex(hash2).rawBits() == obj2.rawBits());
         if (size1 == size2) {
             // In-place become: swap header + slots at the same addresses
             uint64_t tempHeader = hdr1->rawHeader();
             hdr1->setRawHeader(hdr2->rawHeader());
             hdr2->setRawHeader(tempHeader);
+            if (keepHashWithRefs) {     // the references did not move
+                hdr1->setIdentityHash(hash1);
+                hdr2->setIdentityHash(hash2);
+            }
 
             Oop* slots1 = hdr1->slots();
             Oop* slots2 = hdr2->slots();
@@ -473,7 +487,12 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             rememberIfNeeded(obj1);
             rememberIfNeeded(obj2);
         } else {
-            // Different sizes — need heap scan to swap all references
+            // Different sizes — need heap scan to swap all references.
+            // The references move, so the hashes go with them.
+            if (keepHashWithRefs) {
+                hdr1->setIdentityHash(hash2);
+                hdr2->setIdentityHash(hash1);
+            }
             heapScanPairs.push_back({obj1, obj2});
         }
     }
