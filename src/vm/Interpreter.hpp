@@ -1479,6 +1479,12 @@ private:
     int32_t fileSessionID_ = 0;  // per-boot tag baked into handles (lazy-init)
     Oop makeFileHandle(int fileId, FILE* file, bool writable);
     FILE* fileFromHandle(Oop handleOop, int* outFileId = nullptr);
+    // A read-only file's position after a large read or a setPosition:
+    // pread does not move the FILE, and an fseeko to catch up refilled
+    // the stdio buffer (a read() per 64 KB block of the sources file).
+    // fileFromHandle applies it before any other use of the FILE.
+    std::unordered_map<int, int64_t> filePendingPos_;
+    FILE* fileFromHandleNoSync(Oop handleOop, int* outFileId);
 
     // ===== CLASS INDEX CACHE =====
     // These are looked up dynamically from the class table at init time.
@@ -4047,6 +4053,7 @@ private:
 
 // ===== TEMPLATE IMPLEMENTATIONS =====
 
+inline double g_rootTimeUs[3] = {0, 0, 0};   // PHARO_SCAV_STATS: method cache + code zone, maps, rest
 template<typename Visitor>
 void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     // PHARO_WATCH_ROOT_CLASS=<ClassName>: name which ROOT CATEGORY is
@@ -4201,6 +4208,9 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         visitor(frame.materializedContext);
     }
 
+    const bool rootTimed = GET_DEBUG_BOOL(PHARO_SCAV_STATS);
+    auto rootNow = [] { return std::chrono::steady_clock::now(); };
+    auto rtA = rootTimed ? rootNow() : std::chrono::steady_clock::time_point{};
     rootTag_ = "method-cache";
     // Method cache (weak cache root — see visitCacheRoots above)
     if (visitCacheRoots) {
@@ -4309,6 +4319,11 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
             m = m->nextInZone;
         }
 
+        if (rootTimed) {
+            auto rtB = rootNow();
+            g_rootTimeUs[0] += std::chrono::duration<double, std::micro>(rtB - rtA).count();
+            rtA = rtB;
+        }
         rootTag_ = "jit-count-map";
         // Count map: keys are CompiledMethod Oop bits (needs GC update).
         // Preserving counts across GC lets methods accumulate toward the
@@ -4385,6 +4400,10 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         }
     }
 
+    if (rootTimed) {
+        g_rootTimeUs[1] += std::chrono::duration<double, std::micro>(rootNow() - rtA).count();
+        rtA = rootNow();
+    }
     rootTag_ = "jit-state";
     // Live JITState: its Oop fields aren't reachable any other way while
     // JIT code is on the C stack. Without this, GC compaction would move

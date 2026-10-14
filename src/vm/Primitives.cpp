@@ -13980,6 +13980,20 @@ Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
 }
 
 FILE* Interpreter::fileFromHandle(Oop handleOop, int* outFileId) {
+    int fileId = -1;
+    FILE* file = fileFromHandleNoSync(handleOop, &fileId);
+    if (file && !filePendingPos_.empty()) {
+        auto p = filePendingPos_.find(fileId);
+        if (p != filePendingPos_.end()) {
+            fseeko(file, static_cast<off_t>(p->second), SEEK_SET);
+            filePendingPos_.erase(p);
+        }
+    }
+    if (outFileId) *outFileId = fileId;
+    return file;
+}
+
+FILE* Interpreter::fileFromHandleNoSync(Oop handleOop, int* outFileId) {
     if (handleOop.isSmallInteger()) {
         // Legacy SmallInteger-index handle (pre-SQFile shape); still honored
         // so a snapshot taken before this change keeps its stdio streams.
@@ -14101,12 +14115,14 @@ PrimitiveResult Interpreter::primitiveFileClose(int argCount) {
 PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
     Oop fileIdOop = stackTop();
 
-    FILE* file = fileFromHandle(fileIdOop);
+    int fileId = -1;
+    FILE* file = fileFromHandleNoSync(fileIdOop, &fileId);
     if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    long pos = ftell(file);
+    auto pending = filePendingPos_.find(fileId);
+    long pos = pending != filePendingPos_.end() ? static_cast<long>(pending->second) : ftell(file);
     if (pos < 0) {
         return PrimitiveResult::Failure;
     }
@@ -14367,7 +14383,8 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    FILE* file = fileFromHandle(fileIdOop);
+    int fileId = -1;
+    FILE* file = fileFromHandleNoSync(fileIdOop, &fileId);   // pending position: below
     if (!file) {
         return PrimitiveResult::Failure;
     }
@@ -14418,16 +14435,25 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
     // (a 64 KB read: 10 us with fread, 2.8 us with pread).  The image's
     // source stream refills 64 KB per method-source access; lexicon does
     // 245K of them.  The FILE position then moves past the bytes read.
+    // The FILE is not moved: the new position is pending (filePendingPos_),
+    // so the next setPosition or read needs no seek and no buffer refill.
+    auto pending = filePendingPos_.find(fileId);
     if (byteCount >= 4096 && fileIdOop.isObject()
             && fileIdOop.asObjectPtr()->bytes()[16] == 0) {
-        off_t pos = ftello(file);
+        off_t pos = pending != filePendingPos_.end() ? static_cast<off_t>(pending->second)
+                                                     : ftello(file);
         if (pos >= 0) {
             ssize_t n = pread(fileno(file), bufHdr->bytes() + byteStart, byteCount, pos);
-            if (n >= 0 && fseeko(file, pos + n, SEEK_SET) == 0) {
+            if (n >= 0) {
                 bytesRead = static_cast<size_t>(n);
                 done = true;
+                filePendingPos_[fileId] = static_cast<int64_t>(pos + n);
             }
         }
+    }
+    if (!done && pending != filePendingPos_.end()) {
+        fseeko(file, static_cast<off_t>(pending->second), SEEK_SET);
+        filePendingPos_.erase(pending);
     }
 #endif
     if (!done) bytesRead = fread(bufHdr->bytes() + byteStart, 1, byteCount, file);
@@ -14461,11 +14487,26 @@ PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
 
     int64_t pos = posOop.asSmallInteger();
 
-    FILE* file = fileFromHandle(fileIdOop);
+    int fileId = -1;
+    FILE* file = fileFromHandleNoSync(fileIdOop, &fileId);
     if (!file) {
         return PrimitiveResult::Failure;
     }
 
+#ifndef _WIN32
+    // A read-only regular file: remember the position (see filePendingPos_).
+    if (pos >= 0 && fileIdOop.isObject() && fileIdOop.asObjectPtr()->bytes()[16] == 0
+            && fileIdOop.asObjectPtr()->bytes()[19] == 0) {
+        struct stat st;
+        if (filePendingPos_.count(fileId)
+                || (fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode))) {
+            filePendingPos_[fileId] = static_cast<int64_t>(pos);
+            popN(argCount);
+            return PrimitiveResult::Success;
+        }
+    }
+#endif
+    filePendingPos_.erase(fileId);
     if (fseek(file, static_cast<long>(pos), SEEK_SET) != 0) {
         return PrimitiveResult::Failure;
     }
@@ -14498,7 +14539,7 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
 PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     Oop fileIdOop = stackTop();
 
-    FILE* file = fileFromHandle(fileIdOop);
+    FILE* file = fileFromHandleNoSync(fileIdOop, nullptr);   // fstat needs no position
     if (!file) {
         return PrimitiveResult::Failure;
     }
@@ -14518,6 +14559,7 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
         }
     }
 #endif
+    file = fileFromHandle(fileIdOop);   // applies a pending position
 
     // Save current position
     long currentPos = ftell(file);

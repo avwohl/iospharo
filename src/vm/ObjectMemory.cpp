@@ -2105,15 +2105,31 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
             while (ObjectHeader* h = scan.next())
                 if (h->classIndex() != 0) visit(oopFromPointer(h));
         };
+        const bool timed = GET_DEBUG_BOOL(PHARO_BECOME_CENSUS);
+        auto now = [timed] { return timed ? std::chrono::steady_clock::now()
+                                          : std::chrono::steady_clock::time_point{}; };
+        auto t0 = now();
         visitRegion(edenAllocBase_, edenFree_);
+        auto t1 = now();
         // By index: a barriered replacement may append to rememberedSet_.
         for (size_t k = 0, n = rememberedSet_.size(); k < n; ++k)
             visit(oopFromPointer(rememberedSet_[k]));
+        auto t2 = now();
         uint8_t* recentStart = (oldFreeAtLastScavenge_ && oldFreeAtLastScavenge_ > oldSpaceStart_)
             ? oldFreeAtLastScavenge_ : oldSpaceStart_;
         if (recentStart < oldSpaceFree_) visitRegion(recentStart, oldSpaceFree_);
+        auto t3 = now();
         if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_)
             visitRegion(permSpaceStart_, permSpaceEnd_);
+        auto t4 = now();
+        if (__builtin_expect(timed, 0)) {
+            auto us = [](auto d) { return (long long)std::chrono::duration_cast<std::chrono::microseconds>(d).count(); };
+            fprintf(stderr, "[BECOME-YOUNG-T] eden %lld us (%zu KB) rs %lld us (%zu) recent %lld us (%zu KB) perm %lld us (%zu KB)\n",
+                    us(t1 - t0), (size_t)(edenFree_ - edenAllocBase_) >> 10,
+                    us(t2 - t1), rememberedSet_.size(),
+                    us(t3 - t2), recentStart < oldSpaceFree_ ? (size_t)(oldSpaceFree_ - recentStart) >> 10 : 0,
+                    us(t4 - t3), permSpaceStart_ ? (size_t)(permSpaceEnd_ - permSpaceStart_) >> 10 : 0);
+        }
         if (GET_DEBUG_BOOL(PHARO_BECOME_YOUNG_VERIFY)) {
             // Any reference left behind is one the young-only scan missed.
             size_t before = becomeReplacedCount;
@@ -3269,6 +3285,9 @@ GCResult ObjectMemory::scavenge() {
         sMoved += forward.size(); sRecent += scavRecentBytes; sRem += scavRemembered;
         sEden += edenUsedBefore;
         if ((++sN & 63) == 0) {
+            fprintf(stderr, "[SCAV-ROOTS] avg us: mcache+zone %.0f maps %.0f\n",
+                    g_rootTimeUs[0] / 64, g_rootTimeUs[1] / 64);
+            g_rootTimeUs[0] = g_rootTimeUs[1] = 0;
             fprintf(stderr, "[SCAV-STATS] n=%llu avg us: roots %.0f oldscan %.0f drain %.0f post %.0f | "
                     "moved %llu objs, recent %llu KB, remembered %llu, eden %llu KB\n",
                     (unsigned long long)sN, sRoots / 64, sOld / 64, sDrain / 64, sPost / 64,
