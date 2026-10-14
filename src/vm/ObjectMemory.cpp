@@ -1967,6 +1967,22 @@ HeapScanPool& heapScanPool() {
 }  // namespace
 
 bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map) {
+    struct BecomeCensus {
+        std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+        size_t n;
+        explicit BecomeCensus(size_t pairs) : n(pairs) {}
+        ~BecomeCensus() {
+            if (!GET_DEBUG_BOOL(PHARO_BECOME_CENSUS)) return;
+            static uint64_t calls = 0, pairs = 0, us = 0;
+            calls++; pairs += n;
+            us += std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - t0).count();
+            if ((calls & 63) == 0)
+                fprintf(stderr, "[BECOME-CENSUS] calls=%llu pairs=%llu ms=%llu\n",
+                        (unsigned long long)calls, (unsigned long long)pairs,
+                        (unsigned long long)(us / 1000));
+        }
+    } becomeCensus(map.size());
     g_objectMotionEpoch++;
     if (map.empty()) return true;
     // Instances of a class whose hash a copyHash become just moved (see

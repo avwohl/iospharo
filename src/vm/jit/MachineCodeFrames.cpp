@@ -70,6 +70,13 @@ extern "C" void pharo_mcf_ctx_sync(jit::JITState* st) {
     st->interp->mcfCtxSync(st);
 }
 
+// PushFullBlock in machine code: create the closure without leaving.
+// st->ip is the bytecode; the interpreter would have it past the 3 bytes.
+// Allocation cannot GC here, so the machine code's registers stay valid.
+extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
+    return st->interp->mcfBlockCreate(st, packed);
+}
+
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
@@ -529,6 +536,17 @@ bool Interpreter::mcfActivate(Oop method) {
     }
     mcfRun(jm, entry);
     return true;
+}
+
+uint64_t Interpreter::mcfBlockCreate(jit::JITState* st, uint64_t packed) {
+    stackPointer_ = st->sp;
+    mcfSyncRegisters(*st);
+    instructionPointer_ = st->ip + 3;
+    const int litIndex = static_cast<int>(packed & 0xFFFF);
+    const int flags = static_cast<int>((packed >> 32) & 0xFF);
+    createFullBlockWithLiteral(litIndex, flags & 0x3F, (flags >> 7) & 1, (flags >> 6) & 1);
+    st->sp = stackPointer_;
+    return 1;
 }
 
 void Interpreter::mcfCtxSync(jit::JITState* st) {

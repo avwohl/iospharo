@@ -177,9 +177,11 @@ DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)           // MCF native calls refuse at fra
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)          // MCF: naked ExtSend/ExtSuperSend take the generic bytecode exit (no return memo) and methods with a super send stay stubs
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)          // MCF: naked ExtSend/ExtSuperSend never call natively through pharo_mcf_extsend (always the send exit)
 DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL)        // MCF: blocks with a non-local return are never called natively (the behaviour before 2026-10-14)
+DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)   // MCF: PushFullBlock exits to the interpreter again (ExitBlockCreate) instead of pharo_mcf_block_create
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
 DEBUG_BOOL(PHARO_EFC_CENSUS)                   // count executeFromContext calls by caller address
 DEBUG_BOOL(PHARO_THISCTX_CENSUS)               // count thisContext (PushThisContext) by method, collapsing or at depth 0
+DEBUG_BOOL(PHARO_BECOME_CENSUS)                // count becomeForwardAll calls, pairs and time
 DEBUG_BOOL(PHARO_JIT_CONTEXT_METHODS_UNSAFE)   // measurement only: let the JIT compile Context methods again (their field reads then skip the lazy-context sync)
 DEBUG_BOOL(PHARO_MCF_NO_CTX_JIT)               // arm64 MCF: keep Context methods out of the JIT (the behaviour of lazy outer contexts before 2026-10-14)
 DEBUG_STR(PHARO_MCF_WATCH_SEL)                 // log why mcfActivate does not make methods with this selector native-callable

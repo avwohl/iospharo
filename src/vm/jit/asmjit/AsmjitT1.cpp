@@ -55,6 +55,7 @@ extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
 extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
+extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -11884,8 +11885,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // #value: DNUs at startup).  The sound form of this
                 // lever is LAZY outerContext (married contexts) — see
                 // WIP checkpoint tt.
+                // Machine-code frames keep every frame in savedFrames_
+                // (no hidden J2J callers), so there the in-JIT create is
+                // sound and is the default: lexicon makes 51M blocks, and
+                // each one was an exit and a re-entry.
+                const bool mcfBlockCreate = ::pharo::mcfEnabled()
+                    && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE);
                 const bool inlineBlockCreate =
-                    GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE)
+                    (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE) || mcfBlockCreate)
                     && (ibcMax < 0 || g_ibcEmits < ibcMax);
                 if (inlineBlockCreate) g_ibcEmits++;
                 if (inlineBlockCreate) {
@@ -11904,8 +11911,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.str(a64::x30, a64::ptr(a64::sp, 8));
                     a.mov(a64::x1, asmjit::Imm(packed));
                     emitSyncSpToState(a);
-                    a.mov(a64::x9, asmjit::Imm(
-                        (uint64_t)&jit_rt_block_create));
+                    a.mov(a64::x9, asmjit::Imm(mcfBlockCreate
+                        ? (uint64_t)&pharo_mcf_block_create
+                        : (uint64_t)&jit_rt_block_create));
                     a.blr(a64::x9);
                     a.ldr(a64::x0,  a64::ptr(a64::sp, 0));
                     a.ldr(a64::x30, a64::ptr(a64::sp, 8));
