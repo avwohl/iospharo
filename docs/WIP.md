@@ -15,6 +15,23 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, night 4) -- call-site shapes; sweep L17 finishing
+
+Since `08deb8cf` (not yet swept):
+
+- `3360d7b9` one `cbnz` for an ordinary callee's entry kind.
+- `ff09200b` hashMultiply (primitive 159) runs from machine code:
+  Dictionary benchmark 18.2 -> 15.3 billion instructions.
+- `683a0ca2` the call stub and native return no longer store the state ip.
+- `605cf4ee` the send-site leak guard is off under MCF.
+- `a1ac1368` multi-slot getter (`^ a - b + 1`, OrderedCollection>>size)
+  answered at the call site; its old x5 clobber (the #extent bug) fixed.
+- `a06a810a` tiny shapes: `^ f ifNil: [...]`, `^ fa OP fb`,
+  `^ (fa OP fb) and: [...]` answered by a shared stub.
+
+lexicon 471 -> 451 billion instructions.  Call + return of a small method
+about 189 instructions.
+
 ## Right now (2026-10-14, night 3) -- benchmark suite against Cog; sweep L17
 
 Pushed: origin/jit at `477275fb` (sweep L16: 27801 / 8 / 2; the only new
