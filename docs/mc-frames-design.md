@@ -273,15 +273,58 @@ without native block calls and 13.28 interpreted; deeptraverser does not
 change.
 
 **Default (2026-10-14).**  `mcfEnabled()` is true on arm64 unless
-`PHARO_NO_MCF` is set.  Validation of the default: battery and
-test_class_table pass; sweep M4 and the 95-package batch run.
+`PHARO_NO_MCF` is set.
+
+**After the flip (2026-10-14).**
+
+- Shared stubs: the native method and block call sequences are two stubs
+  built once (`emitMcfCallStub`, `emitMcfBlockStub`); code for the same
+  printString run is 10% smaller (34.8 -> 31.4 MB).
+- `value:value:` and longer block sends call the block natively too.
+- T1 no longer emits primitive 60/61/62 methods as prologue-only leaves in
+  this mode.  A leaf has no body, so ByteString>>byteAt:put: with a
+  Character (every SmallInteger printString) left machine code on every
+  call.  printString 62.1 -> 38.65 billion instructions.
+- The pending-IC owner check runs at `sendSelector` entry: a block-value
+  primitive moves ip first, so the old check dropped every value:value:
+  site's IC patch.
+- The pending memo is dropped at every GC (keyed by a raw ip).
+
+**Validation of the default.**
+
+| Run | Binary | Result |
+|---|---|---|
+| Sweep U (old default, baseline) | `1c689fff` | 27879 P / 9 F / 2 E |
+| Sweep M3 (`PHARO_MCF=1`) | `21e4ae7a` | 27877 / 11 / 2 |
+| Sweep M4 (MCF default) | `35dab876` | 27878 / 11 / 1 |
+| Sweep M5 | `ad043e26` | 27877 / 11 / 2 |
+
+The non-passes of M3-M5 that are not in the baseline lists all pass alone:
+a TraitTest timeout in each (that batch has an intermittent timeout, a
+different test each time), and one novel error each in M3
+(WriteStreamTest, "receiver of #x is nil") and M5 (SpButtonPresenterTest,
+SubscriptOutOfBounds on a text).  Watch for more of these.  Battery and
+test_class_table pass; test_relaunch failed 1-2 of 3 cycles under load in
+both modes.
+
+Package batch (95 packages, `vm-M4`, against Cog): identical except the
+known differences -- lexicon's 50 s CodeAnalysisRunnerTest (speed),
+soil's and famixreplication's slow timeouts, myprecious's round-trip
+timeout (1 now, 3 before), pharo-cig (we find a libclang Cog cannot),
+methodproxies (Cog's interpreter/JIT split for special #value) -- and two
+newtools tests (StSpotterModelTest timing, StTranscriptPresenterTest
+testClear), which pass alone in both modes.
+
+| Workload (instructions, billion) | Before (2026-10-13) | Now |
+|---|---|---|
+| printString (3M) | 83.7 | 38.4 |
+| deeptraverser test | 1004 | 767 |
+| lexicon test | 1699 | 1081 |
+| myprecious round trips | 44.3 | ~44 (network-bound) |
 
 Open items:
 
-- Code size: the native call, primitive and block sequences are emitted
-  inline at every send site (about 70, 25 and 100 instructions).  Move
-  them into shared stubs.
-- `value:value:` and longer block sends go through the inline cache to a
-  primitive-207 method and still exit.
+- lexicon is now limited by block creation materializing the frame stack
+  (docs/deferred.md: married, read-through contexts).
 - The default mode with `PHARO_NO_MCF` pays the larger SavedFrame
   (printString 83.7 -> 84.7).
