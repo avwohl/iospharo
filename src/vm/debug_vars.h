@@ -99,7 +99,7 @@ DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX)   // log [INLINE-METHOD] idx+methodOop fo
 DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX, -1) // bisect: compile ONLY the inline-method with this compile-order idx; bail all other inline methods
 DEBUG_STR(PHARO_SISTA_KEEP_METHOD_OOP)    // bisect: compile ONLY the inline method with this method oop (hex); bail all other inline methods (stable across runs)
 DEBUG_STR(PHARO_T1_RESUME_ONLY_SEL)       // debug isolation: force send-resume ON only for T1 methods whose selector == this value (resume stays OFF for all others, incl. startup). Repro/validate the send-resume protocol on one controlled method without breaking startup.
-DEBUG_STR(PHARO_JIT_PERF_MAP)               // write "start size Class>>#sel" for every T1 compile to this file (attribute sample addresses)
+DEBUG_STR_RT(PHARO_JIT_PERF_MAP)            // (live in release builds: profiles them) write "start size Class>>#sel" for every T1 compile to this file (attribute sample addresses)
 DEBUG_STR(PHARO_T1_DUMP_CODE)               // write the machine code of each T1 compile of this selector to /tmp/t1code-<sel>-<n>.bin (+ .txt with the start address)
 DEBUG_BOOL(PHARO_J2J_LOG_FILL)            // log every IC J2J bit-60 fill/upgrade as [J2JFILL] caller->callee (+selfrec flag), capped. Used to enumerate engaged (caller,callee) pairs under global inline-J2J for bisecting the startup corruptor.
 DEBUG_BOOL(PHARO_J2J_MAT_LOG)             // log every J2J-save materialize (site, saveJM selector, receiver class, sendArgs, ip) + flag IP-OUT-OF-RANGE saves whose ip isn't inside saveJM's bytecode range = stale save.jitMethod written by the xmethod save-push

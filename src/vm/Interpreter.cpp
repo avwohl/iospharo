@@ -21410,7 +21410,7 @@ Oop Interpreter::lazyOuterContext() {
     // so the later sync into this object fits.
     Oop* obPre = framePointer_ + 1 + numTemps;
     ptrdiff_t opPre = stackPointer_ - obPre;
-    size_t contextSize = 6 + numTemps + (opPre > 32 ? (size_t)opPre + 8 : 32);
+    size_t contextSize = contextSlotsFor(methodHeader, numTemps, opPre);
     if (contextClassIndex_ == 0) {
         Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
         if (contextClass.isObject()) contextClassIndex_ = memory_.indexOfClass(contextClass);
@@ -21972,7 +21972,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                 if (nextStartPre > exprStartPre)
                     exprNeed = static_cast<size_t>(nextStartPre - exprStartPre);
             }
-            size_t contextSize = 6 + numTemps + (exprNeed > 32 ? exprNeed + 8 : 32);
+            size_t contextSize = contextSlotsFor(methodHeader, numTemps, (ptrdiff_t)exprNeed);
 
             // Get Context class and its index in the class table
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
@@ -24950,10 +24950,18 @@ void Interpreter::storeContextStackp(Oop context, int stackp, bool tailKnownNil)
     // before writing keeps the common case (an already-nil tail) to loads.
     memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
     if (tailKnownNil) return;   // freshly allocated context: nothing to clear
-    const Oop nilOop = memory_.nil();
-    for (size_t s = 6 + (size_t)stackp; s < cap; ++s) {
-        if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, nilOop);
+    // Raw slots: nil is never young, so the store needs no barrier.  (Each
+    // slot through slotAt + storePointer cost ~40 instructions; a
+    // non-local return through ensure: clears seven 40-slot tails.)
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {   // sees every store
+        for (size_t s = 6 + (size_t)stackp; s < cap; ++s)
+            if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, memory_.nil());
+        return;
     }
+    const uint64_t nilBits = memory_.nil().rawBits();
+    uint64_t* slots = reinterpret_cast<uint64_t*>(ctx->slots());
+    for (size_t s = 6 + (size_t)stackp; s < cap; ++s)
+        if (slots[s] != nilBits) slots[s] = nilBits;
 }
 
 void Interpreter::prepareForGC() {

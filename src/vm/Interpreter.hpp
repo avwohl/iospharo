@@ -1922,6 +1922,15 @@ public:
     bool mcfReturnedIntoContext_ = false;
     bool mcfConstantReturn(Oop method, Oop& value);
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
+    // Slots of a context made for a frame: 6 + the header's frame size, as
+    // Cog sizes it (16, or 56 with the large-frame bit 17), or 6 + numTemps
+    // + stackDepth + 8 when that is more.  (Was 6 + numTemps + 32 at least:
+    // twice Cog's size for most methods, all of it nil-filled.)
+    static size_t contextSlotsFor(Oop methodHeader, int numTemps, ptrdiff_t stackDepth) {
+        size_t frame = (methodHeader.asSmallInteger() >> 17) & 1 ? 56 : 16;
+        size_t need = (size_t)numTemps + (size_t)(stackDepth > 0 ? stackDepth : 0) + 8;
+        return 6 + (need > frame ? need : frame);
+    }
     bool mcfTinyShape(Oop method, uint64_t& prim);
     void mcfFillICAtExit(jit::JITState& st);
     void mcfDeriveView(jit::JITState& st);

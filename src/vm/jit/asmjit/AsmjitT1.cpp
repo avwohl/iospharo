@@ -6327,17 +6327,27 @@ static void emitMcfBlockCreateStub(asmjit::a64::Assembler& a) {
     mcfFieldLdr(a, x8, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x16);
     a.cmp(x8, x14);
     a.b_ne(haveCtx);
-    // A lazy context for this frame: 6 + numTemps + max(32, stack + 8) slots.
+    // A lazy context for this frame, sized as Cog sizes it: 6 + the
+    // header's frame size (16, or 56 with the large-frame bit), or 6 +
+    // numTemps + stack + 8 when that is more (mcfContextSlots).
     a.ubfx(x4, x2, asmjit::Imm(16), asmjit::Imm(6));    // numTemps
     a.add(x5, x22, x4, lsl(3));                     // first operand-stack slot
     a.sub(x5, x25, x5);
     a.asr(x5, x5, asmjit::Imm(3));                  // operand-stack depth
     a.add(x5, x5, asmjit::Imm(8));
-    a.cmp(x5, asmjit::Imm(40));                     // depth > 32 -> depth + 8
-    a.b_hi(sizeOk);
-    a.mov(x5, asmjit::Imm(32));
+    a.add(x5, x5, x4);                              // numTemps + depth + 8
+    a.ldr(x10, ptr(x15, 8));                        // the header (SmallInteger)
+    a.mov(x7, asmjit::Imm(16));
+    {
+        asmjit::Label smallFrame = a.new_label();
+        a.tbz(x10, asmjit::Imm(17 + 3), smallFrame);   // header bit 17: large frame
+        a.mov(x7, asmjit::Imm(56));
+        a.bind(smallFrame);
+    }
+    a.cmp(x5, x7);
+    a.b_hs(sizeOk);
+    a.mov(x5, x7);
     a.bind(sizeOk);
-    a.add(x5, x5, x4);
     a.add(x5, x5, asmjit::Imm(6));                  // slots
     a.cmp(x5, asmjit::Imm(254));
     a.b_hi(fail);
@@ -6355,10 +6365,13 @@ static void emitMcfBlockCreateStub(asmjit::a64::Assembler& a) {
     a.str(x10, ptr(x8));
     a.add(x6, x8, asmjit::Imm(8));
     a.mov(x7, x5);
-    a.bind(fill);
-    a.cbz(x7, filled);
+    a.tbz(x7, asmjit::Imm(0), fill);                // odd: one slot first
     a.str(x14, ptr_post(x6, 8));
     a.sub(x7, x7, asmjit::Imm(1));
+    a.bind(fill);                                   // then two per store
+    a.cbz(x7, filled);
+    a.stp(x14, x14, ptr_post(x6, 16));
+    a.sub(x7, x7, asmjit::Imm(2));
     a.b(fill);
     a.bind(filled);
     a.str(x12, ptr(x11));                           // commit
