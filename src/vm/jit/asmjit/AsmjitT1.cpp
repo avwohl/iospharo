@@ -5648,8 +5648,19 @@ static uint64_t buildMcfStubPage(void (*emit)(asmjit::a64::Assembler&)) {
     Environment env = Environment::host();
     CodeHolder code;
     if (code.init(env) != kErrorOk) return 0;
+    // Without a handler asmjit skips an instruction it cannot encode and
+    // the stub runs with a hole: `ccmp w10, #63` vanished from the
+    // primitive stub and String>>at: took the C call for months.  A stub
+    // with an encoding error is not installed (its callers then take
+    // their slow paths) and says so.
+    T1EncodingErrorHandler encErr;
+    code.set_error_handler(&encErr);
     a64::Assembler a(&code);
     emit(a);
+    if (encErr.failed) {
+        fprintf(stderr, "[asmjit-t1] MCF stub page not installed: encoding error\n");
+        return 0;
+    }
     if (code.flatten() != kErrorOk) return 0;
     size_t sz = code.code_size();
     if (sz == 0 || sz > 4096) return 0;
@@ -5790,9 +5801,17 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         // 60 at: (pointers, or bytes as SmallInteger) and 63 String>>at:
         // (bytes as Character).
         a.bind(pAt);
-        a.cmp(w10, asmjit::Imm(60));
-        a.ccmp(w10, asmjit::Imm(63), 4, CondCode::kNE);   // Z if 60 or 63
-        a.b_ne(slow);
+        // Not `ccmp w10, #63`: the immediate form takes 0-31, and asmjit
+        // dropped the instruction without a word, so 63 (String>>at:) took
+        // the C call every time (39M calls in lexicon).
+        {
+            asmjit::Label isAt = a.new_label();
+            a.cmp(w10, asmjit::Imm(60));
+            a.b_eq(isAt);
+            a.cmp(w10, asmjit::Imm(63));
+            a.b_ne(slow);
+            a.bind(isAt);
+        }
         a.tst(x1, asmjit::Imm(7));
         a.b_ne(slow);
         a.and_(x3, x2, asmjit::Imm(7));
@@ -15050,6 +15069,13 @@ void pharo::jit::mcfBuildStubs() {
                 std::string path = std::string(GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) + (k ? ".blockstub.bin" : ".callstub.bin");
                 if (FILE* f = std::fopen(path.c_str(), "wb")) {
                     std::fwrite((const void*)(k ? g_mcfBlockStub : g_mcfCallStub), 1, 4096, f);
+                    std::fclose(f);
+                }
+            }
+            for (int k = 0; k < 3; k++) {
+                std::string path = std::string(GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) + ".primstub" + std::to_string(k) + ".bin";
+                if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                    std::fwrite((const void*)g_mcfPrimStub[k], 1, 4096, f);
                     std::fclose(f);
                 }
             }

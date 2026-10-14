@@ -66,10 +66,13 @@ bool Interpreter::mcfIsIdentityEquals(Oop m) {
     Oop hdr = mo->slotAt(0);
     if (!hdr.isSmallInteger()) return false;
     const int64_t h = hdr.asSmallInteger();
-    if (((h >> 24) & 0xF) != 1 || ((h >> 16) & 1)) return false;   // 1 arg, no primitive
+    if (((h >> 24) & 0xF) != 1) return false;                      // 1 argument
+    // Primitive 110 (==) never fails: Character>>= and friends.  18.6M
+    // lexicon `ch = $x` sends ran it through the C primitive call.
+    if ((h >> 16) & 1) return primitiveIndexOf(m) == 110;
     const uint8_t* bc = mo->bytes() + (1 + (h & 0x7FFF)) * 8;
     const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
-    return end - bc >= 4 && bc[0] == jit::SistaV1::PushReceiver && bc[1] == 0x40
+    return end - bc >= 4 && bc[0] == jit::SistaV1::PushReceiver && bc[1] == jit::SistaV1::PushTempBase
         && bc[2] == jit::SistaV1::SpecialSendBase + 6 && bc[3] == jit::SistaV1::ReturnTop;
 }
 
@@ -267,6 +270,7 @@ bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
 // interpreter, which retries the primitive and runs the method), 2 = the
 // primitive pushed a frame or switched process: the interpreter's state is
 // now the truth and machine code must exit without touching it.
+static bool g_mcfPrimFromExt = false;   // census: called from pharo_mcf_extsend
 int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_PRIM_CENSUS), 0)) {
         static uint64_t counts[1024], total = 0;
@@ -286,7 +290,64 @@ int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
                             (unsigned long long)v[k].first, v[k].second.c_str());
             }
         }
-        if ((++total & 0x3FFFFFF) == 0) {
+        {
+            // Receiver (and argument) kinds for the primitives with an inline
+            // path that still reach the C call.
+            static std::unordered_map<std::string, uint64_t> byKind;
+            if (primIndex == 60 || primIndex == 63 || primIndex == 110 || primIndex == 70
+                    || primIndex == 62 || primIndex == 68) {
+                Oop rcv = st->sp[-(nArgs + 1)];
+                auto kind = [&](Oop o) -> std::string {
+                    if (o.isSmallInteger()) return "SmI";
+                    if (!o.isObject()) return "imm" + std::to_string(o.rawBits() & 7);
+                    ObjectHeader* h = o.asObjectPtr();
+                    return memory_.classNameOf(o) + "/fmt" + std::to_string((int)h->format())
+                        + (h->slotCount() == 255 ? "/big" : "");
+                };
+                std::string k = std::to_string(primIndex) + "/" + std::to_string(nArgs)
+                    + (g_mcfPrimFromExt ? " ext " : " ic ") + kind(rcv)
+                    + " tgt " + (st->cachedTarget.isObject() ? classNameOfMethod(st->cachedTarget) + ">>#"
+                                 + memory_.selectorOf(st->cachedTarget) : std::string("?"));
+                if (primIndex == 63 && nArgs == 1 && !g_mcfPrimFromExt && rcv.isObject()
+                        && st->sp[-1].isSmallInteger()) {
+                    // The inline stub's checks, in C++: which one failed?
+                    ObjectHeader* h = rcv.asObjectPtr();
+                    const int64_t idx = st->sp[-1].asSmallInteger();
+                    const uint64_t hw = *reinterpret_cast<uint64_t*>(h);
+                    uint64_t cnt = hw >> 56;
+                    if (cnt == 255) cnt = (reinterpret_cast<uint64_t*>(h)[-1] << 8) >> 8;
+                    const uint64_t fmt = (hw >> 24) & 0x1F;
+                    const uint64_t bytes = cnt * 8 - (fmt - 16);
+                    const char* why = idx < 1 ? "idx<1" : fmt < 16 || fmt > 23 ? "fmt"
+                        : (uint64_t)idx > bytes ? "idx>bytes" : "PASSES";
+                    static std::unordered_map<std::string, uint64_t> whyCount;
+                    whyCount[std::string(why) + (cnt == 255 ? " big" : "")]++;
+                    static uint64_t nw = 0;
+                    if ((++nw & 0xFFFFF) == 0)
+                        for (auto& kv : whyCount)
+                            fprintf(stderr, "[MCF-63WHY] %llu %s\n", (unsigned long long)kv.second, kv.first.c_str());
+                }
+                if (primIndex == 63 && nArgs == 1 && rcv.isObject() && st->sp[-1].isSmallInteger()) {
+                    static int shown = 0;
+                    if (++shown <= 6)
+                        fprintf(stderr, "[MCF-63] index %lld bytes %zu slots %zu hdr 0x%llx\n",
+                                (long long)st->sp[-1].asSmallInteger(), rcv.asObjectPtr()->byteSize(),
+                                rcv.asObjectPtr()->slotCount(),
+                                (unsigned long long)*reinterpret_cast<uint64_t*>(rcv.asObjectPtr()));
+                }
+                if (nArgs >= 1) k += " arg " + kind(st->sp[-1]);
+                byKind[k]++;
+            }
+            if ((total & 0x3FFFFF) == 0x3FFFFF) {
+                std::vector<std::pair<uint64_t, std::string>> v;
+                for (auto& kv : byKind) v.push_back({kv.second, kv.first});
+                std::sort(v.rbegin(), v.rend());
+                for (size_t k = 0; k < v.size() && k < 14; k++)
+                    fprintf(stderr, "[MCF-PRIMKIND] %llu %s\n", (unsigned long long)v[k].first,
+                            v[k].second.c_str());
+            }
+        }
+        if ((++total & 0x3FFFFF) == 0) {
             for (int p = 0; p < 1024; p++)
                 if (counts[p] > total / 200) {
                     Oop rcv = st->sp[-(nArgs + 1)];
@@ -979,7 +1040,10 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     if (e && !e->jm && e->prim && e->prim < 1024) {
         // A primitive entry (mcfNotePrimitiveTarget): run it.
         st->cachedTarget = target;
-        switch (mcfCallPrimitive(st, (int)e->prim, nArgs)) {
+        g_mcfPrimFromExt = true;
+        const int pr = mcfCallPrimitive(st, (int)e->prim, nArgs);
+        g_mcfPrimFromExt = false;
+        switch (pr) {
         case 1: return kMcfExtDone;
         case 2: return kMcfExtDeopt;
         default:
@@ -1044,7 +1108,10 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         if (mcfPrimMethodCallable(target, p)) {
             mcfNotePrimitiveTarget(target, rcv);   // next time: the entry above
             st->cachedTarget = target;
-            switch (mcfCallPrimitive(st, p, nArgs)) {
+            g_mcfPrimFromExt = true;
+            const int pr = mcfCallPrimitive(st, p, nArgs);
+            g_mcfPrimFromExt = false;
+            switch (pr) {
             case 1: return kMcfExtDone;
             case 2: return kMcfExtDeopt;
             default: return mcfPrimFailBodyEntry(target, rcv);   // or nullptr: the interpreter retries it
