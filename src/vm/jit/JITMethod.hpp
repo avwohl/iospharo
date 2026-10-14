@@ -263,6 +263,12 @@ inline McfFrameLayout g_mcfLayout{};
 // JITRuntime::megaCache() (MegaCacheEntry[MegaCacheSize]); T1 code probes it
 // at an inline-cache miss under machine-code frames.  Set by mcfInit.
 inline void* g_mcfMegaCache = nullptr;
+// Interpreter::fullBlockClosureClassIndex_, for T1's native block call at
+// value / value: sites.  Set by mcfInit.
+inline uint32_t g_mcfFbcClassIndex = 0;
+// McfCallEntry.prim for a CompiledBlock T1 code may call natively:
+// kMcfBlockEntry | numArgs.  Never a primitive index (those are < 1024).
+constexpr uint64_t kMcfBlockEntry = 0x10000;
 
 struct JITMethod {
     // --- Identity (link back to Smalltalk objects) ---

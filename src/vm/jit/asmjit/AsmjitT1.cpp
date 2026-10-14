@@ -4955,9 +4955,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.ldr(w10, ptr(x10));
     a.cmp(w8, w10);
     a.b_ne(fall);
-    a.ldr(x8, ptr(x7, L.savedClosure));
-    a.cmp(x8, x6);
-    a.b_ne(fall);                             // caller is a block frame
+
     if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
         // The memo's code must belong to the caller's method.
         asmjit::Label ok = a.new_label();
@@ -5014,6 +5012,8 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.str(x19, ptr(x0, OFF_JITMETHOD));
     a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
     a.str(x8, ptr(x0, OFF_IP));
+    a.ldr(x8, ptr(x7, L.savedClosure));       // the caller's closure (nil: method)
+    a.str(x8, ptr(x0, OFF_CLOSURE));
     a.mov(x26, x1);                           // TOS mirror = the result
     a.str(wzr, ptr(x0, OFF_EXIT));
     a.br(x9);
@@ -6467,12 +6467,158 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Machine-code frames (phase 2): native call to a compiled callee at an
             // IC hit; mcfCont (= endOfSend) is where the callee's return lands.
             asmjit::Label mcfCont = a.new_label();
-            // Not from block code: the record would need the closure and the
-            // home method, and the C++ side relies on block frames never
-            // being left by a native call.
+            // Also from block code: the record saves the caller's closure
+            // (st.closure), and savedHomeMethod is only ever restored into
+            // homeMethod_, which execution does not read.
             const bool mcfNative = ::pharo::mcfEnabled() && nArgs <= 15
-                && !g_emitIsBlock
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_CALL);
+            // Machine-code frames, phase 3b: `value` / `value:` to a
+            // FullBlockClosure whose CompiledBlock is in the call cache
+            // (compiled, old, no non-local return, matching arity): push the
+            // block's SavedFrame and set up its frame as activateBlock does
+            // (closure in fp[0], receiver from the closure, copied values
+            // after the arguments, nil temporaries), then branch to the
+            // block's code.  Anything else continues with the normal send.
+            if (mcfNative && g_mcfFbcClassIndex != 0 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)
+                    && (op == SistaV1::SpecialSendBase + 9 || op == SistaV1::SpecialSendBase + 10)) {
+                const McfFrameLayout& L = g_mcfLayout;
+                asmjit::Label notBlock = a.new_label();
+                asmjit::Label copyLoop = a.new_label(), copyDone = a.new_label();
+                asmjit::Label nilLoop = a.new_label(), nilDone = a.new_label();
+                emitLoadSp(a, x2);
+                a.ldur(x1, ptr(x2, -8 * (nArgs + 1)));       // the closure
+                a.tst(x1, asmjit::Imm(0x7));
+                a.b_ne(notBlock);
+                a.ldr(w4, ptr(x1));
+                a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
+                // x5 already holds this site's IC pointer (emitMaterializeX5,
+                // above): never clobber it before notBlock.
+                a.mov(w11, asmjit::Imm(g_mcfFbcClassIndex));
+                a.cmp(w4, w11);
+                a.b_ne(notBlock);
+                a.ldrb(w12, ptr(x1, 7));                     // slot count
+                a.cmp(w12, asmjit::Imm(255));
+                a.b_eq(notBlock);                            // overflow header
+                a.cmp(w12, asmjit::Imm(4));
+                a.b_lo(notBlock);
+                a.ldr(x6, ptr(x1, 16));                      // slot 1: CompiledBlock
+                a.tst(x6, asmjit::Imm(0x7));
+                a.b_ne(notBlock);
+                a.ldr(x7, ptr(x0, OFF_MCF_CALL_CACHE));
+                a.lsr(x8, x6, asmjit::Imm(3));
+                a.and_(x8, x8, asmjit::Imm(kMcfCallCacheSize - 1));
+                a.add(x7, x7, x8, asmjit::a64::lsl(5));
+                a.ldp(x8, x9, ptr(x7));                      // key, block JM
+                a.cmp(x8, x6);
+                a.b_ne(notBlock);
+                a.ldr(x10, ptr(x7, 24));
+                a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
+                a.cmp(x10, x11);
+                a.b_ne(notBlock);                            // not a block entry, or arity
+                a.ldrb(w11, ptr(x9, (int)offsetof(JITMethod, tempCount)));
+                a.sub(w10, w12, asmjit::Imm(4));             // copied values
+                a.add(w10, w10, asmjit::Imm(nArgs));
+                a.cmp(w11, w10);
+                a.b_lo(notBlock);                            // temps cannot hold them
+                a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));
+                a.ldr(w11, ptr(x10));
+                a.ldrh(w13, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
+                a.subs(w11, w11, w13);
+                a.b_le(notBlock);
+                a.str(w11, ptr(x10));
+                a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
+                a.ldr(x11, ptr(x10));
+                a.cbz(x11, notBlock);
+                a.ldr(x13, ptr(x0, OFF_MCF_DEPTH_LIMIT));
+                a.cmp(x11, x13);
+                a.b_hs(notBlock);
+                a.ldr(x13, ptr(x0, OFF_MCF_FRAMES));
+                a.mov(x14, asmjit::Imm(L.size));
+                a.madd(x13, x11, x14, x13);                  // x13 = &savedFrames_[depth]
+                a.add(x11, x11, asmjit::Imm(1));
+                a.str(x11, ptr(x10));                        // frameDepth_++
+                // The caller's state (pushFrame), as for a method call.
+                a.ldr(x14, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x14, x14, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                a.str(x14, ptr(x13, L.savedIP));
+                a.str(x14, ptr(x13, L.mcKeyIP));
+                a.ldr(x14, ptr(x0, OFF_METHOD));
+                a.str(x14, ptr(x13, L.savedMethod));
+                a.str(x14, ptr(x13, L.savedHomeMethod));
+                a.ldr(x15, ptr(x0, OFF_MCF_BCEND_OFF));
+                a.add(x15, x14, x15);
+                a.str(x15, ptr(x13, L.savedBytecodeEnd));
+                a.ldr(x14, ptr(x0, OFF_RECEIVER));
+                a.str(x14, ptr(x13, L.savedReceiver));
+                a.ldr(x14, ptr(x0, OFF_CLOSURE));            // the caller's closure
+                a.str(x14, ptr(x13, L.savedClosure));
+                a.ldr(x14, ptr(x0, OFF_MCF_NIL));            // x14 = nil from here on
+                a.ldr(x15, ptr(x0, OFF_MCF_MATCTX_PTR));
+                a.ldr(x10, ptr(x15));
+                a.str(x10, ptr(x13, L.materializedContext));
+                a.str(x14, ptr(x15));
+                a.ldr(x15, ptr(x0, OFF_MCF_ACTCTX_PTR));
+                a.ldr(x10, ptr(x15));
+                a.str(x10, ptr(x13, L.savedActiveContext));
+                a.strb(wzr, ptr(x13, L.ctxSynced));
+                emitLoadTempBase(a, x10);
+                a.sub(x10, x10, asmjit::Imm(8));
+                a.str(x10, ptr(x13, L.savedFP));
+                a.str(xzr, ptr(x13, L.materializedRetSlot));
+                a.mov(w10, asmjit::Imm(callerArgCount));
+                a.str(w10, ptr(x13, L.savedArgCount));
+                a.movn(x10, asmjit::Imm(0));                 // no non-local return
+                a.str(x10, ptr(x13, L.homeFrameDepth));
+                a.adr(x10, mcfCont);
+                a.str(x10, ptr(x13, L.mcReturn));
+                a.str(x19, ptr(x13, L.mcJM));
+                a.ldr(x15, ptr(x0, OFF_MCF_EPOCH_PTR));
+                a.ldr(w10, ptr(x15));
+                a.str(w10, ptr(x13, L.mcEpoch));
+                // The block's view (activateBlock).
+                emitLoadSp(a, x13);
+                if (nArgs) a.sub(x13, x13, asmjit::Imm(8 * nArgs));   // first arg
+                emitStoreTempBase(a, x13);
+                a.ldr(x15, ptr(x1, 32));                     // slot 3: outer receiver
+                a.str(x15, ptr(x0, OFF_RECEIVER));
+                a.str(x1, ptr(x0, OFF_CLOSURE));
+                a.str(x6, ptr(x0, OFF_METHOD));
+                a.add(x15, x6, asmjit::Imm(16));
+                a.str(x15, ptr(x0, OFF_LITERALS));
+                a.mov(w15, asmjit::Imm(nArgs));
+                a.str(w15, ptr(x0, OFF_ARGCOUNT));
+                a.mov(x19, x9);
+                a.str(x9, ptr(x0, OFF_JITMETHOD));
+                a.ldr(x15, ptr(x9, (int)offsetof(JITMethod, bcStartCache)));
+                a.str(x15, ptr(x0, OFF_IP));
+                a.ldr(x15, ptr(x7, 16));                     // entry.bcEndOff
+                a.str(x15, ptr(x0, OFF_MCF_BCEND_OFF));
+                // Copied values (closure slots 4..) after the arguments.
+                emitLoadSp(a, x10);                          // = first temp after args
+                a.sub(w12, w12, asmjit::Imm(4));
+                a.add(x15, x1, asmjit::Imm(8 + 4 * 8));
+                a.bind(copyLoop);
+                a.cbz(w12, copyDone);
+                a.ldr(x16, ptr_post(x15, 8));
+                a.str(x16, ptr_post(x10, 8));
+                a.sub(w12, w12, asmjit::Imm(1));
+                a.b(copyLoop);
+                a.bind(copyDone);
+                // The other temporaries start as nil, up to tempCount.
+                a.ldrb(w15, ptr(x9, (int)offsetof(JITMethod, tempCount)));
+                a.add(x15, x13, x15, asmjit::a64::lsl(3));   // tempBase + tempCount
+                a.bind(nilLoop);
+                a.cmp(x10, x15);
+                a.b_hs(nilDone);
+                a.str(x14, ptr_post(x10, 8));
+                a.b(nilLoop);
+                a.bind(nilDone);
+                emitStoreSp(a, x10);
+                a.ldur(x26, ptr(x10, -8));                   // TOS mirror
+                a.add(x15, x9, asmjit::Imm((int)sizeof(JITMethod)));
+                a.br(x15);
+                a.bind(notBlock);
+            }
             // simStack B2c (design §5 RM-F1): when the send-result
             // family is on, EVERY inline-spec arrival at endOfSend is
             // retargeted through tosLrearm (ldur x26 from memory) so
@@ -10112,8 +10258,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x15, ptr(x12, L.savedBytecodeEnd));
                 a.ldr(x14, ptr(x0, OFF_RECEIVER));
                 a.str(x14, ptr(x12, L.savedReceiver));
-                a.ldr(x14, ptr(x0, OFF_MCF_NIL));            // x14 = nil from here on
+                a.ldr(x14, ptr(x0, OFF_CLOSURE));            // the caller's closure
                 a.str(x14, ptr(x12, L.savedClosure));
+                a.ldr(x14, ptr(x0, OFF_MCF_NIL));            // x14 = nil from here on
                 a.ldr(x15, ptr(x0, OFF_MCF_MATCTX_PTR));
                 a.ldr(x13, ptr(x15));
                 a.str(x13, ptr(x12, L.materializedContext));
@@ -10145,6 +10292,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldur(x1, ptr(x13, -8));                    // receiver
                 emitStoreTempBase(a, x13);
                 a.str(x1, ptr(x0, OFF_RECEIVER));
+                a.str(x14, ptr(x0, OFF_CLOSURE));            // a method frame
                 a.str(x6, ptr(x0, OFF_METHOD));
                 a.add(x15, x6, asmjit::Imm(16));
                 a.str(x15, ptr(x0, OFF_LITERALS));

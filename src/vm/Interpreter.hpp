@@ -1821,6 +1821,8 @@ public:
     // Is the current frame a method frame (not a block)?
     bool mcfIsMethodFrame() const;
     bool mcfIsBlockFrame() const;
+    void mcfSyncRegisters(const jit::JITState& st);
+    bool mcfBlockHasNLR(Oop compiledBlock);
     void mcfActivateBlock();
     // Run the compiled code of the frame just activated; false = not run.
     bool mcfActivate(Oop method);

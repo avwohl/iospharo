@@ -143,12 +143,7 @@ static bool mcfPrimCallable(int p) {
 // now the truth and machine code must exit without touching it.
 int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     stackPointer_ = st->sp;
-    method_ = st->method;            // unconditionally: see mcfRun
-    homeMethod_ = st->method;
-    receiver_ = st->receiver;
-    framePointer_ = st->tempBase - 1;
-    argCount_ = st->argCount;
-    bytecodeEnd_ = reinterpret_cast<uint8_t*>(st->method.rawBits()) + st->mcfBcEndOff;
+    mcfSyncRegisters(*st);           // unconditionally: see mcfRun
     instructionPointer_ = st->ip;   // bcStart: inside the method, for GC
     Oop* spBefore = stackPointer_;
     const size_t depth = frameDepth_;
@@ -215,12 +210,15 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
     if (f.savedIP <= bc0 || f.savedIP > end) why = "savedIP outside caller";
     else if (f.savedBytecodeEnd != end) why = "savedBytecodeEnd";
-    else if (f.savedHomeMethod.rawBits() != f.savedMethod.rawBits()) why = "homeMethod";
-    else if (f.savedFP[0].rawBits() != f.savedReceiver.rawBits()) why = "receiver != fp[0]";
+
+    else if (f.savedFP[0].rawBits() != (f.savedClosure.isNil() ? f.savedReceiver
+                                                               : f.savedClosure).rawBits())
+        why = "fp[0] is neither the receiver nor the closure";
     else if (f.savedArgCount != nArgsCaller) why = "argCount";
-    else if (!f.savedClosure.isNil()) why = "closure";
     else if (f.mcKeyIP != f.savedIP) why = "keyIP";
-    else if (st->tempBase[-1].rawBits() != st->receiver.rawBits()) why = "callee receiver";
+    else if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
+                                                              : st->closure).rawBits())
+        why = "callee fp[0]";
     else if (st->tempBase - 1 <= f.savedFP) why = "callee fp below caller fp";
     else {
         Oop ch = st->method.asObjectPtr()->slotAt(0);
@@ -228,7 +226,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
         const int nTemps = (int)((ch.asSmallInteger() >> 18) & 0x3F);
         if (nArgsCallee != st->argCount) why = "callee argCount";
         else if (st->sp != st->tempBase + nTemps) why = "callee sp";
-        else {
+        else if (st->closure.isNil()) {   // a block's copied values are not nil
             for (int t = nArgsCallee; t < nTemps; t++)
                 if (!st->tempBase[t].isNil()) { why = "temp not nil"; break; }
         }
@@ -329,10 +327,8 @@ void Interpreter::mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, u
             (unsigned long long)memory_.falseObject().rawBits());
 }
 
-// A block frame activateBlock or popFrame set up (closure_ set, method_ a
-// CompiledBlock).  Its interpreter registers are right while it runs in
-// machine code: T1 block code makes no native calls, and a native return
-// never lands in a block frame (the caller record must have a nil closure).
+// A block frame (closure_ set, method_ a CompiledBlock), set up by
+// activateBlock, popFrame or a native block call.
 bool Interpreter::mcfIsBlockFrame() const {
     if (!GET_DEBUG_BOOL(PHARO_MCF_BLOCKS)) return false;
     return !closure_.isNil()
@@ -341,15 +337,53 @@ bool Interpreter::mcfIsBlockFrame() const {
 }
 
 void Interpreter::mcfActivateBlock() {
-    if (mcfActive_ || !jitInitialized_ || !mcfIsBlockFrame()) return;
+    if (mcfActive_ || !jitInitialized_) return;
+    if (closure_.isNil() || !method_.isObject()
+            || method_.asObjectPtr()->classIndex() != compiledBlockClassIndex_) return;
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
     if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
     if (instructionPointer_ != reinterpret_cast<const uint8_t*>(jm->bcStart())) return;
+    // Phase 3b: let T1 code call this block natively at value / value:.
+    if (!memory_.isYoung(method_) && !mcfBlockHasNLR(method_)) {
+        Oop hdr = method_.asObjectPtr()->slotAt(0);
+        jit::McfCallEntry& e = jit::g_mcfCallCache[
+            (method_.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
+        e.methodBits = method_.rawBits();
+        e.jm = jm;
+        e.bcEndOff = static_cast<uint64_t>(
+            bytecodeEnd_ - reinterpret_cast<uint8_t*>(method_.rawBits()));
+        e.prim = jit::kMcfBlockEntry | (uint64_t)((hdr.asSmallInteger() >> 24) & 0xF);
+    }
+    if (!mcfIsBlockFrame()) return;
     if (jm->stats) {
         jitRuntime_.codeZone().touch(jm);
         jm->stats->executionCount++;
     }
     mcfRun(jm, const_cast<uint8_t*>(jm->codeStart()));
+}
+
+// The interpreter's frame registers from the machine-code state view, for
+// the frame machine code is in now.  Unconditional: a native return followed
+// by a native call can leave a NEW activation of the same method at the same
+// fp with another receiver, so "same method and fp" is not "same frame".
+void Interpreter::mcfSyncRegisters(const jit::JITState& st) {
+    method_ = st.method;
+    receiver_ = st.receiver;
+    framePointer_ = st.tempBase - 1;
+    argCount_ = st.argCount;
+    bytecodeEnd_ = reinterpret_cast<uint8_t*>(st.method.rawBits()) + st.mcfBcEndOff;
+    if (st.closure.isNil()) {
+        closure_ = st.closure;
+        homeMethod_ = st.method;
+    } else {
+        // A block frame: activateBlock's choice of home method.
+        closure_ = st.closure;
+        ObjectHeader* clo = st.closure.asObjectPtr();
+        Oop cb = clo->slotAt(1);
+        Oop home = cb.isObject() ? memory_.fetchPointer(2, cb) : Oop::nil();
+        homeMethod_ = home.isObject() ? home
+                                      : memory_.fetchPointer(3, clo->slotAt(0));
+    }
 }
 
 bool Interpreter::mcfIsMethodFrame() const {
@@ -468,7 +502,10 @@ void Interpreter::mcfInit() {
     L.mcEpoch = offsetof(SavedFrame, mcEpoch);
 #pragma GCC diagnostic pop
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
-    if (!jit::g_mcfCallCache) {
+    jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
+    // Only in this mode: every code change clears the cache (mcfCodeChanged),
+    // a 128 KB memset the default mode must not pay.
+    if (::pharo::mcfEnabled() && !jit::g_mcfCallCache) {
         jit::g_mcfCallCache = new jit::McfCallEntry[jit::kMcfCallCacheSize];
         jit::mcfClearCallCache();
     }
@@ -673,15 +710,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         // frame" (the stale receiver_ then went into the next pushFrame).
         jm = st.jitMethod;
         const bool blockFrame = !st.closure.isNil();
-        if (!blockFrame) {   // a block frame's registers are already right
-            method_ = st.method;
-            homeMethod_ = st.method;
-            receiver_ = st.receiver;
-            framePointer_ = st.tempBase - 1;
-            argCount_ = st.argCount;
-            bytecodeEnd_ = reinterpret_cast<uint8_t*>(st.method.rawBits())
-                + st.mcfBcEndOff;
-        }
+        mcfSyncRegisters(st);
         switch (st.exitReason) {
         case jit::ExitSend:
             // IC miss: the interpreter's lookup patches the site (the same
@@ -782,6 +811,7 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame*) {}
 void Interpreter::mcfRun(jit::JITMethod*, void*) {}
 void Interpreter::mcfCensus(const jit::JITState&) {}
 void Interpreter::mcfInit() {}
+void Interpreter::mcfSyncRegisters(const jit::JITState&) {}
 bool Interpreter::mcfIsBlockFrame() const { return false; }
 void Interpreter::mcfActivateBlock() {}
 bool Interpreter::mcfPrologueIsPrimitive(Oop) { return false; }

@@ -15641,6 +15641,14 @@ static const BlockFactsMemo& compiledBlockFacts(Oop compiledBlock) {
     return m;
 }
 
+#if PHARO_JIT_ENABLED
+// Machine-code frames: a block T1 code may call natively must not return
+// non-locally (its frame then needs no home frame depth).
+bool Interpreter::mcfBlockHasNLR(Oop compiledBlock) {
+    return compiledBlockFacts(compiledBlock).nlr;
+}
+#endif
+
 void Interpreter::activateBlock(Oop block, int argCount) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_ACTIVATE_BLOCK)) {
         static uint64_t n = 0;
@@ -20282,6 +20290,9 @@ void Interpreter::initializeClassIndexCache() {
     // Smalltalk refersToLiteral: (value-equality via literalEqual:).
     byteSymbolClassIndex_ = lookupClassIndexByName("ByteSymbol");
     fullBlockClosureClassIndex_ = lookupClassIndexByName("FullBlockClosure");
+#if PHARO_JIT_ENABLED
+    jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
+#endif
     orderedCollectionClassIndex_ = lookupClassIndexByName("OrderedCollection");
     writeStreamClassIndex_ = lookupClassIndexByName("WriteStream");
     // BoxedFloat64, via the special-objects array (name-independent).  Used
