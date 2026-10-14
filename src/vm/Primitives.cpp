@@ -14342,7 +14342,35 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
     // stored byte by byte through storeByte, which recomputes byteSize() per
     // byte -- 18% of a source-reading workload (lexicon's
     // CodeAnalysisRunnerTest).
-    size_t bytesRead = fread(bufHdr->bytes() + byteStart, 1, byteCount, file);
+    size_t bytesRead = 0;
+    bool done = false;
+#ifndef _WIN32
+    // A large read from a read-only regular file: one pread instead of
+    // fread, which refills its 4 KB buffer for every 4 KB of the request
+    // (a 64 KB read: 10 us with fread, 2.8 us with pread).  The image's
+    // source stream refills 64 KB per method-source access; lexicon does
+    // 245K of them.  The FILE position then moves past the bytes read.
+    if (byteCount >= 4096 && fileIdOop.isObject()
+            && fileIdOop.asObjectPtr()->bytes()[16] == 0) {
+        off_t pos = ftello(file);
+        if (pos >= 0) {
+            ssize_t n = pread(fileno(file), bufHdr->bytes() + byteStart, byteCount, pos);
+            if (n >= 0 && fseeko(file, pos + n, SEEK_SET) == 0) {
+                bytesRead = static_cast<size_t>(n);
+                done = true;
+            }
+        }
+    }
+#endif
+    if (!done) bytesRead = fread(bufHdr->bytes() + byteStart, 1, byteCount, file);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FILE_CENSUS), 0)) {
+        static uint64_t n = 0, req = 0, got = 0;
+        n++; req += byteCount; got += bytesRead;
+        if ((n & 0x3FFF) == 0)
+            fprintf(stderr, "[FILE-CENSUS] reads=%llu requested=%llu got=%llu avgReq=%llu\n",
+                    (unsigned long long)n, (unsigned long long)req, (unsigned long long)got,
+                    (unsigned long long)(req / n));
+    }
 
     popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(bytesRead / elemSize)));
