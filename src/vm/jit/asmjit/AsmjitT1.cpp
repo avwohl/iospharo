@@ -5913,6 +5913,36 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.ldr(x7, ptr(x1, x3, lsl(3)));           // slot index-1 is at 8*index
         a.b(result);
         a.bind(atBytes);
+        {
+            // Formats 10-11, 32-bit words: WideString>>at: (a Character),
+            // Bitmap and WordArray at: (a SmallInteger).  String translation
+            // tables are WideStrings (2.3M C calls in 300K asUppercase).
+            asmjit::Label notWords = a.new_label();
+            a.sub(x9, x4, asmjit::Imm(10));
+            a.cmp(x9, asmjit::Imm(1));
+            a.b_hi(notWords);
+            a.lsl(x8, x8, asmjit::Imm(1));
+            a.sub(x8, x8, x9);                     // word count
+            a.cmp(x3, x8);
+            a.b_hi(slow);
+            a.add(x4, x1, x3, lsl(2));
+            a.ldr(w7, ptr(x4, 4));                 // word index-1 at 8+4*(index-1)
+            a.cmp(w10, asmjit::Imm(63));
+            {
+                asmjit::Label smi = a.new_label();
+                a.b_ne(smi);
+                a.lsr(x9, x7, asmjit::Imm(30));    // a Character holds 30 bits
+                a.cbnz(x9, slow);
+                a.lsl(x7, x7, asmjit::Imm(3));
+                a.orr(x7, x7, asmjit::Imm(3));     // Character tag
+                a.b(result);
+                a.bind(smi);
+            }
+            a.lsl(x7, x7, asmjit::Imm(3));
+            a.orr(x7, x7, asmjit::Imm(1));         // SmallInteger tag
+            a.b(result);
+            a.bind(notWords);
+        }
         a.sub(x4, x4, asmjit::Imm(16));
         a.cmp(x4, asmjit::Imm(7));
         a.b_hi(slow);
@@ -6069,11 +6099,36 @@ static void emitMcfInlinePrims2(asmjit::a64::Assembler& a) { emitMcfInlinePrims(
 // at `cont`.
 static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArgs,
                               int sendLen, int globalIdx, int callerArgCount,
-                              const asmjit::Label& cont) {
+                              const asmjit::Label& cont, uint64_t* siteSlot = nullptr) {
     using namespace asmjit::a64;
     asmjit::Label extExit = a.new_label();
     asmjit::Label extDone = a.new_label();
     asmjit::Label extDeopt = a.new_label();
+    asmjit::Label extCall = a.new_label();
+    if (siteSlot) {
+        // A monomorphic cache for this site: {receiver class key, method}.
+        // Hit and the method in the call cache: call it with no lookup.
+        // pharo_mcf_extsend fills it (from OFF_MCF_SITE_CACHE) on a miss.
+        asmjit::Label miss = a.new_label(), immKey = a.new_label(), haveKey = a.new_label();
+        a.mov(x10, asmjit::Imm((uint64_t)siteSlot));
+        a.ldp(x8, x6, ptr(x10));
+        a.cbz(x8, miss);
+        a.ldur(x1, ptr(x25, -8 * (nArgs + 1)));   // receiver
+        a.and_(x9, x1, asmjit::Imm(7));
+        a.cbnz(x9, immKey);
+        a.ldr(w9, ptr(x1));
+        a.and_(w9, w9, asmjit::Imm(0x3FFFFF));
+        a.b(haveKey);
+        a.bind(immKey);
+        a.orr(w9, w9, asmjit::Imm(0x80000000u));
+        a.bind(haveKey);
+        a.cmp(x9, x8);
+        a.b_ne(miss);
+        emitMcfCacheProbe(a, miss);
+        a.b(extCall);
+        a.bind(miss);
+        a.str(x10, ptr(x0, OFF_MCF_SITE_CACHE));
+    }
     a.str(x5, ptr(x0, OFF_IP));      // for GC during the lookup
     emitSyncSpToState(a);
     a.stp(x0, x30, ptr_pre(sp, -16));
@@ -6088,6 +6143,7 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
     a.cmp(x7, asmjit::Imm(2));
     a.b_eq(extDeopt);
     a.ldp(x6, x9, ptr(x7));                  // method, callee JM
+    a.bind(extCall);
     a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
     a.add(x13, x13, asmjit::Imm(globalIdx + sendLen));   // ip after the send
     a.adr(x14, cont);
@@ -13018,7 +13074,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         | ((uint32_t)(bcReal[i + 1] & 7) << 8)
                         | (op == SistaV1::ExtSuperSend ? (1u << 16) : 0u);
                     emitMcfHelperSend(a, desc, bcReal[i + 1] & 7, 2, globalIdx,
-                                      callerArgCount, extCont);
+                                      callerArgCount, extCont,
+                                      GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_SITE_CACHE)
+                                          ? nullptr : mcfAllocSiteCache());
                     a.bind(extCont);
                     a.bind(bcLabels[globalIdx + 1]);
                     i += 1;

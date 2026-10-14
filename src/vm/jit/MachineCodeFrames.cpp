@@ -1016,7 +1016,21 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         e = jit::mcfCallFind(target.rawBits());
     }
     if (e && e->jm && (!e->prim || (e->prim & 0xFFFFFF) == jit::kMcfTinyShape)
-            && mcfReceiverOk(e->jm, rcv)) return e;   // a tiny shape is also a native call
+            && mcfReceiverOk(e->jm, rcv)) {   // a tiny shape is also a native call
+        // An ExtSend site's cache: from now on, this receiver class calls
+        // the method with no lookup (machine code probes the call cache
+        // for it).  Not for a young method (a scavenge moves it) or a
+        // receiver whose slot count may differ between instances when the
+        // method reads receiver fields.
+        if (siteCache && !special && !super && !memory_.isYoung(target)
+                && (!e->jm->hasRecvFieldAccess
+                    || (rcv.isObject() && rcv.asObjectPtr()->format() == ObjectFormat::FixedSize))) {
+            siteCache[0] = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                          : (0x80000000ull | (rcv.rawBits() & 7));
+            siteCache[1] = target.rawBits();
+        }
+        return e;
+    }
     if (e && e->prim == jit::kMcfReturnsValue) {
         // A method answering one constant (mcfConstantReturn).
         st->sp[-(nArgs + 1)] = Oop::fromRawBits(e->bcEndOff);

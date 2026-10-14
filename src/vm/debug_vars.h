@@ -208,6 +208,7 @@ DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)            // MCF: unary field-reading meth
 DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)        // the interpreter's periodic check (process switch, timers, signals) runs at whatever bytecode it falls on, not only at interrupt points (sends, back jumps, frame entry)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)             // MCF: basicNew (primKind 17) is not allocated inline at the call site
 DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)             // MCF: a return into a sender context continues its method in the interpreter, not in machine code
+DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_SITE_CACHE)      // MCF: naked ExtSend sites (3+ arguments) have no per-site class/method cache; every send looks up in pharo_mcf_extsend
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
