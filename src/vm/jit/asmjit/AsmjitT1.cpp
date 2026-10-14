@@ -6544,6 +6544,8 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
     asmjit::Label extDone = a.new_label();
     asmjit::Label extDeopt = a.new_label();
     asmjit::Label extCall = a.new_label();
+    asmjit::Label generic = a.new_label();
+    asmjit::Label primHit = a.new_label();
     if (siteSlot) {
         // A monomorphic cache for this site: {receiver class key, method}.
         // Hit and the method in the call cache: call it with no lookup.
@@ -6564,10 +6566,12 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
         a.cmp(x9, x8);
         a.b_ne(miss);
         emitMcfCacheProbe(a, miss);
+        a.cbz(x9, primHit);                       // a primitive entry: no JM
         a.b(extCall);
         a.bind(miss);
         a.str(x10, ptr(x0, OFF_MCF_SITE_CACHE));
     }
+    a.bind(generic);
     a.str(x5, ptr(x0, OFF_IP));      // for GC during the lookup
     emitSyncSpToState(a);
     a.stp(x0, x30, ptr_pre(sp, -16));
@@ -6594,6 +6598,41 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
     emitReloadSpFromState(a);
     a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
     a.b(cont);
+    if (siteSlot) {
+        // A site-cache hit on a primitive method (the 4-argument
+        // replaceFrom:to:with:startingAt: of every `,`): run the primitive
+        // with no lookup, as the inline-cache path does.  On failure the
+        // generic helper runs it again and then the method body.
+        asmjit::Label primFailed = a.new_label();
+        a.bind(primHit);
+        a.ldr(x10, ptr(x7, 24));                 // entry.prim
+        a.cbz(x10, primFailed);
+        a.cmp(x10, asmjit::Imm(1024));
+        a.b_hs(primFailed);
+        emitSyncSpToState(a);
+        a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+        a.add(x16, x16, asmjit::Imm(globalIdx + sendLen));   // ip after the send
+        a.str(x16, ptr(x0, OFF_IP));
+        a.str(x6, ptr(x0, OFF_CACHED_TARGET));
+        a.str(xzr, ptr(x0, OFF_ICDATAPTR));
+        a.stp(x0, x30, ptr_pre(sp, -16));
+        a.mov(w1, w10);
+        a.movk(w1, asmjit::Imm(nArgs), 16);
+        a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_prim));
+        a.blr(x16);
+        a.mov(w9, w0);
+        a.ldp(x0, x30, ptr_post(sp, 16));
+        emitReloadSpFromState(a);
+        a.cbz(w9, primFailed);
+        a.cmp(w9, asmjit::Imm(2));
+        a.b_eq(extDeopt);
+        a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+        a.b(cont);
+        a.bind(primFailed);
+        a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+        a.add(x5, x5, asmjit::Imm(globalIdx));   // the send
+        a.b(generic);
+    }
     a.bind(extDeopt);                        // interpreter owns the state
     a.mov(w3, asmjit::Imm((int)ExitDeopt));
     a.str(w3, ptr(x0, OFF_EXIT));

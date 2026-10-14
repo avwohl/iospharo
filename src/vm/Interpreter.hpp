@@ -1922,6 +1922,7 @@ public:
     bool mcfReturnedIntoContext_ = false;
     bool mcfConstantReturn(Oop method, Oop& value);
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
+    bool mcfFastReplace(jit::JITState* st);
     // Slots of a context made for a frame: 6 + the header's frame size, as
     // Cog sizes it (16, or 56 with the large-frame bit 17), or 6 + numTemps
     // + stackDepth + 8 when that is more.  (Was 6 + numTemps + 32 at least:

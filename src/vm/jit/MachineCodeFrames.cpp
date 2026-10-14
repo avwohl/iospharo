@@ -160,8 +160,65 @@ extern "C" uint64_t pharo_mcf_array_create(jit::JITState* st, uint32_t desc) {
 }
 
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
+    if ((primAndArgs & 0xFFFF) == 105 && (primAndArgs >> 16) == 4
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_FAST_REPLACE)
+            && st->interp->mcfFastReplace(st))
+        return 1;
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
+}
+
+// Primitive 105 (replaceFrom:to:with:startingAt:) for its two common
+// shapes, bytes into bytes and Array into Array, with none of the
+// interpreter state sync of a primitive call (~180 instructions; each `,`
+// makes two).  The same checks as primitiveStringReplace; anything else
+// (other formats, fixed fields, immutable destination) answers false and
+// the full primitive runs.
+bool Interpreter::mcfFastReplace(jit::JITState* st) {
+    Oop* const sp = st->sp;
+    const Oop dest = sp[-5], startO = sp[-4], stopO = sp[-3], repl = sp[-2], rStartO = sp[-1];
+    if (!startO.isSmallInteger() || !stopO.isSmallInteger() || !rStartO.isSmallInteger())
+        return false;
+    if (!dest.isObject() || !repl.isObject()) return false;
+    ObjectHeader* const dh = dest.asObjectPtr();
+    ObjectHeader* const rh = repl.asObjectPtr();
+    if (dh->isImmutable()) return false;
+    const int64_t start = startO.asSmallInteger(), stop = stopO.asSmallInteger();
+    const int64_t rStart = rStartO.asSmallInteger();
+    if (start < 1 || rStart < 1 || stop < start - 1) return false;
+    const int64_t count = stop - start + 1;
+    // A self-copy overlapping ahead of its source propagates (the
+    // primitive is a forward element loop): the full primitive does that.
+    if (dest.rawBits() == repl.rawBits() && start > rStart && start < rStart + count)
+        return false;
+    const ObjectFormat df = dh->format(), rf = rh->format();
+    if (df >= ObjectFormat::Indexable8 && df <= ObjectFormat::Indexable8_7
+            && rf >= ObjectFormat::Indexable8 && rf <= ObjectFormat::Indexable8_7) {
+        const int64_t dSize = (int64_t)dh->slotCount() * 8 - ((int)df - (int)ObjectFormat::Indexable8);
+        const int64_t rSize = (int64_t)rh->slotCount() * 8 - ((int)rf - (int)ObjectFormat::Indexable8);
+        if (stop > dSize || rStart - 1 + count > rSize) return false;
+        if (count > 0)
+            std::memmove(dh->bytes() + (start - 1), rh->bytes() + (rStart - 1), (size_t)count);
+    } else if (df == ObjectFormat::Indexable && rf == ObjectFormat::Indexable) {
+        const int64_t dSize = (int64_t)dh->slotCount(), rSize = (int64_t)rh->slotCount();
+        if (stop > dSize || rStart - 1 + count > rSize) return false;
+        if (count > 0) {
+            Oop* const d = dh->slots() + (start - 1);
+            const Oop* const r = rh->slots() + (rStart - 1);
+            if (memory_.isYoung(dest)) {
+                std::memmove(d, r, (size_t)count * sizeof(Oop));
+            } else {
+                // An old destination may need remembering: per slot, with
+                // the barrier (no overlap ahead of the source, checked above).
+                for (int64_t k = 0; k < count; k++)
+                    memory_.storePointer((size_t)(start - 1 + k), dest, r[k]);
+            }
+        }
+    } else {
+        return false;
+    }
+    st->sp = sp - 4;                     // the destination is the result
+    return true;
 }
 
 // Length of the send at ip, extension prefixes included.  ip is where T1's
@@ -1105,7 +1162,14 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
                                               (unsigned long long)kv.second, kv.first.c_str());
     }
     if (e && !e->jm && e->prim && e->prim < 1024) {
-        // A primitive entry (mcfNotePrimitiveTarget): run it.
+        // A primitive entry (mcfNotePrimitiveTarget): run it, and let the
+        // site's cache run it from now on with no lookup.
+        if (siteCache && !special && !super && !memory_.isYoung(target)
+                && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_PRIM_CACHE)) {
+            siteCache[0] = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                          : (0x80000000ull | (rcv.rawBits() & 7));
+            siteCache[1] = target.rawBits();
+        }
         st->cachedTarget = target;
         g_mcfPrimFromExt = true;
         const int pr = mcfCallPrimitive(st, (int)e->prim, nArgs);
