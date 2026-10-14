@@ -5709,9 +5709,10 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.orr(x7, x7, asmjit::Imm(1));
         a.b(result);
         // 62 size: pointer-indexable without fixed fields, or bytes.
+        asmjit::Label p555 = a.new_label();
         a.bind(p62);
         a.cmp(w10, asmjit::Imm(62));
-        a.b_ne(slow);
+        a.b_ne(p555);
         a.tst(x1, asmjit::Imm(7));
         a.b_ne(slow);
         a.ldr(x3, ptr(x1));
@@ -5730,6 +5731,38 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.sub(x7, x7, x8);                         // bytes
         a.lsl(x7, x7, asmjit::Imm(3));
         a.orr(x7, x7, asmjit::Imm(1));
+        a.b(result);
+        // 555 SmallFloat64>>sqrt of a positive SmallFloat64 (the primitive
+        // fails for a negative one; +/-0 and a result that is no
+        // SmallFloat64 take the C call).
+        a.bind(p555);
+        a.mov(x4, asmjit::Imm(555));
+        a.cmp(w10, w4);
+        a.b_ne(slow);
+        a.and_(x2, x1, asmjit::Imm(7));
+        a.cmp(x2, asmjit::Imm(5));
+        a.b_ne(slow);
+        a.lsr(x3, x1, asmjit::Imm(3));
+        a.cmp(x3, asmjit::Imm(1));
+        a.b_ls(slow);                              // +/-0
+        a.mov(x4, asmjit::Imm(0x7000000000000000ULL));
+        a.add(x3, x3, x4);
+        a.ror(x3, x3, asmjit::Imm(1));
+        a.fmov(d0, x3);
+        a.fcmp(d0, 0.0);
+        a.b_le(slow);                              // negative (or NaN: unordered)
+        a.b_vs(slow);
+        a.fsqrt(d0, d0);
+        a.fmov(x3, d0);
+        a.ror(x3, x3, asmjit::Imm(63));
+        a.cmp(x3, x4);
+        a.b_lo(slow);
+        a.sub(x3, x3, x4);
+        a.mov(x8, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
+        a.cmp(x3, x8);
+        a.b_hi(slow);
+        a.lsl(x7, x3, asmjit::Imm(3));
+        a.add(x7, x7, asmjit::Imm(5));             // SmallFloatTag
         a.b(result);
     } else if (nArgs == 1) {
         asmjit::Label p170 = a.new_label(), pAt = a.new_label(), atBytes = a.new_label();

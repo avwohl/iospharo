@@ -208,6 +208,7 @@ bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
 static bool mcfPrimCallable(int p) {
     if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
     if (p >= 40 && p <= 59) return true;         // Float
+    if (p >= 541 && p <= 559) return true;       // SmallFloat64 (sqrt alone was ~360 instructions a call)
     switch (p) {
     case 60: case 61: case 62: case 63: case 64: // at: at:put: size, string at:
     case 68: case 69:                            // objectAt: objectAt:put:
