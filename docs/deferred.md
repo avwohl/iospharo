@@ -322,22 +322,20 @@ The history lives in `docs/history/`; nothing was deleted.
   found: the depth-0 share is similar in both modes (`[DEPTH0]` 40% vs 34% of
   checkpoints).  Find what the JIT-on interpreter path does per block call
   that the no-JIT one does not before trying again.
-- **T1 loses on send-bearing code because of interpreter<->JIT transitions,
-  not its own code (measured 2026-10-13).**  The arm64 resume-internal policy
-  keeps every method with a real send out of T1; the opt-out
-  `PHARO_T1_RESUME_EXTERNAL_J2J=1` compiles them and loses (Release,
-  instructions: printString 83.7 -> 104.6 billion, deeptraverser 1039 ->
-  1387; diag build with `PHARO_T1_COMPILE_ALL` too: printString 130 -> 206).
-  Yet T1's own send can be fast: a loop sending a trivial method runs 163 ms
-  with the opt-out against 980 interpreted (Cog 95).  Release profile of
-  printString with the opt-out: JIT code itself 7.8%; the resume glue
-  ~28% -- `tryJITResumeInCallerSlow` 17.4% (+3.3% in its lambda), spread
-  flat over that ~2000-line exit-dispatch loop, `JITRuntime::tryResume`
-  5.1%, `upgradeICToJ2J` 2.1%.  Real code mostly calls methods T1 did not
-  compile, so a compiled caller exits, the callee runs interpreted, and the
-  caller is resumed through that loop on every return.  The lever is a cheap
-  resume (or compiling callees, which the diag compile-all run shows is not
-  enough today); until then the refusal policy is the right default.
+- **DONE 2026-10-14: T1 lost on send-bearing code because of the
+  interpreter<->JIT transitions.**  Replaced by machine-code frames
+  (`docs/mc-frames-design.md`), the arm64 default: one frame model, exits
+  at bytecode boundaries, memo returns, native calls of methods, primitives
+  and blocks.  printString 83.7 -> 62.1 billion instructions, deeptraverser
+  1004 -> 764, lexicon 1699 -> ~1080.
+- **Block creation materializes the whole frame stack (lexicon: ~10% of
+  samples, 2026-10-14).**  `createFullBlockWithLiteral` needs an outer
+  context for a non-clean block and calls `materializeFrameStack()`, which
+  makes contexts for every frame not yet synced, because a context's sender
+  must be a context.  Cog marries only the current frame and materializes
+  senders on demand.  Doing the same here (a context whose sender is "the
+  frame below", resolved when read) is the lazy-context redesign; it would
+  also cut `widowReturningContext` and process-switch cost.
 - **`PHARO_NO_JIT=1` still pays `noteMethodEntrySlow` on every activation.**
   The JIT runtime initializes with the compiler off, `countThresholdCache_`
   stays 0, so the inline gate never takes its fast path.  Diagnostic mode
