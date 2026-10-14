@@ -408,6 +408,24 @@ bool Interpreter::mcfIsMethodFrame() const {
 bool Interpreter::mcfActivate(Oop method) {
     if (mcfActive_ || !jitInitialized_) return false;
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_MCF_WATCH_SEL) != nullptr, 0)
+            && memory_.selectorOf(method) == GET_DEBUG_STR(PHARO_MCF_WATCH_SEL)) {
+        static std::unordered_map<std::string, uint64_t> whyCount;
+        static uint64_t n = 0;
+        {
+            const char* why = !jm ? "no-jm" : !jm->isExecutable() ? "not-exec"
+                : jm->numBytecodes == 0 ? "no-bc" : !mcfIsMethodFrame() ? "not-method-frame"
+                : !mcfReceiverOk(jm, receiver_) ? "receiver" : memory_.isYoung(method) ? "young"
+                : ((jm->methodHeader >> 16) & 1) && !mcfPrologueIsPrimitive(method) ? "prim"
+                : (jm->hasRecvFieldAccess && !receiver_.isObject()) ? "recv-field" : "ok";
+            whyCount[classNameOfMethod(method) + " " + why +
+                     (jm && jm->isStubOnEntry ? " stub" : "")]++;
+            if ((++n & 0xFFFF) == 0)
+                for (auto& kv : whyCount)
+                    fprintf(stderr, "[MCF-WATCH] %llu %s\n", (unsigned long long)kv.second,
+                            kv.first.c_str());
+        }
+    }
     if (!jm || !jm->isExecutable() || jm->numBytecodes == 0) return false;
     if (!mcfIsMethodFrame() || !mcfReceiverOk(jm, receiver_)) return false;
     if (jm->stats) {

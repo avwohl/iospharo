@@ -1734,7 +1734,16 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             // Naked here means no preceding ExtA/B — the bundle case
             // is handled above when ExtA/B is at i.
             if (op == SistaV1::ExtSuperSend) {
-                if (!GET_DEBUG_BOOL(PHARO_T1_ACCEPT_EXTSUPERSEND)) {
+                // Under machine-code frames the arm64 emit exits to the
+                // interpreter for the super send and resumes after it
+                // (a send exit with a return memo).
+#if defined(__aarch64__) || defined(_M_ARM64)
+                const bool superOk = ::pharo::mcfEnabled()
+                    && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT);
+#else
+                const bool superOk = false;
+#endif
+                if (!superOk && !GET_DEBUG_BOOL(PHARO_T1_ACCEPT_EXTSUPERSEND)) {
                     traceFail(i, op, "ext-super-send-disabled");
                     return false;
                 }
@@ -11662,7 +11671,19 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                       asmjit::Imm(bcOffsetBase + globalIdx));
                 }
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
-                a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
+                if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)) {
+                    // Machine-code frames: a send exit without an inline
+                    // cache.  The interpreter looks the send up, and mcfRun
+                    // leaves a return memo, so the callee returns into this
+                    // code instead of the rest of the method running
+                    // interpreted (the generic bytecode exit below).
+                    a.str(a64::xzr, a64::ptr(a64::x0, OFF_ICDATAPTR));
+                    a.mov(a64::w3, Imm((int)(bcReal[i + 1] & 7)));
+                    a.str(a64::w3, a64::ptr(a64::x0, OFF_SENDARGCOUNT));
+                    a.mov(a64::w3, Imm(EXIT_SEND));
+                } else {
+                    a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
+                }
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
                 emitSyncSpToState(a);
                 a.ret(a64::x30);
