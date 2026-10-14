@@ -907,6 +907,34 @@ static void sistaRingDump(const char* tag, Interpreter* interp) {
 
 
 
+// May the periodic check switch process here?  Cog's interrupt points: the
+// next bytecode is a (non-inlined) send or a back jump, or the frame was
+// just entered.  Special selectors (+, <, ==, at:...) are left out: Cog runs
+// most of them inline without a check.
+bool Interpreter::atInterruptPoint() const {
+    const uint8_t* ip = instructionPointer_;
+    if (!ip || !method_.isObject()) return true;
+    namespace S = jit::SistaV1;
+    uint8_t op = *ip;
+    if (op >= S::Send0Base && op <= S::Send2Last) return true;
+    if (op == S::ExtSend || op == S::ExtSuperSend) return true;
+    if (op == S::ExtendA || op == S::ExtendB) {
+        bool negativeB = false;
+        while (*ip == S::ExtendA || *ip == S::ExtendB) {
+            if (*ip == S::ExtendB && ip[1] > 127) negativeB = true;
+            ip += 2;
+        }
+        return *ip == S::ExtSend || *ip == S::ExtSuperSend
+            || (*ip == S::ExtJump && negativeB);
+    }
+    ObjectHeader* mo = method_.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return true;
+    const uint8_t* start = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    if (ip == start) return true;
+    return *start == S::CallPrimitive && ip == start + 3;
+}
+
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
@@ -4981,6 +5009,18 @@ void Interpreter::interpret() {
 
     // ====== PERIODIC CHECKS (every 1024 bytecodes) ======
     periodic_checks: {
+        // Cog switches process (and services timers and signals) only at an
+        // interrupt point: a send, a back jump, a method or block entry.
+        // Image code relies on the bytecodes between them running without a
+        // switch.  Anywhere else, look again at the next bytecode.
+        if (__builtin_expect(!atInterruptPoint(), 0)
+                && !GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)) {
+            checkCountdown_ = 1;
+            if (__builtin_expect(!running_, 0)) goto cg_exit;
+            bytecode = *instructionPointer_++;
+            inExtension_ = false;
+            goto *dispatchTable[bytecode];
+        }
         checkCountdown_ = 1024;
         totalSteps += 1024;
         g_stepNum += 1024;

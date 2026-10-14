@@ -1868,6 +1868,7 @@ public:
     bool mcfIsIdentityEquals(Oop method);
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
     bool mcfCacheableOop(Oop m) const;
+    bool atInterruptPoint() const;
     bool mcfConstantReturn(Oop method, Oop& value);
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
     bool mcfTinyShape(Oop method, uint64_t& prim);
