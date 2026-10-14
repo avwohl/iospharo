@@ -317,6 +317,8 @@ constexpr uint64_t kMcfBlockValueMethod = 0x20000;
 // Or'ed into a block entry: the block has a non-local return, so the block
 // stub has pharo_mcf_block_home find its home frame, as activateBlock does.
 constexpr uint64_t kMcfBlockNLR = 0x40000;
+// &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
+inline uint64_t g_lazyCtxPendingAddr = 0;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
 inline uint64_t g_mcfBlockStub = 0;

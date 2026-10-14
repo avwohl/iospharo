@@ -54,6 +54,7 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep);
 extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
 extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
+extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -114,6 +115,10 @@ static bool g_emitSpTrace = false;
 // [^true]]. ^false`) returned false on present elements once its do:
 // block compiled (DictionaryTest>>testIncludes 2-test repro).
 static bool g_emitIsBlock = false;
+// Per compile: a method of Context (or a superclass with fields).  Its
+// field reads (sender, pc, stackp) and stores first sync lazy context stubs
+// (docs/lazy-contexts.md) through pharo_mcf_ctx_sync while the flag is set.
+static bool g_emitCtxMethod = false;
 // x86 inline-J2J (WIP): true only while compiling a method whose selector
 // matches PHARO_T1_X86_J2J_SEL (and the master knob is on).  Per-method opt-in
 // keeps the unfinished mechanism off startup/library code — it is only safe for
@@ -11939,6 +11944,27 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     || op == SistaV1::ExtPopStoreLitVar
                     || op == SistaV1::ExtStoreLitVar) {
                 int idx = bcReal[i + 1];
+                if (g_emitCtxMethod && g_lazyCtxPendingAddr != 0
+                        && ((op == SistaV1::ExtPushRecvVar && idx <= 2)
+                            || ((op == SistaV1::ExtPopStoreRecv || op == SistaV1::ExtStoreRecv)
+                                && idx <= 5))) {
+                    // A Context method reading sender/pc/stackp or storing a
+                    // field: with lazy context stubs pending, sync them first,
+                    // as the interpreter's handlers do.
+                    asmjit::Label noSync = a.new_label();
+                    a.mov(a64::x16, asmjit::Imm(g_lazyCtxPendingAddr));
+                    a.ldrb(a64::w16, a64::ptr(a64::x16));
+                    a.cbz(a64::w16, noSync);
+                    a.ldr(a64::x5, a64::ptr(a64::x19, (int)offsetof(JITMethod, bcStartCache)));
+                    a.add(a64::x5, a64::x5, asmjit::Imm(globalIdx));
+                    a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                    emitSyncSpToState(a);
+                    a.stp(a64::x0, a64::x30, a64::ptr_pre(a64::sp, -16));
+                    a.mov(a64::x16, asmjit::Imm((uint64_t)&pharo_mcf_ctx_sync));
+                    a.blr(a64::x16);
+                    a.ldp(a64::x0, a64::x30, a64::ptr_post(a64::sp, 16));
+                    a.bind(noSync);
+                }
                 if (op == SistaV1::ExtPushRecvVar) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
                     a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + idx * 8));
@@ -12506,6 +12532,11 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // a block bail to interp) and for jm->isBlock below.
     g_emitIsBlock =
         methObj->classIndex() == interp.compiledBlockClassIndex();
+#if defined(__aarch64__) || defined(_M_ARM64)
+    g_emitCtxMethod = ::pharo::mcfEnabled() && interp.isContextFieldMethod(compiledMethod);
+#else
+    g_emitCtxMethod = false;
+#endif
     // x86 inline-J2J WIP: opt this method into the inline-J2J fast path only if
     // the master knob is on AND its selector matches PHARO_T1_X86_J2J_SEL.
     g_emitX86J2JOk = false;

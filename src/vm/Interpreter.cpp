@@ -7752,6 +7752,19 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         }
         // Push thisContext - must materialize inline frames first
         Oop contextToPush = activeContext_;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_THISCTX_CENSUS), 0)) {
+            static std::unordered_map<std::string, uint64_t> bySel;
+            static uint64_t n = 0;
+            bySel[classNameOfMethod(homeMethod_.isObject() ? homeMethod_ : method_) + ">>#"
+                  + memory_.selectorOf(method_) + (frameDepth_ > 0 ? " collapse" : " depth0")]++;
+            if ((++n & 0xFFFFF) == 0) {
+                std::vector<std::pair<uint64_t, std::string>> v;
+                for (auto& kv : bySel) v.push_back({kv.second, kv.first});
+                std::sort(v.rbegin(), v.rend());
+                for (size_t k = 0; k < v.size() && k < 12; k++)
+                    fprintf(stderr, "[THISCTX] %llu %s\n", (unsigned long long)v[k].first, v[k].second.c_str());
+            }
+        }
         if (frameDepth_ > 0) {
             contextToPush = materializeFrameStack();
             activeContext_ = contextToPush;
@@ -23312,6 +23325,20 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_EFC_CENSUS), 0)) {
+        static std::unordered_map<uintptr_t, uint64_t> byCaller;
+        static uint64_t calls = 0;
+        byCaller[(uintptr_t)__builtin_return_address(0)]++;
+        if ((++calls & 0x3FFFFF) == 0) {
+            Dl_info di{};
+            for (auto& kv : byCaller) {
+                dladdr((void*)kv.first, &di);
+                fprintf(stderr, "[EFC-CALLER] +0x%llx %llu\n",
+                        (unsigned long long)(kv.first - (uintptr_t)di.dli_fbase),
+                        (unsigned long long)kv.second);
+            }
+        }
+    }
     struct ExecFromCtxCheck {
         Interpreter* self;
         ~ExecFromCtxCheck() {

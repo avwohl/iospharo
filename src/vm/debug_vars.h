@@ -178,6 +178,10 @@ DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)          // MCF: naked ExtSend/ExtSuperSen
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)          // MCF: naked ExtSend/ExtSuperSend never call natively through pharo_mcf_extsend (always the send exit)
 DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL)        // MCF: blocks with a non-local return are never called natively (the behaviour before 2026-10-14)
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
+DEBUG_BOOL(PHARO_EFC_CENSUS)                   // count executeFromContext calls by caller address
+DEBUG_BOOL(PHARO_THISCTX_CENSUS)               // count thisContext (PushThisContext) by method, collapsing or at depth 0
+DEBUG_BOOL(PHARO_JIT_CONTEXT_METHODS_UNSAFE)   // measurement only: let the JIT compile Context methods again (their field reads then skip the lazy-context sync)
+DEBUG_BOOL(PHARO_MCF_NO_CTX_JIT)               // arm64 MCF: keep Context methods out of the JIT (the behaviour of lazy outer contexts before 2026-10-14)
 DEBUG_STR(PHARO_MCF_WATCH_SEL)                 // log why mcfActivate does not make methods with this selector native-callable
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)            // MCF bisect: no native block call at value / value: sites
 DEBUG_BOOL(PHARO_MCF_NO_EQ)                    // MCF bisect: emit == and ~~ as sends again (no inline identity compare)

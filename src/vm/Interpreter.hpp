@@ -1848,6 +1848,7 @@ public:
     size_t findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext, Oop methodToExecute);
     Oop blockHomeMethodForNLR(Oop compiledBlock);
     void mcfSetBlockHome(Oop closure);
+    void mcfCtxSync(jit::JITState* st);
     void mcfVerifyMemo(const SavedFrame& f, const char* site);
     int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
     void mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where);

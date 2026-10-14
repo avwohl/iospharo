@@ -63,6 +63,13 @@ extern "C" void pharo_mcf_block_home(jit::JITState* st, uint64_t closure) {
     st->interp->mcfSetBlockHome(Oop::fromRawBits(closure));
 }
 
+// Called from a compiled Context method before it reads sender/pc/stackp
+// or stores a field, while lazy context stubs are pending.  st->ip is the
+// bytecode; materializeFrameStack only allocates (no GC can run).
+extern "C" void pharo_mcf_ctx_sync(jit::JITState* st) {
+    st->interp->mcfCtxSync(st);
+}
+
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
@@ -517,6 +524,14 @@ bool Interpreter::mcfActivate(Oop method) {
     return true;
 }
 
+void Interpreter::mcfCtxSync(jit::JITState* st) {
+    if (!lazyCtxPending_) return;
+    stackPointer_ = st->sp;
+    mcfSyncRegisters(*st);
+    instructionPointer_ = st->ip;
+    materializeFrameStack();
+}
+
 void Interpreter::mcfSetBlockHome(Oop closure) {
     if (frameDepth_ < 1) return;
     ObjectHeader* clo = closure.asObjectPtr();
@@ -695,6 +710,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method) {
 // Called once from initializeJIT: SavedFrame layout for T1's native call
 // and return, and the call cache.
 void Interpreter::mcfInit() {
+    jit::g_lazyCtxPendingAddr = reinterpret_cast<uint64_t>(&lazyCtxPending_);
     jit::McfFrameLayout& L = jit::g_mcfLayout;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
@@ -796,7 +812,7 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
         byMiss["#" + sel + " rcv=" + (rcv.isObject() ? memory_.classNameOf(rcv)
                : rcv.isSmallInteger() ? std::string("SmI") : std::string("imm"))
                + " filled=" + std::to_string(filled) + " op=" + std::to_string(*st.ip)]++;
-        if ((miss & 0x3FFFFF) == 0) {
+        if ((miss & 0xFFFFF) == 0) {
             std::vector<std::pair<uint64_t, std::string>> v;
             for (auto& kv : byMiss) v.push_back({kv.second, kv.first});
             std::sort(v.rbegin(), v.rend());
@@ -840,7 +856,7 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
                     + " exitBC=" + std::to_string(st.ip ? *st.ip : -1)
                     + " reason=" + std::to_string(st.exitReason);
                 bySite[key]++;
-                if ((n & 0x3FFFFF) == 0) {
+                if ((n & 0xFFFFF) == 0) {
                     std::vector<std::pair<uint64_t, std::string>> v;
                     for (auto& kv : bySite) v.push_back({kv.second, kv.first});
                     std::sort(v.rbegin(), v.rend());
