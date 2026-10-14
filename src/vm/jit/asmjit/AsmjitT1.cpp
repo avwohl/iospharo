@@ -12094,15 +12094,34 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 simFlushBelow(a, 2);
                 SimItem A = S.items[0], B = S.items[1];
                 asmjit::a64::Gp rA = simSrc(a, A, x1);
-                asmjit::a64::Gp rB = simSrc(a, B, x4);
+                // A SmallInteger constant argument within the 12-bit
+                // add/sub/cmp immediate (tagged bits >> 0): only the
+                // receiver needs the tag check, and B stays an immediate
+                // except on the slow path (materialized there).
+                const bool bImm = B.k == SimK::Const && (B.v & 7) == 1
+                                  && (B.v >> 3) >= 0 && (B.v >> 3) < 512;
+                asmjit::a64::Gp rB = x4;
                 asmjit::Label slow = a.new_label(), cont = a.new_label();
-                a.eor(x5, rA, rB);
-                a.sub(x6, rA, asmjit::Imm(1));
-                a.orr(x5, x5, x6);
-                a.tst(x5, asmjit::Imm(7));
-                a.b_ne(slow);
+                if (bImm) {
+                    a.and_(x5, rA, asmjit::Imm(7));
+                    a.cmp(x5, asmjit::Imm(1));
+                    a.b_ne(slow);
+                } else {
+                    rB = simSrc(a, B, x4);
+                    a.eor(x5, rA, rB);
+                    a.sub(x6, rA, asmjit::Imm(1));
+                    a.orr(x5, x5, x6);
+                    a.tst(x5, asmjit::Imm(7));
+                    a.b_ne(slow);
+                }
+                const uint64_t bShift = bImm ? (uint64_t)B.v - 1 : 0;   // b << 3
+                auto cmpAB = [&]() {
+                    if (bImm) a.cmp(rA, asmjit::Imm((uint64_t)B.v));
+                    else a.cmp(rA, rB);
+                };
                 auto slowPush = [&]() {
                     a.bind(slow);
+                    if (bImm) simLoad(a, B, x4);
                     a.stp(rA, rB, ptr_post(x25, 16));
                     // emitOne pops the operands and pushes the result (or
                     // sends); the stack below is already in memory.
@@ -12129,7 +12148,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                                                    : nop == SistaV1::ExtJumpTrue;
                             if (targetIdx > nextIdx && (size_t)targetIdx < bcLabels.size()
                                     && (size_t)postIdx < bcLabels.size()) {
-                                a.cmp(rA, rB);
+                                cmpAB();
                                 asmjit::Label tgt = bcLabels[targetIdx];
                                 switch (op) {
                                 case 0x62: if (jt) a.b_lt(tgt); else a.b_ge(tgt); break;
@@ -12153,15 +12172,27 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (r < 0) return -1;
                 asmjit::a64::Gp R = asmjit::a64::x(r);
                 if (op == 0x60) {
-                    a.adds(x7, rA, rB);
-                    a.b_vs(slow);
-                    a.sub(R, x7, asmjit::Imm(1));
+                    if (bImm) {
+                        a.adds(x7, rA, asmjit::Imm(bShift));
+                        a.b_vs(slow);
+                        a.mov(R, x7);
+                    } else {
+                        a.adds(x7, rA, rB);
+                        a.b_vs(slow);
+                        a.sub(R, x7, asmjit::Imm(1));
+                    }
                 } else if (op == 0x61) {
-                    a.subs(x7, rA, rB);
-                    a.b_vs(slow);
-                    a.add(R, x7, asmjit::Imm(1));
+                    if (bImm) {
+                        a.subs(x7, rA, asmjit::Imm(bShift));
+                        a.b_vs(slow);
+                        a.mov(R, x7);
+                    } else {
+                        a.subs(x7, rA, rB);
+                        a.b_vs(slow);
+                        a.add(R, x7, asmjit::Imm(1));
+                    }
                 } else {
-                    a.cmp(rA, rB);
+                    cmpAB();
                     a.ldp(x7, x8, ptr(x0, OFF_TRUEOOP));
                     CondCode cc = op == 0x62 ? CondCode::kLT : op == 0x63 ? CondCode::kGT
                                 : op == 0x64 ? CondCode::kLE : op == 0x65 ? CondCode::kGE
