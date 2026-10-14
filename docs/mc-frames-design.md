@@ -358,10 +358,55 @@ old-space methods, which a scavenge does not move or free.
 | lexicon test | 954 | 838 |
 | printString (3M) | 38.7 | 34.8 |
 
+More census rounds the same day (each fix found by the next census):
+
+4. T1 compiled no method with a super send (a stub, fully interpreted:
+   `WriteStream>>nextPutAll:`, most `initialize` methods), and a naked
+   `ExtSend` / `ExtSuperSend` was a generic bytecode exit, after which the
+   rest of the method ran interpreted.  Both are now send exits with a
+   return memo (`8142e6f8`).
+5. After a full GC, `recoverAfterGC` set the selector slot of every
+   inline cache to 0 and nothing restored it.  The megacache probe needs
+   that selector, so megamorphic sites missed for the rest of the run.
+   The slot now comes back from `selBitsArray`.
+6. A naked `ExtSend` / `ExtSuperSend` has no inline cache.  T1 code now
+   calls `pharo_mcf_extsend`, which looks the send up.  It answers the
+   call-cache entry, and T1 code calls the target through the shared
+   stub.  If the target is a callable primitive or a trivial method
+   (`^self`, getter), the helper runs it.  Otherwise it answers nil, and
+   the send exits.
+7. Named primitive 117 runs in machine code for the pure string functions
+   of MiscPrimitivePlugin (`mcfPrimMethodCallable`).
+8. T1 code calls blocks with a non-local return natively: the call-cache
+   entry has `kMcfBlockNLR`, and the block stub calls
+   `pharo_mcf_block_home`, which stores the home frame index exactly as
+   `activateBlock` does (`findBlockHomeFrame`).
+
+| Workload (instructions, billion) | `ed0c202e` | `93bd699f` |
+|---|---|---|
+| lexicon test | 838 | 796 |
+| printString (3M) | 34.8 | 30.4 |
+
+lexicon send exits: 142 million before the census work, 29 million after
+item 7.
+
+**The intermittent non-passes.**  Each sweep since M3 has a few
+non-passes outside the baseline lists that pass alone and in a rerun of
+their batch.  Most are GUI tests (Calypso, Spec, Roassal) that fail with
+a nil in Morphic layout code.  Under `PHARO_DET_SCHED=1` (quantum 1),
+batch 201-250 gave ClyNotebookPageRecyclerTest errors on the L3 binary
+in one of two runs.  It gave them on M6 (machine-code frames before the
+lazy contexts) too.  The baseline binary U was clean in its one run.  The
+pattern fits races between the test process and the Morphic UI process,
+which a faster VM shows more often.  This is not proof.
+
 Open items:
 
 - The default mode with `PHARO_NO_MCF` pays the larger SavedFrame
   (printString 83.7 -> 84.7).
+- `value:value:value:` and longer through `ExtSend` still exit
+  (0.8 million in lexicon).  `read:into:startingAt:count:` (FilePlugin,
+  not in the allowlist) also exits.
 
 ## 5. Debugging the mode
 
