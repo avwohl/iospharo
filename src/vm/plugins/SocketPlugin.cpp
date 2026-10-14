@@ -230,8 +230,13 @@ static void ioMonitorLoop() {
             } else if (ps->sockState == SOCK_WAITING_FOR_CONNECTION) {
                 wantWrite[i] = true;
             } else if (ps->sockState == SOCK_CONNECTED) {
-                wantRead[i] = true;
-                if (!ps->eofDetected) wantWrite[i] = true;
+                // Not once the edge was signaled: a socket with unread data
+                // stays readable, and one with room stays writable, so poll()
+                // returned at once and this thread spun (allocating these
+                // vectors) until the image read or wrote.  recv()/send()
+                // re-arm the flag and wake the thread.
+                wantRead[i] = !ps->readSignaled || ps->listening;
+                if (!ps->eofDetected && !ps->writeSignaled) wantWrite[i] = true;
             } else if (ps->sockState == SOCK_THIS_END_CLOSED) {
                 wantRead[i] = true;
             }
@@ -865,7 +870,10 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
         int err = SOCK_LAST_ERROR;
         if (err == SOCK_EAGAIN || err == SOCK_EWOULDBLOCK) {
             sent = 0; // Nothing sent yet, try again later
-            ps->writeSignaled = false; // Re-arm write notification
+            if (ps->writeSignaled) {   // re-arm write notification
+                ps->writeSignaled = false;
+                wakeIOThread();         // the io loop stopped watching it
+            }
         } else if (!ps->isDgram && (err == SOCK_ECONNRESET || err == SOCK_ECONNABORTED
 #ifdef EPIPE
                                     || err == EPIPE
@@ -1012,7 +1020,11 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
 
     // Re-arm the one-shot readable notification (see readSignaled): the
     // reader is consuming now, so the NEXT readability edge must signal.
-    ps->readSignaled = false;
+    // The io loop stopped watching the socket at the edge: wake it.
+    if (ps->readSignaled) {
+        ps->readSignaled = false;
+        wakeIOThread();
+    }
 
     ssize_t received = recv(ps->fd, buf + offset, (size_t)count, 0);
     if (received < 0) {
@@ -1728,7 +1740,10 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
     memset(&from, 0, sizeof(from));
 
     // Re-arm the one-shot readable notification (see readSignaled).
-    ps->readSignaled = false;
+    if (ps->readSignaled) {
+        ps->readSignaled = false;
+        wakeIOThread();
+    }
 
     ssize_t received = recvfrom(ps->fd, buf + offset, (size_t)count, 0,
                                 (struct sockaddr*)&from, &fromLen);
