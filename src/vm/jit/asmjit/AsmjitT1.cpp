@@ -5707,6 +5707,26 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.lsr(cnt, cnt, asmjit::Imm(8));
         a.bind(have);
     };
+    // Fixed fields of the receiver's class (formats 3-5: MethodDictionary,
+    // WeakArray) into `out`, from the class's format word (slot 2), as
+    // ObjectMemory::fixedFieldCountOf.  Clobbers x9, x11.
+    auto fixedFieldsTo = [&](const asmjit::a64::Gp& out) {
+        a.ldr(w11, ptr(x1));
+        a.and_(w11, w11, asmjit::Imm(0x3FFFFF));       // class index
+        a.mov(x9, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.ldr(x9, ptr(x9));
+        a.ldr(x9, ptr(x9, x11, lsl(3)));             // the class
+        a.tst(x9, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.ldrb(w11, ptr(x9, 7));
+        a.cmp(w11, asmjit::Imm(3));
+        a.b_lo(slow);
+        a.ldr(out, ptr(x9, 8 + 2 * 8));              // format word, a SmallInteger
+        a.and_(x11, out, asmjit::Imm(7));
+        a.cmp(x11, asmjit::Imm(1));
+        a.b_ne(slow);
+        a.ubfx(out, out, asmjit::Imm(3), asmjit::Imm(16));
+    };
     a.ldur(x1, ptr(x25, -8 * (nArgs + 1)));        // receiver
     if (nArgs == 0) {
         asmjit::Label p62 = a.new_label(), bytes = a.new_label();
@@ -5729,8 +5749,20 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.ldr(x3, ptr(x1));
         slotCountTo(x7, x3);                       // slot count
         a.ubfx(x4, x3, asmjit::Imm(24), asmjit::Imm(5));   // format
-        a.cmp(x4, asmjit::Imm(2));
-        a.b_ne(bytes);
+        {
+            asmjit::Label noFixed = a.new_label();
+            a.cmp(x4, asmjit::Imm(2));
+            a.b_eq(noFixed);
+            a.cmp(x4, asmjit::Imm(3));
+            a.b_lo(slow);
+            a.cmp(x4, asmjit::Imm(5));
+            a.b_hi(bytes);
+            fixedFieldsTo(x12);                       // formats 3-5
+            a.cmp(x12, x7);
+            a.b_hi(slow);
+            a.sub(x7, x7, x12);
+            a.bind(noFixed);
+        }
         a.lsl(x7, x7, asmjit::Imm(3));
         a.orr(x7, x7, asmjit::Imm(1));
         a.b(result);
@@ -5823,8 +5855,29 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.ldr(x4, ptr(x1));
         slotCountTo(x8, x4);
         a.ubfx(x4, x4, asmjit::Imm(24), asmjit::Imm(5));
-        a.cmp(x4, asmjit::Imm(2));
-        a.b_ne(atBytes);
+        {
+            asmjit::Label noFixed = a.new_label();
+            a.cmp(x4, asmjit::Imm(2));
+            a.b_eq(noFixed);
+            a.cmp(x4, asmjit::Imm(3));
+            a.b_lo(slow);
+            a.cmp(x4, asmjit::Imm(5));
+            a.b_hi(atBytes);
+            // Formats 3-5: index past the fixed fields (MethodDictionary
+            // basicAt:, WeakArray at:: 43M C calls in lexicon).
+            a.cmp(w10, asmjit::Imm(60));
+            a.b_ne(slow);
+            fixedFieldsTo(x12);
+            a.cmp(x12, x8);
+            a.b_hi(slow);
+            a.sub(x9, x8, x12);                       // indexable size
+            a.cmp(x3, x9);
+            a.b_hi(slow);
+            a.add(x9, x12, x3);
+            a.ldr(x7, ptr(x1, x9, lsl(3)));           // slot fixed+index-1 at 8*(fixed+index)
+            a.b(result);
+            a.bind(noFixed);
+        }
         a.cmp(w10, asmjit::Imm(60));               // String>>at: on pointers: C
         a.b_ne(slow);
         a.cmp(x3, x8);
