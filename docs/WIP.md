@@ -15,23 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-14, 02:00) -- machine-code frames (opt-in `PHARO_MCF`)
+## Right now (2026-10-14, 04:00) -- machine-code frames are the arm64 default
 
 The user asked for the redesign of how compiled code calls and returns into
-interpreted methods.  Design, status, defects found and numbers:
-`docs/mc-frames-design.md`.  Commits `60de4731` (phases 1, 2a), `4266b544`
-(2b) and the phase-2c commit.  Not pushed yet: the mode is opt-in; push
-after sweep M3 (`$S/sweep-M3`, binary `$S/vm-M3`) compares clean with
-sweep U.  Default mode only gained a larger SavedFrame (printString 83.7 ->
-84.8; to recover once MCF is the default).
+interpreted methods.  Done and the default on arm64 (opt-out `PHARO_NO_MCF`):
+`docs/mc-frames-design.md` has the design, the defects found, and numbers.
+Pushed through `21e4ae7a` (validated by sweep M3).  Local, not pushed:
+`a7b47e9c` (lighter mcfRun), `35901695` (native block calls), `35dab876`
+(default flip) -- push after sweep M4 (`$S/sweep-M4`, binary `$S/vm-M4`) and
+the package batch (`$S/pkgbatch-MCF.tsv`, compare with `pkgbatch-[M-U].tsv`)
+are clean.
 
-With `PHARO_MCF=1`: printString 62.5 billion instructions (interpreter
-84.8), deeptraverser 783 (1004), `30 zzFib` 31 ms (62), 3M sends 13 ms
-(97).  Battery passes; the phase-2a sweep's new failures pass.
+Default now (instructions, billion): printString 63.2 (was 83.7 this
+morning), deeptraverser ~775 (1004), lexicon ~1080 (1699), myprecious 42.9
+(44.3); `30 zzFib` 31 ms (62), 3M sends 13 ms (105).
 
-Next: blocks in machine code (`value:` exits are the largest remaining
-bucket on deeptraverser), lexicon / myprecious workloads, then a default
-flip once a sweep and the package runs are clean.
+test_relaunch failed 2/3 and 1/3 cycles (vm_stop timeout) with the sweep
+loading the machine, in both modes; rerun on a quiet machine.
+
+Next: shared stubs for the native call / primitive / block sequences (code
+size), `value:value:` block calls, then more workload profiling.
 
 ## Right now (2026-10-13, 17:30) -- array loops into T1
 

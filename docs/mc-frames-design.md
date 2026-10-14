@@ -1,7 +1,7 @@
 # Machine-code frames: one frame model for compiled and interpreted code
 
-Status: design, 2026-10-13.  Work in progress; the phase list at the end
-records what is done.
+Status: the arm64 default since 2026-10-14 (opt-out `PHARO_NO_MCF`).  The
+phase list and section 4 record what is done.
 
 ## 1. The problem
 
@@ -250,5 +250,38 @@ fixed.**
 
 The battery passes, and the classes that failed in the phase-2a sweep
 (MetacelloVersionNumberTestCase, ZnChunkedStreamTest, the three Spec file
-dialog presenter tests, OCCompilerSyntaxErrorNotifyingTest) pass.  Blocks
-still run in the interpreter.
+dialog presenter tests, OCCompilerSyntaxErrorNotifyingTest) pass.
+
+Sweep M3 (`PHARO_MCF=1` at `21e4ae7a`): 27877 P / 11 F / 2 E, the baseline
+level (sweep U: 27879 / 9 / 2).  Its two non-passes that are not in the
+baseline lists both pass alone 3/3: TraitTest>>testSubclasses (a timeout
+in the batch that has a known intermittent watchdog timeout) and
+WriteStreamTest>>testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses
+("receiver of #x is nil"; never seen before, a stress run of its lint
+rule over 600 classes is clean -- watch it).  lexicon: 1699 -> 1097
+billion instructions; myprecious: 44.3 -> 42.9 (network-bound).
+
+**Phase 3b (2026-10-14): native block calls.**  At `value` / `value:`
+sites, a FullBlockClosure whose CompiledBlock is in the call cache
+(compiled, old, no non-local return, matching arity) is called natively:
+T1 pushes the SavedFrame and sets up the block frame as `activateBlock`
+does.  Block code may make native calls (the record saves the caller's
+closure; the native return restores it).  Entering or resuming block
+frames from the interpreter stays opt-in (`PHARO_MCF_BLOCKS`): it was
+slower.  A block microbenchmark: 9.57 billion instructions, against 9.94
+without native block calls and 13.28 interpreted; deeptraverser does not
+change.
+
+**Default (2026-10-14).**  `mcfEnabled()` is true on arm64 unless
+`PHARO_NO_MCF` is set.  Validation of the default: battery and
+test_class_table pass; sweep M4 and the 95-package batch run.
+
+Open items:
+
+- Code size: the native call, primitive and block sequences are emitted
+  inline at every send site (about 70, 25 and 100 instructions).  Move
+  them into shared stubs.
+- `value:value:` and longer block sends go through the inline cache to a
+  primitive-207 method and still exit.
+- The default mode with `PHARO_NO_MCF` pays the larger SavedFrame
+  (printString 83.7 -> 84.7).
