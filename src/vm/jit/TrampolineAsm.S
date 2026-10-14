@@ -616,12 +616,15 @@ SYMBOL(pharo_jit_osr_resume):
     str     x25, [sp, #32]            // save x25 (sp-residency mirror)
     str     x26, [sp, #48]            // save x26 (simStack TOS mirror)
     str     x23, [sp, #56]            // save x23 (FSR M2 cursor mirror)
+    stp     x21, x22, [sp, #64]       // save x21/x22 (MCF receiver/tempBase registers)
     mov     x29, sp
     ldr     x19, [x0, #JS_JITMETHOD]
     ldr     x20, [x0, #JS_J2J_DEPTH_INC]
     // sp/tempBase residency: x25/x26 live-in/live-out.
     str     x0,  [sp, #40]            // stash state for the writeback
     ldr     x25, [x0, #JS_SP]
+    ldr     x22, [x0, #JS_TEMPBASE]   // MCF: tempBase register live-in
+    ldr     x21, [x0, #JS_RECEIVER]   // MCF: receiver register live-in
     ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
     // FSR M2: x23 = save cursor live-in (write-through in emitted code,
     // so no live-out store is needed).  This was THE hole that made the
@@ -636,6 +639,7 @@ SYMBOL(pharo_jit_osr_resume):
                                       //  here — a writeback would corrupt JS_SP,
                                       //  the snapshot-resume onErrorDo: corruption)
     ldr     x23, [sp, #56]            // restore x23 for our caller
+    ldp     x21, x22, [sp, #64]       // restore x21/x22 for our caller
     ldr     x26, [sp, #48]            // restore x26 for our caller
     ldr     x25, [sp, #32]            // restore x25 for our caller
     ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller

@@ -77,6 +77,39 @@ extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
     return st->interp->mcfBlockCreate(st, packed);
 }
 
+// PHARO_MCF_CALL_CENSUS: native calls by callee method (printed with the
+// JIT stats by mcfCallCensusDump).
+static std::unordered_map<uint64_t, uint64_t>* g_mcfCallCensus = nullptr;
+extern "C" void pharo_mcf_call_census(uint64_t method) {
+    if (!g_mcfCallCensus) g_mcfCallCensus = new std::unordered_map<uint64_t, uint64_t>();
+    (*g_mcfCallCensus)[method]++;
+}
+void Interpreter::mcfCallCensusDump() {
+    if (!g_mcfCallCensus) return;
+    std::vector<std::pair<uint64_t, uint64_t>> v;
+    uint64_t total = 0;
+    for (auto& kv : *g_mcfCallCensus) { v.push_back({kv.second, kv.first}); total += kv.second; }
+    std::sort(v.rbegin(), v.rend());
+    fprintf(stderr, "[MCF-CALLS] total %llu, %zu callees\n", (unsigned long long)total, v.size());
+    for (size_t k = 0; k < v.size() && k < 60; k++) {
+        Oop m = Oop::fromRawBits(v[k].second);
+        if (!m.isObject()) continue;
+        ObjectHeader* mo = m.asObjectPtr();
+        Oop hdr = mo->slotAt(0);
+        const int nl = hdr.isSmallInteger() ? (int)(hdr.asSmallInteger() & 0x7FFF) : 0;
+        const uint8_t* bc = mo->bytes() + (1 + nl) * 8;
+        const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
+        int sends = 0, blocks = 0, n = 0;
+        for (const uint8_t* p = bc; p < end; p += jit::SistaV1::bytecodeLength(*p), n++) {
+            if (jit::SistaV1::isSendBytecode(*p)) sends++;
+            if (*p == jit::SistaV1::PushFullBlock) blocks++;
+        }
+        fprintf(stderr, "[MCF-CALLS] %12llu %5.2f%% %s>>#%s bc=%d sends=%d blocks=%d\n",
+                (unsigned long long)v[k].first, 100.0 * v[k].first / total,
+                classNameOfMethod(m).c_str(), memory_.selectorOf(m).c_str(), n, sends, blocks);
+    }
+}
+
 extern "C" uint64_t pharo_mcf_array_create(jit::JITState* st, uint32_t desc) {
     return st->interp->mcfArrayCreate(st, desc);
 }

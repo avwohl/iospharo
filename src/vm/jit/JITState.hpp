@@ -406,6 +406,9 @@ typedef void (*StencilFunc)(JITState*);
         /* until the T1 emit sweep maintains it (unmigrated code    */ \
         /* updates memory; a stale-x25 writeback would corrupt sp). */ \
         "ldr x25, [x0, #0]\n\t" \
+        /* x22 = state.tempBase (offset 24): MCF's register copy */ \
+        "ldr x22, [x0, #24]\n\t" \
+        "ldr x21, [x0, #8]\n\t" \
         /* x23 = j2j save cursor (offset 144) — FSR M2 v1 hoist.  The */ \
         /* emitted push/pop use x23 for address generation under     */ \
         /* PHARO_T1_FSR_CURSOR and WRITE THROUGH to memory, so no    */ \
@@ -447,6 +450,9 @@ typedef void (*StencilFunc)(JITState*);
         "ldr x20, [x0, #208]\n\t" \
         "ldr x19, [x0, #56]\n\t" \
         "ldr x25, [x0, #0]\n\t" \
+        /* x22 = state.tempBase (offset 24): MCF's register copy */ \
+        "ldr x22, [x0, #24]\n\t" \
+        "ldr x21, [x0, #8]\n\t" \
         /* x23 = j2j save cursor (offset 144) — FSR M2 v1 hoist.  The */ \
         /* emitted push/pop use x23 for address generation under     */ \
         /* PHARO_T1_FSR_CURSOR and WRITE THROUGH to memory, so no    */ \

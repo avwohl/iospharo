@@ -57,6 +57,7 @@ extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure)
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
 extern "C" uint64_t pharo_mcf_array_create(pharo::jit::JITState* st, uint32_t desc);
+extern "C" void pharo_mcf_call_census(uint64_t method);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -4143,11 +4144,23 @@ static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
 // anything that can run Smalltalk / trigger materialize), reload the
 // mirror.  Caller must have restored x0 = state first (every BLR
 // wrapper in this file stashes/restores x0 around the call).
+// Machine-code frames: tempBase is also cached in x22 (write-through: the
+// state field stays the truth for C++).  Every entry into T1 code loads it
+// (JIT_CALL, JIT_RESUME_CALL, pharo_jit_osr_resume); the J2J trampoline,
+// which pins x22 for itself, does not run under MCF.
+static inline bool t1TbReg() {
+    static const bool v = ::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_T1_NO_TB_REG);
+    return v;
+}
 static inline void emitReloadSpFromState(asmjit::a64::Assembler& a) {
 #if PHARO_T1_SP_IN_X25
     a.ldr(asmjit::a64::x25,
           asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
 #endif
+    if (t1TbReg()) {
+        a.ldr(asmjit::a64::x22, asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
+        a.ldr(asmjit::a64::x21, asmjit::a64::ptr(asmjit::a64::x0, OFF_RECEIVER));
+    }
 #if PHARO_T1_TB_IN_X26
     a.ldr(asmjit::a64::x26,
           asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
@@ -4161,7 +4174,8 @@ static inline void emitLoadTempBase(asmjit::a64::Assembler& a,
 #if PHARO_T1_TB_IN_X26
     a.mov(dst, asmjit::a64::x26);
 #else
-    a.ldr(dst, asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
+    if (t1TbReg()) a.mov(dst, asmjit::a64::x22);
+    else a.ldr(dst, asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
 #endif
 }
 static inline void emitStoreTempBase(asmjit::a64::Assembler& a,
@@ -4170,7 +4184,16 @@ static inline void emitStoreTempBase(asmjit::a64::Assembler& a,
     a.mov(asmjit::a64::x26, src);
 #else
     a.str(src, asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
+    if (t1TbReg()) a.mov(asmjit::a64::x22, src);
 #endif
+}
+
+// The register to address temps through: x22 itself under MCF, else
+// `scratch` loaded from the state.
+static inline asmjit::a64::Gp tbBase(asmjit::a64::Assembler& a, asmjit::a64::Gp scratch) {
+    if (t1TbReg()) return asmjit::a64::x22;
+    emitLoadTempBase(a, scratch);
+    return scratch;
 }
 
 // simStack producer pair: value is already IN x26; push it and mark
@@ -4684,8 +4707,8 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
                 a.cbz(x10, fail);
                 // Return the stored value (still in x9 — saved before call?).
                 // Actually x9 is caller-saved; reload val from temp.
-                emitLoadTempBase(a, x2);
-                a.ldr(x9, ptr(x2, 8));
+                { asmjit::a64::Gp tbR = tbBase(a, x2);
+                a.ldr(x9, ptr(tbR, 8)); }
                 a.str(x9, ptr(x0, OFF_RETVAL));
                 a.mov(w3, asmjit::Imm(EXIT_RETURN));
                 a.str(w3, ptr(x0, OFF_EXIT));
@@ -5044,6 +5067,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     emitStoreTempBase(a, x8);
     a.ldr(x8, ptr(x7, L.savedReceiver));
     a.str(x8, ptr(x0, OFF_RECEIVER));
+    if (t1TbReg()) a.mov(x21, x8);
     a.ldr(x8, ptr(x7, L.savedMethod));
     a.str(x8, ptr(x0, OFF_METHOD));
     a.ldr(x10, ptr(x7, L.savedBytecodeEnd));
@@ -5136,6 +5160,7 @@ static void emitJ2JReturnPrelude_arm64(asmjit::a64::Assembler& a,
         //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
         // (sp + recv already loaded above via pre-index — x5=sp, x6=recv)
         a.str(x6, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x21, x6);
         // jit-may20b Step 8.2: load tempBase only (skip save.ip restore).
         // The JIT body never READS state.ip during execution — every
         // bytecode op writes state.ip itself before any exit to interp,
@@ -5452,12 +5477,27 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     asmjit::Label fail = a.new_label(), tInit = a.new_label(), tDone = a.new_label();
     emitMcfCount(a, &g_mcfCountCalls);
+    if (GET_DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)) {
+        // Per-callee counts (x6 = the callee method); all registers kept.
+        a.sub(sp, sp, asmjit::Imm(160));
+        for (int r = 0; r < 18; r += 2)
+            a.stp(asmjit::a64::x(r), asmjit::a64::x(r + 1), ptr(sp, r * 8));
+        a.str(x30, ptr(sp, 144));
+        a.mov(x0, x6);
+        a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_call_census));
+        a.blr(x16);
+        a.ldr(x30, ptr(sp, 144));
+        for (int r = 0; r < 18; r += 2)
+            a.ldp(asmjit::a64::x(r), asmjit::a64::x(r + 1), ptr(sp, r * 8));
+        a.add(sp, sp, asmjit::Imm(160));
+    }
     emitMcfPushRecord(a, fail);
     emitMcfCalleeView(a);
     a.sub(x16, x25, x11, asmjit::a64::lsl(3));    // callee tempBase (first arg)
     a.ldur(x1, ptr(x16, -8));                      // receiver
     emitStoreTempBase(a, x16);
     a.str(x1, ptr(x0, OFF_RECEIVER));
+    if (t1TbReg()) a.mov(x21, x1);
     a.str(x4, ptr(x0, OFF_CLOSURE));               // a method frame
     // Temporaries beyond the arguments start as nil.
     a.ldrb(w17, ptr(x9, (int)offsetof(JITMethod, tempCount)));
@@ -5496,6 +5536,7 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     emitStoreTempBase(a, x16);
     a.ldr(x17, ptr(x1, 32));                       // slot 3: outer receiver
     a.str(x17, ptr(x0, OFF_RECEIVER));
+    if (t1TbReg()) a.mov(x21, x17);
     a.str(x1, ptr(x0, OFF_CLOSURE));
     // Copied values (closure slots 4..) after the arguments, then nil.
     a.ldrb(w10, ptr(x1, 7));
@@ -5652,12 +5693,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
         }
         if (tosFam(kTosFamPush) && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
-            a.ldr(x26, ptr(x0, OFF_RECEIVER));
-            a.ldr(x26, ptr(x26, OBJ_SLOT_0 + n * 8));
+            if (t1TbReg()) a.ldr(x26, ptr(x21, OBJ_SLOT_0 + n * 8));
+            else { a.ldr(x26, ptr(x0, OFF_RECEIVER)); a.ldr(x26, ptr(x26, OBJ_SLOT_0 + n * 8)); }
             emitTosPush(a);
         } else {
-            a.ldr(x1, ptr(x0, OFF_RECEIVER));
-            a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8));
+            if (t1TbReg()) a.ldr(x1, ptr(x21, OBJ_SLOT_0 + n * 8));
+            else { a.ldr(x1, ptr(x0, OFF_RECEIVER)); a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8)); }
             emitShadowReadVerify(a, n);
             emitPushReg(a, x1);
         }
@@ -5690,14 +5731,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op >= 0x40 && op <= 0x4B) {
         int n = op - 0x40;
         asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
-        emitLoadTempBase(a, dst);
-        a.ldr(dst, ptr(dst, n * 8));
+        a.ldr(dst, ptr(tbBase(a, dst), n * 8));
         if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
         return true;
     }
     if (op == SistaV1::PushReceiver) {
         asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
-        a.ldr(dst, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(dst, x21); else a.ldr(dst, ptr(x0, OFF_RECEIVER));
         if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
         return true;
     }
@@ -5838,16 +5878,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
 #endif
-            emitLoadTempBase(a, x4);
-            a.str(x26, ptr(x4, n * 8));
+            a.str(x26, ptr(tbBase(a, x4), n * 8));
             return true;
         }
         emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);
         a.ldr(x1, ptr(x2));
-        emitLoadTempBase(a, x4);
-        a.str(x1, ptr(x4, n * 8));
+        a.str(x1, ptr(tbBase(a, x4), n * 8));
         return true;
     }
     // popStoreRecv N (0xC8..0xCF): pop TOS, store into receiver.slot[N].
@@ -5933,7 +5971,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     };
 
     auto emitReturnPtr = [&](int srcOff) {
-        a.ldr(x1, ptr(x0, srcOff));
+        if (srcOff == OFF_RECEIVER && t1TbReg()) a.mov(x1, x21);
+        else a.ldr(x1, ptr(x0, srcOff));
         // B0: x1 = retval; the shared block owns prelude + the uniform epilogue.
         if (g_sharedRetPreludeStub) { a.mov(x16, asmjit::Imm(g_sharedRetPreludeStub)); a.br(x16); return; }
         emitJ2JReturnPreludeIfEnabled();
@@ -7134,6 +7173,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.add(x13, x13, asmjit::a64::x20);
                         a.str(x13, ptr(x0, OFF_J2J_DEPTH));
                         a.str(x1, ptr(x0, OFF_RECEIVER));
+                        if (t1TbReg()) a.mov(x21, x1);
                         a.sub(x13, x2, asmjit::Imm(nArgs * 8));
                         emitStoreTempBase(a, x13);
                         if (!g_fsrLazy || g_fsrLazyVerify) {
@@ -8203,6 +8243,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // NOTE: x13 = calleeCM (loaded in the xmethod gate
                     // block) — use x6/x12 as scratch, never x13.
                     a.str(x1, ptr(x0, OFF_RECEIVER));
+                    if (t1TbReg()) a.mov(x21, x1);
                     a.sub(x6, x4, asmjit::Imm(nArgs * 8));   // new tempBase
                     emitStoreTempBase(a, x6);
                     if (!g_fsrLazy || g_fsrLazyVerify) {
@@ -8420,6 +8461,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.str(x14, ptr(x0, OFF_J2J_ENTRY_CURSOR));
                     }
                     a.str(x5, ptr(x0, OFF_RECEIVER));
+                    if (t1TbReg()) a.mov(x21, x5);
                     emitStoreTempBase(a, x6);
                     a.str(x12, ptr(x0, OFF_IP));
                     if (crossSaveless) {
@@ -8773,6 +8815,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // and xmethod-log are opt-in; neither touches x2).
                 // Reuse x2 instead of reloading sp.
                 a.str(x1, ptr(x0, OFF_RECEIVER));        // recv from x1
+                if (t1TbReg()) a.mov(x21, x1);
                 const bool spLiveInX2 = !GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)
                     && !GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_XMETHOD_LOG);
                 asmjit::a64::Gp spReg = x12;
@@ -11958,8 +12001,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (op == SistaV1::PushTempAtInVec) {
                     asmjit::Label vecObj = a.new_label();
                     asmjit::Label pushDone = a.new_label();
-                    emitLoadTempBase(a, a64::x4);
-                    a.ldr(a64::x5, a64::ptr(a64::x4, vecIdx * 8));
+                    { asmjit::a64::Gp tbR = tbBase(a, a64::x4);
+                    a.ldr(a64::x5, a64::ptr(tbR, vecIdx * 8)); }
                     a.tst(a64::x5, asmjit::Imm(0x7));
                     a.b_eq(vecObj);                   // tag==0 → real obj
                     // Not an object — push nil.
@@ -11982,8 +12025,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.sub(a64::x2, a64::x2, asmjit::Imm(8));
                         emitStoreSp(a, a64::x2);
                     }
-                    emitLoadTempBase(a, a64::x4);
-                    a.ldr(a64::x5, a64::ptr(a64::x4, vecIdx * 8));
+                    { asmjit::a64::Gp tbR = tbBase(a, a64::x4);
+                    a.ldr(a64::x5, a64::ptr(tbR, vecIdx * 8)); }
                     a.tst(a64::x5, asmjit::Imm(0x7));
                     a.b_ne(vecNotObj);                // not Object → skip store
                     a.str(a64::x6, a64::ptr(a64::x5, 8 + tempIdx * 8));
@@ -12151,8 +12194,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
                     emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPushTemp) {
-                    emitLoadTempBase(a, a64::x1);
-                    a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
+                    a.ldr(a64::x1, a64::ptr(tbBase(a, a64::x1), idx * 8));
                     emitLoadSp(a, a64::x2);
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
@@ -12167,8 +12209,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 } else if (op == SistaV1::ExtStoreTemp) {
                     emitLoadSp(a, a64::x2);
                     a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
-                    emitLoadTempBase(a, a64::x4);
-                    a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
+                    { asmjit::a64::Gp tbR = tbBase(a, a64::x4);
+                    a.str(a64::x1, a64::ptr(tbR, idx * 8)); }
                 } else if (op == SistaV1::ExtPopStoreLitVar
                         || op == SistaV1::ExtStoreLitVar) {
                     // Literal var (Association) store.  literals[idx]

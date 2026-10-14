@@ -1929,6 +1929,7 @@ void Interpreter::dumpJITStats() {
     size_t actTotal = jitActivations_;
     size_t resumeTotal = jitJ2JChains_ + jitJ2JFallbacks_;
     fprintf(stderr, "\n=== JIT Stats ===\n");
+    if (GET_DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)) mcfCallCensusDump();
     if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS))
         fprintf(stderr, "  mcf native calls: method %llu block %llu returns %llu\n",
                 (unsigned long long)jit::g_mcfCountCalls,
@@ -31258,6 +31259,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // is a no-op (matches the while-condition in the fallback version).
         if (state.exitReason == jit::ExitJ2JCall ||
             (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+            if (::pharo::mcfEnabled()) {
+                // T1 code under MCF keeps tempBase in x22, which the
+                // trampoline pins for its save stack.  MCF disables inline
+                // J2J, so this cannot happen; say so loudly if it does.
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    fprintf(stderr, "[MCF] J2J trampoline entered under machine-code frames\n");
+                }
+            }
             pharo_jit_j2j_trampoline(
                 &state,
                 j2jStack,

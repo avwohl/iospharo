@@ -15304,6 +15304,19 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
     if (argCount != 1) {
         return PrimitiveResult::Failure;
     }
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BECOME_CENSUS), 0)) {
+        static std::unordered_map<std::string, uint64_t> by;
+        static uint64_t n = 0;
+        std::string k = "#" + memory_.selectorOf(method_);
+        for (size_t d = frameDepth_, i = 0; d-- > 0 && i < 3; i++)
+            k += " <- #" + memory_.selectorOf(savedFrames_[d].savedMethod);
+        by[k]++;
+        if ((++n & 255) == 0) {
+            for (auto& kv : by)
+                if (kv.second > 16) fprintf(stderr, "[BECOME-BY] %llu %s\n",
+                                            (unsigned long long)kv.second, kv.first.c_str());
+        }
+    }
 
     Oop toArrayOop = stackValue(0);
     Oop fromArrayOop = stackValue(1);
