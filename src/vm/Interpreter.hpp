@@ -1915,6 +1915,7 @@ public:
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
     bool mcfCacheableOop(Oop m) const;
     bool atInterruptPoint() const;
+    bool ensureFrameAtEntry() const;
     // Set by returnValue when a return resumed a sender context; mcfRun then
     // continues that context's method in machine code.
     bool mcfReturnedIntoContext_ = false;

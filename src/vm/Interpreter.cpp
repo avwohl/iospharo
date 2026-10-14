@@ -911,6 +911,24 @@ static void sistaRingDump(const char* tag, Interpreter* interp) {
 // next bytecode is a (non-inlined) send or a back jump, or the frame was
 // just entered.  Special selectors (+, <, ==, at:...) are left out: Cog runs
 // most of them inline without a check.
+// suppressContextSwitch_ is set when an ensure:/ifCurtailed: method
+// (primitive 198) is activated, so the check at its entry does not switch
+// process (Cog makes no interrupt check there).  It is honoured only while
+// that frame is still at its entry; a stale flag (the check came due
+// later, in machine code) deferred every heartbeat yield while each
+// ensure: re-armed it, and machine code's back edges then exited at every
+// iteration on the never-cleared forceYield_ (an ensure: loop 3.3x slower).
+bool Interpreter::ensureFrameAtEntry() const {
+    if (!method_.isObject() || method_.rawBits() < 0x10000 || !instructionPointer_) return false;
+    ObjectHeader* mo = method_.asObjectPtr();
+    if (mo->classIndex() != compiledMethodClassIndex_) return false;
+    if (primitiveIndexOf(method_) != 198) return false;
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return false;
+    const uint8_t* start = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
+    return instructionPointer_ <= start + 3;   // the CallPrimitive bytecode at most
+}
+
 bool Interpreter::atInterruptPoint() const {
     const uint8_t* ip = instructionPointer_;
     if (!ip || !method_.isObject()) return true;
@@ -5335,9 +5353,10 @@ void Interpreter::interpret() {
 
         // -- Force yield (set by heartbeat every ~2ms) --
         if (forceYield_.load(std::memory_order_acquire)) {
-            if (suppressContextSwitch_) {
+            if (suppressContextSwitch_ && ensureFrameAtEntry()) {
                 suppressContextSwitch_ = false;
             } else {
+                suppressContextSwitch_ = false;   // stale: see ensureFrameAtEntry
                 // Don't let heartbeat preempt finalization drain.
                 // FinalizationProcess wakes (P50) and forks a P51 worker
                 // that runs mournLoopWith:.  A mid-drain preemption leaves
@@ -7531,7 +7550,7 @@ bool Interpreter::step() {
         if (suppressContextSwitch_) {
             suppressContextSwitch_ = false;
             // Don't consume forceYield - retry on next step
-            goto skip_yield;
+            if (ensureFrameAtEntry()) goto skip_yield;
         }
         // Don't yield between extension bytes (0xE0/0xE1) and their target bytecode.
         if (inExtension_) {
