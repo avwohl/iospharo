@@ -682,7 +682,10 @@ public:
     /// pre-become heap — Spur defines become as simultaneous, not sequential.
     /// @param map old oop raw bits -> replacement oop
     size_t fullGCCount() const { return fullGCCount_; }
-    bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map);
+    // viaScavenge: when every key is young, forward through a scavenge
+    // instead of walking eden (the caller must tolerate young objects moving:
+    // primitive 72 from the interpreter).
+    bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge = false);
 
     // Hash-copying become onto a CLASS (Spur prim 72/249, copyHash: true).
     // A class's identity hash IS its class-table index, so copying obj1's
@@ -1149,6 +1152,9 @@ private:
     bool emittedStoresBarriered() const;
     void discardRememberedSet();
     bool rememberedBitsExact_ = false;  // a full scan has cleared every remembered bit (scavenge)
+    // Set while becomeForwardAll forwards through a scavenge: tenureIfYoung
+    // follows become forwarders in eden to their targets.
+    bool becomeForwardersPending_ = false;
     uint8_t* oldFreeAtLastScavenge_ = nullptr;  // old-space top when the last scavenge finished (PHARO_SCAV_BIT_AUDIT: "recent" holders)
 
     // Segregated free lists for old space (Spur-style)

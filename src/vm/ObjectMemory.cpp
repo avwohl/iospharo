@@ -1968,7 +1968,7 @@ HeapScanPool& heapScanPool() {
 }
 }  // namespace
 
-bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map) {
+bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge) {
     struct BecomeCensus {
         std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
         size_t n;
@@ -2099,6 +2099,52 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
         if (((yo + full) & 63) == 0)
             fprintf(stderr, "[BECOME-KIND] youngOnly=%llu full=%llu\n",
                     (unsigned long long)yo, (unsigned long long)full);
+    }
+    if (youngOnly && viaScavenge && enableYoungGen_
+            && !GET_DEBUG_BOOL(PHARO_BECOME_NO_SCAVENGE)) {
+        // Forward through a scavenge.  Each key becomes a forwarder to its
+        // target, and the scavenge -- which visits every root and every live
+        // young object, but not dead eden -- follows forwarders as it copies
+        // (tenureIfYoung).  A walk of eden visited every object in it: 2.5 ms
+        // for 36 MB at each of lexicon's 383 wide-character String becomes,
+        // against ~0.15 ms for a scavenge.  The keys die with eden.
+        bool ok = true;
+        for (const auto& e : map) {
+            ObjectHeader* h = Oop::fromRawBits(e.first).asObjectPtr();
+            if (h->slotCount() < 1 || h->isForwarded() || h->isPinned()
+                    || e.second.rawBits() == e.first) { ok = false; break; }
+        }
+        if (ok) {
+            for (const auto& e : map) {
+                ObjectHeader* h = Oop::fromRawBits(e.first).asObjectPtr();
+                h->slots()[0] = e.second;      // young holder: no barrier
+                h->setClassIndex(ObjectHeader::ForwardedClassIndex);
+            }
+            becomeForwardersPending_ = true;
+            scavenge();
+            becomeForwardersPending_ = false;
+            if (GET_DEBUG_BOOL(PHARO_BECOME_YOUNG_VERIFY)) {
+                // Eden is empty now: a slot pointing into new space, or to a
+                // forwarder (a key copied instead of followed), is a
+                // reference the scavenge did not forward.
+                size_t bad = 0, checked = 0;
+                allObjectsDo([&](Oop o) {
+                    ObjectHeader* h = o.asObjectPtr();
+                    if (!h->isPointersObject() || h->isForwarded()) return;
+                    for (size_t i = 0, n = h->slotCount(); i < n; i++) {
+                        Oop s = h->slotAt(i);
+                        if (!s.isObject() || s.rawBits() < 0x10000) continue;
+                        checked++;
+                        if (isNewSpaceBits(s.rawBits()) || s.asObjectPtr()->isForwarded()) bad++;
+                    }
+                });
+                static int nr = 0;
+                if (bad || ++nr <= 2)
+                    fprintf(stderr, "[BECOME-SCAV-VERIFY] %zu of %zu slots point into new space or to a forwarder\n",
+                            bad, checked);
+            }
+            return true;
+        }
     }
     if (youngOnly) {
         drainJitRememberBuffer();   // overflow ruled out above
@@ -2523,6 +2569,18 @@ GCResult ObjectMemory::scavenge() {
         uint8_t* p = reinterpret_cast<uint8_t*>(obj);
         if (p < edenAllocBase_ || p >= edenFree_) return oop;
         if (ObjectHeader* to = forward.to(obj)) return Oop::fromObject(to);
+        if (__builtin_expect(becomeForwardersPending_, 0) && obj->isForwarded()) {
+            // A become forwarder (becomeForwardAll viaScavenge): the
+            // reference goes to the target, which is copied if young.
+            do {
+                oop = obj->slots()[0];
+                if (!oop.isObject()) return oop;
+                obj = oop.asObjectPtr();
+                p = reinterpret_cast<uint8_t*>(obj);
+                if (p < edenAllocBase_ || p >= edenFree_) return oop;
+                if (ObjectHeader* to = forward.to(obj)) return Oop::fromObject(to);
+            } while (obj->isForwarded());
+        }
 
         // Copy to old space.  Use raw bytes so overflow-slot
         // prefix (if any) and header are preserved.

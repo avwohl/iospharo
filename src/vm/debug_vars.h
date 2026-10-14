@@ -211,6 +211,8 @@ DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)             // MCF: a return into a sender c
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_SITE_CACHE)      // MCF: naked ExtSend sites (3+ arguments) have no per-site class/method cache; every send looks up in pharo_mcf_extsend
 DEBUG_BOOL(PHARO_SCAV_WALK_ALL_TABLES)          // scavenge visits the method cache and JIT tables every time, not only when a young object was stored there
 DEBUG_BOOL(PHARO_SCAV_TABLE_VERIFY)             // scavenge walks the method cache and JIT tables even when their young flags are clear, and reports any young object found there
+DEBUG_BOOL(PHARO_BECOME_NO_SCAVENGE)            // primitive 72 on young objects walks eden instead of forwarding through a scavenge
+DEBUG_BOOL(PHARO_BECOME_ALWAYS_FLUSH)           // primitive 72 flushes the method cache and JIT caches after every become, not only when a method, class or selector is forwarded
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read

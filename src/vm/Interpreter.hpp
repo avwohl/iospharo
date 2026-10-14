@@ -1488,6 +1488,21 @@ private:
     // fileFromHandle applies it before any other use of the FILE.
     std::unordered_map<int, int64_t> filePendingPos_;
     FILE* fileFromHandleNoSync(Oop handleOop, int* outFileId);
+    // Would forwarding o leave the method cache or the JIT caches stale?  They
+    // hold methods, classes (by index) and selectors.
+    bool becomeAffectsCaches(Oop o) const {
+        if (!o.isObject() || o.isNil()) return false;
+        ObjectHeader* h = o.asObjectPtr();
+        if (h->isCompiledMethod()) return true;
+        const uint32_t ci = h->classIndex();
+        if (ci == byteSymbolClassIndex_ || ci == compiledBlockClassIndex_
+                || ci == compiledMethodClassIndex_) return true;
+        if (h->isBytesObject() && memory_.classAtIndex(ci).isObject()
+                && memory_.classNameOf(memory_.classAtIndex(ci)).find("Symbol") != std::string::npos)
+            return true;   // WideSymbol and the like
+        const uint32_t hash = h->identityHash();
+        return hash != 0 && memory_.classAtIndex(hash).rawBits() == o.rawBits();   // a class
+    }
 
     // ===== CLASS INDEX CACHE =====
     // These are looked up dynamically from the class table at init time.

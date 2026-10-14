@@ -15395,6 +15395,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
     // visits for a single primitive call.
     std::unordered_map<uint64_t, Oop> forwarding;
     forwarding.reserve(fromSize);
+    bool cachesAffected = false;
     for (size_t i = 0; i < fromSize; i++) {
         Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
         Oop toObj = memory_.fetchPointer(i, toArrayOop);
@@ -15416,6 +15417,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         }
 
         forwarding[fromObj.rawBits()] = toObj;
+        cachesAffected = cachesAffected || becomeAffectsCaches(fromObj) || becomeAffectsCaches(toObj);
 
         // Also scan C++ execution stack - critical for stack-based VM.
         // Without this, local variables (temps) on the stack still point to old
@@ -15423,11 +15425,18 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         scanStackReplace(fromObj, toObj);
     }
 
-    memory_.becomeForwardAll(forwarding);
+    // Called from the interpreter only (not a machine-code primitive), where
+    // young objects may move: forward young keys through a scavenge.
+    memory_.becomeForwardAll(forwarding, /* viaScavenge */ true);
 
-    // Flush method cache (critical after become)
-    flushMethodCache();
-    flushJITCaches();
+    // The method cache and the JIT caches hold methods, classes and
+    // selectors.  Forwarding anything else leaves them right (Cog flushes
+    // only for those too); the flush after each of lexicon's 383 String
+    // becomes emptied every inline cache.
+    if (cachesAffected || GET_DEBUG_BOOL(PHARO_BECOME_ALWAYS_FLUSH)) {
+        flushMethodCache();
+        flushJITCaches();
+    }
 
     popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;
