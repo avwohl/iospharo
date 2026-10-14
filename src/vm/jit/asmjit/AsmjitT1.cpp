@@ -5541,6 +5541,24 @@ static void emitMcfCount(asmjit::a64::Assembler& a, uint64_t* counter) {
     a.str(x17, ptr(x16));
 }
 
+// cnt = the slot count of the object at obj, whose header word is hdr:
+// the header's top byte, or for 255 the overflow word before the header
+// (objects of 255 slots and more).  Before this the inline at:, at:put:
+// and size gave up on those: every read of a 64 KB stream buffer took the
+// primitive stub.
+static void emitSlotCountWithOverflow(asmjit::a64::Assembler& a, const asmjit::a64::Gp& cnt,
+                                      const asmjit::a64::Gp& hdr, const asmjit::a64::Gp& obj) {
+    using namespace asmjit::a64;
+    asmjit::Label have = a.new_label();
+    a.lsr(cnt, hdr, asmjit::Imm(56));
+    a.cmp(cnt, asmjit::Imm(255));
+    a.b_ne(have);
+    a.ldur(cnt, ptr(obj, -8));
+    a.lsl(cnt, cnt, asmjit::Imm(8));
+    a.lsr(cnt, cnt, asmjit::Imm(8));
+    a.bind(have);
+}
+
 static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     asmjit::Label fail = a.new_label(), tInit = a.new_label(), tDone = a.new_label();
@@ -11520,10 +11538,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x8, x6, asmjit::Imm(16));      // x8 = fmt - 16
                 a.cmp(x8, asmjit::Imm(8));
                 a.b_hs(dispatchCachedRestoreX5);     // fmt not in 16..23
-                a.lsr(x5, x4, asmjit::Imm(56));
-                a.and_(x5, x5, asmjit::Imm(0xFF));
-                a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCachedRestoreX5);     // slotCount==255 → ovf
+                emitSlotCountWithOverflow(a, x5, x4, x1);   // a 64K stream buffer has 8K slots
                 a.lsl(x5, x5, asmjit::Imm(3));       // sc*8 = max byte capacity
                 a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes (= fmt&7)
                 a.sub(x5, x5, x6);                   // byteSize
@@ -11569,10 +11584,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_ne(tryByteAtPut);
                 // Immutability check (bit 23)
                 a.tbnz(x4, asmjit::Imm(23), dispatchCachedRestoreX5);
-                a.lsr(x5, x4, asmjit::Imm(56));
-                a.and_(x5, x5, asmjit::Imm(0xFF));
-                a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCachedRestoreX5);
+                emitSlotCountWithOverflow(a, x5, x4, x1);
                 // sp[-1] = val, sp[-2] = idx (after pushes for nArgs=2)
                 a.ldur(x3, ptr(x2, -16));            // idx
                 a.and_(x6, x3, asmjit::Imm(0x7));
@@ -11601,10 +11613,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.cmp(x8, asmjit::Imm(8));
                 a.b_hs(dispatchCachedRestoreX5);
                 a.tbnz(x4, asmjit::Imm(23), dispatchCachedRestoreX5);
-                a.lsr(x5, x4, asmjit::Imm(56));
-                a.and_(x5, x5, asmjit::Imm(0xFF));
-                a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCachedRestoreX5);
+                emitSlotCountWithOverflow(a, x5, x4, x1);
                 a.lsl(x5, x5, asmjit::Imm(3));      // sc*8
                 a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes (fmt-16)
                 a.sub(x5, x5, x6);                   // byteSize
@@ -11656,10 +11665,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x4, ptr(x1));                  // header
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
-                a.lsr(x5, x4, asmjit::Imm(56));
-                a.and_(x5, x5, asmjit::Imm(0xFF));
-                a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCachedRestoreX5);     // overflow header → slow
+                emitSlotCountWithOverflow(a, x5, x4, x1);
                 // fmt 2 or 9: result = slotCount (no adjust)
                 a.cmp(x6, asmjit::Imm(2));
                 a.b_eq(sizeDone);
@@ -15846,6 +15852,15 @@ void pharo::jit::mcfBuildStubs() {
                 if (g_sharedRetPreludeStub)
                     std::fprintf(f, "%llx 1000 <shared return prelude>\n",
                                  (unsigned long long)g_sharedRetPreludeStub);
+                for (int k = 0; k < 3; k++)
+                    if (g_mcfPrimStub[k])
+                        std::fprintf(f, "%llx 1000 <mcf prim stub %d>\n",
+                                     (unsigned long long)g_mcfPrimStub[k], k);
+                if (g_mcfTinyStub)
+                    std::fprintf(f, "%llx 1000 <mcf tiny stub>\n", (unsigned long long)g_mcfTinyStub);
+                if (g_mcfBlockCreateStub)
+                    std::fprintf(f, "%llx 1000 <mcf block create stub>\n",
+                                 (unsigned long long)g_mcfBlockCreateStub);
                 std::fclose(f);
             }
             for (int k = 0; k < 2; k++) {
