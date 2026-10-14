@@ -1,5 +1,24 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
+## OPEN 2026-10-14 — ProcessSpecificTest>>testLocalVariable fails 1 run in 3-5 on a fake-GUI image
+
+First seen in sweep L17.  The test forks two processes that set and check
+a ProcessLocalVariable around 30 ms Delays.  Measured with
+`runclassesimg.sh ... ProcessSpecificTest`:
+
+- sweep image with `setup_fake_gui.st` (sunit6): fails 1 in 3-5, with the
+  L14, L16, L17 and current binaries alike, and also with PHARO_NO_JIT;
+- the same runner without `setup_fake_gui.st`: 6 of 6 pass;
+- the old sweep image: 3 of 3 pass;
+- eval on the pristine image, 20 runs, with the FakeGUI cycle loop started:
+  0 failures on our VM and 0 on stock Cog.
+
+So it needs the runner and the fake-GUI cycle loop (a priority-40 World
+cycle every 25 ms) together, and the JIT plays no part.  Not yet known
+which assertion fails: the runner records no stack for a failure raised
+in a forked process.  Next step: log checkLocal: actual/expected and the
+active process from inside the prepped image.
+
 ## ~~arm64 JIT crashes (SIGBUS) on a runtime-compiled hot loop~~ — FIXED `260692fa` (2026-08-19), VERIFIED 2026-08-22
 
 Filed 2026-08-19 and fixed the same day by `260692fa` ("guard the
