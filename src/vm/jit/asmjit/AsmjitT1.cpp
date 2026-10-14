@@ -11693,6 +11693,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.mov(x7, x0);
                     a.ldp(x0, x30, ptr_post(sp, 16));
                     a.cbz(x7, extExit);
+                    asmjit::Label extDone = a.new_label();
+                    asmjit::Label extDeopt = a.new_label();
+                    a.cmp(x7, asmjit::Imm(1));
+                    a.b_eq(extDone);
+                    a.cmp(x7, asmjit::Imm(2));
+                    a.b_eq(extDeopt);
                     a.ldp(x6, x9, ptr(x7));                  // method, callee JM
                     a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
                     a.add(x13, x13, asmjit::Imm(globalIdx + 2));   // ip after the send
@@ -11701,6 +11707,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.mov(w12, asmjit::Imm((bcReal[i + 1] & 7) | (callerArgCount << 8)));
                     a.mov(x16, asmjit::Imm(g_mcfCallStub));
                     a.br(x16);
+                    a.bind(extDone);                         // result on the stack
+                    emitReloadSpFromState(a);
+                    a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+                    a.b(extCont);
+                    a.bind(extDeopt);                        // interpreter owns the state
+                    a.mov(w3, asmjit::Imm((int)ExitDeopt));
+                    a.str(w3, ptr(x0, OFF_EXIT));
+                    a.ret(x30);
                     a.bind(extExit);
                     // The stub's refusal path: x5 was clobbered, recompute.
                     a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));

@@ -241,6 +241,11 @@ struct McfCallEntry {
 static_assert(sizeof(McfCallEntry) == 32, "T1 indexes McfCallEntry with lsl #5");
 constexpr size_t kMcfCallCacheSize = 4096;   // T1 masks with kMcfCallCacheSize - 1
 inline McfCallEntry* g_mcfCallCache = nullptr;
+// pharo_mcf_extsend answers, besides a call-cache entry or nullptr: the
+// send is done (result on the stack, sp in the state), or a primitive
+// switched process / pushed a frame (exit with ExitDeopt).
+#define kMcfExtDone  (reinterpret_cast<void*>(uintptr_t(1)))
+#define kMcfExtDeopt (reinterpret_cast<void*>(uintptr_t(2)))
 // Two-way set associative: a method's set is entries 2k and 2k+1, k from
 // its oop.  Direct-mapped, pairs that call each other (at:ifPresent: and
 // findElementOrNil:) evicted each other at every call, and every call

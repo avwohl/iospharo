@@ -511,9 +511,40 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     Oop target = lookupMethodForSend(selector, cls);
     if (!target.isObject() || target.isNil()) return nullptr;
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
-    if (!e || !e->jm || e->prim) return nullptr;
-    if (!mcfReceiverOk(e->jm, rcv)) return nullptr;
-    return e;
+    if (e && e->jm && !e->prim && mcfReceiverOk(e->jm, rcv)) return e;
+    // Not a native call.  The sends cacheMethod shortcuts (they never
+    // activate, so never reach the call cache) run here: ^self, getter.
+    if (MethodCacheEntry* ce = probeCache(selector, cls)) {
+        if (ce->method.rawBits() == target.rawBits() && ce->trivialShape) {
+            if (ce->returnsSelf) {
+                st->sp -= nArgs;
+                return kMcfExtDone;
+            }
+            if (ce->accessorIndex >= 0 && nArgs == 0 && rcv.isObject()
+                    && rcv.rawBits() > 0x10000) {
+                ObjectHeader* rh = rcv.asObjectPtr();
+                if (!rh->isBytesObject() && (size_t)ce->accessorIndex < rh->slotCount()) {
+                    st->sp[-1] = rh->slotAt(ce->accessorIndex);
+                    return kMcfExtDone;
+                }
+            }
+        }
+    }
+    // A primitive T1 code may run without leaving machine code.
+    Oop thdr = target.asObjectPtr()->slotAt(0);
+    if (target.asObjectPtr()->classIndex() == compiledMethodClassIndex_
+            && thdr.isSmallInteger() && ((thdr.asSmallInteger() >> 16) & 1)) {
+        const int p = primitiveIndexOf(target);
+        if (mcfPrimCallable(p)) {
+            st->cachedTarget = target;
+            switch (mcfCallPrimitive(st, p, nArgs)) {
+            case 1: return kMcfExtDone;
+            case 2: return kMcfExtDeopt;
+            default: return nullptr;   // failed: the interpreter retries it
+            }
+        }
+    }
+    return nullptr;
 }
 
 // A send left machine code for this method.  When it is a primitive T1 code
@@ -620,6 +651,19 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
             for (int e = 0; e < 6; e++) if (st.icDataPtr[e * 3]) filled++;
             Oop so = Oop::fromRawBits(st.icDataPtr[18]);
             if (so.isObject() && so.rawBits() > 0x10000) sel = memory_.oopToString(so);
+        } else if (st.ip && (*st.ip == jit::SistaV1::ExtSend || *st.ip == jit::SistaV1::ExtSuperSend)
+                   && st.method.isObject()) {
+            int li = st.ip[1] >> 3;
+            Oop so = memory_.fetchPointer(1 + li, st.method);
+            if (so.isObject() && so.rawBits() > 0x10000) sel = memory_.oopToString(so);
+            Oop rc = memory_.classOf(rcv);
+            Oop tm = lookupMethodForSend(so, rc);
+            if (tm.isObject() && !tm.isNil()) {
+                sel += " prim=" + std::to_string(primitiveIndexOf(tm));
+                jit::JITMethod* tj = jitRuntime_.methodMap().lookup(tm.rawBits());
+                sel += tj && tj->isExecutable() && tj->numBytecodes ? " compiled" : " notcompiled";
+                sel += jit::mcfCallFind(tm.rawBits()) ? " inCache" : " notInCache";
+            }
         }
         byMiss["#" + sel + " rcv=" + (rcv.isObject() ? memory_.classNameOf(rcv)
                : rcv.isSmallInteger() ? std::string("SmI") : std::string("imm"))

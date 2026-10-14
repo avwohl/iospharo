@@ -5259,12 +5259,7 @@ void Interpreter::interpret() {
         // `dict size` read before its value reached the argument stack.
 
         // -- Timer semaphore (Delay scheduler) --
-        // Every 8th checkpoint: the check reads the wall clock and a steady
-        // clock, 1.4% of lexicon when done at every checkpoint (one each
-        // 3-10 us under machine-code frames).  Adds at most ~0.1 ms of
-        // Delay latency; Delays have 1 ms resolution.
-        static uint32_t timerCheckTick = 0;
-        if ((++timerCheckTick & 7) == 0) checkTimerSemaphore();
+        checkTimerSemaphore();
 
 
         // -- External semaphore signals (from heartbeat/events) --
