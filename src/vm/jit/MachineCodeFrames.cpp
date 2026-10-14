@@ -77,6 +77,10 @@ extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
     return st->interp->mcfBlockCreate(st, packed);
 }
 
+extern "C" uint64_t pharo_mcf_array_create(jit::JITState* st, uint32_t desc) {
+    return st->interp->mcfArrayCreate(st, desc);
+}
+
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
@@ -546,6 +550,26 @@ uint64_t Interpreter::mcfBlockCreate(jit::JITState* st, uint64_t packed) {
     const int flags = static_cast<int>((packed >> 32) & 0xFF);
     createFullBlockWithLiteral(litIndex, flags & 0x3F, (flags >> 7) & 1, (flags >> 6) & 1);
     st->sp = stackPointer_;
+    return 1;
+}
+
+// PushArray in machine code.  Allocation does not GC (a full eden falls
+// back to old space), so no register sync is needed.  0 = allocation
+// failed: take the exit.
+uint64_t Interpreter::mcfArrayCreate(jit::JITState* st, uint32_t desc) {
+    const int arraySize = desc & 0x7F;
+    const bool popIntoArray = (desc >> 7) != 0;
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    Oop array = memory_.allocateSlots(memory_.indexOfClass(arrayClass), arraySize,
+                                      ObjectFormat::Indexable);
+    if (!array.isObject() || array.isNil()) return 0;
+    Oop* sp = st->sp;
+    if (popIntoArray) {
+        for (int i = arraySize - 1; i >= 0; i--)
+            memory_.storePointer(i, array, *--sp);
+    }
+    *sp++ = array;
+    st->sp = sp;
     return 1;
 }
 

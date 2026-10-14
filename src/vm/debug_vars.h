@@ -180,6 +180,7 @@ DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL)        // MCF: blocks with a non-local r
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)   // MCF: PushFullBlock exits to the interpreter again (ExitBlockCreate) instead of pharo_mcf_block_create
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_RETURN)          // MCF: a block's local return (BlockReturnTop/Nil) takes the generic bytecode exit again
 DEBUG_BOOL(PHARO_MCF_NO_ARITH_SEND)            // MCF: arithmetic special sends whose inline path fails take the generic bytecode exit again
+DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
 DEBUG_BOOL(PHARO_EFC_CENSUS)                   // count executeFromContext calls by caller address
 DEBUG_BOOL(PHARO_THISCTX_CENSUS)               // count thisContext (PushThisContext) by method, collapsing or at depth 0

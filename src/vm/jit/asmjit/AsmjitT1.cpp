@@ -56,6 +56,7 @@ extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
+extern "C" uint64_t pharo_mcf_array_create(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -11697,6 +11698,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             // PushArray bytecode.
             if (op == SistaV1::PushArray) {
                 uint8_t desc = bcReal[i + 1];
+                asmjit::Label arrSlow = a.new_label();
+                asmjit::Label arrDone = a.new_label();
+                if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)) {
+                    // Machine-code frames: build the Array in place
+                    // instead of exiting (critical: and every {...}).
+                    emitSyncSpToState(a);
+                    a.stp(a64::x0, a64::x30, a64::ptr_pre(a64::sp, -16));
+                    a.mov(a64::w1, asmjit::Imm((uint32_t)desc));
+                    a.mov(a64::x16, asmjit::Imm((uint64_t)&pharo_mcf_array_create));
+                    a.blr(a64::x16);
+                    a.mov(a64::x7, a64::x0);
+                    a.ldp(a64::x0, a64::x30, a64::ptr_post(a64::sp, 16));
+                    a.cbz(a64::x7, arrSlow);
+                    emitReloadSpFromState(a);
+                    a.ldur(a64::x26, a64::ptr(a64::x25, -8));
+                    a.b(arrDone);
+                }
+                a.bind(arrSlow);
                 a.mov(a64::x1, asmjit::Imm(static_cast<uint64_t>(desc)));
                 a.str(a64::x1, a64::ptr(a64::x0, OFF_CACHED_TARGET));
                 if (g_fsrLazy) {
@@ -11716,6 +11735,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
                 emitSyncSpToState(a);
                 a.ret(a64::x30);
+                a.bind(arrDone);
                 a.bind(bcLabels[globalIdx + 1]);
                 i += 1;
                 continue;
