@@ -53,6 +53,7 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep);
 // Machine-code frames: run a primitive from T1 code (MachineCodeFrames.cpp).
 extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
 extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
+extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -5483,6 +5484,23 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     a.str(x4, ptr_post(x25, 8));
     a.b(nilLoop);
     a.bind(nilDone);
+    {
+        // A block with ^: its frame record needs the home frame index, which
+        // pharo_mcf_block_home computes as activateBlock does.
+        asmjit::Label noNLR = a.new_label();
+        a.ldr(x10, ptr(x7, 24));
+        a.tst(x10, asmjit::Imm(kMcfBlockNLR));
+        a.b_eq(noNLR);
+        emitSyncSpToState(a);
+        a.stp(x0, x30, ptr_pre(sp, -32));
+        a.str(x9, ptr(sp, 16));
+        // x1 = the closure (unchanged since entry)
+        a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_block_home));
+        a.blr(x16);
+        a.ldr(x9, ptr(sp, 16));
+        a.ldp(x0, x30, ptr_post(sp, 32));
+        a.bind(noNLR);
+    }
     emitMcfVerifyPushCall(a);
     a.ldur(x26, ptr(x25, -8));                     // TOS mirror
     a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
@@ -6782,6 +6800,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_ne(notBlock);
                 emitMcfCacheProbe(a, notBlock);             // x7 entry, x9 block JM
                 a.ldr(x10, ptr(x7, 24));
+                a.and_(x10, x10, asmjit::Imm(~kMcfBlockNLR)); // the stub reads the flag
                 a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
                 a.cmp(x10, x11);
                 a.b_ne(notBlock);                            // not a block entry, or arity
@@ -10422,6 +10441,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     emitMcfCacheProbe(a, mcfSlow);
 
                     a.ldr(x10, ptr(x7, 24));
+                    a.and_(x10, x10, asmjit::Imm(~kMcfBlockNLR));
                     a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
                     a.cmp(x10, x11);
                     a.b_ne(mcfSlow);

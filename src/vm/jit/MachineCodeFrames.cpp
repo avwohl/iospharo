@@ -57,6 +57,12 @@ extern "C" void* pharo_mcf_extsend(jit::JITState* st, uint32_t desc) {
     return st->interp->mcfExtSendTarget(st, desc);
 }
 
+// Called from the native block stub for a block with a non-local return,
+// after the block's frame record is pushed: store its home frame index.
+extern "C" void pharo_mcf_block_home(jit::JITState* st, uint64_t closure) {
+    st->interp->mcfSetBlockHome(Oop::fromRawBits(closure));
+}
+
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
@@ -381,14 +387,17 @@ void Interpreter::mcfActivateBlock() {
     if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
     if (instructionPointer_ != reinterpret_cast<const uint8_t*>(jm->bcStart())) return;
     // Phase 3b: let T1 code call this block natively at value / value:.
-    if (!memory_.isYoung(method_) && !mcfBlockHasNLR(method_)) {
+    // A block with ^ is flagged: the stub then finds its home frame.
+    const bool nlr = mcfBlockHasNLR(method_);
+    if (!memory_.isYoung(method_) && (!nlr || !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL))) {
         Oop hdr = method_.asObjectPtr()->slotAt(0);
         jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method_.rawBits());
         e.methodBits = method_.rawBits();
         e.jm = jm;
         e.bcEndOff = static_cast<uint64_t>(
             bytecodeEnd_ - reinterpret_cast<uint8_t*>(method_.rawBits()));
-        e.prim = jit::kMcfBlockEntry | (uint64_t)((hdr.asSmallInteger() >> 24) & 0xF);
+        e.prim = jit::kMcfBlockEntry | (uint64_t)((hdr.asSmallInteger() >> 24) & 0xF)
+                 | (nlr ? jit::kMcfBlockNLR : 0);
     }
     if (!mcfIsBlockFrame()) return;
     if (jm->stats) {
@@ -505,6 +514,18 @@ bool Interpreter::mcfActivate(Oop method) {
     }
     mcfRun(jm, entry);
     return true;
+}
+
+void Interpreter::mcfSetBlockHome(Oop closure) {
+    if (frameDepth_ < 1) return;
+    ObjectHeader* clo = closure.asObjectPtr();
+    Oop compiledBlock = clo->slotAt(1);
+    Oop outerContext = clo->slotAt(0);
+    Oop home = blockHomeMethodForNLR(compiledBlock);
+    size_t homeFrame = SIZE_MAX;
+    if (home.isObject() && !home.isNil())
+        homeFrame = findBlockHomeFrame(home, outerContext, compiledBlock);
+    savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
 }
 
 void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
@@ -697,6 +718,15 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
                 sel += tj && tj->isExecutable() && tj->numBytecodes ? " compiled" : " notcompiled";
                 sel += jit::mcfCallFind(tm.rawBits()) ? " inCache" : " notInCache";
             }
+        }
+        if (rcv.isObject() && rcv.rawBits() > 0x10000
+                && rcv.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            Oop cb = rcv.asObjectPtr()->slotAt(1);
+            jit::JITMethod* bj = cb.isObject() ? jitRuntime_.methodMap().lookup(cb.rawBits()) : nullptr;
+            sel += std::string(bj && bj->isExecutable() && bj->numBytecodes ? " blkCompiled" : " blkNotCompiled")
+                + (mcfBlockHasNLR(cb) ? " NLR" : "") + (memory_.isYoung(cb) ? " young" : "")
+                + (jit::mcfCallFind(cb.rawBits()) ? " inCache" : " notInCache")
+                + " slots=" + std::to_string(rcv.asObjectPtr()->slotCount());
         }
         byMiss["#" + sel + " rcv=" + (rcv.isObject() ? memory_.classNameOf(rcv)
                : rcv.isSmallInteger() ? std::string("SmI") : std::string("imm"))

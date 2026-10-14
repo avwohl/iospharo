@@ -314,6 +314,9 @@ constexpr uint64_t kMcfBlockEntry = 0x10000;
 // McfCallEntry.prim for a block-value method (primitive 207: value:value:
 // and longer): T1 code calls the receiver closure's block natively.
 constexpr uint64_t kMcfBlockValueMethod = 0x20000;
+// Or'ed into a block entry: the block has a non-local return, so the block
+// stub has pharo_mcf_block_home find its home frame, as activateBlock does.
+constexpr uint64_t kMcfBlockNLR = 0x40000;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
 inline uint64_t g_mcfBlockStub = 0;

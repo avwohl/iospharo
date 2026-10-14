@@ -15694,6 +15694,211 @@ bool Interpreter::mcfBlockHasNLR(Oop compiledBlock) {
 }
 #endif
 
+// The frame index of a block's home (the activation where it was created),
+// for its non-local return: the search activateBlock always made, and the
+// native MCF block stub makes for a block with ^.  savedFrames_ already
+// holds the record pushed for the block's activation.  homeMethodOop may
+// change to the fallback home.  Reads only; never allocates.
+size_t Interpreter::findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext,
+                                       Oop methodToExecute) {
+    Oop homeMethodForNLR = homeMethodOop;
+    (void)homeMethodForNLR;
+    size_t homeFrame = SIZE_MAX;  // Default: not found
+
+        // Primary home: from the CompiledBlock's last literal (static/lexical home).
+        // Fallback home: the method of the closure's outerContext — needed for the case
+        // where the CompiledBlock is shared between different CompiledMethods (notably
+        // FBDBytecodeDecompiler reuses the original CompiledBlock when regenerating a
+        // method, so the CompiledBlock's last literal points at the ORIGINAL method,
+        // but execution is happening in a frame for the REGENERATED method).  Without
+        // this fallback, NLR from the regenerated method's inner block fails with
+        // BlockCannotReturn because the static home isn't on savedFrames_.
+        Oop altHomeMethod = Oop::nil();
+        Oop tracedOcMethod = Oop::nil();
+        if (outerContext.isObject() && !outerContext.isNil()) {
+            // Walk the DYNAMIC outerContext chain (context -> closureOrNil ->
+            // outerContext) until a context whose method is a non-block
+            // CompiledMethod. That method is the runtime home even when the
+            // CompiledBlock's static outerCode literal points at a DIFFERENT
+            // (stale) method — FBDBytecodeDecompiler reuses the original
+            // CompiledBlocks when regenerating a method, and for NESTED blocks
+            // the previous static-literal walk converged back to the stale
+            // home, so NLR failed with BlockCannotReturn
+            // (FBDBytecodeDecompilerExamplesTest testExampleSimpleBlockReturn/
+            // testExampleIfTrue; stock walks contexts, never outerCode).
+            Oop ctxWalk = outerContext;
+            int cChain = 0;
+            while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 256) {
+                Oop m = memory_.fetchPointer(3, ctxWalk);
+                tracedOcMethod = m;
+                if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
+                // Block or method? A CompiledBlock's last literal is compiled code.
+                Oop mHeader = memory_.fetchPointer(0, m);
+                if (!mHeader.isSmallInteger()) break;
+                int mNumLits = mHeader.asSmallInteger() & 0x7FFF;
+                bool isBlock = false;
+                if (mNumLits >= 1) {
+                    Oop lastLit = memory_.fetchPointer(mNumLits, m);
+                    isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
+                              lastLit.asObjectPtr()->isCompiledMethod();
+                }
+                if (!isBlock) {
+                    if (m.rawBits() != homeMethodOop.rawBits()) altHomeMethod = m;
+                    break;
+                }
+                // Enclosing context of a block activation: via its closure.
+                Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
+                if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
+                ctxWalk = memory_.fetchPointer(0, clo);       // closure's outerContext
+                cChain++;
+            }
+        }
+
+        // NLR home disambiguation (nlr-nested-valuewithexit-bug): when the home
+        // method is on the stack more than once (nested valueWithExit), the
+        // method-oop search below takes the INNERMOST match — the wrong home.
+        // Prefer the HOME-METHOD frame whose materialized context IS the closure's
+        // outerContext (the exact home). REQUIRE savedMethod==homeMethodOop too, so
+        // a coincidental context match on a non-home frame can't fire (that
+        // false-positive regressed DateAndTime in an earlier attempt).
+        if (outerContext.isObject() && !outerContext.isNil() && outerContext.rawBits() > 0x10000) {
+            for (size_t i = frameDepth_; i > 0; i--) {
+                Oop mc = savedFrames_[i - 1].materializedContext;
+                if (mc.isObject() && !mc.isNil() && mc.rawBits() == outerContext.rawBits()
+                    && savedFrames_[i - 1].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                    homeFrame = i - 1;
+                    break;
+                }
+            }
+        }
+
+        if (GET_DEBUG_BOOL(PHARO_NLR_TRACE)) {
+            fprintf(stderr, "[NLR-ACT] home=0x%llx alt=0x%llx outerCtx=0x%llx(%s) fd=%zu preHome=%zu\n",
+                    (unsigned long long)homeMethodOop.rawBits(),
+                    (unsigned long long)altHomeMethod.rawBits(),
+                    (unsigned long long)outerContext.rawBits(),
+                    outerContext.isObject() ? "obj" : (outerContext.isSmallInteger() ? "smi" : "other"),
+                    frameDepth_, homeFrame);
+            for (size_t i2 = frameDepth_; i2 > 0 && i2 + 6 > frameDepth_; i2--) {
+                fprintf(stderr, "[NLR-ACT]   frame[%zu] m=0x%llx\n", i2 - 1,
+                        (unsigned long long)savedFrames_[i2 - 1].savedMethod.rawBits());
+            }
+        }
+        for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
+            Oop savedMethod = savedFrames_[i - 1].savedMethod;
+
+            // Match primary home, then fallback home (for shared CompiledBlocks).
+            if (savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                homeFrame = i - 1;
+                break;
+            }
+            if (!altHomeMethod.isNil() && savedMethod.rawBits() == altHomeMethod.rawBits()) {
+                homeFrame = i - 1;
+                homeMethodOop = altHomeMethod;  // use fallback as the canonical home from here on
+                break;
+            }
+
+            // Also check if this frame is a block whose home is our home method
+            // This handles nested blocks
+            if (savedMethod.isObject() && savedMethod.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = savedMethod.asObjectPtr();
+                if (mHdr->isCompiledMethod()) {
+                    // Check if this is a CompiledBlock (last literal is a CompiledMethod)
+                    Oop header = memory_.fetchPointer(0, savedMethod);
+                    if (header.isSmallInteger()) {
+                        int numLits = header.asSmallInteger() & 0x7FFF;
+                        if (numLits >= 2) {
+                            Oop outerLit = memory_.fetchPointer(numLits - 1, savedMethod);
+                            // For CompiledBlock, last literal is the enclosing method
+                            if (outerLit.rawBits() == homeMethodOop.rawBits()) {
+                                // This frame's block was also created in our home method
+                                // but we want the method frame itself, not another block frame
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we couldn't find the home method in savedFrames_, also search the context chain.
+        // This happens after exception handling: contexts were materialized and savedFrames_
+        // doesn't contain the home method anymore - it's in the context chain.
+        if (homeFrame == SIZE_MAX && activeContext_.isObject() && !activeContext_.isNil()) {
+            // Search context chain for home method
+            // If found, NLR will need to use context-based unwinding (frameDepth_=0 path)
+            // We signal this by setting homeFrame to 0 and ensuring the NLR code handles it
+            Oop ctx = activeContext_;
+            int searchDepth = 0;
+            while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
+                Oop ctxMethod = memory_.fetchPointer(3, ctx);
+                if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                    // Found! Set homeFrame to 0 - NLR will use context-based return
+                    // Actually, we can't use inline NLR because the home is in context chain.
+                    // The safest approach: leave homeFrame as SIZE_MAX but ensure returnValue
+                    // handles this case via context-based NLR (which we already implemented).
+                    // But that only works when frameDepth_==0. Here frameDepth_>0.
+                    //
+                    // Alternative: when we detect home method is in context chain,
+                    // materialize the current frames and switch to context-based execution.
+                    // This ensures all future NLRs work correctly.
+
+                    // Don't materialize here — defer to returnFromBlock() which will
+                    // materialize on demand when NLR actually happens.
+                    // returnFromBlock() handles frameDepth_>0 + homeFrame==SIZE_MAX
+                    // by materializing and falling through to context-based NLR.
+                    break;
+                }
+                ctx = memory_.fetchPointer(0, ctx);
+                searchDepth++;
+            }
+        }
+
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
+            fprintf(stderr, "[HFD-W@11911] entry=%zu val=%zu m=#%s\n",
+                frameDepth_ - 1, homeFrame,
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
+        if (GET_DEBUG_BOOL(PHARO_NLR_TRACE) && homeFrame == SIZE_MAX) {
+            fprintf(stderr, "[NLR-ACT-FINAL] UNRESOLVED home=0x%llx alt=0x%llx block=0x%llx fd=%zu\n",
+                    (unsigned long long)homeMethodOop.rawBits(),
+                    (unsigned long long)altHomeMethod.rawBits(),
+                    (unsigned long long)methodToExecute.rawBits(), frameDepth_);
+            fprintf(stderr, "[NLR-ACT-FINAL]   ocMethod=0x%llx outerCtx=0x%llx\n", (unsigned long long)tracedOcMethod.rawBits(), (unsigned long long)outerContext.rawBits());
+        }
+    return homeFrame;
+}
+
+// The home CompiledMethod of a CompiledBlock: follow the outer-code literals.
+Oop Interpreter::blockHomeMethodForNLR(Oop compiledBlock) {
+    Oop homeMethodForNLR = Oop::nil();
+    Oop hdr = memory_.fetchPointer(0, compiledBlock);
+    if (!hdr.isSmallInteger()) return homeMethodForNLR;
+    int numLiterals = hdr.asSmallInteger() & 0x7FFF;
+    if (numLiterals < 1) return homeMethodForNLR;
+    Oop enclosingCode = memory_.fetchPointerUnchecked(numLiterals, compiledBlock);
+    int chainDepth = 0;
+    while (enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000 && chainDepth < 256) {
+        ObjectHeader* ecHdr = enclosingCode.asObjectPtr();
+        if (!ecHdr->isCompiledMethod()) break;
+        Oop ecHeader = memory_.fetchPointerUnchecked(0, enclosingCode);
+        if (!ecHeader.isSmallInteger()) break;
+        int ecNumLits = ecHeader.asSmallInteger() & 0xFFFF;
+        if (ecNumLits < 1) return enclosingCode;
+        Oop ecLastLit = memory_.fetchPointerUnchecked(ecNumLits, enclosingCode);
+        bool lastLitIsCode = ecLastLit.isObject() && ecLastLit.rawBits() > 0x10000
+            && ecLastLit.asObjectPtr()->isCompiledMethod();
+        if (!lastLitIsCode) return enclosingCode;
+        enclosingCode = ecLastLit;
+        chainDepth++;
+    }
+    if (enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000
+            && enclosingCode.asObjectPtr()->isCompiledMethod())
+        homeMethodForNLR = enclosingCode;
+    return homeMethodForNLR;
+}
+
 void Interpreter::activateBlock(Oop block, int argCount) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_ACTIVATE_BLOCK)) {
         static uint64_t n = 0;
@@ -15867,171 +16072,8 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     {
     }
     if (frameDepth_ >= 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
-        size_t homeFrame = SIZE_MAX;  // Default: not found
-
-        // Primary home: from the CompiledBlock's last literal (static/lexical home).
-        // Fallback home: the method of the closure's outerContext — needed for the case
-        // where the CompiledBlock is shared between different CompiledMethods (notably
-        // FBDBytecodeDecompiler reuses the original CompiledBlock when regenerating a
-        // method, so the CompiledBlock's last literal points at the ORIGINAL method,
-        // but execution is happening in a frame for the REGENERATED method).  Without
-        // this fallback, NLR from the regenerated method's inner block fails with
-        // BlockCannotReturn because the static home isn't on savedFrames_.
         Oop homeMethodOop = homeMethodForNLR;
-        Oop altHomeMethod = Oop::nil();
-        Oop tracedOcMethod = Oop::nil();
-        if (outerContext.isObject() && !outerContext.isNil()) {
-            // Walk the DYNAMIC outerContext chain (context -> closureOrNil ->
-            // outerContext) until a context whose method is a non-block
-            // CompiledMethod. That method is the runtime home even when the
-            // CompiledBlock's static outerCode literal points at a DIFFERENT
-            // (stale) method — FBDBytecodeDecompiler reuses the original
-            // CompiledBlocks when regenerating a method, and for NESTED blocks
-            // the previous static-literal walk converged back to the stale
-            // home, so NLR failed with BlockCannotReturn
-            // (FBDBytecodeDecompilerExamplesTest testExampleSimpleBlockReturn/
-            // testExampleIfTrue; stock walks contexts, never outerCode).
-            Oop ctxWalk = outerContext;
-            int cChain = 0;
-            while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 256) {
-                Oop m = memory_.fetchPointer(3, ctxWalk);
-                tracedOcMethod = m;
-                if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
-                // Block or method? A CompiledBlock's last literal is compiled code.
-                Oop mHeader = memory_.fetchPointer(0, m);
-                if (!mHeader.isSmallInteger()) break;
-                int mNumLits = mHeader.asSmallInteger() & 0x7FFF;
-                bool isBlock = false;
-                if (mNumLits >= 1) {
-                    Oop lastLit = memory_.fetchPointer(mNumLits, m);
-                    isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
-                              lastLit.asObjectPtr()->isCompiledMethod();
-                }
-                if (!isBlock) {
-                    if (m.rawBits() != homeMethodOop.rawBits()) altHomeMethod = m;
-                    break;
-                }
-                // Enclosing context of a block activation: via its closure.
-                Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
-                if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
-                ctxWalk = memory_.fetchPointer(0, clo);       // closure's outerContext
-                cChain++;
-            }
-        }
-
-        // NLR home disambiguation (nlr-nested-valuewithexit-bug): when the home
-        // method is on the stack more than once (nested valueWithExit), the
-        // method-oop search below takes the INNERMOST match — the wrong home.
-        // Prefer the HOME-METHOD frame whose materialized context IS the closure's
-        // outerContext (the exact home). REQUIRE savedMethod==homeMethodOop too, so
-        // a coincidental context match on a non-home frame can't fire (that
-        // false-positive regressed DateAndTime in an earlier attempt).
-        if (outerContext.isObject() && !outerContext.isNil() && outerContext.rawBits() > 0x10000) {
-            for (size_t i = frameDepth_; i > 0; i--) {
-                Oop mc = savedFrames_[i - 1].materializedContext;
-                if (mc.isObject() && !mc.isNil() && mc.rawBits() == outerContext.rawBits()
-                    && savedFrames_[i - 1].savedMethod.rawBits() == homeMethodOop.rawBits()) {
-                    homeFrame = i - 1;
-                    break;
-                }
-            }
-        }
-
-        if (GET_DEBUG_BOOL(PHARO_NLR_TRACE)) {
-            fprintf(stderr, "[NLR-ACT] home=0x%llx alt=0x%llx outerCtx=0x%llx(%s) fd=%zu preHome=%zu\n",
-                    (unsigned long long)homeMethodOop.rawBits(),
-                    (unsigned long long)altHomeMethod.rawBits(),
-                    (unsigned long long)outerContext.rawBits(),
-                    outerContext.isObject() ? "obj" : (outerContext.isSmallInteger() ? "smi" : "other"),
-                    frameDepth_, homeFrame);
-            for (size_t i2 = frameDepth_; i2 > 0 && i2 + 6 > frameDepth_; i2--) {
-                fprintf(stderr, "[NLR-ACT]   frame[%zu] m=0x%llx\n", i2 - 1,
-                        (unsigned long long)savedFrames_[i2 - 1].savedMethod.rawBits());
-            }
-        }
-        for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
-            Oop savedMethod = savedFrames_[i - 1].savedMethod;
-
-            // Match primary home, then fallback home (for shared CompiledBlocks).
-            if (savedMethod.rawBits() == homeMethodOop.rawBits()) {
-                homeFrame = i - 1;
-                break;
-            }
-            if (!altHomeMethod.isNil() && savedMethod.rawBits() == altHomeMethod.rawBits()) {
-                homeFrame = i - 1;
-                homeMethodOop = altHomeMethod;  // use fallback as the canonical home from here on
-                break;
-            }
-
-            // Also check if this frame is a block whose home is our home method
-            // This handles nested blocks
-            if (savedMethod.isObject() && savedMethod.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = savedMethod.asObjectPtr();
-                if (mHdr->isCompiledMethod()) {
-                    // Check if this is a CompiledBlock (last literal is a CompiledMethod)
-                    Oop header = memory_.fetchPointer(0, savedMethod);
-                    if (header.isSmallInteger()) {
-                        int numLits = header.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop outerLit = memory_.fetchPointer(numLits - 1, savedMethod);
-                            // For CompiledBlock, last literal is the enclosing method
-                            if (outerLit.rawBits() == homeMethodOop.rawBits()) {
-                                // This frame's block was also created in our home method
-                                // but we want the method frame itself, not another block frame
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // If we couldn't find the home method in savedFrames_, also search the context chain.
-        // This happens after exception handling: contexts were materialized and savedFrames_
-        // doesn't contain the home method anymore - it's in the context chain.
-        if (homeFrame == SIZE_MAX && activeContext_.isObject() && !activeContext_.isNil()) {
-            // Search context chain for home method
-            // If found, NLR will need to use context-based unwinding (frameDepth_=0 path)
-            // We signal this by setting homeFrame to 0 and ensuring the NLR code handles it
-            Oop ctx = activeContext_;
-            int searchDepth = 0;
-            while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
-                Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
-                    // Found! Set homeFrame to 0 - NLR will use context-based return
-                    // Actually, we can't use inline NLR because the home is in context chain.
-                    // The safest approach: leave homeFrame as SIZE_MAX but ensure returnValue
-                    // handles this case via context-based NLR (which we already implemented).
-                    // But that only works when frameDepth_==0. Here frameDepth_>0.
-                    //
-                    // Alternative: when we detect home method is in context chain,
-                    // materialize the current frames and switch to context-based execution.
-                    // This ensures all future NLRs work correctly.
-
-                    // Don't materialize here — defer to returnFromBlock() which will
-                    // materialize on demand when NLR actually happens.
-                    // returnFromBlock() handles frameDepth_>0 + homeFrame==SIZE_MAX
-                    // by materializing and falling through to context-based NLR.
-                    break;
-                }
-                ctx = memory_.fetchPointer(0, ctx);
-                searchDepth++;
-            }
-        }
-
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
-                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
-            fprintf(stderr, "[HFD-W@11911] entry=%zu val=%zu m=#%s\n",
-                frameDepth_ - 1, homeFrame,
-                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
-        }
-        if (GET_DEBUG_BOOL(PHARO_NLR_TRACE) && homeFrame == SIZE_MAX) {
-            fprintf(stderr, "[NLR-ACT-FINAL] UNRESOLVED home=0x%llx alt=0x%llx block=0x%llx fd=%zu\n",
-                    (unsigned long long)homeMethodOop.rawBits(),
-                    (unsigned long long)altHomeMethod.rawBits(),
-                    (unsigned long long)methodToExecute.rawBits(), frameDepth_);
-            fprintf(stderr, "[NLR-ACT-FINAL]   ocMethod=0x%llx outerCtx=0x%llx\n", (unsigned long long)tracedOcMethod.rawBits(), (unsigned long long)outerContext.rawBits());
-        }
+        size_t homeFrame = findBlockHomeFrame(homeMethodOop, outerContext, methodToExecute);
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
                 && homeFrame != SIZE_MAX
