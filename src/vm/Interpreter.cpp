@@ -16067,6 +16067,12 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // bench-correctness (block frames already set up; tryJITActivation
     // expects different state).  Reverted — needs deeper integration
     // with activateBlock's frame setup.  See docs/jit-may23.md.
+#if PHARO_JIT_ENABLED
+    // Machine-code frames: run the block's compiled code now, from the
+    // frame set up above (mcfRun builds its state from these registers).
+    // Every caller (the block-value primitives) answers Success right after.
+    if (::pharo::mcfEnabled()) mcfActivateBlock();
+#endif
 }
 
 // ===== FRAME MANAGEMENT =====

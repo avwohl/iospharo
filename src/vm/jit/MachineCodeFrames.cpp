@@ -26,6 +26,7 @@
 namespace pharo {
 
 extern uint64_t g_stepNum;
+extern uint64_t g_objectMotionEpoch;   // ObjectMemory.cpp
 
 #if PHARO_JIT_ENABLED && (defined(__aarch64__) || defined(__arm64__))
 
@@ -299,6 +300,7 @@ void Interpreter::mcfVerifyCall(jit::JITState* st, Oop method, uint64_t where) {
 
 // PHARO_MCF_VERIFY: in a method frame the receiver is fp[0].
 void Interpreter::mcfVerifyReceiver(jit::JITState* st, const char* site) {
+    if (!st->closure.isNil()) return;   // block frame: fp[0] is the closure
     if (st->tempBase[-1].rawBits() == st->receiver.rawBits()) return;
     static int n = 0;
     if (++n > 10) return;
@@ -325,6 +327,29 @@ void Interpreter::mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, u
             (unsigned long long)want.rawBits(),
             (unsigned long long)memory_.trueObject().rawBits(),
             (unsigned long long)memory_.falseObject().rawBits());
+}
+
+// A block frame activateBlock or popFrame set up (closure_ set, method_ a
+// CompiledBlock).  Its interpreter registers are right while it runs in
+// machine code: T1 block code makes no native calls, and a native return
+// never lands in a block frame (the caller record must have a nil closure).
+bool Interpreter::mcfIsBlockFrame() const {
+    if (!GET_DEBUG_BOOL(PHARO_MCF_BLOCKS)) return false;
+    return !closure_.isNil()
+        && method_.isObject()
+        && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
+}
+
+void Interpreter::mcfActivateBlock() {
+    if (mcfActive_ || !jitInitialized_ || !mcfIsBlockFrame()) return;
+    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+    if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
+    if (instructionPointer_ != reinterpret_cast<const uint8_t*>(jm->bcStart())) return;
+    if (jm->stats) {
+        jitRuntime_.codeZone().touch(jm);
+        jm->stats->executionCount++;
+    }
+    mcfRun(jm, const_cast<uint8_t*>(jm->codeStart()));
 }
 
 bool Interpreter::mcfIsMethodFrame() const {
@@ -464,7 +489,7 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
         if (!method_.isObject() || method_.rawBits() < 0x10000) return;
         jm = jitRuntime_.methodMap().lookup(method_.rawBits());
         if (!jm || !jm->isExecutable()) return;
-        if (!mcfIsMethodFrame() || !mcfReceiverOk(jm, receiver_)) return;
+        if (!(mcfIsMethodFrame() || mcfIsBlockFrame()) || !mcfReceiverOk(jm, receiver_)) return;
         entry = mcfEntryFor(jm, instructionPointer_);
         if (!entry) return;
     }
@@ -560,10 +585,38 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
 
 void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
     if (!mcfState_) {
+        // Fields that never change for this interpreter.
         mcfState_ = new jit::JITState();
         std::memset(mcfState_, 0, sizeof(jit::JITState));
+        jit::JITState& c = *mcfState_;
+        c.memory = &memory_;
+        c.interp = this;
+        // No inline J2J: a null slice makes every J2J-capable site take its
+        // SendCached exit (nullptr >= nullptr).
+        c.j2jSaveCursor = nullptr;
+        c.j2jSaveLimit = nullptr;
+        c.j2jEntryCursor = nullptr;
+        c.j2jDepthInc = 0x0000000100000001ULL;
+        c.methodMapPtr = &jitRuntime_.methodMap();
+        c.yieldCountdown = 1000;
+        c.mcfFrames = savedFrames_.data();
+        c.mcfFrameDepthPtr = &frameDepth_;
+        c.mcfMatCtxPtr = &currentFrameMaterializedCtx_;
+        c.mcfActiveCtxPtr = &activeContext_;
+        c.mcfCheckCountdownPtr = &checkCountdown_;
+        c.mcfDepthLimit = StackOverflowLimit - 64;
+        c.mcfEpochPtr = &jit::g_mcCodeEpoch;
+        c.mcfCallCache = jit::g_mcfCallCache;
+        mcfConstEpoch_ = 0;
     }
     jit::JITState& st = *mcfState_;
+    if (mcfConstEpoch_ != g_objectMotionEpoch) {
+        // Oops that a GC or become could have moved.
+        st.trueOop = memory_.trueObject();
+        st.falseOop = memory_.falseObject();
+        st.mcfNil = memory_.nil();
+        mcfConstEpoch_ = g_objectMotionEpoch;
+    }
     mcfActive_ = true;
     for (;;) {
         Oop m = method_;
@@ -573,47 +626,23 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         st.closure = closure_;
         st.literals = mo->slots() + 1;
         st.tempBase = framePointer_ + 1;
-        st.memory = &memory_;
-        st.interp = this;
         st.ip = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(jm->bcStart()));
         st.jitMethod = jm;
         st.method = m;
         st.argCount = argCount_;
         st.exitReason = jit::ExitNone;
+        // GC roots while machine code runs: never leave stale oops here.
         st.returnValue = Oop::fromRawBits(0);
         st.cachedTarget = Oop::fromRawBits(0);
-        st.icDataPtr = nullptr;
-        st.sendArgCount = 0;
-        // No inline J2J: a null slice makes every J2J-capable site take its
-        // SendCached exit (nullptr >= nullptr).
-        st.j2jSaveCursor = nullptr;
-        st.j2jSaveLimit = nullptr;
-        st.j2jEntryCursor = nullptr;
-        st.j2jDepth = 0;
-        st.j2jTotalCalls = 0;
-        st.j2jEntryDepth = 0;
-        st.j2jDepthInc = 0x0000000100000001ULL;
-        st.methodMapPtr = &jitRuntime_.methodMap();
-        st.yieldCountdown = 1000;
-        st.trueOop = memory_.trueObject();
-        st.falseOop = memory_.falseObject();
+        // Old space can grow without a GC: refresh the bounds every entry.
         st.oldSpaceStart = memory_.oldSpaceStart();
         st.oldSpaceEnd = memory_.oldSpaceEnd();
         st.newSpaceStart = memory_.newSpaceStart();
         st.newSpaceEnd = memory_.newSpaceEnd();
-        st.prevState = currentJITState_;
-        st.gcIpOffset = 0;
-        st.mcfFrames = savedFrames_.data();
-        st.mcfFrameDepthPtr = &frameDepth_;
-        st.mcfMatCtxPtr = &currentFrameMaterializedCtx_;
-        st.mcfActiveCtxPtr = &activeContext_;
-        st.mcfCheckCountdownPtr = &checkCountdown_;
-        st.mcfDepthLimit = StackOverflowLimit - 64;
-        st.mcfNil = memory_.nil();
-        st.mcfEpochPtr = &jit::g_mcCodeEpoch;
-        st.mcfCallCache = jit::g_mcfCallCache;
         st.mcfBcEndOff = static_cast<uint64_t>(
             bytecodeEnd_ - reinterpret_cast<uint8_t*>(m.rawBits()));
+        st.prevState = currentJITState_;
+        st.gcIpOffset = 0;
         currentJITState_ = &st;
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyReceiver(&st, "entry");
@@ -643,13 +672,16 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         // another receiver, so "same method and fp" does not mean "same
         // frame" (the stale receiver_ then went into the next pushFrame).
         jm = st.jitMethod;
-        method_ = st.method;
-        homeMethod_ = st.method;
-        receiver_ = st.receiver;
-        framePointer_ = st.tempBase - 1;
-        argCount_ = st.argCount;
-        bytecodeEnd_ = reinterpret_cast<uint8_t*>(st.method.rawBits())
-            + st.mcfBcEndOff;
+        const bool blockFrame = !st.closure.isNil();
+        if (!blockFrame) {   // a block frame's registers are already right
+            method_ = st.method;
+            homeMethod_ = st.method;
+            receiver_ = st.receiver;
+            framePointer_ = st.tempBase - 1;
+            argCount_ = st.argCount;
+            bytecodeEnd_ = reinterpret_cast<uint8_t*>(st.method.rawBits())
+                + st.mcfBcEndOff;
+        }
         switch (st.exitReason) {
         case jit::ExitSend:
             // IC miss: the interpreter's lookup patches the site (the same
@@ -689,7 +721,11 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             // block frames), which is returnFromMethod's fast case.
             Oop value = st.returnValue;
             size_t depth = frameDepth_;
-            if (depth == 0 || savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX) {
+            // A block's local return (BlockReturnTop) is returnValue, like
+            // the interpreter's op_blockReturnTop; ^ in a block exits as a
+            // bytecode for the interpreter (non-local return).
+            if (depth == 0 || (!blockFrame
+                               && savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX)) {
                 returnFromMethodSlow(value);
                 mcfActive_ = false;
                 return;
@@ -712,7 +748,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             if (!method_.isObject() || method_.rawBits() < 0x10000) break;
             jm = jitRuntime_.methodMap().lookup(method_.rawBits());
             if (!jm || !jm->isExecutable()) break;
-            if (!mcfIsMethodFrame() || !mcfReceiverOk(jm, receiver_)) break;
+            if (!(mcfIsMethodFrame() || mcfIsBlockFrame()) || !mcfReceiverOk(jm, receiver_)) break;
             entry = mcfEntryFor(jm, instructionPointer_);
             if (!entry) break;
             continue;
@@ -746,6 +782,8 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame*) {}
 void Interpreter::mcfRun(jit::JITMethod*, void*) {}
 void Interpreter::mcfCensus(const jit::JITState&) {}
 void Interpreter::mcfInit() {}
+bool Interpreter::mcfIsBlockFrame() const { return false; }
+void Interpreter::mcfActivateBlock() {}
 bool Interpreter::mcfPrologueIsPrimitive(Oop) { return false; }
 int Interpreter::mcfCallPrimitive(jit::JITState*, int, int) { return 0; }
 void Interpreter::mcfNotePrimitiveTarget(Oop) {}

@@ -166,6 +166,7 @@ DEBUG_BOOL_RT(PHARO_T1_RESUME_INTERNAL_J2J)    // x86_64 opt-in: J2J pool slice 
 DEBUG_BOOL_RT(PHARO_T1_RESUME_EXTERNAL_J2J)    // arm64 opt-out: restore the null-slice external-J2J mode for tryResume-resumed methods (one C++ round trip per send)
 DEBUG_BOOL_RT(PHARO_MCF)                       // machine-code frames (docs/mc-frames-design.md): T1 compiles send-bearing methods, sends exit at the bytecode for the interpreter to do, and a return enters the caller's code from the memo in its SavedFrame.  Opt-in while under construction
 DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit (target compiled / primitive / not compiled / IC miss) and print the counts every 4M exits
+DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also run block frames in machine code (entry from activateBlock, resume after a return).  Off: without native block calls each block invocation pays an exit and an entry, and deeptraverser got slower (783 -> 823)
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
 DEBUG_BOOL(PHARO_MCF_NO_EQ)                    // MCF bisect: emit == and ~~ as sends again (no inline identity compare)

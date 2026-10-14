@@ -6467,7 +6467,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Machine-code frames (phase 2): native call to a compiled callee at an
             // IC hit; mcfCont (= endOfSend) is where the callee's return lands.
             asmjit::Label mcfCont = a.new_label();
+            // Not from block code: the record would need the closure and the
+            // home method, and the C++ side relies on block frames never
+            // being left by a native call.
             const bool mcfNative = ::pharo::mcfEnabled() && nArgs <= 15
+                && !g_emitIsBlock
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_CALL);
             // simStack B2c (design §5 RM-F1): when the send-result
             // family is on, EVERY inline-spec arrival at endOfSend is

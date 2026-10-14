@@ -1817,8 +1817,11 @@ public:
     // activation and return hooks must not nest a second mcfRun.
     bool mcfActive_ = false;
     jit::JITState* mcfState_ = nullptr;   // reused by every mcfRun
+    uint64_t mcfConstEpoch_ = 0;          // g_objectMotionEpoch when its oops were set
     // Is the current frame a method frame (not a block)?
     bool mcfIsMethodFrame() const;
+    bool mcfIsBlockFrame() const;
+    void mcfActivateBlock();
     // Run the compiled code of the frame just activated; false = not run.
     bool mcfActivate(Oop method);
     // After returnValue: continue the current frame in machine code, from
