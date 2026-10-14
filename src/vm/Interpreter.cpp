@@ -918,6 +918,16 @@ bool Interpreter::atInterruptPoint() const {
     uint8_t op = *ip;
     if (op >= S::Send0Base && op <= S::Send2Last) return true;
     if (op == S::ExtSend || op == S::ExtSuperSend) return true;
+    // Special-selector sends 16-31 (at:, size, next, value:, do:, new, ...)
+    // are real sends, as in Cog, except ==, class and ~~, which Cog
+    // answers inline.  Leaving them out deferred a checkpoint that came due
+    // at `s next` until the next literal send; machine code then refused
+    // every native call on the spent countdown and each refusal ran the
+    // send through the interpreter (a `s next` loop 4.8x slower).
+    if (op >= S::SpecialSendBase && op <= S::SpecialSendLast) {
+        const int idx = op - S::SpecialSendBase + 16;   // special selector index
+        return idx != 22 && idx != 23 && idx != 24;     // ==, class, ~~
+    }
     if (op == S::ExtendA || op == S::ExtendB) {
         bool negativeB = false;
         while (*ip == S::ExtendA || *ip == S::ExtendB) {
