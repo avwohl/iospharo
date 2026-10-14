@@ -21249,6 +21249,9 @@ Oop Interpreter::lazyOuterContext() {
     if (contextClassIndex_ == 0) {
         Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
         if (contextClass.isObject()) contextClassIndex_ = memory_.indexOfClass(contextClass);
+#if PHARO_JIT_ENABLED
+        jit::g_mcfContextClassIndex = contextClassIndex_;
+#endif
         if (contextClassIndex_ == 0) return materializeFrameStack();
     }
     context = memory_.allocateSlots(contextClassIndex_, contextSize, ObjectFormat::IndexableWithFixed);

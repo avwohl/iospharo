@@ -1289,6 +1289,7 @@ void Interpreter::mcfInit() {
     jit::g_mcfClearMemosHook = [] { g_mcfInterp->mcfClearMemos(); };
     if (::pharo::mcfEnabled()) jit::mcfBuildStubs();
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
+    jit::g_mcfContextClassIndex = contextClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),
     // a 128 KB memset the default mode must not pay.
     if (::pharo::mcfEnabled() && !jit::g_mcfCallCache) {

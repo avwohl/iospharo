@@ -9,6 +9,7 @@
 #include "winsock_compat.h"  // FIRST: winsock2 before any windows.h; net headers + BSD<->winsock shims
 #include "SocketPlugin.h"
 #include "../DebugSettings.hpp"
+#include "../DebugVars.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -264,6 +265,24 @@ static void ioMonitorLoop() {
         }
 
         int ready = poll(pfds.data(), (nfds_t)pfds.size(), 100 /*ms*/);
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SOCKET_LOOP_CENSUS), 0)) {
+            static uint64_t iters = 0, wakes = 0, sockReady = 0;
+            iters++;
+            if (ready > 0 && (pfds[0].revents & (POLLIN | POLLHUP | POLLERR))) wakes++;
+            for (size_t k = 1; k < pfds.size(); k++) if (pfds[k].revents) sockReady++;
+            if ((iters & 0xFFF) == 0) {
+                fprintf(stderr, "[SOCK-LOOP] iters=%llu wakes=%llu sockReady=%llu active=%zu watched=%zu\n",
+                        (unsigned long long)iters, (unsigned long long)wakes,
+                        (unsigned long long)sockReady, snapshot.size(), pfds.size() - 1);
+                for (size_t k = 1; k < pfds.size(); k++) {
+                    PrivateSocket* ps = snapshot[pfdIndex[k - 1]];
+                    fprintf(stderr, "[SOCK-LOOP]   fd=%d ev=%d rev=%d state=%d listen=%d rs=%d ws=%d eof=%d\n",
+                            pfds[k].fd, pfds[k].events, pfds[k].revents, (int)ps->sockState,
+                            (int)ps->listening, (int)ps->readSignaled, (int)ps->writeSignaled,
+                            (int)ps->eofDetected);
+                }
+            }
+        }
         if (ready <= 0) continue;
 
         // Drain wake channel

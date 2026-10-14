@@ -5730,7 +5730,163 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
     a.ldur(x1, ptr(x25, -8 * (nArgs + 1)));        // receiver
     if (nArgs == 0) {
         asmjit::Label p62 = a.new_label(), bytes = a.new_label();
+        asmjit::Label p171 = a.new_label(), p175 = a.new_label();
+        {
+            // Quick primitives 256-519 (^self, ^true/false/nil, ^-1..2,
+            // ^field): 10M C calls a lexicon run took pharo_mcf_prim.
+            asmjit::Label notQuick = a.new_label(), qConst = a.new_label();
+            asmjit::Label qField = a.new_label();
+            a.sub(w11, w10, asmjit::Imm(256));
+            a.cmp(w11, asmjit::Imm(263));
+            a.b_hi(notQuick);
+            a.cbnz(w11, qConst);
+            a.mov(x7, x1);                             // 256 ^self
+            a.b(result);
+            a.bind(qConst);
+            a.cmp(w11, asmjit::Imm(7));
+            a.b_hi(qField);
+            {
+                asmjit::Label notBool = a.new_label(), notNil = a.new_label();
+                a.cmp(w11, asmjit::Imm(2));
+                a.b_hi(notBool);
+                a.add(x9, x0, asmjit::Imm(OFF_TRUEOOP - 8));
+                a.ldr(x7, ptr(x9, x11, lsl(3)));       // 257 true, 258 false
+                a.b(result);
+                a.bind(notBool);
+                a.cmp(w11, asmjit::Imm(3));
+                a.b_ne(notNil);
+                a.ldr(x7, ptr(x0, OFF_MCF_NIL));       // 259 nil
+                a.b(result);
+                a.bind(notNil);
+                a.sub(x7, x11, asmjit::Imm(5));        // 260-263: -1, 0, 1, 2
+                a.lsl(x7, x7, asmjit::Imm(3));
+                a.orr(x7, x7, asmjit::Imm(1));
+                a.b(result);
+            }
+            a.bind(qField);                            // 264-519: field p - 264
+            a.sub(x11, x11, asmjit::Imm(8));
+            a.tst(x1, asmjit::Imm(7));
+            a.b_ne(slow);
+            a.ldr(x3, ptr(x1));
+            a.ubfx(x4, x3, asmjit::Imm(24), asmjit::Imm(5));   // format
+            a.cmp(x4, asmjit::Imm(5));
+            a.b_hi(slow);                              // not pointers
+            a.and_(w4, w3, asmjit::Imm(0x3FFFFF));
+            a.mov(x9, asmjit::Imm((uint64_t)&g_mcfContextClassIndex));
+            a.ldr(w9, ptr(x9));
+            a.cbz(w9, slow);
+            a.cmp(w4, w9);
+            a.b_eq(slow);                              // a Context: lazy, the C call syncs
+            slotCountTo(x8, x3);
+            a.cmp(x11, x8);
+            a.b_hs(slow);
+            a.add(x9, x1, x11, lsl(3));
+            a.ldr(x7, ptr(x9, 8));
+            a.b(result);
+            a.bind(notQuick);
+        }
+        // 70 basicNew of a fixed-size class: an eden allocation, as the
+        // IC path's tryPrimBasicNewZero.  A megamorphic `self basicNew`
+        // (Behavior>>new over many node classes) hits entries without the
+        // primitive kind, and each took the C call (4.5M a lexicon run).
+        {
+            asmjit::Label notNew = a.new_label(), szOk = a.new_label();
+            asmjit::Label fill = a.new_label(), filled = a.new_label();
+            a.cmp(w10, asmjit::Imm(70));
+            a.b_ne(notNew);
+            if (g_jitEdenFreeCell && g_jitSurvivorStartCell
+                    && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW)) {
+                a.tst(x1, asmjit::Imm(7));
+                a.b_ne(slow);
+                a.ldrb(w3, ptr(x1, 7));
+                a.cmp(w3, asmjit::Imm(3));
+                a.b_lo(slow);                          // not a class shape
+                a.ldr(x3, ptr(x1, 24));                // slot 2: the format word
+                a.and_(x4, x3, asmjit::Imm(7));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ne(slow);
+                a.asr(x3, x3, asmjit::Imm(3));
+                a.ubfx(x4, x3, asmjit::Imm(16), asmjit::Imm(5));
+                a.cmp(x4, asmjit::Imm(1));             // FixedSize only
+                a.b_ne(slow);
+                a.ubfx(x17, x3, asmjit::Imm(0), asmjit::Imm(16));   // instance size
+                a.cmp(x17, asmjit::Imm(254));
+                a.b_hi(slow);
+                a.ldr(x8, ptr(x1));
+                a.ubfx(x8, x8, asmjit::Imm(32), asmjit::Imm(22));   // hash = class index
+                a.cbz(x8, slow);
+                a.mov(x3, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+                a.ldr(x3, ptr(x3));
+                a.ldr(x3, ptr(x3, x8, lsl(3)));
+                a.cmp(x3, x1);
+                a.b_ne(slow);                          // not registered at its hash
+                a.lsl(x2, x17, asmjit::Imm(3));
+                a.add(x2, x2, asmjit::Imm(8));
+                a.cmp(x2, asmjit::Imm(15));
+                a.b_hi(szOk);
+                a.mov(x2, asmjit::Imm(16));
+                a.bind(szOk);
+                a.mov(x11, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+                a.ldr(x9, ptr(x11));
+                a.add(x12, x9, x2);
+                a.mov(x13, asmjit::Imm((uint64_t)g_jitSurvivorStartCell));
+                a.ldr(x13, ptr(x13));
+                a.cmp(x12, x13);
+                a.b_hi(slow);                          // eden full: the C call
+                a.lsl(x13, x17, asmjit::Imm(56));
+                a.orr(x13, x13, asmjit::Imm(1ULL << 24));
+                a.orr(x13, x13, x8);
+                a.str(x13, ptr(x9));                   // header, before the commit
+                a.ldr(x14, ptr(x0, OFF_MCF_NIL));
+                a.add(x15, x9, asmjit::Imm(8));
+                a.bind(fill);
+                a.cbz(x17, filled);
+                a.str(x14, ptr_post(x15, 8));
+                a.sub(x17, x17, asmjit::Imm(1));
+                a.b(fill);
+                a.bind(filled);
+                a.str(x12, ptr(x11));                  // commit edenFree_
+                a.mov(x7, x9);
+                a.b(result);
+            } else {
+                a.b(slow);
+            }
+            a.bind(notNew);
+        }
+        // 111 class of a heap object (an immediate's takes the C call).
+        a.cmp(w10, asmjit::Imm(111));
+        a.b_ne(p175);
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.ldr(w4, ptr(x1));
+        a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
+        a.cmp(w4, asmjit::Imm(ObjectHeader::ForwardedClassIndex));
+        a.b_eq(slow);
+        a.mov(x9, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.ldr(x9, ptr(x9));
+        a.ldr(x7, ptr(x9, x4, lsl(3)));
+        a.tst(x7, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.ldr(x9, ptr(x0, OFF_MCF_NIL));
+        a.cmp(x7, x9);
+        a.b_eq(slow);
+        a.cbz(x7, slow);
+        a.b(result);
+        // 175 behaviorHash: an assigned identity hash (0 takes the C call,
+        // which assigns one).
+        a.bind(p175);
+        a.cmp(w10, asmjit::Imm(175));
+        a.b_ne(p171);
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.ldr(x3, ptr(x1));
+        a.ubfx(x7, x3, asmjit::Imm(32), asmjit::Imm(22));
+        a.cbz(x7, slow);
+        a.lsl(x7, x7, asmjit::Imm(3));
+        a.orr(x7, x7, asmjit::Imm(1));
+        a.b(result);
         // 171 Character>>value / asInteger: Character -> SmallInteger.
+        a.bind(p171);
         a.cmp(w10, asmjit::Imm(171));
         a.b_ne(p62);
         a.and_(x2, x1, asmjit::Imm(7));
@@ -5942,6 +6098,18 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             a.orr(x7, x7, asmjit::Imm(1));         // SmallInteger tag
             a.b(result);
             a.bind(notWords);
+        }
+        {
+            // Formats 24-31, compiled code: at: answers any byte below the
+            // byte size as a SmallInteger, as primitiveAt does (scanner and
+            // decompiler reads: ~1.7M C calls a lexicon run).
+            asmjit::Label notCode = a.new_label();
+            a.cmp(x4, asmjit::Imm(24));
+            a.b_lo(notCode);
+            a.cmp(w10, asmjit::Imm(60));
+            a.b_ne(slow);
+            a.sub(x4, x4, asmjit::Imm(8));         // 16-23: the byte path below
+            a.bind(notCode);
         }
         a.sub(x4, x4, asmjit::Imm(16));
         a.cmp(x4, asmjit::Imm(7));
@@ -6874,10 +7042,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.bind(bail);
         // Counter: how often the SmI fast path bails (for any reason).
         if (op == 0x60 || op == 0x61) {
-            a.mov(x14, asmjit::Imm((uint64_t)&g_bcArithBail_hits));
-            a.ldr(x15, ptr(x14));
-            a.add(x15, x15, asmjit::Imm(1));
-            a.str(x15, ptr(x14));
+            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                a.mov(x14, asmjit::Imm((uint64_t)&g_bcArithBail_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+            }
         }
         // Inline SmallFloat64 arithmetic and comparisons, reached when the
         // SmallInteger path fails.  At least one operand is a SmallFloat64;
@@ -8388,16 +8558,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         asmjit::Label bailBV = a.new_label();
                         asmjit::Label hitBV  = a.new_label();
                         a.cbz(x9, bailBV);
-                        a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_hits));
-                        a.ldr(x15, ptr(x14));
-                        a.add(x15, x15, asmjit::Imm(1));
-                        a.str(x15, ptr(x14));
+                        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                            a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_hits));
+                            a.ldr(x15, ptr(x14));
+                            a.add(x15, x15, asmjit::Imm(1));
+                            a.str(x15, ptr(x14));
+                        }
                         a.b(hitBV);
                         a.bind(bailBV);
-                        a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_bails));
-                        a.ldr(x15, ptr(x14));
-                        a.add(x15, x15, asmjit::Imm(1));
-                        a.str(x15, ptr(x14));
+                        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                            a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_bails));
+                            a.ldr(x15, ptr(x14));
+                            a.add(x15, x15, asmjit::Imm(1));
+                            a.str(x15, ptr(x14));
+                        }
                         a.b(j2jBail);
                         a.bind(hitBV);
                     }
@@ -8493,11 +8667,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         asmjit::Label skipCount = a.new_label();
                         a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, canSkipJ2JSave)));   // canSkipJ2JSave byte
                         a.cbz(w14, skipCount);
-                        a.mov(x14, asmjit::Imm(
-                            (uint64_t)&g_canSkipJ2JSave_ic_hits));
-                        a.ldr(x15, ptr(x14));
-                        a.add(x15, x15, asmjit::Imm(1));
-                        a.str(x15, ptr(x14));
+                        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                            a.mov(x14, asmjit::Imm(
+                                (uint64_t)&g_canSkipJ2JSave_ic_hits));
+                            a.ldr(x15, ptr(x14));
+                            a.add(x15, x15, asmjit::Imm(1));
+                            a.str(x15, ptr(x14));
+                        }
                         a.bind(skipCount);
                     }
                 }
@@ -10068,11 +10244,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label bailSista = a.new_label();
                 a.cbz(x9, bailSista);
                 // Hit path: bump counter, continue at endOfSend.
-                a.mov(x14, asmjit::Imm(
-                    (uint64_t)&g_t1SistaDispatch_hits));
-                a.ldr(x15, ptr(x14));
-                a.add(x15, x15, asmjit::Imm(1));
-                a.str(x15, ptr(x14));
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                    a.mov(x14, asmjit::Imm(
+                        (uint64_t)&g_t1SistaDispatch_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                }
                 a.b(tosSendRes ? tosLrearm : endOfSend);
                 a.bind(bailSista);
                 a.b(dispatchCached);
@@ -10094,10 +10272,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === returnsLiteral helper (counter bump) ===
             auto bumpRetLitCounter = [&]() {
-                a.mov(x14, asmjit::Imm((uint64_t)&g_t1ReturnsLiteral_hits));
-                a.ldr(x15, ptr(x14));
-                a.add(x15, x15, asmjit::Imm(1));
-                a.str(x15, ptr(x14));
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_t1ReturnsLiteral_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                }
             };
             // === returnsLiteral (bit 58, nArgs==0 only) ===
             // jit-may22b: pattern `^ <literal>` where literal is one
@@ -10197,10 +10377,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Then drop args, store result at rcvr slot.
             if (nArgs >= 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN)) {
                 a.bind(tryTempReturn);
-                a.mov(x14, asmjit::Imm((uint64_t)&g_t1TempReturn_hits));
-                a.ldr(x15, ptr(x14));
-                a.add(x15, x15, asmjit::Imm(1));
-                a.str(x15, ptr(x14));
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_t1TempReturn_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                }
                 // x6 = temp index N (bits 48-52, 5 bits = up to 31).
                 a.lsr(x6, x7, asmjit::Imm(48));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
@@ -10321,10 +10503,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Overflow → bail to dispatchCached.
             if (nArgs == 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_INT_ARITH_RETURN)) {
                 a.bind(tryIntArithReturn);
-                a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntArithReturn_hits));
-                a.ldr(x15, ptr(x14));
-                a.add(x15, x15, asmjit::Imm(1));
-                a.str(x15, ptr(x14));
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntArithReturn_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                }
                 a.ldur(x3, ptr(x2, -8));     // x3 = arg0
                 // Strict per-operand SmI checks.  The old OR-combined
                 // check (`(x1|x3) & 7 == 1`) accepted (heap, SmI) pairs —
@@ -10623,10 +10807,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.stur(x9, ptr(x2, -16));      // result replaces class at sp[-2]
                     a.sub(x2, x2, asmjit::Imm(8)); // pop 1 net (popped class+size, pushed result)
                     emitStoreSp(a, x2);
-                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_hits));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_hits));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
                     a.b(tosSendRes ? tosLrearm : endOfSend);
                     a.bind(nbBail);
                     // fall through to the C++ jit_rt_basic_new_with_arg path
@@ -10650,17 +10836,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     asmjit::Label bailBN = a.new_label();
                     a.cbz(x9, bailBN);
                     // Hit path: bump counter, continue at endOfSend.
-                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_hits));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_hits));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
                     a.b(tosSendRes ? tosLrearm : endOfSend);
                     a.bind(bailBN);
                     // Bail path: bump counter, route to dispatchCached.
-                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_bails));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_bails));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
                     a.b(dispatchCached);
                 }
             }
@@ -10736,10 +10926,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.bind(inlFillDone);
                     a.str(x10, ptr(x11));          // commit edenFree_ = end
                     a.stur(x9, ptr(x2, -8));       // result replaces class at sp[-1]
-                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNewZero_hits));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNewZero_hits));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
                     a.b(tosSendRes ? tosLrearm : endOfSend);
                     a.bind(inlBail);
                     // fall through to the C++ jit_rt_basic_new path
@@ -10758,18 +10950,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 {
                     asmjit::Label bailBNZ = a.new_label();
                     a.cbz(x9, bailBNZ);
-                    a.mov(x14, asmjit::Imm(
-                        (uint64_t)&g_primBasicNewZero_hits));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(x14, asmjit::Imm(
+                            (uint64_t)&g_primBasicNewZero_hits));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
                     a.b(tosSendRes ? tosLrearm : endOfSend);
                     a.bind(bailBNZ);
-                    a.mov(x14, asmjit::Imm(
-                        (uint64_t)&g_primBasicNewZero_bails));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(x14, asmjit::Imm(
+                            (uint64_t)&g_primBasicNewZero_bails));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
                     a.b(dispatchCached);
                 }
             }
@@ -13120,10 +13316,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 uint8_t vecIdx  = bcReal[i + 2];
                 // Counter increment.
                 {
-                    a.mov(a64::x14, asmjit::Imm((uint64_t)&g_bcRemoteTemp_hits));
-                    a.ldr(a64::x15, a64::ptr(a64::x14));
-                    a.add(a64::x15, a64::x15, asmjit::Imm(1));
-                    a.str(a64::x15, a64::ptr(a64::x14));
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) {   // hit counter: 4 instructions on a hot path
+                        a.mov(a64::x14, asmjit::Imm((uint64_t)&g_bcRemoteTemp_hits));
+                        a.ldr(a64::x15, a64::ptr(a64::x14));
+                        a.add(a64::x15, a64::x15, asmjit::Imm(1));
+                        a.str(a64::x15, a64::ptr(a64::x14));
+                    }
                 }
                 if (op == SistaV1::PushTempAtInVec) {
                     asmjit::Label vecObj = a.new_label();
