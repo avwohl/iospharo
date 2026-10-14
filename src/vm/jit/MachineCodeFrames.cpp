@@ -142,6 +142,7 @@ static bool mcfPrimCallable(int p) {
     case 105:                                    // replaceFrom:to:with:startingAt:
     case 110: case 111:                          // == class
     case 148:                                    // shallowCopy
+    case 165: case 166:                          // integerAt: integerAt:put:
     case 169: case 170: case 171:                // ~~ and immediate conversions
     case 175:                                    // behavior hash
         return true;
@@ -529,6 +530,11 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
 }
 
 void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
+    // st->ip is the send (2 bytes: no prefix).  A primitive run below sees
+    // the ip after it, as in the interpreter; on failure T1 code exits at
+    // the send again.
+    st->ip += 2;
+    struct RestoreIp { jit::JITState* s; ~RestoreIp() { s->ip -= 2; } } restoreIp{st};
     const int litIdx = desc & 0xFF;
     const int nArgs = (desc >> 8) & 0xFF;
     const bool super = (desc >> 16) & 1;
@@ -583,8 +589,38 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
             }
         }
     }
-    // A primitive T1 code may run without leaving machine code.
+    // A quick primitive (256-519): a constant or a receiver field, as the
+    // interpreter answers it without an activation.
     Oop thdr = target.asObjectPtr()->slotAt(0);
+    if (target.asObjectPtr()->classIndex() == compiledMethodClassIndex_
+            && thdr.isSmallInteger() && ((thdr.asSmallInteger() >> 16) & 1)) {
+        const int qp = primitiveIndexOf(target);
+        if (qp >= 256 && qp <= 519 && nArgs == 0) {
+            Oop v;
+            bool ok = true;
+            switch (qp) {
+            case 256: v = rcv; break;
+            case 257: v = memory_.trueObject(); break;
+            case 258: v = memory_.falseObject(); break;
+            case 259: v = memory_.nil(); break;
+            case 260: case 261: case 262: case 263:
+                v = Oop::fromSmallInteger(qp - 261); break;
+            default: {
+                size_t idx = (size_t)(qp - 264);
+                ok = rcv.isObject() && rcv.rawBits() > 0x10000
+                     && !rcv.asObjectPtr()->isBytesObject()
+                     && idx < rcv.asObjectPtr()->slotCount()
+                     && !isContextObject(rcv);
+                if (ok) v = rcv.asObjectPtr()->slotAt(idx);
+            }
+            }
+            if (ok) {
+                st->sp[-1] = v;
+                return kMcfExtDone;
+            }
+        }
+    }
+    // A primitive T1 code may run without leaving machine code.
     if (target.asObjectPtr()->classIndex() == compiledMethodClassIndex_
             && thdr.isSmallInteger() && ((thdr.asSmallInteger() >> 16) & 1)) {
         const int p = primitiveIndexOf(target);

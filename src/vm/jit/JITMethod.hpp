@@ -239,7 +239,7 @@ struct McfCallEntry {
     uint64_t prim;         // != 0: call this primitive (pharo_mcf_prim); jm is null
 };
 static_assert(sizeof(McfCallEntry) == 32, "T1 indexes McfCallEntry with lsl #5");
-constexpr size_t kMcfCallCacheSize = 4096;   // T1 masks with kMcfCallCacheSize - 1
+constexpr size_t kMcfCallCacheSize = 16384;  // T1 masks with kMcfCallCacheSize - 2
 inline McfCallEntry* g_mcfCallCache = nullptr;
 // pharo_mcf_extsend answers, besides a call-cache entry or nullptr: the
 // send is done (result on the stack, sp in the state), or a primitive
