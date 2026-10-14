@@ -201,6 +201,7 @@ DEBUG_BOOL(PHARO_MCF_NO_LAZY_RET_POP)           // MCF: ReturnTop pops the value
 DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)        // MCF: a method answering one constant (^ $!, ^ true, ^ #sym) is called, not answered at the call site
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_NOTE)           // MCF: pharo_mcf_extsend does not record a primitive/constant target that has no call-cache entry
 DEBUG_BOOL(PHARO_MCF_NO_PRIM_FAIL_BODY)         // MCF: a primitive that fails in pharo_mcf_extsend exits to the interpreter instead of running the method body natively
+DEBUG_BOOL(PHARO_MCF_KEEP_BLOCK_SHAPES)          // MCF: keep the interpreter block-shape shortcuts in primitive 207 (they stop such blocks from compiling, so machine code exits at each call)
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read

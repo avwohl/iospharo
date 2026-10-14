@@ -4433,8 +4433,13 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     Oop shapeKeyBlock = closure.asObjectPtr()->slotAt(1);
     BlockShapeMemo& shapeMemo =
         g_blockShapeMemo[(shapeKeyBlock.rawBits() >> 3) & 4095];
+    // Machine-code frames skip the shortcuts: a block they serve never
+    // activates, so it never compiles, and every call from machine code
+    // then exits to the interpreter -- every value:value: of
+    // `inject: 0 into: [:a :b | a + b]` (29M exits, 3x Cog's time).
     const bool tryShapes = !(shapeMemo.block == shapeKeyBlock.rawBits()
-                             && shapeMemo.epoch == g_objectMotionEpoch);
+                             && shapeMemo.epoch == g_objectMotionEpoch)
+        && !(mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_KEEP_BLOCK_SHAPES));
     if (tryShapes) {
     if (argCount == 0) {
         Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
