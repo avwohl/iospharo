@@ -10558,11 +10558,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.and_(x6, x6, asmjit::Imm(0x1F));
                 a.cmp(x6, asmjit::Imm(2));           // fmt 2 = Array path
                 a.b_ne(tryByteAt);                   // else try byte path
-                // Slot count in header bits 56:63 (1 byte). If 255 = overflow.
-                a.lsr(x5, x4, asmjit::Imm(56));
-                a.and_(x5, x5, asmjit::Imm(0xFF));
-                a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCachedRestoreX5);     // overflow → slow
+                // Slot count in header bits 56:63 (1 byte); 255 = the
+                // overflow word before the header holds it (large arrays).
+                {
+                    asmjit::Label haveCount = a.new_label();
+                    a.lsr(x5, x4, asmjit::Imm(56));
+                    a.cmp(x5, asmjit::Imm(255));
+                    a.b_ne(haveCount);
+                    a.ldur(x5, ptr(x1, -8));
+                    a.lsl(x5, x5, asmjit::Imm(8));
+                    a.lsr(x5, x5, asmjit::Imm(8));
+                    a.bind(haveCount);
+                }
                 // Load idx (arg)
                 a.ldur(x3, ptr(x2, -8));
                 a.and_(x6, x3, asmjit::Imm(0x7));
