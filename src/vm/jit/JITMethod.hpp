@@ -260,6 +260,9 @@ struct McfFrameLayout {
              savedArgCount, homeFrameDepth, mcReturn, mcKeyIP, mcJM, mcEpoch;
 };
 inline McfFrameLayout g_mcfLayout{};
+// JITRuntime::megaCache() (MegaCacheEntry[MegaCacheSize]); T1 code probes it
+// at an inline-cache miss under machine-code frames.  Set by mcfInit.
+inline void* g_mcfMegaCache = nullptr;
 
 struct JITMethod {
     // --- Identity (link back to Smalltalk objects) ---

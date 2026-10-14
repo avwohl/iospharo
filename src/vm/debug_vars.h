@@ -168,6 +168,15 @@ DEBUG_BOOL_RT(PHARO_MCF)                       // machine-code frames (docs/mc-f
 DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit (target compiled / primitive / not compiled / IC miss) and print the counts every 4M exits
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
+DEBUG_BOOL(PHARO_MCF_NO_EQ)                    // MCF bisect: emit == and ~~ as sends again (no inline identity compare)
+DEBUG_BOOL(PHARO_MCF_NO_SPECS)                 // MCF bisect: no ^literal/^argN/^self dispatch on the non-J2J IC-hit path
+DEBUG_BOOL(PHARO_MCF_NO_POLY)                  // MCF bisect: probe 3 IC entries, no mega-cache step at a miss
+DEBUG_BOOL(PHARO_MCF_VERIFY)                   // MCF oracle: every memo used must point into the code of the frame's own method (brk #0xMCF in T1, stopVM in C++)
+DEBUG_STR(PHARO_MCF_WATCH_OOP)                 // MCF diag: log (with the frame chain) every at:put: / mcf primitive that stores this oop (hex)
+DEBUG_INT(PHARO_MCF_CALL_MOD, 0)               // MCF bisect: when > 0, only methods whose selector hash % MOD == PHARO_MCF_CALL_REM are called natively
+DEBUG_INT(PHARO_MCF_CALL_REM, 0)
+DEBUG_INT(PHARO_MCF_COMPILE_MOD, 0)            // MCF bisect: when > 0, mcfActivate/resume run only methods whose selector hash % MOD == PHARO_MCF_COMPILE_REM
+DEBUG_INT(PHARO_MCF_COMPILE_REM, 0)
 DEBUG_BOOL(PHARO_T1_NO_IC_POLY_WALK)        // opt-out: probe IC slot 0 only (default walks slots 0-2 since 2026-06-12; poly sites missed once per activation -> interp residency)
 DEBUG_BOOL(PHARO_T1_NO_RESUME_CONDJUMP)     // opt-out: refuse mid-method resume for cond-jump send methods (default ADVERTISE since 2026-06-12)
 DEBUG_BOOL(PHARO_T1_ADMIT_BAILMID_CALLEES)  // opt-IN (default EXCLUDE since 2026-06-19): admit canBailMidMethod callees at the send-bearing xmethod J2J gate. They were admitted 2026-06-12 for perf, but PolyMath proved that when such a callee bails mid-body via ExitArithOverflow (SmallInteger arith overflowing to Fraction/Float), the caller's pending J2J save is left un-popped -> operand stack +1 -> wrong index to at: -> SubscriptOutOfBounds (51 PolyMath + Fuel failures, see docs/jit-test-packages.md). Default now EXCLUDES them (correct, +5-31% on collection/recursion); set this to restore the faster-but-wrong admit. The perf-preserving fix (correctly pop the save on V2 ExitArithOverflow, cf. PHARO_T1_AO_MAT_J2J which is V1-only) is a follow-up.

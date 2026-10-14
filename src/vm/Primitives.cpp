@@ -2278,6 +2278,10 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
+#if PHARO_JIT_ENABLED
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_MCF_WATCH_OOP) != nullptr, 0))
+        mcfWatchStore("primitiveAtPut", 61, argCount);
+#endif
     Oop value = stackValue(0);
     Oop index = stackValue(1);
     Oop rcvr = stackValue(2);

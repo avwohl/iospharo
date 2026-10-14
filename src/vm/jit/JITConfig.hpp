@@ -124,6 +124,7 @@ struct MegaCacheEntry {
     uint64_t methodBits;     // Oop bits of the resolved CompiledMethod
     uint64_t jitEntry;       // JIT code entry address (0 = not compiled)
 };
+static_assert(sizeof(MegaCacheEntry) == 32, "T1 code indexes the mega cache with lsl #5");
 
 // ===== PAGE SIZE =====
 

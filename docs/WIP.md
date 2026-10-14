@@ -15,6 +15,24 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, 02:00) -- machine-code frames (opt-in `PHARO_MCF`)
+
+The user asked for the redesign of how compiled code calls and returns into
+interpreted methods.  Design, status, defects found and numbers:
+`docs/mc-frames-design.md`.  Commits `60de4731` (phases 1, 2a), `4266b544`
+(2b) and the phase-2c commit.  Not pushed yet: the mode is opt-in; push
+after sweep M3 (`$S/sweep-M3`, binary `$S/vm-M3`) compares clean with
+sweep U.  Default mode only gained a larger SavedFrame (printString 83.7 ->
+84.8; to recover once MCF is the default).
+
+With `PHARO_MCF=1`: printString 62.5 billion instructions (interpreter
+84.8), deeptraverser 783 (1004), `30 zzFib` 31 ms (62), 3M sends 13 ms
+(97).  Battery passes; the phase-2a sweep's new failures pass.
+
+Next: blocks in machine code (`value:` exits are the largest remaining
+bucket on deeptraverser), lexicon / myprecious workloads, then a default
+flip once a sweep and the package runs are clean.
+
 ## Right now (2026-10-13, 17:30) -- array loops into T1
 
 Under the arm64 resume-internal policy, at: / at:put: / size

@@ -21,12 +21,31 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdlib>
 
 namespace pharo {
 
 extern uint64_t g_stepNum;
 
 #if PHARO_JIT_ENABLED && (defined(__aarch64__) || defined(__arm64__))
+
+extern "C" void pharo_mcf_verify_eq(jit::JITState* st, uint64_t rcv, uint64_t arg,
+                                    uint64_t answer, uint64_t where) {
+    st->interp->mcfVerifyEq(st, Oop::fromRawBits(rcv), Oop::fromRawBits(arg),
+                            Oop::fromRawBits(answer), where);
+}
+
+extern "C" void pharo_mcf_verify_call(jit::JITState* st, uint64_t method, uint64_t where) {
+    st->interp->mcfVerifyCall(st, Oop::fromRawBits(method), where);
+}
+
+extern "C" void pharo_mcf_verify_ret(jit::JITState* st, uint64_t value, void* frame) {
+    st->interp->mcfVerifyRet(st, Oop::fromRawBits(value), frame);
+}
+
+extern "C" void pharo_mcf_verify_push(jit::JITState* st) {
+    st->interp->mcfVerifyPush(st);
+}
 
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
@@ -123,15 +142,12 @@ static bool mcfPrimCallable(int p) {
 // now the truth and machine code must exit without touching it.
 int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     stackPointer_ = st->sp;
-    if (st->method.rawBits() != method_.rawBits()
-            || st->tempBase - 1 != framePointer_) {
-        method_ = st->method;
-        homeMethod_ = st->method;
-        receiver_ = st->receiver;
-        framePointer_ = st->tempBase - 1;
-        argCount_ = st->argCount;
-        bytecodeEnd_ = reinterpret_cast<uint8_t*>(st->method.rawBits()) + st->mcfBcEndOff;
-    }
+    method_ = st->method;            // unconditionally: see mcfRun
+    homeMethod_ = st->method;
+    receiver_ = st->receiver;
+    framePointer_ = st->tempBase - 1;
+    argCount_ = st->argCount;
+    bytecodeEnd_ = reinterpret_cast<uint8_t*>(st->method.rawBits()) + st->mcfBcEndOff;
     instructionPointer_ = st->ip;   // bcStart: inside the method, for GC
     Oop* spBefore = stackPointer_;
     const size_t depth = frameDepth_;
@@ -140,6 +156,8 @@ int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     primitiveFailed_ = false;
     primFailCode_ = 0;
     newMethod_ = st->cachedTarget;
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_MCF_WATCH_OOP) != nullptr, 0))
+        mcfWatchStore("mcf-prim", primIndex, nArgs);
     PrimitiveResult r = executePrimitive(primIndex, nArgs);
     if (frameDepth_ != depth || processSwitchCount_ != switches) {
         st->sp = stackPointer_;
@@ -155,10 +173,173 @@ int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     return 0;
 }
 
+// PHARO_MCF_VERIFY: the memo about to be used must be the lookup it
+// stands for -- code of the frame's own method, entry for its ip.
+void Interpreter::mcfVerifyMemo(const SavedFrame& f, const char* site) {
+    auto* jm = static_cast<jit::JITMethod*>(f.mcJM);
+    const char* why = nullptr;
+    if (!jm || jm->compiledMethodOop != f.savedMethod.rawBits()) why = "jm-method";
+    else if (f.savedMethod.rawBits() != method_.rawBits()) why = "frame-method";
+    else {
+        void* want = mcfEntryFor(jm, f.savedIP);
+        if (want && want != f.mcReturn) {
+            // A native call memo points at the send's continuation, which
+            // may precede the next bytecode's label; accept any address
+            // inside the method's code.
+            const uint8_t* c = jm->codeStart();
+            const uint8_t* r = static_cast<const uint8_t*>(f.mcReturn);
+            if (r < c || r >= c + jm->bcToCodeTable()[jm->numBytecodes]) why = "entry";
+        }
+    }
+    if (!why) return;
+    fprintf(stderr, "[MCF-VERIFY] %s: bad memo (%s) method=#%s jmMethod=0x%llx "
+            "savedMethod=0x%llx savedIP=%p keyIP=%p fd=%zu\n", site, why,
+            memory_.selectorOf(f.savedMethod).c_str(),
+            jm ? (unsigned long long)jm->compiledMethodOop : 0ULL,
+            (unsigned long long)f.savedMethod.rawBits(),
+            (const void*)f.savedIP, (const void*)f.mcKeyIP, frameDepth_);
+    stopVM("MCF memo verification failed");
+}
+
+// PHARO_MCF_VERIFY: T1 just pushed a SavedFrame natively and set up the
+// callee view.  Check the record against what pushFrame would write.
+void Interpreter::mcfVerifyPush(jit::JITState* st) {
+    const SavedFrame& f = savedFrames_[frameDepth_ - 1];
+    const char* why = nullptr;
+    ObjectHeader* mo = f.savedMethod.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    const int nLits = (int)(hdr.asSmallInteger() & 0x7FFF);
+    const int nArgsCaller = (int)((hdr.asSmallInteger() >> 24) & 0xF);
+    const uint8_t* bc0 = mo->bytes() + (1 + nLits) * 8;
+    const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
+    if (f.savedIP <= bc0 || f.savedIP > end) why = "savedIP outside caller";
+    else if (f.savedBytecodeEnd != end) why = "savedBytecodeEnd";
+    else if (f.savedHomeMethod.rawBits() != f.savedMethod.rawBits()) why = "homeMethod";
+    else if (f.savedFP[0].rawBits() != f.savedReceiver.rawBits()) why = "receiver != fp[0]";
+    else if (f.savedArgCount != nArgsCaller) why = "argCount";
+    else if (!f.savedClosure.isNil()) why = "closure";
+    else if (f.mcKeyIP != f.savedIP) why = "keyIP";
+    else if (st->tempBase[-1].rawBits() != st->receiver.rawBits()) why = "callee receiver";
+    else if (st->tempBase - 1 <= f.savedFP) why = "callee fp below caller fp";
+    else {
+        Oop ch = st->method.asObjectPtr()->slotAt(0);
+        const int nArgsCallee = (int)((ch.asSmallInteger() >> 24) & 0xF);
+        const int nTemps = (int)((ch.asSmallInteger() >> 18) & 0x3F);
+        if (nArgsCallee != st->argCount) why = "callee argCount";
+        else if (st->sp != st->tempBase + nTemps) why = "callee sp";
+        else {
+            for (int t = nArgsCallee; t < nTemps; t++)
+                if (!st->tempBase[t].isNil()) { why = "temp not nil"; break; }
+        }
+    }
+    static int n = 0;
+    if (!why || ++n > 10) return;
+    fprintf(stderr, "[MCF-VERIFY-PUSH] %s: caller=#%s callee=#%s fd=%zu\n", why,
+            memory_.selectorOf(f.savedMethod).c_str(), memory_.selectorOf(st->method).c_str(),
+            frameDepth_);
+}
+
+// PHARO_MCF_WATCH_OOP: is a store of the watched oop about to happen?  The
+// value is the top of stack (at:put:, instVarAt:put:, ...).
+void Interpreter::mcfWatchStore(const char* site, int primIndex, int nArgs) {
+    static uint64_t watch = std::strtoull(GET_DEBUG_STR(PHARO_MCF_WATCH_OOP), nullptr, 16);
+    if (stackPointer_[-1].rawBits() != watch) return;
+    static int n = 0;
+    if (++n > 8) return;
+    Oop rcv = stackPointer_[-(nArgs + 1)];
+    fprintf(stderr, "[MCF-WATCH] %s prim=%d stores 0x%llx into 0x%llx(%s) in #%s; chain:", site,
+            primIndex, (unsigned long long)watch, (unsigned long long)rcv.rawBits(),
+            rcv.isObject() ? memory_.classNameOf(rcv).c_str() : "imm",
+            memory_.selectorOf(method_).c_str());
+    for (size_t d = frameDepth_; d-- > 0 && d + 8 > frameDepth_;)
+        fprintf(stderr, " <- #%s", memory_.selectorOf(savedFrames_[d].savedMethod).c_str());
+    fprintf(stderr, "\n");
+}
+
+// PHARO_MCF_VERIFY: a native return is about to pop `frame`, which must be
+// the top record, from a method frame whose receiver is fp[0].
+void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
+    (void)value;
+    mcfVerifyReceiver(st, "native-return");
+    if (framePtr != &savedFrames_[frameDepth_ - 1]) {
+        static int n = 0;
+        if (++n <= 10)
+            fprintf(stderr, "[MCF-VERIFY-RET] frame %p is not the top record %p (fd=%zu)\n",
+                    framePtr, (void*)&savedFrames_[frameDepth_ - 1], frameDepth_);
+    }
+}
+
+// PHARO_MCF_VERIFY: the IC entry T1 is about to call through must hold
+// the method a lookup finds for the send at `where`.
+void Interpreter::mcfVerifyCall(jit::JITState* st, Oop method, uint64_t where) {
+    const uint32_t bcOff = (uint32_t)(where & 0xFFFFFFFF);
+    const int nArgs = (int)(where >> 32);
+    auto* jm = st->jitMethod;
+    const uint8_t op = reinterpret_cast<const uint8_t*>(jm->bcStart())[bcOff];
+    Oop sel;
+    if (op >= jit::SistaV1::SpecialSendBase - 16 && op < jit::SistaV1::SpecialSendBase + 16) {
+        // 0x60-0x7F: special selectors 0..31 (arithmetic, then the rest).
+        Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+        sel = ss.asObjectPtr()->slotAt((op - (jit::SistaV1::SpecialSendBase - 16)) * 2);
+    } else {
+        sel = st->method.asObjectPtr()->slotAt(1 + (op & 0xF));
+    }
+    Oop rcv = st->sp[-(nArgs + 1)];
+    Oop found = lookupMethod(sel, memory_.classOf(rcv));
+    static int n = 0;
+    if (found.rawBits() == method.rawBits() || ++n > 20) return;
+    fprintf(stderr, "[MCF-VERIFY-CALL] in #%s bc=%u op=0x%02x sel=#%s rcv=%s cached=#%s(0x%llx) "
+            "lookup=#%s(0x%llx)\n", memory_.selectorOf(st->method).c_str(), bcOff, op,
+            memory_.oopToString(sel).c_str(),
+            rcv.isObject() ? memory_.classNameOf(rcv).c_str() : "imm",
+            memory_.selectorOf(method).c_str(), (unsigned long long)method.rawBits(),
+            found.isObject() ? memory_.selectorOf(found).c_str() : "?",
+            (unsigned long long)found.rawBits());
+}
+
+// PHARO_MCF_VERIFY: in a method frame the receiver is fp[0].
+void Interpreter::mcfVerifyReceiver(jit::JITState* st, const char* site) {
+    if (st->tempBase[-1].rawBits() == st->receiver.rawBits()) return;
+    static int n = 0;
+    if (++n > 10) return;
+    fprintf(stderr, "[MCF-VERIFY-RCV] %s: #%s state.receiver=0x%llx(%s) fp[0]=0x%llx(%s) fd=%zu\n",
+            site, memory_.selectorOf(st->method).c_str(),
+            (unsigned long long)st->receiver.rawBits(),
+            st->receiver.isObject() ? memory_.classNameOf(st->receiver).c_str() : "imm",
+            (unsigned long long)st->tempBase[-1].rawBits(),
+            st->tempBase[-1].isObject() ? memory_.classNameOf(st->tempBase[-1]).c_str() : "imm",
+            frameDepth_);
+}
+
+void Interpreter::mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where) {
+    mcfVerifyReceiver(st, "==");
+    const bool ne = (where >> 32) == jit::SistaV1::SpecialSendBase + 8;
+    const bool same = memory_.followForwarded(rcv).rawBits() == memory_.followForwarded(arg).rawBits();
+    Oop want = (same != ne) ? memory_.trueObject() : memory_.falseObject();
+    static int n = 0;
+    if (want.rawBits() == answer.rawBits() || ++n > 20) return;
+    fprintf(stderr, "[MCF-VERIFY-EQ] #%s bc=%u rcv=0x%llx arg=0x%llx answer=0x%llx want=0x%llx "
+            "true=0x%llx false=0x%llx\n", memory_.selectorOf(st->method).c_str(),
+            (unsigned)(where & 0xFFFFFFFF), (unsigned long long)rcv.rawBits(),
+            (unsigned long long)arg.rawBits(), (unsigned long long)answer.rawBits(),
+            (unsigned long long)want.rawBits(),
+            (unsigned long long)memory_.trueObject().rawBits(),
+            (unsigned long long)memory_.falseObject().rawBits());
+}
+
 bool Interpreter::mcfIsMethodFrame() const {
-    return closure_.isNil()
-        && method_.isObject()
-        && method_.asObjectPtr()->classIndex() == compiledMethodClassIndex_;
+    if (!(closure_.isNil()
+          && method_.isObject()
+          && method_.asObjectPtr()->classIndex() == compiledMethodClassIndex_))
+        return false;
+    if (__builtin_expect(GET_DEBUG_INT(PHARO_MCF_COMPILE_MOD) > 0, 0)) {
+        std::string sel = memory_.selectorOf(method_);
+        uint32_t h = 2166136261u;
+        for (char c : sel) h = (h ^ (uint8_t)c) * 16777619u;
+        return (int)(h % (uint32_t)GET_DEBUG_INT(PHARO_MCF_COMPILE_MOD))
+               == GET_DEBUG_INT(PHARO_MCF_COMPILE_REM);
+    }
+    return true;
 }
 
 bool Interpreter::mcfActivate(Oop method) {
@@ -176,7 +357,21 @@ bool Interpreter::mcfActivate(Oop method) {
     // safe for any receiver of the classes that reach it.
     {
         const bool hasPrim = (jm->methodHeader >> 16) & 1;
-        if ((!hasPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
+        bool bisectOk = true;
+        if (__builtin_expect(GET_DEBUG_INT(PHARO_MCF_CALL_MOD) > 0, 0)) {
+            std::string sel = memory_.selectorOf(method);
+            uint32_t h = 2166136261u;
+            for (char c : sel) h = (h ^ (uint8_t)c) * 16777619u;
+            bisectOk = (int)(h % (uint32_t)GET_DEBUG_INT(PHARO_MCF_CALL_MOD))
+                       == GET_DEBUG_INT(PHARO_MCF_CALL_REM);
+            if (bisectOk) {
+                static int nLog = 0;
+                if (++nLog <= 40)
+                    fprintf(stderr, "[MCF-CALL-BISECT] native-callable %s>>#%s\n",
+                            classNameOfMethod(method).c_str(), sel.c_str());
+            }
+        }
+        if (bisectOk && (!hasPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
                 && (!jm->hasRecvFieldAccess || receiver_.isObject())) {
             jit::McfCallEntry& e = jit::g_mcfCallCache[
                 (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
@@ -187,7 +382,16 @@ bool Interpreter::mcfActivate(Oop method) {
                 bytecodeEnd_ - reinterpret_cast<uint8_t*>(method.rawBits()));
         }
     }
-    mcfRun(jm, const_cast<uint8_t*>(jm->codeStart()));
+    // activateMethod has already run (and failed) the primitive and stored
+    // its error code, and set ip past both: enter at that bytecode, not at
+    // codeStart, whose prologue would run the primitive again and whose
+    // error-code store would pop a value that is not on the stack.
+    void* entry = const_cast<uint8_t*>(jm->codeStart());
+    if (instructionPointer_ != reinterpret_cast<const uint8_t*>(jm->bcStart())) {
+        entry = mcfEntryFor(jm, instructionPointer_);
+        if (!entry) return false;
+    }
+    mcfRun(jm, entry);
     return true;
 }
 
@@ -238,6 +442,7 @@ void Interpreter::mcfInit() {
     L.mcJM = offsetof(SavedFrame, mcJM);
     L.mcEpoch = offsetof(SavedFrame, mcEpoch);
 #pragma GCC diagnostic pop
+    jit::g_mcfMegaCache = jitRuntime_.megaCache();
     if (!jit::g_mcfCallCache) {
         jit::g_mcfCallCache = new jit::McfCallEntry[jit::kMcfCallCacheSize];
         jit::mcfClearCallCache();
@@ -251,6 +456,8 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
     if (popped && popped->mcReturn
             && popped->mcKeyIP == instructionPointer_
             && popped->mcEpoch == jit::g_mcCodeEpoch) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
+            mcfVerifyMemo(*popped, "resume-after-return");
         jm = static_cast<jit::JITMethod*>(popped->mcJM);
         entry = popped->mcReturn;
     } else {
@@ -270,6 +477,27 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
     ++n;
     if (st.exitReason == jit::ExitSend) {
         ++miss;
+        static std::unordered_map<std::string, uint64_t> byMiss;
+        Oop rcv = st.sp[-(st.sendArgCount + 1)];
+        int filled = 0;
+        std::string sel = "?";
+        if (st.icDataPtr) {
+            for (int e = 0; e < 6; e++) if (st.icDataPtr[e * 3]) filled++;
+            Oop so = Oop::fromRawBits(st.icDataPtr[18]);
+            if (so.isObject() && so.rawBits() > 0x10000) sel = memory_.oopToString(so);
+        }
+        byMiss["#" + sel + " rcv=" + (rcv.isObject() ? memory_.classNameOf(rcv)
+               : rcv.isSmallInteger() ? std::string("SmI") : std::string("imm"))
+               + " filled=" + std::to_string(filled) + " op=" + std::to_string(*st.ip)]++;
+        if ((miss & 0x3FFFFF) == 0) {
+            std::vector<std::pair<uint64_t, std::string>> v;
+            for (auto& kv : byMiss) v.push_back({kv.second, kv.first});
+            std::sort(v.rbegin(), v.rend());
+            for (size_t k = 0; k < v.size() && k < 12; k++)
+                fprintf(stderr, "[MCF-CENSUS] miss %llu %s\n",
+                        (unsigned long long)v[k].first, v[k].second.c_str());
+            byMiss.clear();
+        }
     } else {
         Oop t = st.cachedTarget;
         if (!t.isObject() || t.rawBits() < 0x10000
@@ -387,12 +615,19 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         st.mcfBcEndOff = static_cast<uint64_t>(
             bytecodeEnd_ - reinterpret_cast<uint8_t*>(m.rawBits()));
         currentJITState_ = &st;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
+            mcfVerifyReceiver(&st, "entry");
         checkCountdown_ -= jm->numBytecodes;
         g_stepNum += jm->numBytecodes;
 
         pharo_jit_osr_resume(&st, entry);
 
         currentJITState_ = st.prevState;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)
+                && st.exitReason != jit::ExitDeopt) {
+            mcfVerifyReceiver(&st, "exit");
+            // Entry check: the interpreter's registers fed st.receiver.
+        }
         if (st.exitReason == jit::ExitDeopt) {
             // pharo_mcf_prim answered 2: a primitive pushed a frame or
             // switched process, and the interpreter's state is the truth.
@@ -403,17 +638,18 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         // Native calls and returns (phase 2) may have moved to another
         // frame: the interpreter's frame registers follow the state view.
         // Only method frames run here, so closure_ stays nil.
+        // Unconditionally: a native return followed by a native call can
+        // leave a NEW activation of the same method at the same fp, with
+        // another receiver, so "same method and fp" does not mean "same
+        // frame" (the stale receiver_ then went into the next pushFrame).
         jm = st.jitMethod;
-        if (st.method.rawBits() != method_.rawBits()
-                || st.tempBase - 1 != framePointer_) {
-            method_ = st.method;
-            homeMethod_ = st.method;
-            receiver_ = st.receiver;
-            framePointer_ = st.tempBase - 1;
-            argCount_ = st.argCount;
-            bytecodeEnd_ = reinterpret_cast<uint8_t*>(st.method.rawBits())
-                + st.mcfBcEndOff;
-        }
+        method_ = st.method;
+        homeMethod_ = st.method;
+        receiver_ = st.receiver;
+        framePointer_ = st.tempBase - 1;
+        argCount_ = st.argCount;
+        bytecodeEnd_ = reinterpret_cast<uint8_t*>(st.method.rawBits())
+            + st.mcfBcEndOff;
         switch (st.exitReason) {
         case jit::ExitSend:
             // IC miss: the interpreter's lookup patches the site (the same
@@ -424,6 +660,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                         pendingICPatch_ = st.icDataPtr;
                         pendingICSendArgCount_ = st.sendArgCount;
                         pendingICOwnerMethod_ = method_;
+                        pendingICOwnerIP_ = mcfPastSend(st.ip);
                         break;
                     }
                 }
@@ -466,6 +703,8 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             if (popped.mcReturn
                     && popped.mcKeyIP == instructionPointer_
                     && popped.mcEpoch == jit::g_mcCodeEpoch) {
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
+                    mcfVerifyMemo(popped, "mcfRun-return");
                 jm = static_cast<jit::JITMethod*>(popped.mcJM);
                 entry = popped.mcReturn;
                 continue;
@@ -510,6 +749,13 @@ void Interpreter::mcfInit() {}
 bool Interpreter::mcfPrologueIsPrimitive(Oop) { return false; }
 int Interpreter::mcfCallPrimitive(jit::JITState*, int, int) { return 0; }
 void Interpreter::mcfNotePrimitiveTarget(Oop) {}
+void Interpreter::mcfVerifyMemo(const SavedFrame&, const char*) {}
+void Interpreter::mcfVerifyEq(jit::JITState*, Oop, Oop, Oop, uint64_t) {}
+void Interpreter::mcfVerifyCall(jit::JITState*, Oop, uint64_t) {}
+void Interpreter::mcfVerifyRet(jit::JITState*, Oop, void*) {}
+void Interpreter::mcfVerifyPush(jit::JITState*) {}
+void Interpreter::mcfWatchStore(const char*, int, int) {}
+void Interpreter::mcfVerifyReceiver(jit::JITState*, const char*) {}
 #endif  // PHARO_JIT_ENABLED && arm64
 
 }  // namespace pharo

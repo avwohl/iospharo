@@ -1806,6 +1806,9 @@ public:
     // machine code leaves a send to the interpreter: the code address that
     // continues the caller after the send, keyed by the ip after the send.
     // pushFrame moves it into the callee's SavedFrame.
+    // The ip after the send whose IC mcfRun left pending (pendingICPatch_);
+    // patchJITICAfterSendSlow applies the patch only to that send.
+    const uint8_t* pendingICOwnerIP_ = nullptr;
     void* pendingMcReturn_ = nullptr;
     const uint8_t* pendingMcKeyIP_ = nullptr;
     void* pendingMcJM_ = nullptr;
@@ -1826,7 +1829,14 @@ public:
     void mcfInit();
     bool mcfPrologueIsPrimitive(Oop method);
     void mcfNotePrimitiveTarget(Oop method);
+    void mcfVerifyMemo(const SavedFrame& f, const char* site);
     int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
+    void mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where);
+    void mcfVerifyCall(jit::JITState* st, Oop method, uint64_t where);
+    void mcfVerifyRet(jit::JITState* st, Oop value, void* frame);
+    void mcfVerifyPush(jit::JITState* st);
+    void mcfWatchStore(const char* site, int primIndex, int nArgs);
+    void mcfVerifyReceiver(jit::JITState* st, const char* site);
 
     // B-1: depth of nested jitSistaCallSend frames.  When > 0, an outer
     // helper is driving step(), and nested sends (recursive Sista

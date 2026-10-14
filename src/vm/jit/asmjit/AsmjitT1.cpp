@@ -52,6 +52,10 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
 // Machine-code frames: run a primitive from T1 code (MachineCodeFrames.cpp).
 extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
+extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
+extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
+extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
+extern "C" void pharo_mcf_verify_eq(pharo::jit::JITState* st, uint64_t rcv, uint64_t arg, uint64_t answer, uint64_t where);
 extern "C" void jit_rt_xm_fire_trace(uint64_t statep,
                                      uint64_t calleeEntryAddr, uint64_t recvBits);
 extern "C" void jit_rt_j2j_dbg(uint64_t statep, uint64_t kind, uint64_t id);
@@ -4954,6 +4958,32 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.ldr(x8, ptr(x7, L.savedClosure));
     a.cmp(x8, x6);
     a.b_ne(fall);                             // caller is a block frame
+    if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
+        // The memo's code must belong to the caller's method.
+        asmjit::Label ok = a.new_label();
+        a.ldr(x8, ptr(x7, L.mcJM));
+        a.ldr(x8, ptr(x8, (int)offsetof(JITMethod, compiledMethodOop)));
+        a.ldr(x10, ptr(x7, L.savedMethod));
+        a.cmp(x8, x10);
+        a.b_eq(ok);
+        a.brk(0x3CF);
+        a.bind(ok);
+    }
+    if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
+        a.stp(x0, x30, ptr_pre(sp, -96));
+        a.stp(x1, x2, ptr(sp, 16));
+        a.stp(x3, x4, ptr(sp, 32));
+        a.stp(x5, x6, ptr(sp, 48));
+        a.stp(x7, x9, ptr(sp, 64));
+        a.mov(x2, x7);                        // the popped frame record
+        a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_ret));
+        a.blr(x16);
+        a.ldp(x7, x9, ptr(sp, 64));
+        a.ldp(x5, x6, ptr(sp, 48));
+        a.ldp(x3, x4, ptr(sp, 32));
+        a.ldp(x1, x2, ptr(sp, 16));
+        a.ldp(x0, x30, ptr_post(sp, 96));
+    }
     // Commit: popFrame.
     a.str(x3, ptr(x2));
     a.ldr(x8, ptr(x7, L.materializedContext));
@@ -6241,6 +6271,63 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ret(x30);
         return true;
     }
+    // Machine-code frames: == and ~~ (special selectors 22 and 24) compare
+    // identity without a lookup -- Cog's bytecodePrimIdenticalSistaV1 /
+    // bytecodePrimNotIdenticalSistaV1, and the interpreter's 0x76 / 0x78.
+    // A forwarded operand (class index ForwardedClassIndex) exits at this
+    // bytecode, and the interpreter follows the forwarder.
+    if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ)
+            && (op == SistaV1::SpecialSendBase + 6 || op == SistaV1::SpecialSendBase + 8)) {
+        using namespace asmjit::a64;
+        asmjit::Label slow = a.new_label();
+        asmjit::Label done = a.new_label();
+        emitLoadSp(a, x2);
+        a.ldur(x1, ptr(x2, -16));                    // receiver
+        a.ldur(x3, ptr(x2, -8));                     // argument
+        for (const Gp& r : {x1, x3}) {
+            asmjit::Label imm = a.new_label();
+            a.tst(r, asmjit::Imm(0x7));
+            a.b_ne(imm);
+            a.ldr(w4, ptr(r));
+            a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
+            a.cmp(w4, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+            a.b_eq(slow);
+            a.bind(imm);
+        }
+        a.ldp(x6, x7, ptr(x0, OFF_TRUEOOP));         // true, false (adjacent)
+        a.cmp(x1, x3);
+        a.csel(x1, x6, x7, op == SistaV1::SpecialSendBase + 6
+                               ? CondCode::kEQ : CondCode::kNE);
+        if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
+            // Oracle: recompute == in C++ (following forwarders).
+            a.stp(x0, x30, ptr_pre(sp, -32));
+            a.stp(x1, x2, ptr(sp, 16));
+            a.ldur(x2, ptr(x2, -8));                 // arg
+            a.mov(x3, x1);                           // our answer
+            a.ldr(x1, ptr(sp, 24));
+            a.ldur(x1, ptr(x1, -16));                // receiver
+            a.mov(x4, asmjit::Imm((uint64_t)((bcOffsetFromMethObj - g_bcStartDelta)
+                                             | ((uint64_t)op << 32))));
+            a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_eq));
+            a.blr(x16);
+            a.ldp(x1, x2, ptr(sp, 16));
+            a.ldp(x0, x30, ptr_post(sp, 32));
+        }
+        a.stur(x1, ptr(x2, -16));
+        a.sub(x2, x2, asmjit::Imm(8));
+        emitStoreSp(a, x2);
+        a.b(done);
+        a.bind(slow);
+        a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));  // "execute this bytecode"
+        a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
+        a.ret(x30);
+        a.bind(done);
+        return true;
+    }
     // ARM64 send emit: see x86 version for IC probe rationale + layout.
     if (isPhase4SendOp(op)) {
         using namespace asmjit::a64;
@@ -6590,7 +6677,36 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Slot 2
                 a.ldr(x6, ptr(x5, 48));
                 a.cmp(x4, x6);
+                if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_POLY)) {
+                    // Machine-code frames: every exit costs a full
+                    // interpreter send, so probe all IC_ENTRIES_PER_SITE
+                    // entries, not three.
+                    static_assert(IC_ENTRIES_PER_SITE == 6, "probe walks 6 entries");
+                    asmjit::Label slot2Hit = a.new_label();
+                    asmjit::Label slot3Hit = a.new_label();
+                    asmjit::Label slot4Hit = a.new_label();
+                    a.b_eq(slot2Hit);
+                    a.ldr(x6, ptr(x5, 72));
+                    a.cmp(x4, x6);
+                    a.b_eq(slot3Hit);
+                    a.ldr(x6, ptr(x5, 96));
+                    a.cmp(x4, x6);
+                    a.b_eq(slot4Hit);
+                    a.ldr(x6, ptr(x5, 120));
+                    a.cmp(x4, x6);
+                    a.b_ne(miss);
+                    a.add(x5, x5, asmjit::Imm(120));
+                    a.b(probeDone);
+                    a.bind(slot4Hit);
+                    a.add(x5, x5, asmjit::Imm(96));
+                    a.b(probeDone);
+                    a.bind(slot3Hit);
+                    a.add(x5, x5, asmjit::Imm(72));
+                    a.b(probeDone);
+                    a.bind(slot2Hit);
+                } else {
                 a.b_ne(miss);
+                }
                 a.add(x5, x5, asmjit::Imm(48));
                 a.b(probeDone);
                 a.bind(slot1Hit);
@@ -8348,7 +8464,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // specializations the inline-J2J path dispatches before its
                 // heap/SmI split -- `^ literal`, `^ argN`, `^ self` -- which
                 // matter most for immediate receivers (SmallInteger>>asInteger).
-                if (::pharo::mcfEnabled()) {
+                if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_SPECS)) {
                     if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_RETURNS_LITERAL))
                         a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
                     if (nArgs >= 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN))
@@ -9939,6 +10055,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldp(x8, x9, ptr(x7));                      // key, callee JM
                 a.cmp(x8, x6);
                 a.b_ne(mcfSlow);
+                if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
+                    // Oracle: the cached method must be what a lookup of
+                    // this send's selector in the receiver's class finds.
+                    a.stp(x0, x30, ptr_pre(sp, -64));
+                    a.stp(x5, x6, ptr(sp, 16));
+                    a.stp(x7, x8, ptr(sp, 32));
+                    a.str(x9, ptr(sp, 48));
+                    emitSyncSpToState(a);
+                    a.mov(x1, x6);
+                    a.mov(x2, asmjit::Imm((uint64_t)((bcOffsetFromMethObj - g_bcStartDelta)
+                                                     | ((uint64_t)nArgs << 32))));
+                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_call));
+                    a.blr(x16);
+                    a.ldr(x9, ptr(sp, 48));
+                    a.ldp(x7, x8, ptr(sp, 32));
+                    a.ldp(x5, x6, ptr(sp, 16));
+                    a.ldp(x0, x30, ptr_post(sp, 64));
+                }
                 asmjit::Label mcfPrim = a.new_label();
                 a.ldr(x10, ptr(x7, 24));                     // entry.prim
                 a.cbnz(x10, mcfPrim);
@@ -9988,7 +10122,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x13, x13, asmjit::Imm(8));
                 a.str(x13, ptr(x12, L.savedFP));
                 a.str(xzr, ptr(x12, L.materializedRetSlot));
-                a.ldr(w13, ptr(x0, OFF_ARGCOUNT));
+                // The caller's own argument count (a constant here): the
+                // interpreter's argCount_ is reused by primitives and can
+                // be stale.
+                a.mov(w13, asmjit::Imm(callerArgCount));
                 a.str(w13, ptr(x12, L.savedArgCount));
                 a.movn(x13, asmjit::Imm(0));                 // SIZE_MAX: not a block
                 a.str(x13, ptr(x12, L.homeFrameDepth));
@@ -10026,6 +10163,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_gt(mcfTInit);
                 a.bind(mcfTDone);
                 emitStoreSp(a, x13);
+                if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
+                    // Oracle: the record just pushed must match pushFrame.
+                    a.stp(x0, x30, ptr_pre(sp, -32));
+                    a.str(x9, ptr(sp, 16));
+                    emitSyncSpToState(a);
+                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_push));
+                    a.blr(x16);
+                    a.ldr(x9, ptr(sp, 16));
+                    a.ldp(x0, x30, ptr_post(sp, 32));
+                    emitLoadSp(a, x13);
+                }
                 a.ldur(x26, ptr(x13, -8));                   // TOS mirror
                 a.add(x15, x9, asmjit::Imm((int)sizeof(JITMethod)));
                 a.br(x15);
@@ -10103,6 +10251,52 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === Miss === (emits deferred state setup)
             a.bind(miss);
+            if (::pharo::mcfEnabled() && g_mcfMegaCache && !GET_DEBUG_BOOL(PHARO_MCF_NO_POLY)) {
+                // Machine-code frames: a megamorphic site misses all six
+                // entries every time.  Look the (selector, class) pair up
+                // in the mega cache the interpreter fills (old oops only,
+                // cleared on full GC), install the method in entry 5 and
+                // dispatch it as a hit.  x4 = class key, x5 = site base.
+                asmjit::Label noMega = a.new_label();
+                asmjit::Label megaHit = a.new_label();
+                asmjit::Label megaTry2 = a.new_label();
+                // Only a FULL site (entries fill in order, so entry 5 set):
+                // a site with room takes the normal miss, whose interpreter
+                // patch fills the next entry WITH its inline-spec extras.
+                a.ldr(x9, ptr(x5, 120));
+                a.cbz(x9, noMega);
+                a.ldr(x6, ptr(x5, (int)(IC_SELBITS_SLOT * 8)));   // site selector
+                a.cbz(x6, noMega);
+                a.mov(x7, asmjit::Imm((uint64_t)g_mcfMegaCache));
+                a.eor(x8, x6, x4);
+                a.and_(x8, x8, asmjit::Imm(MegaCacheSize - 1));
+                a.add(x8, x7, x8, asmjit::a64::lsl(5));
+                a.ldp(x9, x10, ptr(x8));
+                a.cmp(x9, x6);
+                a.b_ne(megaTry2);
+                a.cmp(x10, x4);
+                a.b_eq(megaHit);
+                a.bind(megaTry2);                                // JITRuntime::megaCacheAdd h2
+                a.lsr(x8, x6, asmjit::Imm(3));
+                a.eor(x8, x8, x4, asmjit::a64::lsl(2));
+                a.eor(x8, x8, x4);
+                a.and_(x8, x8, asmjit::Imm(MegaCacheSize - 1));
+                a.add(x8, x7, x8, asmjit::a64::lsl(5));
+                a.ldp(x9, x10, ptr(x8));
+                a.cmp(x9, x6);
+                a.b_ne(noMega);
+                a.cmp(x10, x4);
+                a.b_ne(noMega);
+                a.bind(megaHit);
+                a.ldr(x11, ptr(x8, 16));                         // methodBits
+                a.cbz(x11, noMega);
+                a.str(x4, ptr(x5, 120));
+                a.str(x11, ptr(x5, 128));
+                a.str(xzr, ptr(x5, 136));
+                a.add(x5, x5, asmjit::Imm(120));
+                a.b(dispatchCached);
+                a.bind(noMega);
+            }
             a.str(x5, ptr(x0, OFF_ICDATAPTR));
             a.mov(w3, asmjit::Imm(nArgs));
             a.str(w3, ptr(x0, OFF_SENDARGCOUNT));

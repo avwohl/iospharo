@@ -205,6 +205,50 @@ went.  Three changes:
 | printString (instructions) | 84.8 billion | 70.7 billion |
 | deeptraverser (instructions) | 1004 billion | 941 billion |
 
-The battery passes.  On deeptraverser, 39% of the remaining exits are
-inline-cache misses: sites with more than three receiver classes, which
-the T1 probe does not cover.  Blocks still run in the interpreter.
+The battery passes.
+
+**Phase 2c (2026-10-13): `==` inline, six-entry probe, and three defects
+fixed.**
+
+- The deeptraverser census showed that most "inline-cache misses" were not
+  polymorphic sites: they were the `==` bytecode (0x76), which T1 emitted
+  as a send whose cache is never filled, so every `==` left machine code.
+  T1 now compares identity inline for `==` and `~~` (0x78), as Cog's
+  `bytecodePrimIdenticalSistaV1` does; a forwarded operand exits at the
+  bytecode.  The interpreter's slow dispatcher now does the same (its fast
+  dispatcher already did).
+- The IC probe walks all six entries, and a full site probes the mega
+  cache before it exits.
+- Defect 1: `mcfActivate` entered a primitive method at `codeStart`, after
+  `activateMethod` had already run and failed the primitive and stored its
+  error code.  It now enters at the interpreter's ip.
+- Defect 2: a pending IC patch that `mcfRun` left for the interpreter
+  could land on a different send when the interpreter did the exited
+  bytecode without a send (`==`, block `value:`, SmallInteger arithmetic).
+  The patch is now keyed to the ip after the exited send
+  (`pendingICOwnerIP_`).
+- Defect 3 (the one behind the sweep regressions): at an exit, `mcfRun`
+  resynced the interpreter's frame registers only when the method or the
+  frame pointer had changed.  A native return followed by a native call
+  can leave a new activation of the same method at the same frame
+  pointer with another receiver (`new` sent to two classes).  `receiver_`
+  stayed stale, the next `pushFrame` saved it, and later code ran against
+  the wrong object: `WeakSet>>growTo:` filled a symbol table's new array
+  with another set's `flag`, and startup failed with a DNU of `asSymbol`.
+  The resync is now unconditional.  Found with the diagnostic oracles
+  under `PHARO_MCF_VERIFY` (memo target, call target, `==` result, pushed
+  frame, receiver = fp[0]) and the bisect knobs `PHARO_MCF_CALL_MOD/REM`
+  and `PHARO_MCF_WATCH_OOP`.
+
+| Benchmark | Interpreter | `PHARO_MCF=1` |
+|---|---|---|
+| `30 zzFib` | 62 ms | 31 ms |
+| 3M sends of `zzB:` | 97 ms | 13 ms |
+| 300K `inject:into:` | 132 ms | 131 ms |
+| printString (instructions) | 84.8 billion | 62.5 billion |
+| deeptraverser (instructions) | 1004 billion | 783 billion |
+
+The battery passes, and the classes that failed in the phase-2a sweep
+(MetacelloVersionNumberTestCase, ZnChunkedStreamTest, the three Spec file
+dialog presenter tests, OCCompilerSyntaxErrorNotifyingTest) pass.  Blocks
+still run in the interpreter.

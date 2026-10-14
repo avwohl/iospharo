@@ -7871,9 +7871,18 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         commonSend(10);
         break;
     }
+    // == and ~~ compare identity without a lookup, following forwarders
+    // (Cog: bytecodePrimIdenticalSistaV1 / bytecodePrimNotIdenticalSistaV1).
+    // A class that defines #== (ScopeNode) does not change these bytecodes.
+    case 0x76:
+        primitiveIdentical(1);
+        break;
+    case 0x78:
+        primitiveNotIdentical(1);
+        break;
     case 0x70: case 0x71: case 0x72: case 0x73:
-    case 0x74: case 0x75: case 0x76: case 0x77:
-    case 0x78: case 0x7B: case 0x7C: case 0x7D:
+    case 0x74: case 0x75: case 0x77:
+    case 0x7B: case 0x7C: case 0x7D:
     case 0x7E: case 0x7F:
         commonSend(bytecode - 0x70);
         break;
@@ -28460,6 +28469,21 @@ void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop 
             }
         }
     }
+#if PHARO_JIT_ENABLED
+    // Machine-code frames: a pending patch from mcfRun belongs to the one
+    // send that left machine code.  When the interpreter did that bytecode
+    // without a send (==, block value:, SmallInteger arithmetic, ...), the
+    // first send to come along is a different send: drop the patch instead
+    // of writing that send's class and method into the exited site.
+    if (pendingICOwnerIP_) {
+        const uint8_t* owner = pendingICOwnerIP_;
+        pendingICOwnerIP_ = nullptr;
+        if (instructionPointer_ != owner) {
+            pendingICPatch_ = nullptr;
+            return;
+        }
+    }
+#endif
     static bool patchDbg = GET_DEBUG_BOOL(PHARO_IC_PATCH_DEBUG);
     static size_t dbgCalled = 0, dbgNoPending = 0, dbgSelMismatch = 0,
                   dbgDup = 0, dbgPatched = 0, dbgFullNoSlot = 0;
