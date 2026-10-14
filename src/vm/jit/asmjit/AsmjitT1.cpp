@@ -13179,7 +13179,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (i < (size_t)emitSkip) { bcToCodeOut[i] = 0u; continue; }
                 // simStack: operands were pending at this bytecode, so the
                 // memory stack is not the interpreter's; no re-entry here.
+#if defined(__aarch64__) || defined(_M_ARM64)
                 if (i < g_simDeferredAt.size() && g_simDeferredAt[i]) { bcToCodeOut[i] = 0u; continue; }
+#endif
                 uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
                 // Per contract, slot 0 is conventionally 0 (initial entry
                 // goes through codeStart() directly).
