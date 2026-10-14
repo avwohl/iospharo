@@ -73,7 +73,22 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 `docs/deferred.md`, which is now only that. Fixed work is recorded in
 `docs/changes.md` and `docs/history/`.
 
-## NEW 2026-08-22 — four dead weak subscriptions are never removed from the system announcer
+## FIXED 2026-10-14 — four dead weak subscriptions are never removed from the system announcer
+
+Root cause: the snapshot lost pending mourners.  A GC that fires an
+ephemeron turns it into a plain object and records it only in the VM's
+C++ mourn queue until the image fetches it.  The prep's
+`Smalltalk snapshot: true andQuit: true` collected a `PragmaCollector`
+in its own GC, so its four registry ephemerons were saved as plain
+objects, never fired again, and their subscriptions were never
+finalized.  The same prep under stock Cog leaves none.  primitiveSnapshot
+now writes queued mourners whose class format is ephemeron back as
+ephemerons (and restores them after the write), so the first GC after a
+load fires them.  Both tests below pass on a re-prepped image.
+
+(Old analysis follows.)
+
+## OLD 2026-08-22 — four dead weak subscriptions are never removed from the system announcer
 
 Two tests report it, and they are NOT equally strong evidence — read both
 before quoting either.

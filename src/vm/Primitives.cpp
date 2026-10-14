@@ -5899,9 +5899,38 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // 6. Write image to disk
     log("[SNAPSHOT] Phase 6: Writing image...");
     auto writeStart = std::chrono::steady_clock::now();
+    // Ephemerons that a GC fired but the image has not yet mourned live only
+    // in the VM's mourn queue; firing made them plain objects.  Saved that
+    // way they would never fire again, and their finalizers would never
+    // run: a prepped test image kept four dead weak subscriptions of a
+    // collected PragmaCollector forever (ReleaseTest>>testNoDeadSubscriptions,
+    // WeakAnnouncerTest>>testNoDeadWeakSubscriptions; Cog's image had none).
+    // Write them as ephemerons again, so the first GC after a load fires
+    // them; this session keeps them queued as plain objects.
+    std::vector<ObjectHeader*> refiredOnLoad;
+    for (Oop m : memory_.mournQueueEntries()) {
+        if (!m.isObject() || m.isNil()) continue;
+        ObjectHeader* h = m.asObjectPtr();
+        if (h->format() != ObjectFormat::FixedSize) continue;
+        Oop cls = memory_.classOf(m);
+        if (!cls.isObject() || cls.asObjectPtr()->slotCount() < 3) continue;
+        Oop spec = memory_.fetchPointer(2, cls);
+        if (spec.isSmallInteger() && ((spec.asSmallInteger() >> 16) & 0x1F)
+                == static_cast<int64_t>(ObjectFormat::WeakWithFixed)) {
+            h->setFormat(ObjectFormat::WeakWithFixed);   // Spur format 5: ephemeron
+            refiredOnLoad.push_back(h);
+        }
+    }
     ImageWriter writer;
     SaveResult result = writer.save(savePath, memory_, originalImageHeader_,
                                     memory_.lastHash(), screenWidth_, screenHeight_);
+    for (ObjectHeader* h : refiredOnLoad) h->setFormat(ObjectFormat::FixedSize);
+    if (!refiredOnLoad.empty()) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "[SNAPSHOT] %zu pending mourners saved as ephemerons",
+                 refiredOnLoad.size());
+        log(buf);
+    }
     auto writeEnd = std::chrono::steady_clock::now();
     {
         char buf[512];
