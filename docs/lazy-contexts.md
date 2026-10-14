@@ -71,10 +71,13 @@ reads the Context.  This VM does a smaller version of the same idea.
    - native primitive calls from compiled code (`mcfCallPrimitive`)
      fail for a Context operand.  The send then runs in the interpreter,
      where the registers are correct for the sync.
-   - the JIT does not compile methods of Context or of its superclasses
-     with fields (`Interpreter::isContextFieldMethod`).  It also does not
-     compile code that reads a field with the long form at an index from
-     0 to 15 (`SistaV1::readsContextFields`).
+   - methods of Context or of its superclasses with fields
+     (`Interpreter::isContextFieldMethod`): on arm64 under machine-code
+     frames, T1 compiles them, and before a read of sender, pc or stackp,
+     and before a field store, the code tests `lazyCtxPending_` and calls
+     `pharo_mcf_ctx_sync` when it is set.  On x86 and in the stencil JIT,
+     the JIT does not compile them, nor code that reads a field with the
+     long form at an index from 0 to 15 (`SistaV1::readsContextFields`).
    - the trivial-method shortcuts (the interpreter getter and setter
      fast paths, and the T1 inline getter) do not classify long-form
      accessors at an index that the short form can reach.
@@ -133,6 +136,13 @@ testAnnouncement timeout, TraitTest timeout) pass alone 3 of 3.
 ## Debugging
 
 - `PHARO_NO_LAZY_OUTER=1`: use the old full materialization (A/B test).
+- `PHARO_MCF_NO_CTX_JIT=1` (diagnostic build): keep Context methods out
+  of the JIT on arm64 too.
+- `PHARO_THISCTX_CENSUS=1` (diagnostic build): count `thisContext` by
+  method.  In lexicon, all collapses come from `Context>>resume:through:`
+  (non-local returns through `ensure:`).
+- `PHARO_EFC_CENSUS=1` (diagnostic build): count `executeFromContext` by
+  caller.
 - `PHARO_MATFS_CENSUS=1` (diagnostic build): count
   `materializeFrameStack` calls, frames walked, and calls by caller.
 - `PHARO_MCF_NO_INLINE_WIDOW=1` (diagnostic build): the machine-code
