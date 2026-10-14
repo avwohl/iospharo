@@ -1015,6 +1015,24 @@ private:
     // Set when lazyOuterContext() made a context stub whose sender, temps
     // and stack are not filled in; cleared by a complete materializeFrameStack.
     bool lazyCtxPending_ = false;
+    // The frames below a non-local return's home, kept when
+    // nlrDelegateToImageProtocol collapses the frame stack into contexts
+    // for the image's unwind protocol.  When the protocol returns into the
+    // home's sender and those contexts are unchanged, the frames come back
+    // (tryRestoreCollapsedFrames), so the callers below return natively
+    // instead of one context resume each.  recs[0..n-1] are restorable;
+    // recs[n] is the home's record (its savedFP is where the result goes).
+    struct CollapsedFrames {
+        bool armed = false;
+        uint64_t epoch = 0;
+        Oop process;
+        std::vector<SavedFrame> recs;
+        std::vector<Oop> ctxs;
+        std::vector<int64_t> stackps;
+        Oop baseSender;
+    } collapsed_;
+    void captureCollapsedFrames(size_t homeFrame, Oop homeCtx);
+    bool tryRestoreCollapsedFrames();
     // mcfSetBlockHome's memo (raw oops: cleared by afterGC).
     Oop nlrMemoBlock_ = Oop::fromRawBits(0);
     Oop nlrMemoHome_ = Oop::fromRawBits(0);

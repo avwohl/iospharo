@@ -1184,25 +1184,6 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
 
 // ===== OBJECT ACCESS =====
 
-Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
-    if (!obj.isObject()) return nilObject_;
-
-    if (!isValidPointer(obj)) {
-        return nilObject_;
-    }
-
-    ObjectHeader* header = obj.asObjectPtr();
-
-    // Out-of-bounds fetch answers nil BY DESIGN — VM code deliberately
-    // probes optional slots past shorter shapes (e.g. classNameOf reading
-    // the name slot on a 6-slot Metaclass).  Do NOT add a tripwire here:
-    // a 2026-07-04 attempt logged 50 false positives per run from those
-    // legitimate probes.  Stores are different — see storePointer below.
-    if (index >= header->slotCount()) return nilObject_;
-
-    return header->slotAt(index);
-}
-
 void ObjectMemory::storePointerSlow(size_t index, Oop obj, Oop value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();

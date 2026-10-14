@@ -474,7 +474,18 @@ public:
     // ===== OBJECT ACCESS =====
 
     /// Fetch a pointer field from an object (0-based index)
-    Oop fetchPointer(size_t index, Oop obj) const;
+    // Out-of-bounds fetch answers nil BY DESIGN -- VM code deliberately
+    // probes optional slots past shorter shapes (e.g. classNameOf reading
+    // the name slot on a 6-slot Metaclass).  Do NOT add a tripwire here:
+    // a 2026-07-04 attempt logged 50 false positives per run from those
+    // legitimate probes.  Stores are different -- see storePointer below.
+    // Inline: ~500 call sites in the interpreter (context paths, lookup).
+    Oop fetchPointer(size_t index, Oop obj) const {
+        if (!isValidPointer(obj)) return nilObject_;
+        ObjectHeader* header = obj.asObjectPtr();
+        if (index >= header->slotCount()) return nilObject_;
+        return header->slotAt(index);
+    }
 
     /// How many leading slots of obj hold live pointers: a Context up to its
     /// stack pointer, a CompiledMethod its header and literals (Cog's

@@ -8872,8 +8872,11 @@ void Interpreter::returnValue(Oop value) {
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Return into a Context (frame depth 0).  Out of line: see
-        // returnValueAtDepth0.  It answers true where it returned.
-        if (returnValueAtDepth0(value)) return;
+        // returnValueAtDepth0.  It answers true where it returned.  A
+        // collapsed non-local return's frames come back first, if they can.
+        if (!(collapsed_.armed && tryRestoreCollapsedFrames())
+                && returnValueAtDepth0(value))
+            return;
     }
 
 
@@ -10737,6 +10740,118 @@ void Interpreter::returnFromBlock() {
 // delegation happened (caller must return immediately); false to continue
 // the native pop loop (no unwind frames in between — plain fast path,
 // stock returns directly in that case too).
+extern uint64_t g_objectMotionEpoch;
+static uint64_t g_framesRestored = 0;   // tryRestoreCollapsedFrames successes
+// PHARO_FRAME_RESTORE_CENSUS: why tryRestoreCollapsedFrames said no.
+static void restoreFail(int why) {
+    if (!GET_DEBUG_BOOL(PHARO_FRAME_RESTORE_CENSUS)) return;
+    static uint64_t counts[32], n = 0;
+    counts[why & 31]++;
+    if ((++n & 0x3FF) == 0) {
+        fprintf(stderr, "[RESTORE] ok=%llu fails:", (unsigned long long)g_framesRestored);
+        for (int i = 0; i < 32; i++) if (counts[i]) fprintf(stderr, " %d=%llu", i, (unsigned long long)counts[i]);
+        fprintf(stderr, "\n");
+    }
+}
+
+// Called right after nlrDelegateToImageProtocol materialized every frame:
+// the records are still in savedFrames_ (the protocol's own frames have
+// not been pushed yet), and walking senders from the home context gives the
+// context of each record below it, one to one.
+void Interpreter::captureCollapsedFrames(size_t homeFrame, Oop homeCtx) {
+    CollapsedFrames& c = collapsed_;
+    c.armed = false;
+    if (homeFrame == 0 || GET_DEBUG_BOOL(PHARO_NO_FRAME_RESTORE)) { restoreFail(11); return; }
+    if (!homeCtx.isObject() || homeCtx.isNil()) { restoreFail(12); return; }
+    if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) { restoreFail(13); return; }
+    c.recs.assign(savedFrames_.begin(), savedFrames_.begin() + homeFrame + 1);
+    c.ctxs.assign(homeFrame + 1, Oop::nil());
+    c.stackps.assign(homeFrame, 0);
+    Oop ctx = homeCtx;
+    for (size_t k = homeFrame + 1; k-- > 0;) {
+        if (!isContextObject(ctx)) { restoreFail(14); return; }
+        const SavedFrame& r = c.recs[k];
+        ObjectHeader* h = ctx.asObjectPtr();
+        if (h->slotAt(3).rawBits() != r.savedMethod.rawBits()
+                || h->slotAt(4).rawBits() != r.savedClosure.rawBits()
+                || h->slotAt(5).rawBits() != r.savedReceiver.rawBits()
+                || !r.savedFP || !r.savedMethod.isObject())
+            { restoreFail(15); return; }
+        c.ctxs[k] = ctx;
+        if (k < homeFrame) {
+            Oop sp = h->slotAt(2);
+            if (!sp.isSmallInteger() || sp.asSmallInteger() < 0) { restoreFail(16); return; }
+            c.stackps[k] = sp.asSmallInteger();
+        }
+        ctx = h->slotAt(0);
+    }
+    c.baseSender = ctx;
+    c.epoch = g_objectMotionEpoch;
+    c.process = getActiveProcess();
+    c.armed = true;
+    restoreFail(30);   // census: armed
+}
+
+// returnValue at frame depth 0, before the context return: is the sender
+// the home sender of a collapsed non-local return, with every context
+// below it exactly as materialized?  Then rebuild those frames (their
+// temps and stacks from the contexts, which are the truth now) and leave
+// the returning frame at the home's place, so returnValue's frame path
+// pops into the home sender with its return memo.  Contexts the protocol
+// changed, a GC or become (object motion), or another process: no.
+bool Interpreter::tryRestoreCollapsedFrames() {
+    CollapsedFrames& c = collapsed_;
+    if (!c.armed) { restoreFail(1); return false; }
+    if (c.epoch != g_objectMotionEpoch) { c.armed = false; restoreFail(2); return false; }
+    const size_t n = c.recs.size() - 1;   // restorable records
+    if (!activeContext_.isObject() || activeContext_.isNil()) { restoreFail(3); return false; }
+    Oop sender = activeContext_.asObjectPtr()->slotAt(0);
+    if (sender.rawBits() != c.ctxs[n - 1].rawBits()) { restoreFail(4); return false; }
+    c.armed = false;
+    if (getActiveProcess().rawBits() != c.process.rawBits()) { restoreFail(5); return false; }
+    if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) { restoreFail(6); return false; }
+    for (size_t k = 0; k < n; k++) {
+        const SavedFrame& r = c.recs[k];
+        ObjectHeader* h = c.ctxs[k].asObjectPtr();
+        Oop want = k ? c.ctxs[k - 1] : c.baseSender;
+        ObjectHeader* mo = r.savedMethod.asObjectPtr();
+        Oop pc = h->slotAt(1), sp = h->slotAt(2);
+        if (h->slotAt(0).rawBits() != want.rawBits()
+                || h->slotAt(3).rawBits() != r.savedMethod.rawBits()
+                || h->slotAt(4).rawBits() != r.savedClosure.rawBits()
+                || h->slotAt(5).rawBits() != r.savedReceiver.rawBits()
+                || !pc.isSmallInteger()
+                || pc.asSmallInteger() != (int64_t)(r.savedIP - mo->bytes()) + 1
+                || !sp.isSmallInteger() || sp.asSmallInteger() != c.stackps[k]
+                || (size_t)(6 + c.stackps[k]) > h->slotCount())
+            { restoreFail(7); return false; }
+        Oop* next = c.recs[k + 1].savedFP;
+        if (r.savedFP + 1 + c.stackps[k] != next) { restoreFail(8); return false; }
+    }
+    // The returning context dies, as on any return.
+    memory_.storePointer(0, activeContext_, memory_.nil());
+    memory_.storePointer(1, activeContext_, memory_.nil());
+    traceWidow("ctx-return", activeContext_);
+    for (size_t k = 0; k < n; k++) {
+        SavedFrame& r = c.recs[k];
+        ObjectHeader* h = c.ctxs[k].asObjectPtr();
+        Oop* fp = r.savedFP;
+        fp[0] = r.savedClosure.isNil() ? r.savedReceiver : r.savedClosure;
+        for (int64_t j = 0; j < c.stackps[k]; j++) fp[1 + j] = h->slotAt(6 + j);
+        r.materializedContext = c.ctxs[k];
+        r.ctxSynced = true;   // the context is this suspended frame, exactly
+        savedFrames_[k] = r;
+    }
+    frameDepth_ = n;
+    framePointer_ = c.recs[n].savedFP;      // the home's place
+    stackPointer_ = framePointer_ + 1;
+    currentFrameMaterializedCtx_ = memory_.nil();
+    lazyCtxPending_ = true;   // EXPERIMENT-MARK
+    g_framesRestored++;
+    restoreFail(31);   // census: a success
+    return true;
+}
+
 bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
     if (GET_DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND)) return false;  // bisect escape
     if (!selectors_.aboutToReturn.isObject() || selectors_.aboutToReturn.isNil())
@@ -10783,6 +10898,7 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
         if (!homeCtx.isObject() || homeCtx.isNil()) break;
         homeCtx = memory_.fetchPointer(0, homeCtx);  // sender
     }
+    captureCollapsedFrames(homeFrame, homeCtx);
     if (homeCtx.isObject() && !homeCtx.isNil()
         && handleContextNLRUnwind(value, topCtx, homeCtx)) {
         return true;
