@@ -189,6 +189,7 @@ DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)   // MCF: PushFullBlock exits to th
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_RETURN)          // MCF: a block's local return (BlockReturnTop/Nil) takes the generic bytecode exit again
 DEBUG_BOOL(PHARO_MCF_NO_ARITH_SEND)            // MCF: arithmetic special sends whose inline path fails take the generic bytecode exit again
 DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE)          // MCF: the special = send on non-SmallIntegers always calls pharo_mcf_extsend (no per-site identity-= cache)
+DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL)       // MCF: ensure: / on:do: (marker primitives 198/199) are not called natively from machine code
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
 DEBUG_BOOL(PHARO_EFC_CENSUS)                   // count executeFromContext calls by caller address

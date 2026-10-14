@@ -5092,7 +5092,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
     a.str(x8, ptr(x0, OFF_IP));
     a.mov(x26, x1);                           // TOS mirror = the result
-    a.str(wzr, ptr(x0, OFF_EXIT));
+    // No exitReason store: every exit sets its own reason.
     if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)) {
         a.mov(x16, asmjit::Imm((uint64_t)&g_mcfCountRets));
         a.ldr(x17, ptr(x16));

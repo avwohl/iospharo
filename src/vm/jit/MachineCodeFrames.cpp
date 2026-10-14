@@ -662,7 +662,14 @@ bool Interpreter::mcfActivate(Oop method) {
                             classNameOfMethod(method).c_str(), sel.c_str());
             }
         }
-        if (bisectOk && (!hasPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
+        // ensure: (198) and on:do: (199) are marker primitives: they always
+        // fail and the compiled body is the method.  2.7M lexicon calls exited
+        // before they were allowed.  A refused native call (countdown) still
+        // takes the interpreter's send, which suppresses the context switch.
+        const int primIdx = hasPrim ? primitiveIndexOf(method) : 0;
+        const bool markerPrim = (primIdx == 198 || primIdx == 199)
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL);
+        if (bisectOk && (!hasPrim || markerPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
                 && (!jm->hasRecvFieldAccess || receiver_.isObject())
                 && mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm)) {
             jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
