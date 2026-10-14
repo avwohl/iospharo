@@ -15,7 +15,48 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15) -- lexicon passes; lazy outer contexts and MCF census done, pushed
+## Right now (2026-10-14, evening) -- correctness fixes from the package differences; sweep L10 running
+
+Commits after the push of `eb0bdbdb` (not pushed yet; sweep L10 on
+`141818ec` must be clean first):
+
+- `719cf9b2` snapshot saves pending mourners (ReleaseTest,
+  WeakAnnouncerTest).
+- `5cbed8c4` T1 inline `=` compared any two byte objects: large integers
+  of opposite sign and `'ab' = #[97 98]` answered true.  Now only
+  String>>='s case (ByteString receiver; ByteSymbol as Symbol>>=).
+- `43b528b6` arithmetic special sends that miss the SmallInteger path are
+  real sends from machine code (helper send), not a generic exit.
+- `bf213943` PushArray builds the Array in machine code.
+- `c80adedc` OSR enters block frames: a loop in a block that runs once
+  (a DoIt, a test) was interpreted, 4x slower.  `PHARO_JIT_PERF_MAP`
+  attributes `sample` addresses in JIT code to methods.
+- `91e21241` primitive 188/100 left method_ = the target method, so an
+  activating primitive recorded the caller's frame with the wrong method
+  (DNU #numArgsError: on a CompiledMethod after a process switch).
+  Compiled special #value honours an overridden FullBlockClosure>>value,
+  as Cog's JIT does (methodproxies passes).  Two inline-cache poisoning
+  paths closed.  Compare + forward conditional jump fusion is the default.
+- `141818ec` two-way become keeps identity hashes with the references
+  (Spur copyHash false); ReStore's 20 *WithExclusion tests pass.
+
+Regression tests for each: `scripts/test_jit_semantics.st`
+(JITSemanticsTest, 8 tests, in the VM fix battery).
+
+Numbers: lexicon 714 -> 683 billion instructions; printString 28.9.
+lexicon makes 1.18 billion native calls; per-call overhead (call stub,
+frame record, return) is about 170 instructions, a third of all.  A
+send-free loop is 3x slower than Cog (temps go through memory); a send
+about 8x.  Those are the next speed levers.
+
+Sweep L9 (`bf213943` binary): 27800 / 9 / 1; the four non-passes outside
+L7's list pass alone (load from a concurrent package batch).
+
+Open package differences: myprecious (2 errors, speed), soil (2
+timeouts, speed), famixreplication (benchmark budget), restoreforpharo
+(our run exceeds 900 s; rerun after the become fix).
+
+## 2026-10-15 (misdated; was 2026-10-14 morning) -- lexicon passes; lazy outer contexts and MCF census done, pushed
 
 After machine-code frames, the user approved the next step: lazy
 contexts.  Phase 1 is in: lazy outer contexts (docs/lazy-contexts.md).

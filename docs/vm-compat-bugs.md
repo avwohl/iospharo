@@ -73,6 +73,53 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 `docs/deferred.md`, which is now only that. Fixed work is recorded in
 `docs/changes.md` and `docs/history/`.
 
+## FIXED 2026-10-14 — ReStore: 20 *WithExclusion tests fail (two-way become moved identity hashes)
+
+`141818ec`.  ReStore swaps proxies with `become:` and keeps the objects
+to exclude from a commit in IdentitySets.  Primitive 128
+(`elementsExchangeIdentityWith:`) is twoWay: true, copyHash: false in
+Spur: the identity hash stays with the references.  The VM swapped whole
+headers, so the hash moved with the contents; for objects of different
+sizes the references moved and the hashes did not.  After the swap the
+exclusion set did not find the excluded object, and the commit wrote it.
+Probe (Cog and the VM now agree):
+
+    a := Object new. b := Object new. h := a identityHash.
+    s := IdentitySet with: a. a become: b.
+    {a identityHash = h. s includes: a}     -> #(true true)
+
+Classes keep their hash (it is their class-table index).  Regression test:
+`JITSemanticsTest>>testTwoWayBecomeKeepsHashWithReferences`.
+
+## FIXED 2026-10-14 — primitive 188 records the caller's frame with the wrong method
+
+`91e21241`.  Primitive 188 (`withArgs:executeMethod:`,
+`valueWithReceiver:arguments:`) and primitive 100 set `method_` to the
+target method before they ran its primitive.  When that primitive
+activates (207, `BlockClosure>>value` on a block), the caller's frame
+record got the target's method with the caller's receiver and ip.  A
+normal return worked by luck (the ip is absolute).  After a process
+switch the record became a Context that ran `BlockClosure>>value` on a
+CompiledMethod: DNU `#numArgsError:`.  Method proxies reach it through
+`valueUnpreemptively` (OCSpecialSelectorTest, methodproxies).  Regression
+test: `JITSemanticsTest>>testExecuteMethodOnBlockAcrossProcessSwitch`.
+
+## FIXED 2026-10-14 — methodproxies testCanWrapValueWithException (compiled #value ignored a proxy)
+
+`91e21241`.  Cog's JIT sends special `#value` normally; Cog's interpreter
+takes a shortcut, and OCSpecialSelectorTest pins both.  While
+FullBlockClosure>>value or value: is not the primitive-207 method
+(`jit::g_blockValueOverridden`, rechecked at each cache flush), T1 does not
+call blocks natively at special `#value` sites, and the interpreter looks
+`#value` up in methods that have machine code.
+
+## FIXED 2026-10-14 — compiled `=` answered true for unequal byte objects
+
+`5cbed8c4`.  T1's inline `=` compared the bytes of any two byte-format
+objects: `(2 raisedTo: 100) = (2 raisedTo: 100) negated` and
+`'ab' = #[97 98]` answered true in compiled code.  It now takes only
+String>>='s case.
+
 ## FIXED 2026-10-14 — four dead weak subscriptions are never removed from the system announcer
 
 Root cause: the snapshot lost pending mourners.  A GC that fires an
