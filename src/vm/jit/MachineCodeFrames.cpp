@@ -512,6 +512,14 @@ void Interpreter::mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, u
             (unsigned long long)memory_.falseObject().rawBits());
 }
 
+// May a call-cache entry be keyed by this method or CompiledBlock?  Young
+// ones may: the scavenge purges their entries (mcfPurgeCallCacheRange).
+// Methods compiled at run time stayed young until the next scavenge, and
+// every call to them left machine code.
+bool Interpreter::mcfCacheableOop(Oop m) const {
+    return !GET_DEBUG_BOOL(PHARO_MCF_NO_YOUNG_CALL) || !memory_.isYoung(m);
+}
+
 // A block frame (closure_ set, method_ a CompiledBlock), set up by
 // activateBlock, popFrame or a native block call.
 bool Interpreter::mcfIsBlockFrame() const {
@@ -532,7 +540,7 @@ void Interpreter::mcfActivateBlock() {
     // A block with ^ is flagged: the stub then finds its home frame.
     const bool nlr = mcfBlockHasNLR(method_);
     const uint64_t bcInfo = mcfPackBcInfo(method_.rawBits(), bytecodeEnd_, jm);
-    if (bcInfo && !memory_.isYoung(method_) && (!nlr || !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL))) {
+    if (bcInfo && mcfCacheableOop(method_) && (!nlr || !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL))) {
         Oop hdr = method_.asObjectPtr()->slotAt(0);
         jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method_.rawBits());
         e.methodBits = method_.rawBits();
@@ -669,7 +677,7 @@ bool Interpreter::mcfActivate(Oop method) {
         const int primIdx = hasPrim ? primitiveIndexOf(method) : 0;
         const bool markerPrim = (primIdx == 198 || primIdx == 199)
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL);
-        if (bisectOk && (!hasPrim || markerPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
+        if (bisectOk && (!hasPrim || markerPrim || mcfPrologueIsPrimitive(method)) && mcfCacheableOop(method)
                 && (!jm->hasRecvFieldAccess || receiver_.isObject())
                 && mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm)) {
             jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
@@ -923,7 +931,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
     ObjectHeader* mo = method.asObjectPtr();
     if (mo->classIndex() != compiledMethodClassIndex_) return;
     Oop hdr = mo->slotAt(0);
-    if (!hdr.isSmallInteger() || memory_.isYoung(method)) return;
+    if (!hdr.isSmallInteger() || !mcfCacheableOop(method)) return;
     if (!((hdr.asSmallInteger() >> 16) & 1)) {
         // A compiled method without a primitive that a send exited for: one
         // the interpreter runs without an activation (its synthetic

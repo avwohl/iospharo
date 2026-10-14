@@ -25224,6 +25224,8 @@ void Interpreter::afterGC(bool fullGC) {
         // a young method — the inline-getter IC poisoning behind the
         // MAX_IC=1 wrong-object residual.
         jitRuntime_.rebuildMethodMap(/* clearCallCache */ false);
+        jit::mcfPurgeCallCacheRange(reinterpret_cast<uint64_t>(memory_.newSpaceStart()),
+                                    reinterpret_cast<uint64_t>(memory_.newSpaceEnd()));
         // interpHints_ raw-bits entries go stale the same way when a
         // scavenge moves a young method (see recoverSistaAfterGC).
         interpHints_.clear();

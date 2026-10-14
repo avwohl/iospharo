@@ -1862,6 +1862,7 @@ public:
     void mcfClearMemos();
     bool mcfIsIdentityEquals(Oop method);
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
+    bool mcfCacheableOop(Oop m) const;
     void mcfFillICAtExit(jit::JITState& st);
     void mcfDeriveView(jit::JITState& st);
     static constexpr size_t kBcEndMemoSize = 256;

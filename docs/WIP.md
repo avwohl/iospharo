@@ -15,6 +15,43 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, late night) -- sweep L14 on `bdc7a854`
+
+Pushed: origin/jit at `683c8b4d` (sweep L13: 27801 / 8 / 1).  Sweep L14
+runs on `bdc7a854` with a newly prepped image (`setup_fake_gui.st` +
+runner `ceb7b46`).  Push when L14 shows nothing outside the L9-L13
+lists.
+
+Since L13:
+
+- `1febeb00`..`4c3fb6d9`: young closure fields stored directly, per-site
+  `=` cache, inline primitives on 255+ slot objects.
+- `17dfd75d`: `ensure:` and `on:do:` run in machine code.  They had
+  `numBytecodes = 0` (a guard for the old resume protocol), so the
+  machine-code frame could not start them.  An IC-miss exit also fills
+  the site now (special-selector sends never filled it).
+- Runner (submodule `2f33033`, `ceb7b46`): `Smalltalk stderr` raised a
+  DNU in the exit `ensure:` of `runAllTests`, so each batch idled until
+  the harness timeout (ReleaseTest: done at 100 s, killed at 1800 s).
+  Now `Stdio stderr`.  `testUnknownProcesses` passes: the runner stops
+  its two helper loops for that test and terminates (not only suspends)
+  each watchdog.
+- myprecious: 109/109 on our VM (Cog: 108, one failure).  soil, famix
+  replication, methodproxies: same as Cog.
+
+lexicon: 575 billion instructions, 28.3 s wall against Cog 11.3 s
+(Rosetta).  Where the time goes (sample, 1590 samples): machine code 51%,
+scavenge 8%, non-local return through `ensure:` about 10% (1.7M times,
+all `^` inside `Symbol class>>rawIntern:`'s critical section; each one
+makes all 14 frames contexts, and the frames below the home then return
+by the slow context path), become 4%, MCF call stub 6%.  Exits are only
+about 2% now (23M exits).  Tried and dropped: skipping the interpreter's
+block-shape shortcuts in primitive 207 (neutral), new space 32 MB (632)
+and 256 MB (596) against the default 64 MB (574).
+
+Next: non-local return through `ensure:` without discarding the frames
+below the home; then the call-record cost.
+
 ## Right now (2026-10-14, night) -- speed: registers, leaner calls, simStack; sweep L13 running
 
 Pushed: origin/jit at `04a4a843` (sweep L11: 27803 / 7 / 1, the best so

@@ -288,6 +288,16 @@ inline McfCallEntry* mcfCallSlotForPrim(uint64_t bits) {
     if (!s[0].jm) return &s[0];
     return nullptr;
 }
+// A scavenge moved every young method and CompiledBlock: drop the entries
+// keyed by their old addresses (inline caches are GC roots and now hold
+// the new oops, so the next call misses and refills the entry).
+inline void mcfPurgeCallCacheRange(uint64_t lo, uint64_t hi) {
+    if (!g_mcfCallCache) return;
+    for (size_t i = 0; i < kMcfCallCacheSize; i++) {
+        McfCallEntry& e = g_mcfCallCache[i];
+        if (e.methodBits >= lo && e.methodBits < hi) e = McfCallEntry{};
+    }
+}
 inline void mcfClearCallCache() {
     if (g_mcfCallCache)
         std::memset(g_mcfCallCache, 0, sizeof(McfCallEntry) * kMcfCallCacheSize);
