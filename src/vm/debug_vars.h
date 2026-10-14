@@ -332,6 +332,7 @@ DEBUG_BOOL(PHARO_T1_SHARED_RETPRELUDE)    // out-of-line-dispatch B0.5 (docs/out
 DEBUG_INT(PHARO_T1_TOS_MASK, -1)          // bit per converted family (-1 = all): per-term A/B + miscompile bisect. Note: all-on (-1) is net-NEGATIVE; the loop-body subset 101 (Push|Dup|PopStore|Arith) is perf-NEUTRAL (measured) — see PHARO_T1_TOS_REG
 DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ)             // T1: a SmallInteger compare followed by a forward conditional jump materializes the Boolean again (no cmp + b.cond fusion)
 DEBUG_BOOL(PHARO_T1_NO_TB_REG)                // T1 under MCF: read tempBase from the state, not the x22 register copy
+DEBUG_BOOL(PHARO_T1_NO_SIMSTACK)              // T1 under MCF: no deferred operand pushes (every push/pop through the memory stack)
 DEBUG_BOOL(PHARO_T1_TOS_POISON)           // movz x26,#0xDEAD at every invalidation point — stale-valid consumers crash deterministically
 DEBUG_BOOL(PHARO_T1_TOS_VERIFY)           // before every cache-consuming emit: ldur/cmp/b.eq/brk — THE net for the valid-but-stale direction
 DEBUG_BOOL(PHARO_T1_REGSTACK_CENSUS)      // Phase-1 go/no-go measurement (docs/t1-codegen-plan.md): per compiled method, count how many operand loads a static stack-to-register map could keep out of memory (removable = consumed by inlined arith within a straight-line run, no send/merge). Pure measurement, no codegen change. Prints [REGSTACK-CENSUS] at JIT-stats dump.

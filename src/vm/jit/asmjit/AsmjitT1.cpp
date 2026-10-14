@@ -5846,6 +5846,119 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
 }
 #endif
 
+// ===================== simStack (deferred operand pushes) =====================
+// Machine-code frames only (receiver in x21, tempBase in x22).  Pushes of
+// temps, receiver fields, the receiver and constants emit no code: they go
+// on a compile-time stack of descriptors.  Pops, stores and SmallInteger
+// arithmetic / comparisons consume them straight from registers; every
+// other bytecode, every jump target and every slow path first FLUSHES the
+// pending items to the real operand stack, so all existing code sees the
+// memory stack it always did.  Positions with pending items get no
+// bcToCode re-entry entry.  Registers: pool x9-x15 for results; x1-x8
+// scratch.  Opt-out PHARO_T1_NO_SIMSTACK.
+#if defined(__aarch64__) || defined(_M_ARM64)
+namespace {
+enum class SimK : uint8_t { Const, Temp, Ivar, Rcvr, Reg, StateOop, Lit };
+struct SimItem { SimK k; int64_t v; int reg; };
+struct SimStack {
+    std::vector<SimItem> items;
+    uint32_t regBusy = 0;
+    bool enabled = false;
+    int allocReg() {
+        for (int r = 9; r <= 15; r++)
+            if (!(regBusy & (1u << r))) { regBusy |= 1u << r; return r; }
+        return -1;
+    }
+    void freeReg(int r) { regBusy &= ~(1u << r); }
+    void pop() {
+        if (items.back().k == SimK::Reg) freeReg(items.back().reg);
+        items.pop_back();
+    }
+};
+SimStack g_sim;
+std::vector<bool> g_simDeferredAt;
+}  // namespace
+
+static void simLoad(asmjit::a64::Assembler& a, const SimItem& it, const asmjit::a64::Gp& dst) {
+    using namespace asmjit::a64;
+    switch (it.k) {
+    case SimK::Const:    a.mov(dst, asmjit::Imm((uint64_t)it.v)); break;
+    case SimK::Temp:     a.ldr(dst, ptr(x22, (int)(it.v * 8))); break;
+    case SimK::Ivar:     a.ldr(dst, ptr(x21, (int)(OBJ_SLOT_0 + it.v * 8))); break;
+    case SimK::Rcvr:     a.mov(dst, x21); break;
+    case SimK::Reg:      if (dst.id() != (uint32_t)it.reg) a.mov(dst, asmjit::a64::x(it.reg)); break;
+    case SimK::StateOop: a.ldr(dst, ptr(x0, (int)it.v)); break;
+    case SimK::Lit:
+        a.ldr(dst, ptr(x0, OFF_LITERALS));
+        a.ldr(dst, ptr(dst, (int)(it.v * 8)));
+        break;
+    }
+}
+static asmjit::a64::Gp simSrc(asmjit::a64::Assembler& a, const SimItem& it,
+                              const asmjit::a64::Gp& scratch) {
+    if (it.k == SimK::Reg) return asmjit::a64::x(it.reg);
+    simLoad(a, it, scratch);
+    return scratch;
+}
+// Store items [from, to) to the real stack (x25), in order.  Emits code
+// only: the compile-time stack is unchanged.
+static void simEmitStores(asmjit::a64::Assembler& a, size_t from, size_t to) {
+    using namespace asmjit::a64;
+    size_t i = from;
+    while (i < to) {
+        if (i + 1 < to) {
+            asmjit::a64::Gp r1 = simSrc(a, g_sim.items[i], x1);
+            asmjit::a64::Gp r2 = simSrc(a, g_sim.items[i + 1], x2);
+            a.stp(r1, r2, ptr_post(x25, 16));
+            i += 2;
+        } else {
+            a.str(simSrc(a, g_sim.items[i], x1), ptr_post(x25, 8));
+            i += 1;
+        }
+    }
+}
+static void simFlush(asmjit::a64::Assembler& a) {
+    if (g_sim.items.empty()) return;
+    simEmitStores(a, 0, g_sim.items.size());
+    while (!g_sim.items.empty()) g_sim.pop();
+}
+// Flush the items below the top `keep` ones; the kept ones stay pending.
+static void simFlushBelow(asmjit::a64::Assembler& a, size_t keep) {
+    const size_t n = g_sim.items.size();
+    if (n <= keep) return;
+    simEmitStores(a, 0, n - keep);
+    std::vector<SimItem> top(g_sim.items.end() - keep, g_sim.items.end());
+    for (size_t k = 0; k < n - keep; k++)
+        if (g_sim.items[k].k == SimK::Reg) g_sim.freeReg(g_sim.items[k].reg);
+    g_sim.items = top;
+}
+// Before a store into temp `n` (isIvar: receiver field `n`): pending reads
+// of that slot take their value now.  False when out of registers (the
+// caller then flushes everything).
+static bool simDetach(asmjit::a64::Assembler& a, bool isIvar, int n) {
+    const SimK k = isIvar ? SimK::Ivar : SimK::Temp;
+    for (SimItem& it : g_sim.items) {
+        if (it.k != k || it.v != n) continue;
+        int r = g_sim.allocReg();
+        if (r < 0) return false;
+        simLoad(a, it, asmjit::a64::x(r));
+        it.k = SimK::Reg;
+        it.reg = r;
+    }
+    return true;
+}
+static void simGenericExit(asmjit::a64::Assembler& a, int globalIdx) {
+    using namespace asmjit::a64;
+    a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+    a.add(x5, x5, asmjit::Imm(globalIdx));
+    a.str(x5, ptr(x0, OFF_IP));
+    a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+    a.str(w3, ptr(x0, OFF_EXIT));
+    emitSyncSpToState(a);
+    a.ret(x30);
+}
+#endif
+
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     uint64_t nilBits, int bcOffsetFromMethObj,
                     int siteIdx,
@@ -11882,9 +11995,202 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
     if (real) {
         int siteIdx = 0;
+        g_sim.items.clear();
+        g_sim.regBusy = 0;
+        g_sim.enabled = t1TbReg() && !g_useTos && !GET_DEBUG_BOOL(PHARO_T1_NO_SIMSTACK)
+            && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS) && !g_emitGetterTrace;
+        g_simDeferredAt.assign(bcLen + 1, false);
+        auto isJumpTarget = [&](int idx) {
+            return g_tosJumpTargetsPtr && idx >= 0
+                && (size_t)idx < g_tosJumpTargetsPtr->size()
+                && (*g_tosJumpTargetsPtr)[idx];
+        };
+        // simStack: handle `op` at bcReal[i] without memory traffic when it
+        // can.  Answers the bytes consumed (0: not handled; the caller
+        // flushes and emits it as before).
+        auto simTry = [&](size_t i, int globalIdx, uint8_t op) -> int {
+            using namespace asmjit::a64;
+            SimStack& S = g_sim;
+            auto push = [&](SimK k, int64_t v) { S.items.push_back(SimItem{k, v, -1}); };
+            if (op <= 0x0F) {
+                if (g_emitCtxMethod) return 0;
+                push(SimK::Ivar, op); return 1;
+            }
+            if (op >= 0x40 && op <= 0x4B) { push(SimK::Temp, op - 0x40); return 1; }
+            if (op >= 0x20 && op <= 0x3F) { push(SimK::Lit, op - 0x20); return 1; }
+            if (op == SistaV1::PushReceiver) { push(SimK::Rcvr, 0); return 1; }
+            if (op == 0x4D) { push(SimK::StateOop, OFF_TRUEOOP); return 1; }
+            if (op == 0x4E) { push(SimK::StateOop, OFF_FALSEOOP); return 1; }
+            if (op == 0x4F) { push(SimK::Const, (int64_t)nilBits); return 1; }
+            if (op == 0x50) { push(SimK::Const, 1); return 1; }       // SmallInteger 0
+            if (op == 0x51) { push(SimK::Const, 9); return 1; }       // SmallInteger 1
+            if (op == SistaV1::PushInteger && i + 1 < bcRealLen) {
+                const int8_t imm = static_cast<int8_t>(bcReal[i + 1]);
+                push(SimK::Const, (int64_t)(((uint64_t)(int64_t)imm << 3) | 1));
+                a.bind(bcLabels[globalIdx + 1]);
+                return 2;
+            }
+            if (op == SistaV1::PushCharacter && i + 1 < bcRealLen) {
+                push(SimK::Const, (int64_t)(((uint64_t)bcReal[i + 1] << 3) | 3));
+                a.bind(bcLabels[globalIdx + 1]);
+                return 2;
+            }
+            if (S.items.empty()) return 0;
+            if (op == SistaV1::Dup) {
+                SimItem top = S.items.back();
+                if (top.k == SimK::Reg) {
+                    int r = S.allocReg();
+                    if (r < 0) return 0;
+                    a.mov(asmjit::a64::x(r), asmjit::a64::x(top.reg));
+                    top.reg = r;
+                }
+                S.items.push_back(top);
+                return 1;
+            }
+            if (op == SistaV1::Pop) { S.pop(); return 1; }
+            if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
+                const int n = op - SistaV1::PopStoreTempBase;
+                SimItem v = S.items.back();
+                S.items.pop_back();
+                if (!simDetach(a, false, n)) { S.items.push_back(v); return 0; }
+                a.str(simSrc(a, v, x1), ptr(x22, n * 8));
+                if (v.k == SimK::Reg) S.freeReg(v.reg);
+                return 1;
+            }
+            if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
+                if (g_emitCtxMethod) return 0;
+                const int n = op - SistaV1::PopStoreRecvBase;
+                // The immutable-receiver bail exits with the whole stack
+                // (value included) in memory: emit that flush out of line.
+                asmjit::Label bail = a.new_label(), cont = a.new_label();
+                a.ldr(x8, ptr(x21));
+                a.tbnz(x8, 23, bail);
+                SimItem v = S.items.back();
+                S.items.pop_back();
+                const bool ok = simDetach(a, true, n);
+                S.items.push_back(v);
+                if (!ok) {
+                    // Out of registers: take the plain path (flush, emitOne).
+                    a.b(cont);
+                    a.bind(bail);
+                    a.bind(cont);
+                    return 0;
+                }
+                S.items.pop_back();
+                asmjit::a64::Gp rv = simSrc(a, v, x1);
+                a.str(rv, ptr(x21, OBJ_SLOT_0 + n * 8));
+                emitRememberBarrierA64(a, x21, rv, x6, x7, x8);
+                a.b(cont);
+                a.bind(bail);
+                S.items.push_back(v);
+                simEmitStores(a, 0, S.items.size());
+                simGenericExit(a, globalIdx);
+                S.items.pop_back();
+                a.bind(cont);
+                if (v.k == SimK::Reg) S.freeReg(v.reg);
+                return 1;
+            }
+            if (op >= 0x60 && op <= 0x67 && S.items.size() >= 2) {
+                simFlushBelow(a, 2);
+                SimItem A = S.items[0], B = S.items[1];
+                asmjit::a64::Gp rA = simSrc(a, A, x1);
+                asmjit::a64::Gp rB = simSrc(a, B, x4);
+                asmjit::Label slow = a.new_label(), cont = a.new_label();
+                a.eor(x5, rA, rB);
+                a.sub(x6, rA, asmjit::Imm(1));
+                a.orr(x5, x5, x6);
+                a.tst(x5, asmjit::Imm(7));
+                a.b_ne(slow);
+                auto slowPush = [&]() {
+                    a.bind(slow);
+                    a.stp(rA, rB, ptr_post(x25, 16));
+                    // emitOne pops the operands and pushes the result (or
+                    // sends); the stack below is already in memory.
+                    if (A.k == SimK::Reg) S.freeReg(A.reg);
+                    if (B.k == SimK::Reg) S.freeReg(B.reg);
+                    S.items.clear();
+                    return emitOne_arm64(a, op, nilBits, bcOffsetBase + globalIdx, siteIdx,
+                                         bcLabels, globalIdx, callerArgCount, callerTempCount,
+                                         staticJ2JArgCount);
+                };
+                if (op >= 0x62) {
+                    // Fuse with a following forward conditional jump.
+                    const int nextIdx = globalIdx + 1;
+                    if ((size_t)(i + 2) <= bcRealLen && !isJumpTarget(nextIdx) && i + 1 < bcRealLen) {
+                        const uint8_t nop = bcReal[i + 1];
+                        const bool shortJ = SistaV1::isConditionalShortJump(nop);
+                        const bool extJ = (nop == SistaV1::ExtJumpTrue || nop == SistaV1::ExtJumpFalse)
+                                          && i + 2 < bcRealLen;
+                        if (shortJ || extJ) {
+                            const int targetIdx = shortJ ? SistaV1::shortJumpTarget(nop, nextIdx)
+                                                         : nextIdx + 2 + bcReal[i + 2];
+                            const int postIdx = nextIdx + (shortJ ? 1 : 2);
+                            const bool jt = shortJ ? SistaV1::isShortJumpTrue(nop)
+                                                   : nop == SistaV1::ExtJumpTrue;
+                            if (targetIdx > nextIdx && (size_t)targetIdx < bcLabels.size()
+                                    && (size_t)postIdx < bcLabels.size()) {
+                                a.cmp(rA, rB);
+                                asmjit::Label tgt = bcLabels[targetIdx];
+                                switch (op) {
+                                case 0x62: if (jt) a.b_lt(tgt); else a.b_ge(tgt); break;
+                                case 0x63: if (jt) a.b_gt(tgt); else a.b_le(tgt); break;
+                                case 0x64: if (jt) a.b_le(tgt); else a.b_gt(tgt); break;
+                                case 0x65: if (jt) a.b_ge(tgt); else a.b_lt(tgt); break;
+                                case 0x66: if (jt) a.b_eq(tgt); else a.b_ne(tgt); break;
+                                default:   if (jt) a.b_ne(tgt); else a.b_eq(tgt); break;
+                                }
+                                a.b(bcLabels[postIdx]);
+                                if (!slowPush()) return -1;
+                                return 1;     // the jump bytecode is emitted next, as before
+                            }
+                        }
+                    }
+                }
+                // Result in a pool register.
+                if (A.k == SimK::Reg) S.freeReg(A.reg);
+                if (B.k == SimK::Reg) S.freeReg(B.reg);
+                const int r = S.allocReg();
+                if (r < 0) return -1;
+                asmjit::a64::Gp R = asmjit::a64::x(r);
+                if (op == 0x60) {
+                    a.adds(x7, rA, rB);
+                    a.b_vs(slow);
+                    a.sub(R, x7, asmjit::Imm(1));
+                } else if (op == 0x61) {
+                    a.subs(x7, rA, rB);
+                    a.b_vs(slow);
+                    a.add(R, x7, asmjit::Imm(1));
+                } else {
+                    a.cmp(rA, rB);
+                    a.ldp(x7, x8, ptr(x0, OFF_TRUEOOP));
+                    CondCode cc = op == 0x62 ? CondCode::kLT : op == 0x63 ? CondCode::kGT
+                                : op == 0x64 ? CondCode::kLE : op == 0x65 ? CondCode::kGE
+                                : op == 0x66 ? CondCode::kEQ : CondCode::kNE;
+                    a.csel(R, x7, x8, cc);
+                }
+                a.b(cont);
+                // slowPush frees A/B again (harmless) and clears the stack.
+                S.regBusy |= 1u << r;
+                if (A.k == SimK::Reg) S.regBusy |= 1u << A.reg;
+                if (B.k == SimK::Reg) S.regBusy |= 1u << B.reg;
+                if (!slowPush()) return -1;
+                a.ldr(R, ptr_pre(x25, -8));        // the result, back off the stack
+                a.bind(cont);
+                S.items.clear();
+                S.regBusy = 1u << r;
+                S.items.push_back(SimItem{SimK::Reg, 0, r});
+                return 1;
+            }
+            return 0;
+        };
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
             uint8_t op = bcReal[i];
+            // simStack: other paths arrive at a jump target with nothing pending.
+            if (g_sim.enabled && !g_sim.items.empty() && isJumpTarget(globalIdx))
+                simFlush(a);
+            if (g_sim.enabled && !g_sim.items.empty() && (size_t)globalIdx < g_simDeferredAt.size())
+                g_simDeferredAt[globalIdx] = true;
             a.bind(bcLabels[globalIdx]);
 
             // PHARO_T1_SP_TRACE: log live operand sp at the top of each
@@ -11901,6 +12207,13 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             g_tosIn = g_tos;
             g_tos = T1TosCache{};
             (void)g_tosIn;   // consumers arrive in B1+
+
+            if (g_sim.enabled) {
+                const int used = simTry(i, globalIdx, op);
+                if (used < 0) return false;          // slow-path emit refused
+                if (used > 0) { i += (size_t)used - 1; continue; }
+                simFlush(a);
+            }
 
             // InlinedPrimitive 0xEC: 2-byte no-op.  Bind operand label
             // and skip.
@@ -12571,6 +12884,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             }
             if (isPhase4SendOp(op)) siteIdx++;
         }
+        if (g_sim.enabled) simFlush(a);
         if (bcRealLen == 0
                 || bcReal[bcRealLen-1] < SistaV1::ReturnReceiver
                 || bcReal[bcRealLen-1] > SistaV1::ReturnTop) {
@@ -12647,6 +12961,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // CallPrimitive header is not a valid re-entry point, so map it
                 // to 0 like slot 0.  (2026-05-28 root-cause fix.)
                 if (i < (size_t)emitSkip) { bcToCodeOut[i] = 0u; continue; }
+                // simStack: operands were pending at this bytecode, so the
+                // memory stack is not the interpreter's; no re-entry here.
+                if (i < g_simDeferredAt.size() && g_simDeferredAt[i]) { bcToCodeOut[i] = 0u; continue; }
                 uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
                 // Per contract, slot 0 is conventionally 0 (initial entry
                 // goes through codeStart() directly).
