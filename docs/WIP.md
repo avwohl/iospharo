@@ -15,6 +15,38 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, night 2) -- speed round; sweep L15 on `92e646f5`
+
+Pushed: origin/jit at `bdc7a854` (sweep L14: 27806 P / 5 F / 1 E, the
+best so far, nothing outside the L9-L13 lists).  Sweep L15 runs on
+`92e646f5`.  Not yet swept: `0ee9b7c0`, `25baba71`, `52be7182`,
+`e812eb9d`, `1751216e`.
+
+lexicon instructions (billions):
+
+    sweep L14 commit                  575
+    IC hit skips the shape chain      564   (92e646f5)
+    interpreter fields at x0 offsets  556   (0ee9b7c0)
+    scavenge forwards in place        551   (52be7182)
+    scavenge: used class table only   486   (e812eb9d)
+    young lazy context, no barriers   477   (1751216e)
+
+The class-table fix: forEachMemoryRoot visited all 4M class-table slots
+at every scavenge (6.5 ms of 7 ms; lexicon does 390 scavenges).
+PHARO_SCAV_STATS (diagnostic build) prints the phase times.
+
+Also: young methods and blocks are called natively (`a336d1c1`; a
+method compiled at run time stayed young, and every call to it left
+machine code: 1042 -> 285 ms on a recursion micro-benchmark, Cog 230).
+x86_64 tree compiles again (`25baba71`).
+
+Call + return of a small method: 225 -> 201 instructions.  Where the rest
+goes (lldb single-step, PHARO_NO_HEARTBEAT, $S/jitstep.py): caller
+about 40, call stub 58 (25 of them write the 16-field frame record),
+return 44.  lexicon makes 1.18 billion native calls, so each instruction
+per call is 0.25%.  Become of young objects (WideString promotion) walks
+all of eden, 2.6 ms each, about 2%.
+
 ## Right now (2026-10-14, late night) -- sweep L14 on `bdc7a854`
 
 Pushed: origin/jit at `683c8b4d` (sweep L13: 27801 / 8 / 1).  Sweep L14
