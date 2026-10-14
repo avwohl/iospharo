@@ -108,6 +108,16 @@ extern "C" void* pharo_mcf_perform(jit::JITState* st, uint32_t nArgs) {
     return st->interp->mcfPerformTarget(st, (int)nArgs);
 }
 
+// An inline-cache hit's primitive failed (pharo_mcf_prim answered 0, stack
+// unchanged): the call entry of the method's body, to run it natively as
+// the interpreter would after the failure; nullptr = take the exit.
+extern "C" void* pharo_mcf_prim_fail(jit::JITState* st, uint32_t nArgs) {
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_IC_PRIM_FAIL_BODY)) return nullptr;
+    Oop method = st->cachedTarget;
+    if (!method.isObject() || method.rawBits() < 0x10000) return nullptr;
+    return st->interp->mcfPrimFailBodyEntry(method, st->sp[-(int)(nArgs + 1)]);
+}
+
 extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
     return st->interp->mcfBlockCreate(st, packed);
 }

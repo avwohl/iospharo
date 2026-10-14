@@ -57,6 +57,7 @@ extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure)
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
 extern "C" void* pharo_mcf_perform(pharo::jit::JITState* st, uint32_t nArgs);
+extern "C" void* pharo_mcf_prim_fail(pharo::jit::JITState* st, uint32_t nArgs);
 extern "C" uint64_t pharo_mcf_array_create(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_call_census(uint64_t method);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
@@ -5914,11 +5915,29 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             }
             a.bind(notSem);
         }
-        // 111 class of a heap object (an immediate's takes the C call).
+        // 111 class.  An immediate's class index is (tag + 1) / 2 (1-3); the
+        // class found must be registered at that index (its hash is it).
         a.cmp(w10, asmjit::Imm(111));
         a.b_ne(p175);
-        a.tst(x1, asmjit::Imm(7));
-        a.b_ne(slow);
+        {
+            asmjit::Label heap = a.new_label(), haveIdx = a.new_label();
+            a.ands(x4, x1, asmjit::Imm(7));
+            a.b_eq(heap);
+            a.add(x4, x4, asmjit::Imm(1));
+            a.lsr(x4, x4, asmjit::Imm(1));
+            a.mov(x9, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+            a.ldr(x9, ptr(x9));
+            a.ldr(x7, ptr(x9, x4, lsl(3)));
+            a.tst(x7, asmjit::Imm(7));
+            a.b_ne(slow);
+            a.cbz(x7, slow);
+            a.ldr(x9, ptr(x7));
+            a.ubfx(x9, x9, asmjit::Imm(32), asmjit::Imm(22));    // its identity hash
+            a.cmp(x9, x4);
+            a.b_ne(slow);
+            a.b(result);
+            a.bind(heap);
+        }
         a.ldr(w4, ptr(x1));
         a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
         a.cmp(w4, asmjit::Imm(ObjectHeader::ForwardedClassIndex));
@@ -6027,6 +6046,36 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
     } else if (nArgs == 1) {
         asmjit::Label p170 = a.new_label(), pAt = a.new_label(), atBytes = a.new_label();
         a.ldur(x2, ptr(x25, -8));                  // the argument
+        // 10 SmallInteger / : an exact quotient, or a sure failure (2) for an
+        // inexact one or a zero divisor -- the method body makes the
+        // Fraction or signals, with no C call first.
+        {
+            asmjit::Label notDiv = a.new_label(), sureFail = a.new_label();
+            a.cmp(w10, asmjit::Imm(10));
+            a.b_ne(notDiv);
+            a.and_(x3, x1, asmjit::Imm(7));
+            a.and_(x4, x2, asmjit::Imm(7));
+            a.cmp(x3, asmjit::Imm(1));
+            a.ccmp(x4, asmjit::Imm(1), asmjit::Imm(0), CondCode::kEQ);
+            a.b_ne(slow);                              // not two SmallIntegers: C
+            a.asr(x3, x1, asmjit::Imm(3));
+            a.asr(x4, x2, asmjit::Imm(3));
+            a.cbz(x4, sureFail);
+            a.sdiv(x8, x3, x4);
+            a.msub(x9, x8, x4, x3);                    // remainder
+            a.cbnz(x9, sureFail);
+            // The quotient fits unless it is -minSmallInteger (min / -1).
+            a.lsl(x7, x8, asmjit::Imm(3));
+            a.asr(x9, x7, asmjit::Imm(3));
+            a.cmp(x9, x8);
+            a.b_ne(slow);
+            a.orr(x7, x7, asmjit::Imm(1));
+            a.b(result);
+            a.bind(sureFail);
+            a.mov(x7, asmjit::Imm(2));
+            a.ret(x30);
+            a.bind(notDiv);
+        }
         // 110 ==
         a.cmp(w10, asmjit::Imm(110));
         a.b_ne(p170);
@@ -11934,6 +11983,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // entry) is stashed for the failure path's SendCached exit.
                 {
                     asmjit::Label mcfPrimFail = a.new_label();
+                    asmjit::Label mcfStubFail = a.new_label();
                     asmjit::Label mcfDeopt = a.new_label();
                     a.bind(mcfPrim);
                     if (nArgs <= 2 && g_mcfPrimStub[nArgs] != 0
@@ -11942,7 +11992,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.ldr(x16, ptr(x0, OFF_MCF_PRIM_STUB + 8 * nArgs));
                         a.blr(x16);
                         a.ldr(x30, ptr_post(sp, 16));
-                        a.cbnz(x7, mcfCont);
+                        a.cmp(x7, asmjit::Imm(1));
+                        a.b_eq(mcfCont);
+                        a.cmp(x7, asmjit::Imm(2));            // the primitive fails for sure
+                        a.b_eq(mcfStubFail);
                     }
                     emitSyncSpToState(a);
                     // The ip after the send, as the interpreter has it when a
@@ -11970,7 +12023,36 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(w3, asmjit::Imm((int)ExitDeopt));
                     a.str(w3, ptr(x0, OFF_EXIT));
                     a.ret(x30);
+                    // The stub's sure failure: the state pharo_mcf_prim_fail
+                    // reads, as the C call path stores it above.
+                    a.bind(mcfStubFail);
+                    emitSyncSpToState(a);
+                    a.str(x6, ptr(x0, OFF_CACHED_TARGET));
+                    a.str(x5, ptr(x0, OFF_ICDATAPTR));
                     a.bind(mcfPrimFail);
+                    // The failed primitive's method body, natively (as the
+                    // interpreter runs it after the failure).  Each failure
+                    // was an exit: 1/i made a Fraction through one.
+                    if (!GET_DEBUG_BOOL(PHARO_MCF_NO_IC_PRIM_FAIL_BODY)) {
+                        asmjit::Label noBody = a.new_label();
+                        a.stp(x0, x30, ptr_pre(sp, -16));
+                        a.mov(w1, asmjit::Imm(nArgs));
+                        a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_prim_fail));
+                        a.blr(x16);
+                        a.mov(x7, x0);
+                        a.ldp(x0, x30, ptr_post(sp, 16));
+                        a.cbz(x7, noBody);
+                        a.ldr(x5, ptr(x0, OFF_ICDATAPTR));   // for a refused call's exit
+                        a.ldp(x6, x9, ptr(x7));
+                        a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                        a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                        a.adr(x14, mcfCont);
+                        a.adr(x15, mcfSlow);                 // refused: the exit retries it
+                        a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                        a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
+                        a.br(x16);
+                        a.bind(noBody);
+                    }
                     a.ldr(x5, ptr(x0, OFF_ICDATAPTR));
                 }
                 a.bind(mcfSlow);
