@@ -53,7 +53,18 @@ testByteObjectEqualityNeedsStrings
   self assert: (self repeat: [ self found: 'ab' in: (Array with: #[97 98]) ]).
   self assert: (self repeat: [ self found: #abc in: (Array with: 'abc') ]).
   self assert: (self repeat: [ self found: 'abc' copy in: (Array with: 'abc') ]).
-  self deny: (self repeat: [ self found: 'abd' in: (Array with: 'abc') ])!
+  self deny: (self repeat: [ self found: 'abd' in: (Array with: 'abc') ]).
+  "Symbol>>=: identical -> true, another Symbol -> false, a String -> compare."
+  self assert: (self repeat: [ self found: 'abc' copy in: (Array with: #abc) ]).
+  self deny: (self repeat: [ self found: #abd in: (Array with: #abc) ]).
+  self deny: (self repeat: [ self found: 'abd' in: (Array with: #abc) ])!
+
+testArithmeticOnNonSmallIntegers
+  self assert: (self repeat: [ (2 raisedTo: 100) + 1 ]) equals: 1267650600228229401496703205377.
+  self assert: (self repeat: [ (1/2) + (1/3) ]) equals: 5/6.
+  self assert: (self repeat: [ (3@4) + 1 ]) equals: 4@5.
+  self assert: (self repeat: [ $a < $b ]).
+  self deny: (self repeat: [ nil = 3 ])!
 
 testNonLocalReturnFromNativeBlock
   self assert: (self repeat: [ self firstOver: 5 in: (1 to: 10) ]) equals: 6.

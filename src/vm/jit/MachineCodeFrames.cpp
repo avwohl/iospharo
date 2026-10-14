@@ -596,18 +596,30 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     // st->ip is the send (2 bytes: no prefix).  A primitive run below sees
     // the ip after it, as in the interpreter; on failure T1 code exits at
     // the send again.
+    uint8_t* const sendIp = st->ip;
     st->ip += 2;
-    struct RestoreIp { jit::JITState* s; ~RestoreIp() { s->ip -= 2; } } restoreIp{st};
+    struct RestoreIp { jit::JITState* s; uint8_t* ip; ~RestoreIp() { s->ip = ip; } } restoreIp{st, sendIp};
     const int litIdx = desc & 0xFF;
     const int nArgs = (desc >> 8) & 0xFF;
     const bool super = (desc >> 16) & 1;
+    const bool special = (desc >> 17) & 1;   // litIdx is a special selector index
     Oop method = st->method;
     if (!method.isObject() || method.rawBits() < 0x10000) return nullptr;
     ObjectHeader* mo = method.asObjectPtr();
-    Oop hdr = mo->slotAt(0);
-    if (!hdr.isSmallInteger() || litIdx >= (int)(hdr.asSmallInteger() & 0x7FFF))
-        return nullptr;
-    Oop selector = mo->slotAt(1 + litIdx);
+    Oop selector;
+    if (special) {
+        // A special send is 1 byte, not 2: ip after it is ip + 1.
+        st->ip -= 1;
+        Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+        if (!ss.isObject() || (size_t)(litIdx * 2) >= ss.asObjectPtr()->slotCount())
+            return nullptr;
+        selector = ss.asObjectPtr()->slotAt(litIdx * 2);
+    } else {
+        Oop hdr = mo->slotAt(0);
+        if (!hdr.isSmallInteger() || litIdx >= (int)(hdr.asSmallInteger() & 0x7FFF))
+            return nullptr;
+        selector = mo->slotAt(1 + litIdx);
+    }
     Oop rcv = st->sp[-(nArgs + 1)];
     Oop cls;
     if (super) {

@@ -5549,6 +5549,63 @@ static uint64_t buildMcfStubPage(void (*emit)(asmjit::a64::Assembler&)) {
 
 #endif
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+// Machine-code frames: a send with no inline cache (naked ExtSend /
+// ExtSuperSend, or a special arithmetic selector whose inline fast path
+// failed).  x5 = the send's ip.  pharo_mcf_extsend looks it up: a native
+// call through the shared stub, a primitive or trivial target run in place,
+// or nil -> a send exit with a return memo.  Every success path continues
+// at `cont`.
+static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArgs,
+                              int sendLen, int globalIdx, int callerArgCount,
+                              const asmjit::Label& cont) {
+    using namespace asmjit::a64;
+    asmjit::Label extExit = a.new_label();
+    asmjit::Label extDone = a.new_label();
+    asmjit::Label extDeopt = a.new_label();
+    a.str(x5, ptr(x0, OFF_IP));      // for GC during the lookup
+    emitSyncSpToState(a);
+    a.stp(x0, x30, ptr_pre(sp, -16));
+    a.mov(w1, asmjit::Imm(desc));
+    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_extsend));
+    a.blr(x16);
+    a.mov(x7, x0);
+    a.ldp(x0, x30, ptr_post(sp, 16));
+    a.cbz(x7, extExit);
+    a.cmp(x7, asmjit::Imm(1));
+    a.b_eq(extDone);
+    a.cmp(x7, asmjit::Imm(2));
+    a.b_eq(extDeopt);
+    a.ldp(x6, x9, ptr(x7));                  // method, callee JM
+    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+    a.add(x13, x13, asmjit::Imm(globalIdx + sendLen));   // ip after the send
+    a.adr(x14, cont);
+    a.adr(x15, extExit);
+    a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
+    a.mov(x16, asmjit::Imm(g_mcfCallStub));
+    a.br(x16);
+    a.bind(extDone);                         // result on the stack
+    emitReloadSpFromState(a);
+    a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+    a.b(cont);
+    a.bind(extDeopt);                        // interpreter owns the state
+    a.mov(w3, asmjit::Imm((int)ExitDeopt));
+    a.str(w3, ptr(x0, OFF_EXIT));
+    a.ret(x30);
+    a.bind(extExit);
+    a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+    a.add(x5, x5, asmjit::Imm(globalIdx));
+    a.str(x5, ptr(x0, OFF_IP));
+    a.str(xzr, ptr(x0, OFF_ICDATAPTR));
+    a.mov(w3, asmjit::Imm(nArgs));
+    a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+    a.mov(w3, asmjit::Imm(EXIT_SEND));
+    a.str(w3, ptr(x0, OFF_EXIT));
+    emitSyncSpToState(a);
+    a.ret(x30);
+}
+#endif
+
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     uint64_t nilBits, int bcOffsetFromMethObj,
                     int siteIdx,
@@ -6202,9 +6259,25 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b(bsBail);
             } else {
                 a.and_(w7, w5, asmjit::Imm(0x3FFFFF));
+                asmjit::Label rcvString = a.new_label();
+                a.mov(w8, asmjit::Imm(g_byteStringClassIndex));
+                a.cmp(w7, w8);
+                a.b_eq(rcvString);
+                // A ByteSymbol receiver (Symbol>>=): identical -> true;
+                // another Symbol -> false; a ByteString -> String compare.
+                a.mov(w8, asmjit::Imm(g_byteSymbolClassIndex));
+                a.cmp(w7, w8);
+                a.b_ne(bsBail);
+                a.cmp(x1, x4);
+                a.b_eq(resultTrue);
+                a.and_(w7, w6, asmjit::Imm(0x3FFFFF));
+                a.cmp(w7, w8);
+                a.b_eq(resultFalse);
                 a.mov(w8, asmjit::Imm(g_byteStringClassIndex));
                 a.cmp(w7, w8);
                 a.b_ne(bsBail);
+                a.bind(rcvString);
+                a.mov(w8, asmjit::Imm(g_byteStringClassIndex));
                 asmjit::Label argOk = a.new_label();
                 a.and_(w7, w6, asmjit::Imm(0x3FFFFF));
                 a.cmp(w7, w8);
@@ -6286,11 +6359,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
         }
+        if (::pharo::mcfEnabled() && g_mcfCallStub != 0
+                && !GET_DEBUG_BOOL(PHARO_MCF_NO_ARITH_SEND)) {
+            // Not SmallIntegers (nor the inline Float / String cases): send
+            // the special selector properly instead of the generic exit,
+            // after which the rest of the method ran interpreted.
+            emitMcfHelperSend(a, (uint32_t)(op - 0x60) | (1u << 8) | (1u << 17),
+                              1, 1, globalIdx, callerArgCount, end);
+        } else {
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
         a.ret(x30);
+        }
 
         a.bind(end);
         if (tosProduceArith) g_tos.valid = true;
@@ -11763,59 +11845,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)
                         && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)
                         && g_mcfCallStub != 0) {
-                    // Machine-code frames: no inline cache here, so ask
-                    // pharo_mcf_extsend for the target's call-cache entry
-                    // and call it natively through the shared stub; any
-                    // refusal takes the send exit below.
-                    using namespace asmjit::a64;
-                    asmjit::Label extExit = a.new_label();
+                    // Machine-code frames: no inline cache here (see
+                    // emitMcfHelperSend).
                     asmjit::Label extCont = a.new_label();
                     const uint32_t desc = (uint32_t)(bcReal[i + 1] >> 3)
                         | ((uint32_t)(bcReal[i + 1] & 7) << 8)
                         | (op == SistaV1::ExtSuperSend ? (1u << 16) : 0u);
-                    a.str(x5, ptr(x0, OFF_IP));      // for GC during the lookup
-                    emitSyncSpToState(a);
-                    a.stp(x0, x30, ptr_pre(sp, -16));
-                    a.mov(w1, asmjit::Imm(desc));
-                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_extsend));
-                    a.blr(x16);
-                    a.mov(x7, x0);
-                    a.ldp(x0, x30, ptr_post(sp, 16));
-                    a.cbz(x7, extExit);
-                    asmjit::Label extDone = a.new_label();
-                    asmjit::Label extDeopt = a.new_label();
-                    a.cmp(x7, asmjit::Imm(1));
-                    a.b_eq(extDone);
-                    a.cmp(x7, asmjit::Imm(2));
-                    a.b_eq(extDeopt);
-                    a.ldp(x6, x9, ptr(x7));                  // method, callee JM
-                    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                    a.add(x13, x13, asmjit::Imm(globalIdx + 2));   // ip after the send
-                    a.adr(x14, extCont);
-                    a.adr(x15, extExit);
-                    a.mov(w12, asmjit::Imm((bcReal[i + 1] & 7) | (callerArgCount << 8)));
-                    a.mov(x16, asmjit::Imm(g_mcfCallStub));
-                    a.br(x16);
-                    a.bind(extDone);                         // result on the stack
-                    emitReloadSpFromState(a);
-                    a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
-                    a.b(extCont);
-                    a.bind(extDeopt);                        // interpreter owns the state
-                    a.mov(w3, asmjit::Imm((int)ExitDeopt));
-                    a.str(w3, ptr(x0, OFF_EXIT));
-                    a.ret(x30);
-                    a.bind(extExit);
-                    // The stub's refusal path: x5 was clobbered, recompute.
-                    a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                    a.add(x5, x5, asmjit::Imm(globalIdx));
-                    a.str(x5, ptr(x0, OFF_IP));
-                    a.str(xzr, ptr(x0, OFF_ICDATAPTR));
-                    a.mov(w3, Imm((int)(bcReal[i + 1] & 7)));
-                    a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
-                    a.mov(w3, Imm(EXIT_SEND));
-                    a.str(w3, ptr(x0, OFF_EXIT));
-                    emitSyncSpToState(a);
-                    a.ret(x30);
+                    emitMcfHelperSend(a, desc, bcReal[i + 1] & 7, 2, globalIdx,
+                                      callerArgCount, extCont);
                     a.bind(extCont);
                     a.bind(bcLabels[globalIdx + 1]);
                     i += 1;
