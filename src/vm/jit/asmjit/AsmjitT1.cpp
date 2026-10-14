@@ -12035,6 +12035,19 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.bind(bcLabels[globalIdx + 1]);
                 return 2;
             }
+            if (op == SistaV1::ExtPushTemp && i + 1 < bcRealLen) {
+                push(SimK::Temp, bcReal[i + 1]);
+                a.bind(bcLabels[globalIdx + 1]);
+                return 2;
+            }
+            // The long form at an index below 16 is how the compiler reads
+            // Context fields (mediated by the interpreter): not those.
+            if (op == SistaV1::ExtPushRecvVar && i + 1 < bcRealLen && bcReal[i + 1] >= 16
+                    && !g_emitCtxMethod) {
+                push(SimK::Ivar, bcReal[i + 1]);
+                a.bind(bcLabels[globalIdx + 1]);
+                return 2;
+            }
             if (S.items.empty()) return 0;
             if (op == SistaV1::Dup) {
                 SimItem top = S.items.back();
@@ -12048,36 +12061,106 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 return 1;
             }
             if (op == SistaV1::Pop) { S.pop(); return 1; }
-            if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
-                const int n = op - SistaV1::PopStoreTempBase;
+            // Store the top into temp n; pop it or leave it (as a register
+            // when it read a slot the store could change).
+            auto storeTemp = [&](int n, bool popIt) -> bool {
                 SimItem v = S.items.back();
                 S.items.pop_back();
-                if (!simDetach(a, false, n)) { S.items.push_back(v); return 0; }
+                if (!simDetach(a, false, n)) { S.items.push_back(v); return false; }
+                if (!popIt && (v.k == SimK::Temp || v.k == SimK::Ivar)) {
+                    const int r = S.allocReg();
+                    if (r < 0) { S.items.push_back(v); return false; }
+                    simLoad(a, v, asmjit::a64::x(r));
+                    v = SimItem{SimK::Reg, 0, r};
+                }
                 a.str(simSrc(a, v, x1), ptr(x22, n * 8));
-                if (v.k == SimK::Reg) S.freeReg(v.reg);
+                if (popIt) { if (v.k == SimK::Reg) S.freeReg(v.reg); }
+                else S.items.push_back(v);
+                return true;
+            };
+            if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast)
+                return storeTemp(op - SistaV1::PopStoreTempBase, true) ? 1 : 0;
+            if ((op == SistaV1::ExtPopStoreTemp || op == SistaV1::ExtStoreTemp) && i + 1 < bcRealLen) {
+                if (!storeTemp(bcReal[i + 1], op == SistaV1::ExtPopStoreTemp)) return 0;
+                a.bind(bcLabels[globalIdx + 1]);
+                return 2;
+            }
+            // == never looks anything up: compare the oops.  It still owns
+            // an inline-cache site, which the sites after it count on.
+            if (op == SistaV1::SpecialSendBase + 6 && S.items.size() >= 2) {
+                siteIdx++;
+                const int nextIdx = globalIdx + 1;
+                if (i + 1 < bcRealLen && !isJumpTarget(nextIdx)) {
+                    const uint8_t nop = bcReal[i + 1];
+                    const bool shortJ = SistaV1::isConditionalShortJump(nop);
+                    const bool extJ = (nop == SistaV1::ExtJumpTrue || nop == SistaV1::ExtJumpFalse)
+                                      && i + 2 < bcRealLen;
+                    if (shortJ || extJ) {
+                        const int targetIdx = shortJ ? SistaV1::shortJumpTarget(nop, nextIdx)
+                                                     : nextIdx + 2 + bcReal[i + 2];
+                        const int postIdx = nextIdx + (shortJ ? 1 : 2);
+                        const bool jt = shortJ ? SistaV1::isShortJumpTrue(nop)
+                                               : nop == SistaV1::ExtJumpTrue;
+                        if (targetIdx > nextIdx && (size_t)targetIdx < bcLabels.size()
+                                && (size_t)postIdx < bcLabels.size()) {
+                            simFlushBelow(a, 2);
+                            SimItem A = S.items[0], B = S.items[1];
+                            asmjit::a64::Gp rA = simSrc(a, A, x1);
+                            asmjit::a64::Gp rB = simSrc(a, B, x4);
+                            a.cmp(rA, rB);
+                            if (jt) a.b_eq(bcLabels[targetIdx]); else a.b_ne(bcLabels[targetIdx]);
+                            a.b(bcLabels[postIdx]);
+                            S.pop(); S.pop();
+                            // The jump bytecode's own code still follows (it
+                            // is unreachable from here; its label must exist).
+                            a.bind(bcLabels[nextIdx]);
+                            if (!shortJ) a.bind(bcLabels[nextIdx + 1]);
+                            if ((size_t)nextIdx < g_simDeferredAt.size()) g_simDeferredAt[nextIdx] = true;
+                            return shortJ ? 2 : 3;
+                        }
+                    }
+                }
+                SimItem B = S.items.back(); S.items.pop_back();
+                SimItem A = S.items.back(); S.items.pop_back();
+                asmjit::a64::Gp rA = simSrc(a, A, x1);
+                asmjit::a64::Gp rB = simSrc(a, B, x4);
+                if (A.k == SimK::Reg) S.freeReg(A.reg);
+                if (B.k == SimK::Reg) S.freeReg(B.reg);
+                const int r = S.allocReg();
+                if (r < 0) { S.items.push_back(A); S.items.push_back(B); siteIdx--; return 0; }
+                a.cmp(rA, rB);
+                a.ldp(x7, x8, ptr(x0, OFF_TRUEOOP));
+                a.csel(asmjit::a64::x(r), x7, x8, CondCode::kEQ);
+                S.items.push_back(SimItem{SimK::Reg, 0, r});
                 return 1;
             }
-            if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
+            const bool extRecvStore = (op == SistaV1::ExtPopStoreRecv || op == SistaV1::ExtStoreRecv)
+                                      && i + 1 < bcRealLen && bcReal[i + 1] >= 16;
+            if ((op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) || extRecvStore) {
                 if (g_emitCtxMethod) return 0;
-                const int n = op - SistaV1::PopStoreRecvBase;
+                const int n = extRecvStore ? bcReal[i + 1] : op - SistaV1::PopStoreRecvBase;
+                const bool popIt = op != SistaV1::ExtStoreRecv;
+                const int used = extRecvStore ? 2 : 1;
+                // Everything that must be in registers is loaded before the
+                // check: the bail path stores those registers.
+                SimItem v = S.items.back();
+                S.items.pop_back();
+                if (!simDetach(a, true, n)) { S.items.push_back(v); return 0; }
+                // A value kept on the stack that read a field (or temp)
+                // becomes a register first: the store could change it.
+                SimItem kept = v;
+                if (!popIt && (v.k == SimK::Temp || v.k == SimK::Ivar)) {
+                    const int r = S.allocReg();
+                    if (r < 0) { S.items.push_back(v); return 0; }
+                    simLoad(a, v, asmjit::a64::x(r));
+                    kept = SimItem{SimK::Reg, 0, r};
+                }
                 // The immutable-receiver bail exits with the whole stack
-                // (value included) in memory: emit that flush out of line.
+                // (value included) in memory: that flush is out of line.
                 asmjit::Label bail = a.new_label(), cont = a.new_label();
                 a.ldr(x8, ptr(x21));
                 a.tbnz(x8, 23, bail);
-                SimItem v = S.items.back();
-                S.items.pop_back();
-                const bool ok = simDetach(a, true, n);
-                S.items.push_back(v);
-                if (!ok) {
-                    // Out of registers: take the plain path (flush, emitOne).
-                    a.b(cont);
-                    a.bind(bail);
-                    a.bind(cont);
-                    return 0;
-                }
-                S.items.pop_back();
-                asmjit::a64::Gp rv = simSrc(a, v, x1);
+                asmjit::a64::Gp rv = simSrc(a, kept, x1);
                 a.str(rv, ptr(x21, OBJ_SLOT_0 + n * 8));
                 emitRememberBarrierA64(a, x21, rv, x6, x7, x8);
                 a.b(cont);
@@ -12087,8 +12170,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 simGenericExit(a, globalIdx);
                 S.items.pop_back();
                 a.bind(cont);
-                if (v.k == SimK::Reg) S.freeReg(v.reg);
-                return 1;
+                if (popIt) { if (kept.k == SimK::Reg) S.freeReg(kept.reg); }
+                else S.items.push_back(kept);
+                if (extRecvStore) a.bind(bcLabels[globalIdx + 1]);
+                return used;
             }
             if (op >= 0x60 && op <= 0x67 && S.items.size() >= 2) {
                 simFlushBelow(a, 2);

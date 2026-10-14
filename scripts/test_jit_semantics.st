@@ -17,6 +17,8 @@
    switch it resumed as BlockClosure>>value on a CompiledMethod (DNU
    #numArgsError:).  Method proxies (methodproxies, OCSpecialSelectorTest)
    reach it through valueUnpreemptively;
+ - the simStack (deferred operand pushes) must keep a pending read of a
+   temp ahead of a store to it, and the IC site numbering of == (2026-10-14);
  - two-way become (primitive 128) moved the identity hash with the contents;
    Spur keeps it with the references (copyHash false), so an IdentitySet
    still finds what its slot now refers to (ReStore's exclusion sets).
@@ -53,7 +55,30 @@ outerOf: x
   ^ b outerContext!
 
 three: a with: b and: c
-  ^ a + b + c! !
+  ^ a + b + c!
+
+pendingRead: x
+  "simStack: the pending read of a takes its value before the store."
+  | a |
+  a := x.
+  ^ a + (a := 10)!
+
+nilOrThree: x
+  "simStack: == fused with a conditional jump."
+  ^ x == nil ifTrue: [#isNil] ifFalse: [x == 3 ifTrue: [#three] ifFalse: [#other]]!
+
+keep: x
+  "simStack: a store that keeps its value on the stack."
+  | y z |
+  z := (y := x + 1) + 1.
+  ^ {y. z}!
+
+sum: n
+  "simStack: arithmetic in registers, with overflow into LargeInteger."
+  | s |
+  s := SmallInteger maxVal - n.
+  1 to: n + 2 do: [:i | s := s + 1].
+  ^ s! !
 
 !JITSemanticsTest methodsFor: 'tests'!
 testByteObjectEqualityNeedsStrings
@@ -117,6 +142,15 @@ testTwoWayBecomeKeepsHashWithReferences
   self assert: a identityHash equals: h.
   self assert: (set includes: a).
   self assert: a class equals: ByteString!
+
+testSimStackSemantics
+  self assert: (self repeat: [ self pendingRead: 4 ]) equals: 14.
+  self assert: (self repeat: [ self nilOrThree: nil ]) equals: #isNil.
+  self assert: (self repeat: [ self nilOrThree: 3 ]) equals: #three.
+  self assert: (self repeat: [ self nilOrThree: 'x' ]) equals: #other.
+  self assert: (self repeat: [ self keep: 10 ]) equals: #(11 12).
+  self assert: (self repeat: [ self sum: 5 ]) equals: SmallInteger maxVal + 2.
+  self assert: (self repeat: [ self sum: 5 ]) class equals: LargePositiveInteger!
 
 testSuperAndLongSends
   self assert: (self repeat: [ self three: 1 with: 2 and: 3 ]) equals: 6.
