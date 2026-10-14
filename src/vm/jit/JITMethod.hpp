@@ -381,8 +381,11 @@ inline uint64_t g_mcfCallStub = 0;
 inline uint64_t g_mcfPrimStub[3] = {0, 0, 0};
 // MCF: per-site caches of the special = send (no inline cache of its own):
 // {receiver class key, kind}.  Kind 1: that class's = is Object>>= (^self
-// == anObject), answered inline.  Allocated at compile time, never freed;
-// mcfClearSiteCaches empties them when methods change.
+// == anObject), answered inline.  Also the naked ExtSend sites' caches:
+// {receiver class key, method oop} -- not GC roots, so they must be emptied
+// whenever old objects move (full GC: recoverJITAfterGC).  Allocated at
+// compile time, never freed; mcfClearSiteCaches empties them when methods
+// change or move.
 inline std::vector<uint64_t*>& mcfSiteCacheChunks() {
     static std::vector<uint64_t*> chunks;
     return chunks;

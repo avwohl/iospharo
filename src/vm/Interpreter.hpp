@@ -1646,6 +1646,10 @@ private:
         if (jitRuntime_.isInitialized()) {
             jitRuntime_.recoverAfterGC(memory_);
         }
+        // ExtSend site caches hold method oops, and compaction moves
+        // methods: a stale entry called whatever method moved to that
+        // address (FormSet>>asForm for FormSet class>>extent:depth:forms:).
+        jit::mcfClearSiteCaches();
         recoverSistaAfterGC();
 #endif
     }
