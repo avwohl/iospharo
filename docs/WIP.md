@@ -15,34 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-14, 06:00) -- machine-code frames are the arm64 default
+## Right now (2026-10-14, 09:00) -- machine-code frames: done, default, pushed
 
 The user asked for the redesign of how compiled code calls and returns into
-interpreted methods.  Done and the default on arm64 (opt-out `PHARO_NO_MCF`):
-`docs/mc-frames-design.md` has the design, the defects found, and numbers.
+interpreted methods.  It is the arm64 default (opt-out `PHARO_NO_MCF`) and
+pushed (`7968e116`).  Design, defects found, validation and numbers:
+`docs/mc-frames-design.md`.
 
-Pushed through `8e84595b`: validated by sweep M3 (`PHARO_MCF=1`) and sweep
-M4 (the default flip): 27878 P / 11 F / 1 E, baseline level; its only new
-non-pass, TraitTest>>testOrigin TIMEOUT, passes alone 2/2 (that batch has
-an intermittent timeout, a different TraitTest each sweep).  Battery and
-test_class_table pass.
+Validation: sweeps M3-M6 at the baseline level (27876-27878 P against sweep
+U's 27879); every non-pass outside the baseline lists passes alone, but
+three were novel non-timing errors (watch item, no repro: a rerun of the
+RSViolinPlotTest batch 3x on each binary was clean).  Battery,
+test_class_table and test_relaunch (3/3 twice on a quiet machine) pass.
+95 packages against Cog: identical except known differences (see the
+design doc) and thalesgroup-pharoows (4-5 timeouts against remote map
+servers, the same with `PHARO_NO_MCF`: not this work).
 
-Local, not pushed, to be validated by sweep M5 (`$S/sweep-M5`, binary
-`$S/vm-M5` = `ad043e26`): shared call stubs (`49785af5`), value:value:
-block calls (`d78c8198`), at:-family primitive methods compiled with their
-body (`ad043e26`).
-
-Package batch (`$S/pkgbatch-MCF.tsv`, binary `$S/vm-M4`) running:
-deeptraverser 53/53 like Cog; lexicon 50/51 (its 50 s
-CodeAnalysisRunnerTest still times out, measured with a sweep loading the
-machine).
-
-Numbers at `ad043e26` (instructions, billion): printString 38.65 (83.7
-before this work), deeptraverser 766 (1004), lexicon 1081 (1699),
-myprecious ~44 (44.3, network-bound).
-
-Next: lexicon is now limited by block creation materializing the frame
-stack (docs/deferred.md); test_relaunch on a quiet machine.
+Instructions (billion): printString 83.7 -> 38.4, deeptraverser 1004 ->
+767, lexicon 1699 -> 1081.  lexicon's CodeAnalysisRunnerTest takes 56.7 s
+on a quiet machine (was 75-84 s; limit 50 s; Cog 11 s): the remaining cost
+is block creation materializing contexts (docs/deferred.md, lazy contexts).
 
 ## Right now (2026-10-13, 17:30) -- array loops into T1
 
