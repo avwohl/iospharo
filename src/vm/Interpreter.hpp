@@ -1860,6 +1860,10 @@ public:
     void mcfCallCensusDump();
     void mcfClearMemos();
     void mcfDeriveView(jit::JITState& st);
+    static constexpr size_t kBcEndMemoSize = 256;
+    struct BcEndMemo { uint64_t method = 0; uint64_t off = 0; };
+    BcEndMemo bcEndMemo_[kBcEndMemoSize];
+    uint64_t bcEndMemoEpoch_ = ~0ULL;
     uint8_t* bytecodeEndOf(Oop method) {
         ObjectHeader* mo = method.asObjectPtr();
         return mo->bytes() + mo->compiledCodeByteSize();

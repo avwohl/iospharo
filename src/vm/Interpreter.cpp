@@ -19324,8 +19324,16 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     } else {
         outerContextForBlock = activeContext_;
     }
-    memory_.storePointer(0, block, outerContextForBlock);  // outerContext
-    memory_.storePointer(1, block, compiledBlock);   // compiledBlock (instead of startPC)
+    // A young block (the usual case: just allocated in eden) needs no
+    // generational barrier; storePointer's checks were 3% of lexicon.
+    const bool youngBlock = memory_.isYoung(block);
+    ObjectHeader* blockHdr = block.asObjectPtr();
+    auto putSlot = [&](size_t k, Oop v) {
+        if (youngBlock) blockHdr->slots()[k] = v;
+        else memory_.storePointer(k, block, v);
+    };
+    putSlot(0, outerContextForBlock);  // outerContext
+    putSlot(1, compiledBlock);         // compiledBlock (instead of startPC)
 
     // Get numArgs from the CompiledBlock's header (first slot)
     // In Pharo, CompiledCode header format has numArgs in bits 24-27:
@@ -19338,7 +19346,7 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
             numArgs = (headerBits >> 24) & 0x0F;  // numArgs in bits 24-27
         }
     }
-    memory_.storePointer(2, block, Oop::fromSmallInteger(numArgs));
+    putSlot(2, Oop::fromSmallInteger(numArgs));
 
     // Store receiver at slot 3
     // If receiverOnStack, pop it from stack; otherwise use current receiver_
@@ -19348,12 +19356,12 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     } else {
         blockReceiver = receiver_;
     }
-    memory_.storePointer(3, block, blockReceiver);
+    putSlot(3, blockReceiver);
 
     // Copy values from stack - these go into slot 4+ (after the 4 fixed slots)
     for (int i = numCopied - 1; i >= 0; --i) {
         Oop copiedValue = pop();
-        memory_.storePointer(4 + i, block, copiedValue);
+        putSlot(4 + i, copiedValue);
     }
 
     // B5 diagnostic: when creating a block in decodeBytes:, check that

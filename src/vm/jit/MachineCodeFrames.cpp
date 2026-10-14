@@ -534,8 +534,19 @@ void Interpreter::mcfDeriveView(jit::JITState& st) {
     ObjectHeader* mo = st.method.asObjectPtr();
     st.literals = mo->slots() + 1;
     st.argCount = jm->argCount;
-    st.mcfBcEndOff = static_cast<uint64_t>(
-        (mo->bytes() + mo->compiledCodeByteSize()) - reinterpret_cast<uint8_t*>(st.method.rawBits()));
+    // The bytecode end, memoized by method oop (decoding it on every
+    // primitive call was 2% of lexicon).  Object motion clears the memo.
+    if (bcEndMemoEpoch_ != g_objectMotionEpoch) {
+        for (auto& e : bcEndMemo_) e.method = 0;
+        bcEndMemoEpoch_ = g_objectMotionEpoch;
+    }
+    auto& e = bcEndMemo_[(jm->compiledMethodOop >> 4) & (kBcEndMemoSize - 1)];
+    if (e.method != jm->compiledMethodOop) {
+        e.method = jm->compiledMethodOop;
+        e.off = static_cast<uint64_t>(
+            (mo->bytes() + mo->compiledCodeByteSize()) - reinterpret_cast<uint8_t*>(st.method.rawBits()));
+    }
+    st.mcfBcEndOff = e.off;
 }
 
 void Interpreter::mcfSyncRegisters(const jit::JITState& stIn) {
