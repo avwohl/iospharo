@@ -298,12 +298,20 @@ change.
 | Sweep M3 (`PHARO_MCF=1`) | `21e4ae7a` | 27877 / 11 / 2 |
 | Sweep M4 (MCF default) | `35dab876` | 27878 / 11 / 1 |
 | Sweep M5 | `ad043e26` | 27877 / 11 / 2 |
+| Sweep M6 | `a1a8b3c6` | 27876 / 11 / 3 |
 
 The non-passes of M3-M5 that are not in the baseline lists all pass alone:
 a TraitTest timeout in each (that batch has an intermittent timeout, a
 different test each time), and one novel error each in M3
 (WriteStreamTest, "receiver of #x is nil") and M5 (SpButtonPresenterTest,
-SubscriptOutOfBounds on a text).  Watch for more of these.  Battery and
+SubscriptOutOfBounds on a text), and two in M6 (RSViolinPlotTest,
+"receiver of #nextCell: is nil"; TKTParameterizedServiceTest, a TaskIt
+timeout).  All pass alone 3/3.  Three novel non-timing errors in four
+sweeps is a pattern worth watching: a review of the GC, process-switch,
+memo, block and primitive paths found no rare-corruption mechanism these
+tests could hit, but none of them has a reproduction yet.  (An earlier
+"new vs baseline" list compared files sorted in two different orders;
+the lists here use one byte order.)  Battery and
 test_class_table pass; test_relaunch failed 1-2 of 3 cycles under load in
 both modes.
 
