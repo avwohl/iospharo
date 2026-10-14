@@ -98,6 +98,7 @@ DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX, -1) // bisect: compile ONLY the inline-me
 DEBUG_STR(PHARO_SISTA_KEEP_METHOD_OOP)    // bisect: compile ONLY the inline method with this method oop (hex); bail all other inline methods (stable across runs)
 DEBUG_STR(PHARO_T1_RESUME_ONLY_SEL)       // debug isolation: force send-resume ON only for T1 methods whose selector == this value (resume stays OFF for all others, incl. startup). Repro/validate the send-resume protocol on one controlled method without breaking startup.
 DEBUG_STR(PHARO_JIT_PERF_MAP)               // write "start size Class>>#sel" for every T1 compile to this file (attribute sample addresses)
+DEBUG_STR(PHARO_T1_DUMP_CODE)               // write the machine code of each T1 compile of this selector to /tmp/t1code-<sel>-<n>.bin (+ .txt with the start address)
 DEBUG_BOOL(PHARO_J2J_LOG_FILL)            // log every IC J2J bit-60 fill/upgrade as [J2JFILL] caller->callee (+selfrec flag), capped. Used to enumerate engaged (caller,callee) pairs under global inline-J2J for bisecting the startup corruptor.
 DEBUG_BOOL(PHARO_J2J_MAT_LOG)             // log every J2J-save materialize (site, saveJM selector, receiver class, sendArgs, ip) + flag IP-OUT-OF-RANGE saves whose ip isn't inside saveJM's bytecode range = stale save.jitMethod written by the xmethod save-push
 DEBUG_STR(PHARO_J2J_MAT_SEL)              // substring filter: J2J-MAT entries whose saveJM selector matches are logged UNCAPPED (the general log caps at 200 lines, before the corruption window)
@@ -192,6 +193,8 @@ DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE)          // MCF: the special = send on no
 DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL)       // MCF: ensure: / on:do: (marker primitives 198/199) are not called natively from machine code
 DEBUG_BOOL(PHARO_MCF_NO_EAGER_IC_FILL)          // MCF: an IC-miss exit leaves the IC patch to the interpreter send (which some special-selector fast paths never make)
 DEBUG_BOOL(PHARO_MCF_NO_YOUNG_CALL)             // MCF: young methods and CompiledBlocks get no call-cache entry (machine code calls them through an exit)
+DEBUG_BOOL(PHARO_MCF_NO_PROMPT_YIELD)           // MCF: a bytecode exit taken for a heartbeat yield leaves the yield to the interpreter countdown
+DEBUG_BOOL(PHARO_MCF_NO_EXTRAS_SHORTCUT)        // MCF: an IC hit walks the whole specialization chain even when no tested extras bit is set
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read

@@ -9386,6 +9386,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.b(dispatchCached);
             } else {
+                // Every bit the chain below tests: when all are zero it ends
+                // at dispatchCached whatever the receiver, so go there at
+                // once.  An ordinary compiled callee (extras = J2J entry
+                // bits only) took 15 instructions of failed tests per call.
+                // All the bits are in 48-63: one mov builds the mask.
+                if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTRAS_SHORTCUT)) {
+                    uint64_t testedHi = 0x1F                   // primKind, bits 48-52
+                        | (1u << (54 - 48)) | (1u << (58 - 48)) | (1u << (61 - 48))
+                        | (nArgs == 0 ? (1u << (63 - 48)) : 0)
+                        | (nArgs == 1 ? (1u << (62 - 48)) : 0);
+                    a.movz(x6, asmjit::Imm(testedHi), asmjit::Imm(48));
+                    a.tst(x7, x6);
+                    a.b_eq(dispatchCached);
+                }
                 // Machine-code frames: this is the path every site takes (no
                 // inline J2J), so give it the receiver-independent
                 // specializations the inline-J2J path dispatches before its
@@ -14701,6 +14715,23 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                          (unsigned long long)(uintptr_t)jm->codeStart(), emitted,
                          cls.c_str(), memory.selectorOf(compiledMethod).c_str());
             std::fflush(mapf);
+        }
+    }
+    // PHARO_T1_DUMP_CODE=<selector>: write each compile of that selector's
+    // machine code to /tmp/t1code-<selector>-<n>.bin (first line of the
+    // matching .txt: the start address), to read it with a disassembler.
+    if (jm && GET_DEBUG_STR(PHARO_T1_DUMP_CODE)
+            && memory.selectorOf(compiledMethod) == GET_DEBUG_STR(PHARO_T1_DUMP_CODE)) {
+        static int dumpN = 0;
+        std::string base = std::string("/tmp/t1code-") + GET_DEBUG_STR(PHARO_T1_DUMP_CODE)
+                           + "-" + std::to_string(dumpN++);
+        if (FILE* f = std::fopen((base + ".bin").c_str(), "wb")) {
+            std::fwrite(jm->codeStart(), 1, emitted, f);
+            std::fclose(f);
+        }
+        if (FILE* f = std::fopen((base + ".txt").c_str(), "w")) {
+            std::fprintf(f, "%llx %zx\n", (unsigned long long)(uintptr_t)jm->codeStart(), emitted);
+            std::fclose(f);
         }
     }
     // E2 2026-05-24: log every successful asmjit-T1 compile when
