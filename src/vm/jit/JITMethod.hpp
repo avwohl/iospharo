@@ -235,7 +235,12 @@ inline uint32_t g_mcCodeEpoch = 1;
 struct McfCallEntry {
     uint64_t methodBits;   // key (0 = empty)
     struct JITMethod* jm;
-    uint64_t bcEndOff;     // bytecodeEnd - method, for SavedFrame.savedBytecodeEnd
+    // Packed (mcfPackBcInfo): bits 0-23 bytecodeEnd - method (for
+    // SavedFrame.savedBytecodeEnd), bits 24-47 bytecode start - method,
+    // bits 48-55 the callee's temp count.  The call stub reads them here,
+    // in the entry the caller just probed, not from the JITMethod header
+    // in the code zone (two cold data lines per call).
+    uint64_t bcEndOff;
     uint64_t prim;         // != 0: call this primitive (pharo_mcf_prim); jm is null
 };
 static_assert(sizeof(McfCallEntry) == 32, "T1 indexes McfCallEntry with lsl #5");

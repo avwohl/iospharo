@@ -5001,12 +5001,16 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.b_eq(fall);
         a.bind(noHome);
     }
-    a.ldr(x8, ptr(x7, L.materializedRetSlot));
+    // Adjacent record fields load in pairs (ldp2 falls back to two ldr).
+    auto ldp2 = [&](asmjit::a64::Gp r1, uint32_t o1, asmjit::a64::Gp r2, uint32_t o2) {
+        if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.ldp(r1, r2, ptr(x7, o1));
+        else { a.ldr(r1, ptr(x7, o1)); a.ldr(r2, ptr(x7, o2)); }
+    };
+    ldp2(x11, L.savedFP, x8, L.materializedRetSlot);
     a.cbnz(x8, fall);
-    a.ldr(x9, ptr(x7, L.mcReturn));
+    ldp2(x9, L.mcReturn, x8, L.mcKeyIP);
     a.cbz(x9, fall);
-    a.ldr(x8, ptr(x7, L.mcKeyIP));
-    a.ldr(x10, ptr(x7, L.savedIP));
+    ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
     a.cmp(x8, x10);
     a.b_ne(fall);
 
@@ -5047,26 +5051,24 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.bind(noCtx);
     }
     a.str(x3, ptr(x2));
-    a.ldr(x8, ptr(x7, L.materializedContext));
-    a.str(x8, ptr(x4));
-    a.ldr(x8, ptr(x7, L.savedActiveContext));
+    ldp2(x13, L.savedActiveContext, x14, L.materializedContext);
+    a.str(x14, ptr(x4));
     a.ldr(x10, ptr(x0, OFF_MCF_ACTCTX_PTR));
-    a.str(x8, ptr(x10));
+    a.str(x13, ptr(x10));
     // Result into the callee's receiver slot; sp just above it.
     emitLoadTempBase(a, x8);
     a.stur(x1, ptr(x8, -8));
     emitStoreSp(a, x8);
     // Caller's view.
-    a.ldr(x8, ptr(x7, L.savedFP));
-    a.add(x8, x8, asmjit::Imm(8));
+    a.add(x8, x11, asmjit::Imm(8));           // savedFP + 8
     emitStoreTempBase(a, x8);
-    a.ldr(x8, ptr(x7, L.savedReceiver));
-    a.str(x8, ptr(x0, OFF_RECEIVER));
-    if (t1TbReg()) a.mov(x21, x8);
+    ldp2(x13, L.savedReceiver, x14, L.savedClosure);
+    a.str(x13, ptr(x0, OFF_RECEIVER));
+    if (t1TbReg()) a.mov(x21, x13);
+    a.str(x14, ptr(x0, OFF_CLOSURE));         // the caller's closure (nil: method)
     a.ldr(x8, ptr(x7, L.savedMethod));
     a.str(x8, ptr(x0, OFF_METHOD));
-    a.ldr(x10, ptr(x7, L.savedBytecodeEnd));
-    a.sub(x10, x10, x8);
+    a.sub(x10, x12, x8);                      // savedBytecodeEnd - method
     a.str(x10, ptr(x0, OFF_MCF_BCEND_OFF));
     a.add(x8, x8, asmjit::Imm(16));
     a.str(x8, ptr(x0, OFF_LITERALS));
@@ -5076,8 +5078,6 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.str(x19, ptr(x0, OFF_JITMETHOD));
     a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
     a.str(x8, ptr(x0, OFF_IP));
-    a.ldr(x8, ptr(x7, L.savedClosure));       // the caller's closure (nil: method)
-    a.str(x8, ptr(x0, OFF_CLOSURE));
     a.mov(x26, x1);                           // TOS mirror = the result
     a.str(wzr, ptr(x0, OFF_EXIT));
     if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)) {
@@ -5419,10 +5419,15 @@ static void emitMcfCalleeView(asmjit::a64::Assembler& a) {
     a.str(w11, ptr(x0, OFF_ARGCOUNT));
     a.mov(x19, x9);
     a.str(x9, ptr(x0, OFF_JITMETHOD));
-    a.ldr(x17, ptr(x9, (int)offsetof(JITMethod, bcStartCache)));
-    a.str(x17, ptr(x0, OFF_IP));
-    a.ldr(x17, ptr(x7, 16));                       // entry.bcEndOff
+    // entry.bcEndOff packs the bytecode end, start and temp count
+    // (mcfPackBcInfo).  x17 = the temp count on exit; clobbers x10.
+    a.ldr(x10, ptr(x7, 16));
+    a.ubfx(x17, x10, asmjit::Imm(24), asmjit::Imm(24));
+    a.add(x17, x6, x17);
+    a.str(x17, ptr(x0, OFF_IP));                   // bytecode start
+    a.and_(x17, x10, asmjit::Imm(0xFFFFFF));
     a.str(x17, ptr(x0, OFF_MCF_BCEND_OFF));
+    a.lsr(x17, x10, asmjit::Imm(48));             // temp count
 }
 
 static void emitMcfVerifyPushCall(asmjit::a64::Assembler& a) {
@@ -5491,8 +5496,8 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     a.str(x1, ptr(x0, OFF_RECEIVER));
     if (t1TbReg()) a.mov(x21, x1);
     a.str(x4, ptr(x0, OFF_CLOSURE));               // a method frame
-    // Temporaries beyond the arguments start as nil.
-    a.ldrb(w17, ptr(x9, (int)offsetof(JITMethod, tempCount)));
+    // Temporaries beyond the arguments start as nil (x17 = temp count,
+    // from emitMcfCalleeView).
     a.subs(w17, w17, w11);
     a.b_le(tDone);
     a.bind(tInit);

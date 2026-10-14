@@ -59,6 +59,16 @@ extern "C" void* pharo_mcf_extsend(jit::JITState* st, uint32_t desc) {
 
 // Called from the native block stub for a block with a non-local return,
 // after the block's frame record is pushed: store its home frame index.
+// McfCallEntry::bcEndOff, packed; 0 when a field does not fit (the
+// caller then makes no native-call entry).
+static inline uint64_t mcfPackBcInfo(uint64_t methodBits, const uint8_t* bcEnd,
+                                     const jit::JITMethod* jm) {
+    const uint64_t endOff = reinterpret_cast<uint64_t>(bcEnd) - methodBits;
+    const uint64_t startOff = jm->bcStartCache - methodBits;
+    if (endOff >= (1u << 24) || startOff >= (1u << 24)) return 0;
+    return endOff | (startOff << 24) | (static_cast<uint64_t>(jm->tempCount) << 48);
+}
+
 extern "C" void pharo_mcf_block_home(jit::JITState* st, uint64_t closure) {
     st->interp->mcfSetBlockHome(Oop::fromRawBits(closure));
 }
@@ -492,13 +502,13 @@ void Interpreter::mcfActivateBlock() {
     // Phase 3b: let T1 code call this block natively at value / value:.
     // A block with ^ is flagged: the stub then finds its home frame.
     const bool nlr = mcfBlockHasNLR(method_);
-    if (!memory_.isYoung(method_) && (!nlr || !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL))) {
+    const uint64_t bcInfo = mcfPackBcInfo(method_.rawBits(), bytecodeEnd_, jm);
+    if (bcInfo && !memory_.isYoung(method_) && (!nlr || !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL))) {
         Oop hdr = method_.asObjectPtr()->slotAt(0);
         jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method_.rawBits());
         e.methodBits = method_.rawBits();
         e.jm = jm;
-        e.bcEndOff = static_cast<uint64_t>(
-            bytecodeEnd_ - reinterpret_cast<uint8_t*>(method_.rawBits()));
+        e.bcEndOff = bcInfo;
         e.prim = jit::kMcfBlockEntry | (uint64_t)((hdr.asSmallInteger() >> 24) & 0xF)
                  | (nlr ? jit::kMcfBlockNLR : 0);
     }
@@ -597,13 +607,13 @@ bool Interpreter::mcfActivate(Oop method) {
             }
         }
         if (bisectOk && (!hasPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
-                && (!jm->hasRecvFieldAccess || receiver_.isObject())) {
+                && (!jm->hasRecvFieldAccess || receiver_.isObject())
+                && mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm)) {
             jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
             e.methodBits = method.rawBits();
             e.jm = jm;
             e.prim = 0;
-            e.bcEndOff = static_cast<uint64_t>(
-                bytecodeEnd_ - reinterpret_cast<uint8_t*>(method.rawBits()));
+            e.bcEndOff = mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm);
         }
     }
     // activateMethod has already run (and failed) the primitive and stored
@@ -831,12 +841,14 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
         jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
         if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
         if (jm->hasRecvFieldAccess && !receiver.isObject()) return;
+        const uint64_t bcInfo = mcfPackBcInfo(method.rawBits(),
+                                                   mo->bytes() + mo->compiledCodeByteSize(), jm);
+        if (!bcInfo) return;
         jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
         e.methodBits = method.rawBits();
         e.jm = jm;
         e.prim = 0;
-        e.bcEndOff = static_cast<uint64_t>(
-            (mo->bytes() + mo->compiledCodeByteSize()) - reinterpret_cast<uint8_t*>(method.rawBits()));
+        e.bcEndOff = bcInfo;
         return;
     }
     const int p = primitiveIndexOf(method);
