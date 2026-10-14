@@ -15,25 +15,31 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-14, 14:00) -- lazy outer contexts, MCF exit census
+## Right now (2026-10-14, 22:00) -- lexicon passes; lazy outer contexts and MCF census done
 
 After machine-code frames, the user approved the next step: lazy
 contexts.  Phase 1 is in: lazy outer contexts (docs/lazy-contexts.md).
 Block creation no longer materializes the frame stack; image code that
-reads a Context syncs first.  A five-reader map plus an adversarial
-review (three lenses, each claim verified) shaped the design; all
-confirmed holes are fixed except two documented ones (opt-in Sista,
-allocation failure).  Then an MCF exit census found three call-path
-defects (depth-0 refusal, direct-mapped call cache, countdown charge),
-fixed in `ed0c202e` (docs/mc-frames-design.md, exit census).
+reads a Context syncs first.  Then rounds of the MCF exit census found
+call-path defects (docs/mc-frames-design.md, "Exit census"): depth-0
+refusal, direct-mapped call cache, countdown charges at the call and at
+entry, super sends as stubs, selector slots zeroed after full GC, no
+native path at ExtSend sites, ^ blocks never called natively.  Also
+primitiveFileRead uses pread for large reads (lexicon read 16 GB).
 
-lexicon instructions: 1081 (MCF) -> 954 (lazy outer contexts) -> 838.
-printString: 38.4 -> 34.8.
+Numbers (instructions, billion): lexicon 1081 -> 793; printString 38.4
+-> 30.4.  lexicon wall time on a quiet machine 56.3 s -> 44.4 s: the
+lexicon package now matches Cog (51 pass, 0 timeouts).  myprecious
+still fails testArgPassByReference x3 (remote-message timeouts): a round
+trip is 6.45 ms, Cog under Rosetta 1.5 ms.
 
-Validation: sweep L2 (`d90a1150`) 27875 / 13 / 1, three non-baseline
-non-passes all pass alone 3/3.  Sweep L3 (`ed0c202e`) running; package
-batch on L2 running.  Both commits are local only: push after L3 is
-clean.
+Validation: sweep L4 (`3c5cf644`) 27878 / 11 / 2, only a TraitTestCase
+timeout outside the baseline; pushed.  Sweep L5 on `33217474` running;
+push the rest after it.  Intermittent GUI non-passes: see
+docs/mc-frames-design.md ("The intermittent non-passes").
+
+Next: myprecious speed (block calls, sends through the interpreter),
+lazy contexts phase 2 (thisContext without the collapse).
 
 ## Right now (2026-10-14, 09:00) -- machine-code frames: done, default, pushed
 

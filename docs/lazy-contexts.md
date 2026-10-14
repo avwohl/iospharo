@@ -100,6 +100,9 @@ after (time limit 50 s, Cog 11 s).  The machine-code-frame fixes that
 followed (docs/mc-frames-design.md, exit census) took lexicon to 838
 billion instructions.
 
+Sweep L4 (`3c5cf644`, with the later machine-code-frame work): 27878 /
+11 / 2, only a TraitTestCase timeout outside the baseline lists.
+
 Validation: sweep L2 (`d90a1150`): 27875 pass, 13 fail, 1 error, against
 27879 / 9 / 2 for the baseline.  The three non-passes outside the
 baseline lists (StDebuggerTest testDynamicVariableEvaluation, TestCaseTest
