@@ -16513,7 +16513,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // pure function of (method, ip, code epoch), so it is right for any
     // frame pushed at that ip.
     if (__builtin_expect(pendingMcReturn_ != nullptr, 0)
-            && instructionPointer_ == pendingMcKeyIP_) {
+            && instructionPointer_ == pendingMcKeyIP_
+            && pendingMcEpoch_ == jit::g_mcCodeEpoch) {
         frame.mcReturn = pendingMcReturn_;
         frame.mcKeyIP = pendingMcKeyIP_;
         frame.mcJM = pendingMcJM_;

@@ -5009,11 +5009,6 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.ldr(x10, ptr(x7, L.savedIP));
     a.cmp(x8, x10);
     a.b_ne(fall);
-    a.ldr(w8, ptr(x7, L.mcEpoch));
-    a.ldr(x10, ptr(x0, OFF_MCF_EPOCH_PTR));
-    a.ldr(w10, ptr(x10));
-    a.cmp(w8, w10);
-    a.b_ne(fall);
 
     if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
         // The memo's code must belong to the caller's method.
@@ -5378,42 +5373,39 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.madd(x8, x11, x16, x8);                      // x8 = &savedFrames_[depth]
     a.add(x11, x11, asmjit::Imm(1));
     a.str(x11, ptr(x10));                          // frameDepth_++
-    // The caller's state (pushFrame).
-    a.str(x13, ptr(x8, L.savedIP));
-    a.str(x13, ptr(x8, L.mcKeyIP));
+    // The caller's state (pushFrame).  Adjacent fields go in pairs.
+    auto put2 = [&](asmjit::a64::Gp r1, uint32_t o1, asmjit::a64::Gp r2, uint32_t o2) {
+        if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.stp(r1, r2, ptr(x8, o1));
+        else { a.str(r1, ptr(x8, o1)); a.str(r2, ptr(x8, o2)); }
+    };
     a.ldr(x16, ptr(x0, OFF_METHOD));
-    a.str(x16, ptr(x8, L.savedMethod));
-    a.str(x16, ptr(x8, L.savedHomeMethod));
     a.ldr(x17, ptr(x0, OFF_MCF_BCEND_OFF));
     a.add(x17, x16, x17);
-    a.str(x17, ptr(x8, L.savedBytecodeEnd));
-    a.ldr(x16, ptr(x0, OFF_RECEIVER));
-    a.str(x16, ptr(x8, L.savedReceiver));
-    a.ldr(x16, ptr(x0, OFF_CLOSURE));
-    a.str(x16, ptr(x8, L.savedClosure));
+    put2(x13, L.savedIP, x17, L.savedBytecodeEnd);
+    put2(x16, L.savedMethod, x16, L.savedHomeMethod);
+    if (t1TbReg()) a.mov(x16, x21);
+    else a.ldr(x16, ptr(x0, OFF_RECEIVER));
+    a.ldr(x17, ptr(x0, OFF_CLOSURE));
+    put2(x16, L.savedReceiver, x17, L.savedClosure);
     a.ldr(x4, ptr(x0, OFF_MCF_NIL));               // x4 = nil from here on
     a.ldr(x10, ptr(x0, OFF_MCF_MATCTX_PTR));
-    a.ldr(x16, ptr(x10));
-    a.str(x16, ptr(x8, L.materializedContext));
+    a.ldr(x17, ptr(x10));                          // the caller's context
     a.str(x4, ptr(x10));                           // the callee has no context
     a.ldr(x10, ptr(x0, OFF_MCF_ACTCTX_PTR));
     a.ldr(x16, ptr(x10));
-    a.str(x16, ptr(x8, L.savedActiveContext));
+    put2(x16, L.savedActiveContext, x17, L.materializedContext);
     a.strb(wzr, ptr(x8, L.ctxSynced));
-    emitLoadTempBase(a, x16);
-    a.sub(x16, x16, asmjit::Imm(8));
-    a.str(x16, ptr(x8, L.savedFP));
-    a.str(xzr, ptr(x8, L.materializedRetSlot));
+    if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
+    else { emitLoadTempBase(a, x16); a.sub(x16, x16, asmjit::Imm(8)); }
+    put2(x16, L.savedFP, xzr, L.materializedRetSlot);
     a.lsr(w16, w12, asmjit::Imm(8));
     a.and_(w16, w16, asmjit::Imm(0xFF));
     a.str(w16, ptr(x8, L.savedArgCount));
     a.movn(x16, asmjit::Imm(0));                   // SIZE_MAX: no non-local return
     a.str(x16, ptr(x8, L.homeFrameDepth));
-    a.str(x14, ptr(x8, L.mcReturn));
+    put2(x14, L.mcReturn, x13, L.mcKeyIP);
     a.str(x19, ptr(x8, L.mcJM));
-    a.ldr(x10, ptr(x0, OFF_MCF_EPOCH_PTR));
-    a.ldr(w16, ptr(x10));
-    a.str(w16, ptr(x8, L.mcEpoch));
+    // No code epoch: mcfCodeChanged clears the memos of the live frames.
 }
 
 // The callee view shared by both stubs: method, literals, arg count, JM,
@@ -14034,5 +14026,26 @@ void pharo::jit::mcfBuildStubs() {
 #if defined(__aarch64__) || defined(_M_ARM64)
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
+    if (GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) {
+        static bool stubsMapped = false;
+        if (!stubsMapped) {
+            stubsMapped = true;
+            if (FILE* f = std::fopen((std::string(GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) + ".stubs").c_str(), "w")) {
+                std::fprintf(f, "%llx 1000 <mcf call stub>\n%llx 1000 <mcf block stub>\n",
+                             (unsigned long long)g_mcfCallStub, (unsigned long long)g_mcfBlockStub);
+                if (g_sharedRetPreludeStub)
+                    std::fprintf(f, "%llx 1000 <shared return prelude>\n",
+                                 (unsigned long long)g_sharedRetPreludeStub);
+                std::fclose(f);
+            }
+            for (int k = 0; k < 2; k++) {
+                std::string path = std::string(GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) + (k ? ".blockstub.bin" : ".callstub.bin");
+                if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                    std::fwrite((const void*)(k ? g_mcfBlockStub : g_mcfCallStub), 1, 4096, f);
+                    std::fclose(f);
+                }
+            }
+        }
+    }
 #endif
 }

@@ -849,6 +849,14 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
 
 // Called once from initializeJIT: SavedFrame layout for T1's native call
 // and return, and the call cache.
+static Interpreter* g_mcfInterp = nullptr;
+
+void Interpreter::mcfClearMemos() {
+    for (size_t d = 0; d < frameDepth_ && d < savedFrames_.size(); d++)
+        savedFrames_[d].mcReturn = nullptr;
+    pendingMcReturn_ = nullptr;
+}
+
 void Interpreter::mcfInit() {
     jit::g_lazyCtxPendingAddr = reinterpret_cast<uint64_t>(&lazyCtxPending_);
     jit::McfFrameLayout& L = jit::g_mcfLayout;
@@ -874,6 +882,8 @@ void Interpreter::mcfInit() {
     L.mcEpoch = offsetof(SavedFrame, mcEpoch);
 #pragma GCC diagnostic pop
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
+    g_mcfInterp = this;
+    jit::g_mcfClearMemosHook = [] { g_mcfInterp->mcfClearMemos(); };
     if (::pharo::mcfEnabled()) jit::mcfBuildStubs();
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),
@@ -888,9 +898,9 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
     if (mcfActive_ || !running_) return;
     jit::JITMethod* jm;
     void* entry;
+    // A non-null memo is current: mcfCodeChanged clears them (no epoch).
     if (popped && popped->mcReturn
-            && popped->mcKeyIP == instructionPointer_
-            && popped->mcEpoch == jit::g_mcCodeEpoch) {
+            && popped->mcKeyIP == instructionPointer_) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyMemo(*popped, "resume-after-return");
         jm = static_cast<jit::JITMethod*>(popped->mcJM);
@@ -1239,8 +1249,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             }
             const SavedFrame& popped = savedFrames_[frameDepth_];
             if (popped.mcReturn
-                    && popped.mcKeyIP == instructionPointer_
-                    && popped.mcEpoch == jit::g_mcCodeEpoch) {
+                    && popped.mcKeyIP == instructionPointer_) {
                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
                     mcfVerifyMemo(popped, "mcfRun-return");
                 jm = static_cast<jit::JITMethod*>(popped.mcJM);
@@ -1284,6 +1293,7 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame*) {}
 void Interpreter::mcfRun(jit::JITMethod*, void*) {}
 void Interpreter::mcfCensus(const jit::JITState&) {}
 void Interpreter::mcfInit() {}
+void Interpreter::mcfClearMemos() {}
 void Interpreter::mcfSyncRegisters(const jit::JITState&) {}
 bool Interpreter::mcfIsBlockFrame() const { return false; }
 void Interpreter::mcfActivateBlock() {}

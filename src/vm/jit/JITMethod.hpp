@@ -287,10 +287,14 @@ inline void mcfClearCallCache() {
     if (g_mcfCallCache)
         std::memset(g_mcfCallCache, 0, sizeof(McfCallEntry) * kMcfCallCacheSize);
 }
+// Set by the interpreter: clear the return memos of the live frames.  The
+// native return trusts a non-null memo, so memos into changed code must go.
+inline void (*g_mcfClearMemosHook)() = nullptr;
 // Code that a memo or a cache entry can point into may stop being right.
 inline void mcfCodeChanged() {
     ++g_mcCodeEpoch;
     mcfClearCallCache();
+    if (g_mcfClearMemosHook) g_mcfClearMemosHook();
 }
 
 // SavedFrame layout for T1's native call and return, filled by the

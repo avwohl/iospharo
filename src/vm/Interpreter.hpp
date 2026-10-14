@@ -1858,6 +1858,7 @@ public:
     uint64_t mcfBlockCreate(jit::JITState* st, uint64_t packed);
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
     void mcfCallCensusDump();
+    void mcfClearMemos();
     void mcfVerifyMemo(const SavedFrame& f, const char* site);
     int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
     void mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where);
