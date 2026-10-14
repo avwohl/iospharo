@@ -1842,7 +1842,7 @@ public:
     void mcfCensus(const jit::JITState& st);
     void mcfInit();
     bool mcfPrologueIsPrimitive(Oop method);
-    void mcfNotePrimitiveTarget(Oop method);
+    void mcfNotePrimitiveTarget(Oop method, Oop receiver = Oop::fromRawBits(0));
     void* mcfExtSendTarget(jit::JITState* st, uint32_t desc);
     bool mcfPrimMethodCallable(Oop method, int p);
     size_t findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext, Oop methodToExecute);

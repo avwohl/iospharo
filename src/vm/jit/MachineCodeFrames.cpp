@@ -177,6 +177,12 @@ bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
             || spec.asObjectPtr()->slotCount() < 2) return false;
     Oop module = spec.asObjectPtr()->slotAt(0);
     Oop fn = spec.asObjectPtr()->slotAt(1);
+    if (memory_.symbolEquals(module, "FilePlugin"))
+        return memory_.symbolEquals(fn, "primitiveFileGetPosition")
+            || memory_.symbolEquals(fn, "primitiveFileSetPosition")
+            || memory_.symbolEquals(fn, "primitiveFileSize")
+            || memory_.symbolEquals(fn, "primitiveFileRead")
+            || memory_.symbolEquals(fn, "primitiveFileAtEnd");
     if (!memory_.symbolEquals(module, "MiscPrimitivePlugin")) return false;
     return memory_.symbolEquals(fn, "primitiveStringHash")
         || memory_.symbolEquals(fn, "primitiveIndexOfAsciiInString")
@@ -664,7 +670,7 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
             && thdr.isSmallInteger() && ((thdr.asSmallInteger() >> 16) & 1)) {
         const int p = primitiveIndexOf(target);
         if (mcfPrimMethodCallable(target, p)) {
-            mcfNotePrimitiveTarget(target);   // next time: the entry above
+            mcfNotePrimitiveTarget(target, rcv);   // next time: the entry above
             st->cachedTarget = target;
             switch (mcfCallPrimitive(st, p, nArgs)) {
             case 1: return kMcfExtDone;
@@ -679,13 +685,29 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
 // A send left machine code for this method.  When it is a primitive T1 code
 // can run through pharo_mcf_prim, record it so the next hit stays in
 // machine code.  Never displaces a native-call entry for a compiled method.
-void Interpreter::mcfNotePrimitiveTarget(Oop method) {
+void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
     if (!method.isObject() || method.rawBits() < 0x10000) return;
     ObjectHeader* mo = method.asObjectPtr();
     if (mo->classIndex() != compiledMethodClassIndex_) return;
     Oop hdr = mo->slotAt(0);
-    if (!hdr.isSmallInteger() || !((hdr.asSmallInteger() >> 16) & 1)) return;
-    if (memory_.isYoung(method)) return;
+    if (!hdr.isSmallInteger() || memory_.isYoung(method)) return;
+    if (!((hdr.asSmallInteger() >> 16) & 1)) {
+        // A compiled method without a primitive that a send exited for: one
+        // the interpreter runs without an activation (its synthetic
+        // primitives, e.g. WriteStream>>nextPut:) never reaches mcfActivate,
+        // so enter it here, under mcfActivate's conditions.
+        if (jit::mcfCallFind(method.rawBits())) return;
+        jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+        if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
+        if (jm->hasRecvFieldAccess && !receiver.isObject()) return;
+        jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
+        e.methodBits = method.rawBits();
+        e.jm = jm;
+        e.prim = 0;
+        e.bcEndOff = static_cast<uint64_t>(
+            (mo->bytes() + mo->compiledCodeByteSize()) - reinterpret_cast<uint8_t*>(method.rawBits()));
+        return;
+    }
     const int p = primitiveIndexOf(method);
     if (p == 207 && ((hdr.asSmallInteger() >> 24) & 0xF) >= 2) {
         // value:value: and longer: T1 code calls the closure's block natively.
@@ -1011,7 +1033,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         case jit::ExitSendCached: {
             instructionPointer_ = st.ip;
             if (st.exitReason == jit::ExitSendCached)
-                mcfNotePrimitiveTarget(st.cachedTarget);
+                mcfNotePrimitiveTarget(st.cachedTarget, st.sp[-(st.sendArgCount + 1)]);
 
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_CENSUS), 0))
                 mcfCensus(st);
@@ -1097,7 +1119,7 @@ bool Interpreter::mcfIsBlockFrame() const { return false; }
 void Interpreter::mcfActivateBlock() {}
 bool Interpreter::mcfPrologueIsPrimitive(Oop) { return false; }
 int Interpreter::mcfCallPrimitive(jit::JITState*, int, int) { return 0; }
-void Interpreter::mcfNotePrimitiveTarget(Oop) {}
+void Interpreter::mcfNotePrimitiveTarget(Oop, Oop) {}
 void Interpreter::mcfVerifyMemo(const SavedFrame&, const char*) {}
 void Interpreter::mcfVerifyEq(jit::JITState*, Oop, Oop, Oop, uint64_t) {}
 void Interpreter::mcfVerifyCall(jit::JITState*, Oop, uint64_t) {}
