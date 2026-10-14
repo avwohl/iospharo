@@ -397,10 +397,10 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
         if (pc == f.savedIP && prev && (prev == bc0 || (prev[-1] != jit::SistaV1::ExtendA
                                                          && prev[-1] != jit::SistaV1::ExtendB))) {
             const uint8_t op = *prev;
-            if (op >= jit::SistaV1::ArithBase && op <= jit::SistaV1::ArithBase + 31) {
+            if (op >= jit::SistaV1::ArithBase && op <= jit::SistaV1::SpecialSendLast) {
                 Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
                 sel = ss.asObjectPtr()->slotAt((size_t)(op - jit::SistaV1::ArithBase) * 2);
-            } else if (op >= 0x80 && op <= 0xAF && (op & 0x0F) < nLits) {
+            } else if (op >= jit::SistaV1::Send0Base && op <= jit::SistaV1::Send2Last && (op & 0x0F) < nLits) {
                 sel = mo->slotAt(1 + (op & 0x0F));
             }
         }
@@ -1180,6 +1180,35 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
                 (unsigned long long)notMethod);
 }
 
+// The selector of the send at ip (no prefixes: T1 sites are naked).
+Oop Interpreter::mcfSelectorAtSend(const uint8_t* ip, Oop method) {
+    const uint8_t op = *ip;
+    ObjectHeader* mo = method.asObjectPtr();
+    if (op >= jit::SistaV1::ArithBase && op <= jit::SistaV1::SpecialSendLast) {
+        Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+        return ss.asObjectPtr()->slotAt((size_t)(op - jit::SistaV1::ArithBase) * 2);
+    }
+    int lit = -1;
+    if (op >= jit::SistaV1::Send0Base && op <= jit::SistaV1::Send2Last) lit = op & 0x0F;
+    else if (op == jit::SistaV1::ExtSend) lit = ip[1] >> 3;
+    if (lit < 0) return Oop::nil();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger() || lit >= (int)(hdr.asSmallInteger() & 0x7FFF)) return Oop::nil();
+    return mo->slotAt(1 + lit);
+}
+
+void Interpreter::mcfFillICAtExit(jit::JITState& st) {
+    if (!st.ip || !method_.isObject()) return;
+    Oop sel = mcfSelectorAtSend(st.ip, method_);
+    if (!sel.isObject() || sel.isNil()) return;
+    Oop rcv = st.sp[-(st.sendArgCount + 1)];
+    Oop cls = memory_.classOf(rcv);
+    if (!cls.isObject() || cls.isNil()) return;
+    Oop target = lookupMethodForSend(sel, cls);
+    if (!target.isObject() || target.isNil() || !target.asObjectPtr()->isCompiledMethod()) return;
+    patchJITICAfterSend(target, rcv, sel);
+}
+
 void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
     if (!mcfState_) {
         // Fields that never change for this interpreter.
@@ -1322,6 +1351,13 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                         pendingICSendArgCount_ = st.sendArgCount;
                         pendingICOwnerMethod_ = method_;
                         pendingICOwnerIP_ = mcfPastSend(st.ip);
+                        // The interpreter runs some sends without a lookup
+                        // (special selectors such as size and at:, synthetic
+                        // primitives such as WriteStream>>nextPut:) and so
+                        // never applied the patch: those sites missed at every
+                        // execution (3M exits in lexicon).  Fill it now.
+                        if (!GET_DEBUG_BOOL(PHARO_MCF_NO_EAGER_IC_FILL))
+                            mcfFillICAtExit(st);
                         break;
                     }
                 }

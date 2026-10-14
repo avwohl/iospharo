@@ -1861,6 +1861,8 @@ public:
     void mcfCallCensusDump();
     void mcfClearMemos();
     bool mcfIsIdentityEquals(Oop method);
+    Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
+    void mcfFillICAtExit(jit::JITState& st);
     void mcfDeriveView(jit::JITState& st);
     static constexpr size_t kBcEndMemoSize = 256;
     struct BcEndMemo { uint64_t method = 0; uint64_t off = 0; };

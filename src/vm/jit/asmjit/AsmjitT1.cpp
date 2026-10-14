@@ -14083,7 +14083,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     {
         int rawPrimIdx = (bcLen >= 3 && bc[0] == SistaV1::CallPrimitive)
             ? (bc[1] | ((bc[2] & 0x1F) << 8)) : 0;
-        if (rawPrimIdx == 198 || rawPrimIdx == 199)
+        // Machine-code frames keep the method in the frame, so the unwind
+        // machinery still finds the marker; they need the bytecode map to
+        // run the method at all (2.7M lexicon calls fell back otherwise).
+#if defined(__aarch64__) || defined(__arm64__)
+        const bool mcfOn = !GET_DEBUG_BOOL(PHARO_NO_MCF)
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL);
+#else
+        const bool mcfOn = false;
+#endif
+        if ((rawPrimIdx == 198 || rawPrimIdx == 199) && !mcfOn)
             advertiseResume = false;
     }
     // COND-JUMP RESUME DEFAULT-ON (2026-06-12): with the J2J gates
