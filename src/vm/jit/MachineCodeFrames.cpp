@@ -150,11 +150,15 @@ static bool mcfPrimCallable(int p) {
     case 110: case 111:                          // == class
     case 148:                                    // shallowCopy
     case 165: case 166:                          // integerAt: integerAt:put:
+    case 85: case 86:                            // signal wait (a switch -> 2)
+    case 195:                                    // findNextUnwindContextUpTo:
+    case 210: case 211: case 212:                // Context tempAt: tempAt:put: size
     case 169: case 170: case 171:                // ~~ and immediate conversions
     case 175:                                    // behavior hash
         return true;
     default:
-        return p >= 541 && p <= 559;             // SmallFloat
+        return (p >= 541 && p <= 559)            // SmallFloat
+            || (p >= 256 && p <= 519);           // quick: constant or field
     }
 }
 
@@ -189,13 +193,10 @@ bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
 // now the truth and machine code must exit without touching it.
 int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     stackPointer_ = st->sp;
-    // A primitive on a Context while lazy context stubs exist: fail, so the
-    // send runs through the interpreter, whose registers are exact for the
-    // sync in executePrimitiveInner (here ip is only the method start).
-    if (__builtin_expect(lazyCtxPending_, 0) && lazyPrimNeedsSync(primIndex, nArgs))
-        return 0;
     mcfSyncRegisters(*st);           // unconditionally: see mcfRun
-    instructionPointer_ = st->ip;   // bcStart: inside the method, for GC
+    // The ip after the send (both callers store it): a process switch or a
+    // lazy-context sync inside the primitive records it as the pc.
+    instructionPointer_ = st->ip;
     Oop* spBefore = stackPointer_;
     const size_t depth = frameDepth_;
     const uint64_t switches = processSwitchCount_;

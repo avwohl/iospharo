@@ -10477,6 +10477,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     asmjit::Label mcfDeopt = a.new_label();
                     a.bind(mcfPrim);
                     emitSyncSpToState(a);
+                    // The ip after the send, as the interpreter has it when a
+                    // primitive runs: a primitive that switches process or
+                    // syncs lazy contexts records it as this frame's pc.
+                    a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                    a.add(x16, x16, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                    a.str(x16, ptr(x0, OFF_IP));
                     a.str(x6, ptr(x0, OFF_CACHED_TARGET));
                     a.str(x5, ptr(x0, OFF_ICDATAPTR));
                     a.stp(x0, x30, ptr_pre(sp, -16));
