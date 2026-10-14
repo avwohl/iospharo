@@ -100,6 +100,14 @@ extern "C" void pharo_mcf_ctx_sync(jit::JITState* st) {
 // PushFullBlock in machine code: create the closure without leaving.
 // st->ip is the bytecode; the interpreter would have it past the 3 bytes.
 // Allocation cannot GC here, so the machine code's registers stay valid.
+// perform: and its with: forms from T1 code (kMcfPerformMethod): the call
+// entry of the performed method when T1 code can call it natively, with
+// the selector removed from the stack; else nullptr, stack untouched (the
+// send then exits and primitive 83 runs in the interpreter).
+extern "C" void* pharo_mcf_perform(jit::JITState* st, uint32_t nArgs) {
+    return st->interp->mcfPerformTarget(st, (int)nArgs);
+}
+
 extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
     return st->interp->mcfBlockCreate(st, packed);
 }
@@ -862,6 +870,37 @@ bool Interpreter::mcfActivate(Oop method) {
     return true;
 }
 
+void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs) {
+    Oop* sp = st->sp;
+    Oop rcv = sp[-(nArgs + 1)];
+    Oop selector = sp[-nArgs];
+    if (!selector.isObject() || selector.rawBits() < 0x10000
+            || !selector.asObjectPtr()->isBytesObject())
+        return nullptr;
+    Oop cls = memory_.classOf(rcv);
+    if (!cls.isObject() || cls.isNil()) return nullptr;
+    Oop target = lookupMethodForSend(selector, cls);
+    if (!target.isObject() || target.rawBits() < 0x10000
+            || target.asObjectPtr()->classIndex() != compiledMethodClassIndex_)
+        return nullptr;
+    Oop th = target.asObjectPtr()->slotAt(0);
+    if (!th.isSmallInteger() || (int)((th.asSmallInteger() >> 24) & 0xF) != nArgs - 1)
+        return nullptr;                              // the primitive fails it
+    jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
+    if (!e || !e->jm || (e->prim && (e->prim & 0xFFFFFF) != jit::kMcfTinyShape)
+            || !mcfReceiverOk(e->jm, rcv))
+        return nullptr;
+    // The call stub must not refuse once the selector is gone: its tests,
+    // made here (countdown, depth limit, a depth-0 caller's context).
+    if (checkCountdown_ <= 1 || frameDepth_ + 2 >= st->mcfDepthLimit) return nullptr;
+    if (frameDepth_ == 0 && (!activeContext_.isObject() || activeContext_.isNil()
+                             || (activeContext_.rawBits() & 7) != 0))
+        return nullptr;
+    for (int i = nArgs - 1; i >= 1; i--) sp[-(i + 1)] = sp[-i];   // drop the selector
+    st->sp = sp - 1;
+    return e;
+}
+
 uint64_t Interpreter::mcfBlockCreate(jit::JITState* st, uint64_t packed) {
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);
@@ -1211,6 +1250,17 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
     }
     const int p = primitiveIndexOf(method);
     const int pArgs = (int)((hdr.asSmallInteger() >> 24) & 0xF);
+    if (p == 83 && pArgs >= 1 && pArgs <= 4 && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CALL)) {
+        jit::McfCallEntry* ep = jit::mcfCallSlotForPrim(method.rawBits());
+        if (!ep) return;
+        jit::McfCallEntry& e = *ep;
+        e.methodBits = method.rawBits();
+        noteJitOop(e.methodBits);
+        e.jm = nullptr;
+        e.bcEndOff = 0;
+        e.prim = jit::kMcfPerformMethod;
+        return;
+    }
     if ((p == 207 && pArgs >= 2)
             || (p == 209 && pArgs == 0 && !GET_DEBUG_BOOL(PHARO_MCF_NO_VNCS_CALL))) {
         // value:value: and longer: T1 code calls the closure's block natively.

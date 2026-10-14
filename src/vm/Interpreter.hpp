@@ -1908,6 +1908,7 @@ public:
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
     uint64_t mcfBlockCreate(jit::JITState* st, uint64_t packed);
+    void* mcfPerformTarget(jit::JITState* st, int nArgs);
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
     void mcfCallCensusDump();
     void mcfClearMemos();

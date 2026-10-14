@@ -56,6 +56,7 @@ extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
+extern "C" void* pharo_mcf_perform(pharo::jit::JITState* st, uint32_t nArgs);
 extern "C" uint64_t pharo_mcf_array_create(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_call_census(uint64_t method);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
@@ -11874,6 +11875,39 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x16, ptr(x0, OFF_MCF_BLOCK_STUB));
                     a.br(x16);
                     a.bind(notBV);
+                }
+                if (nArgs >= 1 && nArgs <= 4 && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CALL)) {
+                    // perform: (primitive 83): pharo_mcf_perform finds the
+                    // target, removes the selector and answers its call
+                    // entry; the call is then one argument shorter.  Its
+                    // tests mean the call stub will not refuse (the
+                    // fallback would see a shifted stack).
+                    asmjit::Label notPerform = a.new_label();
+                    a.mov(x11, asmjit::Imm(kMcfPerformMethod));
+                    a.cmp(x10, x11);
+                    a.b_ne(notPerform);
+                    emitSyncSpToState(a);
+                    a.sub(sp, sp, asmjit::Imm(32));
+                    a.stp(x0, x30, ptr(sp, 0));
+                    a.str(x5, ptr(sp, 16));
+                    a.mov(w1, asmjit::Imm(nArgs));
+                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_perform));
+                    a.blr(x16);
+                    a.mov(x7, x0);
+                    a.ldr(x5, ptr(sp, 16));
+                    a.ldp(x0, x30, ptr(sp, 0));
+                    a.add(sp, sp, asmjit::Imm(32));
+                    a.cbz(x7, mcfSlow);                      // stack untouched
+                    emitReloadSpFromState(a);
+                    a.ldp(x6, x9, ptr(x7));
+                    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                    a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                    a.adr(x14, mcfCont);
+                    a.adr(x15, mcfSlow);                     // not taken (see above)
+                    a.mov(w12, asmjit::Imm(callerArgCount | ((nArgs - 1) << 8)));
+                    a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
+                    a.br(x16);
+                    a.bind(notPerform);
                 }
                 if (!GET_DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)) {
                     // A method that answers one constant: the value is in
