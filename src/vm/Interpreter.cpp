@@ -21971,7 +21971,6 @@ Oop Interpreter::materializeFrameStackImpl() {
                             frame.pushSite);
 
         // Initialize context (sender via cycle guard)
-        setSenderSafe(context, sender);
         // A context just allocated is young (the usual case): its slots need
         // no store barrier, and nothing allocates before they are filled.
         const bool rawCtx = freshContext && memory_.isYoung(context);
@@ -21980,6 +21979,11 @@ Oop Interpreter::materializeFrameStackImpl() {
             if (rawCtx) rawSlots[k] = v;
             else memory_.storePointer(k, context, v);
         };
+        // A fresh context is referenced by nothing yet, so its sender link
+        // cannot close a cycle: setSenderSafe's walk (up to 200 senders,
+        // per frame) is for re-linked ones.
+        if (freshContext) ctxPut(0, sender);
+        else setSenderSafe(context, sender);
         ctxPut(1, Oop::fromSmallInteger(pc));                               // pc
         // stackp is set below after we know how many items we saved
         ctxPut(3, frame.savedMethod);                // method
