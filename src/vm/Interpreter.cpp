@@ -24761,6 +24761,16 @@ void Interpreter::prepareForGC() {
 
 void Interpreter::afterGC(bool fullGC) {
     stepCountAtLastGC_ = g_stepNum;
+#if PHARO_JIT_ENABLED
+    // Machine-code frames: a pending memo is keyed by a raw ip.  Objects
+    // moved, and a new method could now sit where the keyed one was, so a
+    // frame pushed at that ip would get a memo into the old method's code.
+    // (SavedFrame memos are safe: GC rewrites savedIP, so the key no longer
+    // matches.)
+    pendingMcReturn_ = nullptr;
+    pendingICOwnerIP_ = nullptr;
+    pendingICPatch_ = nullptr;
+#endif
 
     // Cascade hunt (2026-07-05): immediately after a scavenge eden holds NO
     // live objects, so ANY eden-window pointer still visible from a VM root
