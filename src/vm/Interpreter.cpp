@@ -928,6 +928,12 @@ bool Interpreter::atInterruptPoint() const {
         const int idx = op - S::SpecialSendBase + 16;   // special selector index
         return idx != 22 && idx != 23 && idx != 24;     // ==, class, ~~
     }
+    // Arithmetic special sends (all binary) are sends unless both operands
+    // are SmallIntegers, which every tier answers inline.  A helper send
+    // from machine code (Fractions, large integers) refused on the spent
+    // countdown exits here, so this must count as the send it is.
+    if (op >= S::ArithBase && op <= S::ArithLast)
+        return !(stackPointer_[-1].isSmallInteger() && stackPointer_[-2].isSmallInteger());
     if (op == S::ExtendA || op == S::ExtendB) {
         bool negativeB = false;
         while (*ip == S::ExtendA || *ip == S::ExtendB) {
