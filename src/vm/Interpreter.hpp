@@ -1859,6 +1859,11 @@ public:
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
     void mcfCallCensusDump();
     void mcfClearMemos();
+    void mcfDeriveView(jit::JITState& st);
+    uint8_t* bytecodeEndOf(Oop method) {
+        ObjectHeader* mo = method.asObjectPtr();
+        return mo->bytes() + mo->compiledCodeByteSize();
+    }
     void mcfVerifyMemo(const SavedFrame& f, const char* site);
     int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
     void mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where);

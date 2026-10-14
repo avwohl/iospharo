@@ -17071,7 +17071,7 @@ bool Interpreter::popFrame() {
 
     // Restore saved execution state
     instructionPointer_ = frame.savedIP;
-    bytecodeEnd_ = frame.savedBytecodeEnd;
+    bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
     homeMethod_ = frame.savedHomeMethod;
     receiver_ = frame.savedReceiver;
@@ -17226,7 +17226,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     // Restore interpreter state from saved frame
     stackPointer_ = framePointer_;  // Discard callee's locals
     instructionPointer_ = frame.savedIP;
-    bytecodeEnd_ = frame.savedBytecodeEnd;
+    bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
     homeMethod_ = frame.savedHomeMethod;
     receiver_ = frame.savedReceiver;
@@ -24724,6 +24724,8 @@ void Interpreter::prepareForGC() {
         if (frame.savedMethod.isObject() && frame.savedIP) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
             frame.savedIPOffset = frame.savedIP - methodBytes;
+            // A machine-code push leaves it null (MCF lazy view): derive.
+            if (!frame.savedBytecodeEnd) frame.savedBytecodeEnd = bytecodeEndOf(frame.savedMethod);
             frame.savedBytecodeEndOffset = frame.savedBytecodeEnd - methodBytes;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY)) {
                 frame.gcVerifyByte = *frame.savedIP;

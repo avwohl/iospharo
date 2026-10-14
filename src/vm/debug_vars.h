@@ -166,6 +166,7 @@ DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd (STAYS
 DEBUG_BOOL_RT(PHARO_T1_RESUME_INTERNAL_J2J)    // x86_64 opt-in: J2J pool slice for resumed methods (default ON on arm64 since 2026-10-12; see resumeInternalJ2JEnabled() in DebugVars.hpp)
 DEBUG_BOOL_RT(PHARO_T1_RESUME_EXTERNAL_J2J)    // arm64 opt-out: restore the null-slice external-J2J mode for tryResume-resumed methods (one C++ round trip per send)
 DEBUG_BOOL_RT(PHARO_NO_MCF)                    // arm64 opt-out of machine-code frames (docs/mc-frames-design.md), the default since 2026-10-14: back to the resume-internal / loops-only T1 policy
+DEBUG_BOOL_RT(PHARO_MCF_NO_LAZY_VIEW)          // MCF: native calls and returns write the state view (method, literals, arg count, JIT method, bytecode end) again instead of C++ deriving it from x19
 DEBUG_BOOL_RT(PHARO_MCF)                       // DEPRECATED no-op: machine-code frames are the arm64 default; PHARO_NO_MCF opts out
 DEBUG_BOOL_RT(PHARO_NO_LAZY_OUTER)             // opt-out of lazy outer contexts (docs/lazy-contexts.md): block creation materializes the whole frame stack again
 DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit (target compiled / primitive / not compiled / IC miss) and print the counts every 4M exits

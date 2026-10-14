@@ -524,7 +524,23 @@ void Interpreter::mcfActivateBlock() {
 // the frame machine code is in now.  Unconditional: a native return followed
 // by a native call can leave a NEW activation of the same method at the same
 // fp with another receiver, so "same method and fp" is not "same frame".
-void Interpreter::mcfSyncRegisters(const jit::JITState& st) {
+// Lazy view: machine code keeps only x19 (published to st.jitMethod at
+// every exit and helper call); the rest of the view follows from it.
+void Interpreter::mcfDeriveView(jit::JITState& st) {
+    if (!::pharo::mcfLazyView()) return;
+    jit::JITMethod* jm = st.jitMethod;
+    if (!jm || !jm->compiledMethodOop) return;
+    st.method = Oop::fromRawBits(jm->compiledMethodOop);
+    ObjectHeader* mo = st.method.asObjectPtr();
+    st.literals = mo->slots() + 1;
+    st.argCount = jm->argCount;
+    st.mcfBcEndOff = static_cast<uint64_t>(
+        (mo->bytes() + mo->compiledCodeByteSize()) - reinterpret_cast<uint8_t*>(st.method.rawBits()));
+}
+
+void Interpreter::mcfSyncRegisters(const jit::JITState& stIn) {
+    jit::JITState& st = const_cast<jit::JITState&>(stIn);
+    mcfDeriveView(st);
     method_ = st.method;
     receiver_ = st.receiver;
     framePointer_ = st.tempBase - 1;
@@ -704,6 +720,7 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
 }
 
 void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
+    mcfDeriveView(*st);
     // st->ip is the send (2 bytes: no prefix).  A primitive run below sees
     // the ip after it, as in the interpreter; on failure T1 code exits at
     // the send again.
@@ -1162,6 +1179,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         g_stepNum += jm->numBytecodes;
 
         pharo_jit_osr_resume(&st, entry);
+        mcfDeriveView(st);
 
         currentJITState_ = st.prevState;
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)
@@ -1320,6 +1338,7 @@ void Interpreter::mcfRun(jit::JITMethod*, void*) {}
 void Interpreter::mcfCensus(const jit::JITState&) {}
 void Interpreter::mcfInit() {}
 void Interpreter::mcfClearMemos() {}
+void Interpreter::mcfDeriveView(jit::JITState&) {}
 void Interpreter::mcfSyncRegisters(const jit::JITState&) {}
 bool Interpreter::mcfIsBlockFrame() const { return false; }
 void Interpreter::mcfActivateBlock() {}

@@ -91,7 +91,7 @@ inline void syncDerivedFromJM(JITState& s) {
 // the C++ chain / trampoline, whose entry setups write the mirrors.
 inline bool fsrLazyActive() {
     return GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY)
-        || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
+        || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY) || mcfLazyView();
 }
 
 // XGATE fold (patched-ic-design.md §5): the inline-J2J cross-method
@@ -143,7 +143,7 @@ inline bool xmethodGateOk(const JITMethod* t) {
 // against the derived values ([M4-PARITY]).
 inline void fsrLazyRefresh(JITState& s) {
     if (!(GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY)
-          || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY))) return;
+          || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY) || mcfLazyView())) return;
     JITMethod* jm = s.jitMethod;
     if (!jm) return;
     if (GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY)) {

@@ -4131,7 +4131,7 @@ static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
         a.brk(0xF14);
         a.bind(x19exOk);
     }
-    if (g_fsrLazy)
+    if (g_fsrLazy || ::pharo::mcfLazyView())
         a.str(asmjit::a64::x19,
               asmjit::a64::ptr(asmjit::a64::x0, 56 /*OFF_JITMETHOD*/));
 #if PHARO_T1_TB_IN_X26
@@ -4151,6 +4151,14 @@ static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
 static inline bool t1TbReg() {
     static const bool v = ::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_T1_NO_TB_REG);
     return v;
+}
+// The literal frame base: x19's literalsCache when the state view is lazy
+// (the state field is not maintained per call), else the state field.
+static inline void emitLoadLiteralsBase(asmjit::a64::Assembler& a, const asmjit::a64::Gp& dst) {
+    if (g_fsrLazy || ::pharo::mcfLazyView())
+        a.ldr(dst, asmjit::a64::ptr(asmjit::a64::x19, (int)offsetof(JITMethod, literalsCache)));
+    else
+        emitLoadLiteralsBase(a, dst);
 }
 static inline void emitReloadSpFromState(asmjit::a64::Assembler& a) {
 #if PHARO_T1_SP_IN_X25
@@ -5066,16 +5074,20 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.str(x13, ptr(x0, OFF_RECEIVER));
     if (t1TbReg()) a.mov(x21, x13);
     a.str(x14, ptr(x0, OFF_CLOSURE));         // the caller's closure (nil: method)
-    a.ldr(x8, ptr(x7, L.savedMethod));
-    a.str(x8, ptr(x0, OFF_METHOD));
-    a.sub(x10, x12, x8);                      // savedBytecodeEnd - method
-    a.str(x10, ptr(x0, OFF_MCF_BCEND_OFF));
-    a.add(x8, x8, asmjit::Imm(16));
-    a.str(x8, ptr(x0, OFF_LITERALS));
-    a.ldr(w8, ptr(x7, L.savedArgCount));
-    a.str(w8, ptr(x0, OFF_ARGCOUNT));
-    a.ldr(x19, ptr(x7, L.mcJM));
-    a.str(x19, ptr(x0, OFF_JITMETHOD));
+    if (::pharo::mcfLazyView()) {
+        a.ldr(x19, ptr(x7, L.mcJM));          // the view is C++'s to derive
+    } else {
+        a.ldr(x8, ptr(x7, L.savedMethod));
+        a.str(x8, ptr(x0, OFF_METHOD));
+        a.sub(x10, x12, x8);                  // savedBytecodeEnd - method
+        a.str(x10, ptr(x0, OFF_MCF_BCEND_OFF));
+        a.add(x8, x8, asmjit::Imm(16));
+        a.str(x8, ptr(x0, OFF_LITERALS));
+        a.ldr(w8, ptr(x7, L.savedArgCount));
+        a.str(w8, ptr(x0, OFF_ARGCOUNT));
+        a.ldr(x19, ptr(x7, L.mcJM));
+        a.str(x19, ptr(x0, OFF_JITMETHOD));
+    }
     a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
     a.str(x8, ptr(x0, OFF_IP));
     a.mov(x26, x1);                           // TOS mirror = the result
@@ -5356,7 +5368,10 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.b_eq(fail);
         a.tst(x16, asmjit::Imm(0x7));
         a.b_ne(fail);
-        a.ldr(x17, ptr(x0, OFF_METHOD));           // the caller's method
+        if (::pharo::mcfLazyView())
+            a.ldr(x17, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
+        else
+            a.ldr(x17, ptr(x0, OFF_METHOD));       // the caller's method
         a.add(x17, x17, asmjit::Imm(8));           // its bytes
         a.sub(x17, x13, x17);                      // savedIP - bytes
         a.add(x17, x17, asmjit::Imm(1));           // 1-based pc
@@ -5378,10 +5393,17 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.stp(r1, r2, ptr(x8, o1));
         else { a.str(r1, ptr(x8, o1)); a.str(r2, ptr(x8, o2)); }
     };
-    a.ldr(x16, ptr(x0, OFF_METHOD));
-    a.ldr(x17, ptr(x0, OFF_MCF_BCEND_OFF));
-    a.add(x17, x16, x17);
-    put2(x13, L.savedIP, x17, L.savedBytecodeEnd);
+    if (::pharo::mcfLazyView()) {
+        // savedBytecodeEnd null: C++ derives it from the method when it
+        // pops the frame (no per-call view to read it from).
+        a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
+        put2(x13, L.savedIP, xzr, L.savedBytecodeEnd);
+    } else {
+        a.ldr(x16, ptr(x0, OFF_METHOD));
+        a.ldr(x17, ptr(x0, OFF_MCF_BCEND_OFF));
+        a.add(x17, x16, x17);
+        put2(x13, L.savedIP, x17, L.savedBytecodeEnd);
+    }
     put2(x16, L.savedMethod, x16, L.savedHomeMethod);
     if (t1TbReg()) a.mov(x16, x21);
     else a.ldr(x16, ptr(x0, OFF_RECEIVER));
@@ -5413,20 +5435,25 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
 static void emitMcfCalleeView(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     a.and_(w11, w12, asmjit::Imm(0xFF));           // nArgs
-    a.str(x6, ptr(x0, OFF_METHOD));
-    a.add(x17, x6, asmjit::Imm(16));
-    a.str(x17, ptr(x0, OFF_LITERALS));
-    a.str(w11, ptr(x0, OFF_ARGCOUNT));
+    const bool lazy = ::pharo::mcfLazyView();
+    if (!lazy) {
+        a.str(x6, ptr(x0, OFF_METHOD));
+        a.add(x17, x6, asmjit::Imm(16));
+        a.str(x17, ptr(x0, OFF_LITERALS));
+        a.str(w11, ptr(x0, OFF_ARGCOUNT));
+    }
     a.mov(x19, x9);
-    a.str(x9, ptr(x0, OFF_JITMETHOD));
+    if (!lazy) a.str(x9, ptr(x0, OFF_JITMETHOD));
     // entry.bcEndOff packs the bytecode end, start and temp count
     // (mcfPackBcInfo).  x17 = the temp count on exit; clobbers x10.
     a.ldr(x10, ptr(x7, 16));
     a.ubfx(x17, x10, asmjit::Imm(24), asmjit::Imm(24));
     a.add(x17, x6, x17);
     a.str(x17, ptr(x0, OFF_IP));                   // bytecode start
-    a.and_(x17, x10, asmjit::Imm(0xFFFFFF));
-    a.str(x17, ptr(x0, OFF_MCF_BCEND_OFF));
+    if (!lazy) {
+        a.and_(x17, x10, asmjit::Imm(0xFFFFFF));
+        a.str(x17, ptr(x0, OFF_MCF_BCEND_OFF));
+    }
     a.lsr(x17, x10, asmjit::Imm(48));             // temp count
 }
 
@@ -5889,7 +5916,7 @@ static void simLoad(asmjit::a64::Assembler& a, const SimItem& it, const asmjit::
     case SimK::Reg:      if (dst.id() != (uint32_t)it.reg) a.mov(dst, asmjit::a64::x(it.reg)); break;
     case SimK::StateOop: a.ldr(dst, ptr(x0, (int)it.v)); break;
     case SimK::Lit:
-        a.ldr(dst, ptr(x0, OFF_LITERALS));
+        emitLoadLiteralsBase(a, dst);
         a.ldr(dst, ptr(dst, (int)(it.v * 8)));
         break;
     }
@@ -6004,7 +6031,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         if (g_fsrLazy)  // M4: mirror may be stale; x19's literalsCache is canonical
             a.ldr(dst, ptr(x19, (int)offsetof(JITMethod, literalsCache)));
         else
-        a.ldr(dst, ptr(x0, OFF_LITERALS));
+        emitLoadLiteralsBase(a, dst);
         a.ldr(dst, ptr(dst, n * 8));
         if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
         return true;
@@ -6016,7 +6043,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         if (g_fsrLazy)  // M4: see pushLitConst
             a.ldr(dst, ptr(x19, (int)offsetof(JITMethod, literalsCache)));
         else
-        a.ldr(dst, ptr(x0, OFF_LITERALS));
+        emitLoadLiteralsBase(a, dst);
         a.ldr(dst, ptr(dst, n * 8));
         a.ldr(dst, ptr(dst, OBJ_SLOT_0 + 8));
         if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
@@ -8512,7 +8539,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.ldr(x12, ptr(x0, OFF_JITMETHOD));
                         a.stp(x6, x12, ptr(sp, 48));
                         }
-                        a.ldr(x6, ptr(x0, OFF_LITERALS));
+                        emitLoadLiteralsBase(a, x6);
                         a.ldr(w12, ptr(x0, OFF_ARGCOUNT));
                         a.stp(x6, x12, ptr(sp, 64));
                     }
@@ -12797,14 +12824,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
                     emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPushLitConst) {
-                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_LITERALS));
+                    emitLoadLiteralsBase(a, a64::x1);
                     a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
                     emitLoadSp(a, a64::x2);
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
                     emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPushLitVar) {
-                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_LITERALS));
+                    emitLoadLiteralsBase(a, a64::x1);
                     a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
                     a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + 8));
                     emitLoadSp(a, a64::x2);
@@ -12844,7 +12871,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         emitLoadSp(a, a64::x2);
                         a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     }
-                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_LITERALS));
+                    emitLoadLiteralsBase(a, a64::x4);
                     a.ldr(a64::x4, a64::ptr(a64::x4, idx * 8));
                     a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + 8));
                     emitRememberBarrierA64(a, a64::x4, a64::x1, a64::x6, a64::x7, a64::x8);
@@ -13501,7 +13528,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     g_fsrX19 = true;
     g_bcStartDelta = (2 + numLiterals) * 8;
     g_fsrLazyVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
-    g_fsrLazy = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY) || g_fsrLazyVerify;
+    g_fsrLazy = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY) || g_fsrLazyVerify || mcfLazyView();
     g_fsrNodepthVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH_VERIFY);
     g_fsrNodepth = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH) || g_fsrNodepthVerify;
     g_fsrCursor = fsrCursorMode()

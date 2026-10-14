@@ -90,6 +90,12 @@ inline bool mcfEnabled() {
 #endif
 }
 
+// MCF lazy view: machine code keeps the JIT method in x19 only; C++ derives
+// method, literals, arg count and bytecode end from it (mcfDeriveView).
+inline bool mcfLazyView() {
+    return mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_VIEW);
+}
+
 inline bool resumeInternalJ2JEnabled() {
 #if defined(__aarch64__) || defined(__arm64__)
     if (mcfEnabled()) return false;   // MCF emits no inline J2J at all

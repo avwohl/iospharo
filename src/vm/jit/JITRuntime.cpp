@@ -5124,6 +5124,26 @@ void JITRuntime::rebuildMethodMap(bool clearCallCache) {
     if (clearCallCache) mcfClearCallCache();
     JITMethod* m = codeZone_.firstMethod();
     size_t skippedSuperseded = 0;
+    // The raw caches derived from compiledMethodOop follow the method when
+    // a GC moved it (machine code reads both through x19).  The headers are
+    // in the MAP_JIT zone: one write window for the walk, and only for
+    // headers that actually changed.
+    {
+        bool any = false;
+        for (JITMethod* c = m; c && !any; c = c->nextInZone)
+            any = c->compiledMethodOop
+                && c->bcStartCache != c->compiledMethodOop + (2 + (c->methodHeader & 0x7FFF)) * 8;
+        if (any) {
+            ScopedPatchWriteAccess w(codeZone_.zoneStart(), codeZone_.totalBytes());
+            for (JITMethod* c = m; c; c = c->nextInZone) {
+                if (!c->compiledMethodOop) continue;
+                const uint64_t bs = c->compiledMethodOop + (2 + (c->methodHeader & 0x7FFF)) * 8;
+                if (c->bcStartCache == bs) continue;
+                c->refreshLiteralsCache();
+                c->bcStartCache = bs;
+            }
+        }
+    }
     while (m) {
         // Skip versions that recompile() has replaced.  They stay mapped and
         // executable (live stack frames / IC J2J entries still reach them),
