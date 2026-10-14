@@ -21371,6 +21371,21 @@ Oop Interpreter::materializeFrameStack() {
 
     const bool trustSynced = !GET_DEBUG_BOOL(PHARO_MAT_FULL_RESYNC)
         && !GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MATFS_CENSUS), 0)) {
+        static uint64_t calls = 0, walked = 0, synced = 0, prefix = 0;
+        calls++;
+        size_t firstUnsynced = frameDepth_;
+        for (size_t i = startFrame; i < frameDepth_; i++) {
+            walked++;
+            if (savedFrames_[i].ctxSynced) synced++;
+            else if (firstUnsynced == frameDepth_) firstUnsynced = i;
+        }
+        prefix += firstUnsynced - startFrame;
+        if ((calls & 0xFFFF) == 0)
+            fprintf(stderr, "[MATFS-CENSUS] calls=%llu walked/call=%.1f synced/call=%.1f "
+                    "syncedPrefix/call=%.1f\n", (unsigned long long)calls,
+                    (double)walked / calls, (double)synced / calls, (double)prefix / calls);
+    }
     for (size_t i = startFrame; i < frameDepth_; i++) {
         auto& frame = savedFrames_[i];  // non-const: may update materializedContext
 

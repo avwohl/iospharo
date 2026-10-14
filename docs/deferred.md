@@ -335,7 +335,13 @@ The history lives in `docs/history/`; nothing was deleted.
   must be a context.  Cog marries only the current frame and materializes
   senders on demand.  Doing the same here (a context whose sender is "the
   frame below", resolved when read) is the lazy-context redesign; it would
-  also cut `widowReturningContext` and process-switch cost.
+  also cut `widowReturningContext` and process-switch cost.  Census
+  (`PHARO_MATFS_CENSUS`, lexicon, 2026-10-14): 51 million calls; each walks
+  16.6 frames, of which 14.5 are an already-synced prefix and about 2.1
+  are re-synced (the current frame's temps and stack copied into its
+  context, and new contexts allocated).  Skipping the synced prefix would
+  save about 1%; the snapshot copy and the allocations are the cost, which
+  only married (read-through) contexts remove.
 - **`PHARO_NO_JIT=1` still pays `noteMethodEntrySlow` on every activation.**
   The JIT runtime initializes with the compiler off, `countThresholdCache_`
   stays 0, so the inline gate never takes its fast path.  Diagnostic mode
