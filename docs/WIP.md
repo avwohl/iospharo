@@ -15,6 +15,31 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, night 6) -- runtime costs outside machine code; sweep L20 on `4f906387`
+
+Pushed: origin/jit at `1ad9a30d` (sweep L19: 27801 / 10 / 1; its new
+entries pass alone on that binary and on HEAD).
+
+lexicon instructions (billions): 411 -> 403 (returns into contexts resume
+machine code; materialization writes fresh contexts directly) -> 400
+(ExtSend site caches; WideString at: in the stub) -> 396 (file reads keep
+a pending position: no fseek, no stdio refill) -> 394 (scavenge skips the
+method cache and JIT tables unless a young object was stored in them;
+roots 770 -> 31 us) -> 364 (young becomeForward: forwards through a
+scavenge instead of walking 36 MB of eden; primitive 72 flushes caches
+only for methods, classes and symbols).
+
+Measured, not done: one send + return costs ~147 instructions in machine
+code (send site 38, call stub 61, return 37); Cog's is 1-2 ns.  Trimming
+fields gives ~1% each; the frame record design is the limit.  The
+interrupt countdown (4 instructions a call) could become Cog's
+stack-limit trick, but every forced-checkpoint writer must then lower the
+depth limit.
+
+New diagnostic knobs: PHARO_SCAV_TABLE_VERIFY, PHARO_BECOME_YOUNG_VERIFY
+(scavenge path), PHARO_SCAV_STATS root sections, PHARO_BECOME_CENSUS
+region times.  Both verifiers were proven by sabotage (a no-op hook).
+
 ## Right now (2026-10-14, night 5) -- primitive stub holes; sweep L19 on `1ad9a30d`
 
 Pushed: origin/jit at `c6e7182a` (sweep L18: 27802 / 8 / 2; its three new
