@@ -1233,7 +1233,20 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
             e.bcEndOff = constant.rawBits();
             return;
         }
-        if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
+        if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_CENSUS), 0)) {
+                static std::unordered_map<std::string, uint64_t> why;
+                static uint64_t n = 0;
+                why[memory_.selectorOf(method) + (!jm ? " nojm" : !jm->isExecutable() ? " notexec"
+                    : jm->numBytecodes == 0 ? " nobc" : " stub")]++;
+                if ((++n & 0xFFFF) == 0)
+                    for (auto& kv : why)
+                        if (kv.second > 1000)
+                            fprintf(stderr, "[MCF-NOTE-REFUSED] %llu %s\n",
+                                    (unsigned long long)kv.second, kv.first.c_str());
+            }
+            return;
+        }
         if (jm->hasRecvFieldAccess && !receiver.isObject()) return;
         const uint64_t bcInfo = mcfPackBcInfo(method.rawBits(),
                                                    mo->bytes() + mo->compiledCodeByteSize(), jm);

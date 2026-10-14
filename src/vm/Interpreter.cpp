@@ -8324,6 +8324,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 #if PHARO_JIT_ENABLED
                 patchJITICAfterSend(method, receiver_, selector);
 #endif
+#if PHARO_JIT_ENABLED
+                // Count it as sendSelector does: a method reached only
+                // through super sends was never compiled (Integer>>
+                // numberOfDigitsInBase: under SmallInteger's super send ran
+                // interpreted at every call, as did its callees' returns).
+                jitRuntime_.noteMethodEntry(method);
+#endif
                 activateMethod(method, numArgs);
             }
         } else {
@@ -8363,6 +8370,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 }
 #if PHARO_JIT_ENABLED
                 patchJITICAfterSend(method, receiver_, selector);
+#endif
+#if PHARO_JIT_ENABLED
+                // Count it as sendSelector does: a method reached only
+                // through super sends was never compiled (Integer>>
+                // numberOfDigitsInBase: under SmallInteger's super send ran
+                // interpreted at every call, as did its callees' returns).
+                jitRuntime_.noteMethodEntry(method);
 #endif
                 activateMethod(method, numArgs);
             }
