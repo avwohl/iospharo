@@ -957,13 +957,13 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyReceiver(&st, "entry");
         // The checkpoint countdown pays for this entry as for a native call:
-        // 1 + numBytecodes/8.  Charging all of numBytecodes at every entry
+        // 1.  Charging all of numBytecodes at every entry
         // (and machine code is re-entered after every exit) drained the
         // countdown, the native call stub then refused every call, and each
         // refusal is another exit: myprecious's includes: loop exited at
         // every element with the countdown at -3 (15M exits per 6000 round
         // trips, 2026-10-14).
-        checkCountdown_ -= 1 + (int)(jm->numBytecodes >> 3);
+        checkCountdown_ -= 1;
         g_stepNum += jm->numBytecodes;
 
         pharo_jit_osr_resume(&st, entry);

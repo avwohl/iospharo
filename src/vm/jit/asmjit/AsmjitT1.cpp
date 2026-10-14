@@ -5289,16 +5289,14 @@ static uint64_t getSharedReturnPreludeStub() {
 static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
-    // Interrupt checks: a native call spends 1 + numBytecodes/8 of the
-    // checkpoint countdown.  The full numBytecodes made a small hot callee
-    // exit to a checkpoint every ~50 calls, about once a microsecond, and
-    // each exit runs the send through the interpreter.
+    // Interrupt checks: a native call spends 1 of the checkpoint countdown,
+    // so machine code reaches a checkpoint (an exit) every 1024 calls, some
+    // 10-50 us.  Charging the callee's numBytecodes made a small hot callee
+    // exit every ~50 calls, about once a microsecond, and each exit runs
+    // the send through the interpreter.
     a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));
     a.ldr(w11, ptr(x10));
-    a.ldrh(w8, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
-    a.lsr(w8, w8, asmjit::Imm(3));
-    a.add(w8, w8, asmjit::Imm(1));
-    a.subs(w11, w11, w8);
+    a.subs(w11, w11, asmjit::Imm(1));
     a.b_le(fail);
     a.str(w11, ptr(x10));
     a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
