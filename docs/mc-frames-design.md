@@ -346,9 +346,13 @@ Three causes, all fixed in `ed0c202e`:
    and removed each other at every call.  The cache is now two-way set
    associative (`mcfCallSet`, `emitMcfCacheProbe`).
 3. A native call spent all of `numBytecodes` of the callee from the
-   checkpoint countdown.  A small hot callee then went to a checkpoint
-   (an exit) about every 50 calls.  A call now spends
-   1 + numBytecodes/8.
+   checkpoint countdown.  `mcfRun` also spent all of `numBytecodes` of
+   the method at every entry.  A small hot callee then went to a
+   checkpoint (an exit) about every 50 calls.  In myprecious the
+   countdown stayed negative, and the stub refused every native call in
+   an `includes:` loop.
+   A call and an entry now spend 1 each (`949cfc84`): a checkpoint every
+   1024 calls, 10-50 us.  Delay timing and preemption did not change.
 
 Also, a scavenge no longer clears the call cache: the cache holds only
 old-space methods, which a scavenge does not move or free.
@@ -377,15 +381,20 @@ More census rounds the same day (each fix found by the next census):
    the send exits.
 7. Named primitive 117 runs in machine code for the pure string functions
    of MiscPrimitivePlugin (`mcfPrimMethodCallable`).
+9. Lazy outer contexts had kept Context methods out of the JIT; on
+   arm64 they compile again, with a sync before their field reads and
+   stores (docs/lazy-contexts.md).  `Context>>resume:through:` runs 1.5
+   million times in lexicon.
+
 8. T1 code calls blocks with a non-local return natively: the call-cache
    entry has `kMcfBlockNLR`, and the block stub calls
    `pharo_mcf_block_home`, which stores the home frame index exactly as
    `activateBlock` does (`findBlockHomeFrame`).
 
-| Workload (instructions, billion) | `ed0c202e` | `93bd699f` |
-|---|---|---|
-| lexicon test | 838 | 796 |
-| printString (3M) | 34.8 | 30.4 |
+| Workload (instructions, billion) | `ed0c202e` | `93bd699f` | `949cfc84` |
+|---|---|---|---|
+| lexicon test | 838 | 796 | 774 |
+| printString (3M) | 34.8 | 30.4 | 29.9 |
 
 lexicon send exits: 142 million before the census work, 29 million after
 item 7.
