@@ -11109,6 +11109,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 asmjit::Label mcfPrim = a.new_label();
                 a.ldr(x10, ptr(x7, 24));                     // entry.prim
+                // An ordinary compiled callee (prim 0) goes straight to the
+                // call; every other entry kind is decided out of line.
+                asmjit::Label mcfSpecial = a.new_label();
+                a.cbnz(x10, mcfSpecial);
+                // The call itself is the shared stub (emitMcfCallStub).
+                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                a.adr(x14, mcfCont);
+                a.adr(x15, mcfSlow);
+                a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
+                a.mov(x16, asmjit::Imm(g_mcfCallStub));
+                a.br(x16);
+                a.bind(mcfSpecial);
                 if (nArgs >= 2 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)) {
                     // value:value: and longer (a primitive-207 method): call
                     // the receiver closure's block natively, as at value: sites.
@@ -11168,15 +11181,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Only real primitive indices reach the primitive path.
                 a.cmp(x10, asmjit::Imm(1024));
                 a.b_hs(mcfSlow);
-                a.cbnz(x10, mcfPrim);
-                // The call itself is the shared stub (emitMcfCallStub).
-                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
-                a.adr(x14, mcfCont);
-                a.adr(x15, mcfSlow);
-                a.mov(w12, asmjit::Imm(nArgs | (callerArgCount << 8)));
-                a.mov(x16, asmjit::Imm(g_mcfCallStub));
-                a.br(x16);
+                a.b(mcfPrim);
                 // A primitive that only touches the stack: run it through
                 // pharo_mcf_prim and continue after the send.  x5 (the IC
                 // entry) is stashed for the failure path's SendCached exit.
