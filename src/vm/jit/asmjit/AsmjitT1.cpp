@@ -11630,9 +11630,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b(mcfNativeCall);
                     a.bind(notTiny);
                 }
-                if (nArgs >= 2 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)) {
-                    // value:value: and longer (a primitive-207 method): call
-                    // the receiver closure's block natively, as at value: sites.
+                if ((nArgs >= 2 || nArgs == 0) && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)) {
+                    // value:value: and longer (a primitive-207 method), or
+                    // valueNoContextSwitch (209, 0 arguments): call the
+                    // receiver closure's block natively, as at value: sites.
                     asmjit::Label notBV = a.new_label();
                     a.mov(x11, asmjit::Imm(kMcfBlockValueMethod));
                     a.cmp(x10, x11);

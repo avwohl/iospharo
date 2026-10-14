@@ -1210,8 +1210,14 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
         return;
     }
     const int p = primitiveIndexOf(method);
-    if (p == 207 && ((hdr.asSmallInteger() >> 24) & 0xF) >= 2) {
+    const int pArgs = (int)((hdr.asSmallInteger() >> 24) & 0xF);
+    if ((p == 207 && pArgs >= 2)
+            || (p == 209 && pArgs == 0 && !GET_DEBUG_BOOL(PHARO_MCF_NO_VNCS_CALL))) {
         // value:value: and longer: T1 code calls the closure's block natively.
+        // Also valueNoContextSwitch (209), how ensure: and ifCurtailed: run
+        // their receiver: it activates the block with no interrupt check,
+        // and a native call makes none (a refused call exits, and the
+        // interpreter's primitive 209 makes none either).
         jit::McfCallEntry* ep = jit::mcfCallSlotForPrim(method.rawBits());
         if (!ep) return;
         jit::McfCallEntry& e = *ep;
