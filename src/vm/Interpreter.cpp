@@ -11466,6 +11466,19 @@ void Interpreter::refillMegaCache(MethodCacheEntry* cached, Oop rcvr, Oop select
 void Interpreter::sendSelector(Oop selector, int argCount) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
         checkIpCoherence("sendSelector");
+#if PHARO_JIT_ENABLED
+    // Machine-code frames: a pending IC patch from mcfRun belongs to the one
+    // send that left machine code.  When the interpreter did that bytecode
+    // without a send (==, block value:, SmallInteger arithmetic, ...), the
+    // next send is a different one: drop the patch rather than write that
+    // send's class and method into the exited site.  Checked here, where ip
+    // is still just past this send -- a primitive such as block value moves
+    // ip before the patch is applied.
+    if (__builtin_expect(pendingICOwnerIP_ != nullptr, 0)) {
+        if (instructionPointer_ != pendingICOwnerIP_) pendingICPatch_ = nullptr;
+        pendingICOwnerIP_ = nullptr;
+    }
+#endif
     // Send-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): address-independent
     // "selector<TAB>receiverClass" stream; diff failing vs passing runs.
     if (DIAG_FLAG(g_traceSendsActive)) {
@@ -28486,21 +28499,6 @@ void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop 
             }
         }
     }
-#if PHARO_JIT_ENABLED
-    // Machine-code frames: a pending patch from mcfRun belongs to the one
-    // send that left machine code.  When the interpreter did that bytecode
-    // without a send (==, block value:, SmallInteger arithmetic, ...), the
-    // first send to come along is a different send: drop the patch instead
-    // of writing that send's class and method into the exited site.
-    if (pendingICOwnerIP_) {
-        const uint8_t* owner = pendingICOwnerIP_;
-        pendingICOwnerIP_ = nullptr;
-        if (instructionPointer_ != owner) {
-            pendingICPatch_ = nullptr;
-            return;
-        }
-    }
-#endif
     static bool patchDbg = GET_DEBUG_BOOL(PHARO_IC_PATCH_DEBUG);
     static size_t dbgCalled = 0, dbgNoPending = 0, dbgSelMismatch = 0,
                   dbgDup = 0, dbgPatched = 0, dbgFullNoSlot = 0;
