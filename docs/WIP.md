@@ -15,31 +15,35 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-14, 22:00) -- lexicon passes; lazy outer contexts and MCF census done
+## Right now (2026-10-15) -- lexicon passes; lazy outer contexts and MCF census done, pushed
 
 After machine-code frames, the user approved the next step: lazy
 contexts.  Phase 1 is in: lazy outer contexts (docs/lazy-contexts.md).
 Block creation no longer materializes the frame stack; image code that
-reads a Context syncs first.  Then rounds of the MCF exit census found
-call-path defects (docs/mc-frames-design.md, "Exit census"): depth-0
-refusal, direct-mapped call cache, countdown charges at the call and at
-entry, super sends as stubs, selector slots zeroed after full GC, no
-native path at ExtSend sites, ^ blocks never called natively.  Also
-primitiveFileRead uses pread for large reads (lexicon read 16 GB).
+reads a Context syncs first; on arm64 Context methods compile with a
+sync before their field reads and stores.  Rounds of the MCF exit
+census then found call-path defects (docs/mc-frames-design.md, "Exit
+census", items 1-9).  primitiveFileRead uses pread for large reads.
 
-Numbers (instructions, billion): lexicon 1081 -> 793; printString 38.4
--> 30.4.  lexicon wall time on a quiet machine 56.3 s -> 44.4 s: the
-lexicon package now matches Cog (51 pass, 0 timeouts).  myprecious
-still fails testArgPassByReference x3 (remote-message timeouts): a round
-trip is 6.45 ms, Cog under Rosetta 1.5 ms.
+Numbers (instructions, billion): lexicon 1081 -> 774; printString 38.4
+-> 29.9; deeptraverser 767 -> 677.  lexicon wall time on a quiet
+machine 56.3 s -> 44.4 s (at `33217474`): the lexicon package matches
+Cog (51 pass, 0 timeouts).
 
-Validation: sweep L4 (`3c5cf644`) 27878 / 11 / 2, only a TraitTestCase
-timeout outside the baseline; pushed.  Sweep L5 on `33217474` running;
-push the rest after it.  Intermittent GUI non-passes: see
-docs/mc-frames-design.md ("The intermittent non-passes").
+Validation: sweep L7 (`949cfc84`) 27880 / 11 / 1, the only non-pass
+outside the baseline a TraitTestCase timeout; pushed through
+`cffdbd03`.  Focused package batch on that binary: same as Cog except
+myprecious (3 remote-message timeouts: a round trip is 6.5 ms, Cog
+under Rosetta 1.5 ms), soil and famixreplication (speed budgets) and
+newtools StDebuggerActionModelTest>>testEventAfterProceed, which is
+intermittent in both modes (fails 1 of 2 class runs with
+PHARO_NO_LAZY_OUTER, 0 of 2 without).
 
-Next: myprecious speed (block calls, sends through the interpreter),
-lazy contexts phase 2 (thisContext without the collapse).
+Next candidates: myprecious speed (the gap is broad: 180M instructions
+per round trip); lazy contexts phase 2 (thisContext without a collapse;
+in lexicon every collapse is Context>>resume:through:, non-local returns
+through ensure:); a checkpoint that does not exit when it has nothing
+to do (about 4% of myprecious).
 
 ## Right now (2026-10-14, 09:00) -- machine-code frames: done, default, pushed
 
