@@ -6612,62 +6612,113 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.add(x15, x15, asmjit::Imm(1));
             a.str(x15, ptr(x14));
         }
-        // Inline SmallFloat + / - at the bytecode level (op 0x60 / 0x61).
-        // Reached when the SmI fast-path fails.  Both operands must have
-        // tag 5 and non-zero shifted bits (i.e. not ±0).
-        if ((op == 0x60 || op == 0x61) && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)) {
-            using namespace asmjit::a64;
-            asmjit::Label notFloat = a.new_label();
-            a.and_(x5, x1, asmjit::Imm(0x7));
-            a.cmp(x5, asmjit::Imm(5));
-            a.b_ne(notFloat);
-            a.and_(x5, x4, asmjit::Imm(0x7));
-            a.cmp(x5, asmjit::Imm(5));
-            a.b_ne(notFloat);
-            // Counter increment (every successful tag check).
-            {
-                a.mov(x14, asmjit::Imm((uint64_t)&g_bcFloatArith_hits));
-                a.ldr(x15, ptr(x14));
-                a.add(x15, x15, asmjit::Imm(1));
-                a.str(x15, ptr(x14));
+        // Inline SmallFloat64 arithmetic and comparisons, reached when the
+        // SmallInteger path fails.  At least one operand is a SmallFloat64;
+        // the other may be a SmallInteger, converted as the image does
+        // (Number>>adaptToInteger:andSend: is `rcvr asFloat perform: ...`).
+        // A mixed comparison is exact only while the integer converts
+        // exactly, so it needs |n| <= 2^53.  +/-0 operands and results
+        // that are no SmallFloat64 take the send.  x1 is reloaded: the `*`
+        // path above overwrote it before bailing.
+        {
+            namespace S = SistaV1;
+            const int k = op - S::ArithBase;    // special selector index
+            const bool isCmp = k >= 2 && k <= 7;
+            const bool isArith = k == 0 || k == 1 || k == 8;
+            if ((isCmp || isArith) && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)) {
+                using namespace asmjit::a64;
+                asmjit::Label notFloat = a.new_label();
+                asmjit::Label rcvInt = a.new_label(), rcvDone = a.new_label();
+                asmjit::Label argInt = a.new_label(), argDone = a.new_label();
+                a.ldr(x1, ptr(x2, -16));
+                // One operand must be a SmallFloat64 (tag 5).
+                a.and_(x5, x1, asmjit::Imm(0x7));
+                a.and_(x7, x4, asmjit::Imm(0x7));
+                a.cmp(x5, asmjit::Imm(5));
+                a.ccmp(x7, asmjit::Imm(5), asmjit::Imm(4), CondCode::kNE);  // Z = either is 5
+                a.b_ne(notFloat);
+                a.mov(x6, asmjit::Imm(0x7000000000000000ULL));
+                a.mov(x8, asmjit::Imm(uint64_t(1) << 53));
+                // Receiver -> d0.
+                a.cmp(x5, asmjit::Imm(1));
+                a.b_eq(rcvInt);
+                a.cmp(x5, asmjit::Imm(5));
+                a.b_ne(notFloat);
+                a.lsr(x5, x1, asmjit::Imm(3));
+                a.cmp(x5, asmjit::Imm(1));
+                a.b_ls(notFloat);                 // +/-0
+                a.add(x5, x5, x6);
+                a.ror(x5, x5, asmjit::Imm(1));
+                a.fmov(d0, x5);
+                a.b(rcvDone);
+                a.bind(rcvInt);
+                a.asr(x5, x1, asmjit::Imm(3));
+                if (isCmp) {
+                    a.add(x9, x5, x8);
+                    a.lsr(x9, x9, asmjit::Imm(54));
+                    a.cbnz(x9, notFloat);         // |n| > 2^53
+                }
+                a.scvtf(d0, x5);
+                a.bind(rcvDone);
+                // Argument -> d1.
+                a.cmp(x7, asmjit::Imm(1));
+                a.b_eq(argInt);
+                a.cmp(x7, asmjit::Imm(5));
+                a.b_ne(notFloat);
+                a.lsr(x5, x4, asmjit::Imm(3));
+                a.cmp(x5, asmjit::Imm(1));
+                a.b_ls(notFloat);
+                a.add(x5, x5, x6);
+                a.ror(x5, x5, asmjit::Imm(1));
+                a.fmov(d1, x5);
+                a.b(argDone);
+                a.bind(argInt);
+                a.asr(x5, x4, asmjit::Imm(3));
+                if (isCmp) {
+                    a.add(x9, x5, x8);
+                    a.lsr(x9, x9, asmjit::Imm(54));
+                    a.cbnz(x9, notFloat);
+                }
+                a.scvtf(d1, x5);
+                a.bind(argDone);
+                if (isArith) {
+                    if (k == 0) a.fadd(d0, d0, d1);
+                    else if (k == 1) a.fsub(d0, d0, d1);
+                    else a.fmul(d0, d0, d1);
+                    // Encode as SmallFloat64, or take the send.
+                    a.fmov(x5, d0);
+                    a.ror(x5, x5, asmjit::Imm(63));
+                    a.cmp(x5, x6);
+                    a.b_lo(notFloat);
+                    a.sub(x5, x5, x6);
+                    a.mov(x7, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
+                    a.cmp(x5, x7);
+                    a.b_hi(notFloat);
+                    a.lsl(x5, x5, asmjit::Imm(3));
+                    // SmallFloatTag (5): after `lsl #3` the low bits are 0;
+                    // `orr #5` is no AArch64 bitmask immediate, so add.
+                    a.add(x5, x5, asmjit::Imm(5));
+                } else {
+                    // IEEE: every comparison with a NaN is false except ~=.
+                    a.fcmp(d0, d1);
+                    a.ldp(x6, x5, ptr(x0, OFF_TRUEOOP));
+                    switch (k) {
+                        case 2: a.csel(x5, x6, x5, CondCode::kMI); break;   // <
+                        case 3: a.csel(x5, x6, x5, CondCode::kGT); break;   // >
+                        case 4: a.csel(x5, x6, x5, CondCode::kLS); break;   // <=
+                        case 5: a.csel(x5, x6, x5, CondCode::kGE); break;   // >=
+                        case 6: a.csel(x5, x6, x5, CondCode::kEQ); break;   // =
+                        default: a.csel(x5, x6, x5, CondCode::kNE); break;  // ~=
+                    }
+                }
+                if (tosProduceArith) a.mov(x26, x5);
+                a.str(x5, ptr(x2, -16));
+                a.sub(x2, x2, asmjit::Imm(8));
+                emitStoreSp(a, x2);
+                a.b(end);
+                a.bind(notFloat);
+                a.ldr(x1, ptr(x2, -16));          // the paths below read x1
             }
-            // Decode rcv to d0.
-            a.lsr(x5, x1, asmjit::Imm(3));
-            a.cmp(x5, asmjit::Imm(1));
-            a.b_ls(notFloat);                 // ±0 → bail
-            a.mov(x6, asmjit::Imm(0x7000000000000000ULL));
-            a.add(x5, x5, x6);
-            a.ror(x5, x5, asmjit::Imm(1));
-            a.fmov(d0, x5);
-            // Decode arg to d1 (x6 still has the offset).
-            a.lsr(x5, x4, asmjit::Imm(3));
-            a.cmp(x5, asmjit::Imm(1));
-            a.b_ls(notFloat);
-            a.add(x5, x5, x6);
-            a.ror(x5, x5, asmjit::Imm(1));
-            a.fmov(d1, x5);
-            if (op == 0x60) a.fadd(d0, d0, d1);
-            else            a.fsub(d0, d0, d1);
-            // Encode.
-            a.fmov(x5, d0);
-            a.ror(x5, x5, asmjit::Imm(63));
-            a.cmp(x5, x6);
-            a.b_lo(notFloat);
-            a.sub(x5, x5, x6);
-            a.mov(x7, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
-            a.cmp(x5, x7);
-            a.b_hi(notFloat);
-            a.lsl(x5, x5, asmjit::Imm(3));
-            // SmallFloatTag (5).  `orr #5` is not a valid AArch64 bitmask
-            // immediate (asmjit drops it → tag 0 corruption); after `lsl #3`
-            // the low 3 bits are 0 so `add #5` sets the tag identically.
-            a.add(x5, x5, asmjit::Imm(5));
-            if (tosProduceArith) a.mov(x26, x5);
-            a.str(x5, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
-            a.b(end);
-            a.bind(notFloat);
         }
         // Inline ByteString = (op 0x66 only).  Mirrors stencils.cpp:880-926.
         // After SmI tag check fails, try byte-equality for two byte
@@ -11097,6 +11148,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(x16, asmjit::Imm(g_mcfBlockStub));
                     a.br(x16);
                     a.bind(notBV);
+                }
+                if (!GET_DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)) {
+                    // A method that answers one constant: the value is in
+                    // the entry; it replaces the receiver, the arguments go.
+                    asmjit::Label notConst = a.new_label();
+                    a.mov(x11, asmjit::Imm(kMcfReturnsValue));
+                    a.cmp(x10, x11);
+                    a.b_ne(notConst);
+                    a.ldr(x1, ptr(x7, 16));
+                    emitLoadSp(a, x2);
+                    a.stur(x1, ptr(x2, -8 * (nArgs + 1)));
+                    if (nArgs > 0) a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                    emitStoreSp(a, x2);
+                    a.mov(x26, x1);                          // TOS mirror
+                    a.b(mcfCont);
+                    a.bind(notConst);
                 }
                 // Only real primitive indices reach the primitive path.
                 a.cmp(x10, asmjit::Imm(1024));

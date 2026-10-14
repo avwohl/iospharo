@@ -340,6 +340,11 @@ constexpr uint64_t kMcfBlockValueMethod = 0x20000;
 // Or'ed into a block entry: the block has a non-local return, so the block
 // stub has pharo_mcf_block_home find its home frame, as activateBlock does.
 constexpr uint64_t kMcfBlockNLR = 0x40000;
+// McfCallEntry.prim for a method whose whole body answers one constant
+// (`^ $!`, `^ true`, `^ #sym`): T1 code puts entry.bcEndOff (the value's
+// oop bits) in the receiver slot instead of calling.  jm stays set, so
+// every other reader of the entry treats it as no native call.
+constexpr uint64_t kMcfReturnsValue = 0x80000;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
 // PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and

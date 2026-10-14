@@ -512,6 +512,52 @@ void Interpreter::mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, u
             (unsigned long long)memory_.falseObject().rawBits());
 }
 
+// Does this method's whole body answer one constant?  `^ literal`
+// (literal frame, PushInteger, PushCharacter, true/false/nil/0/1) or a
+// ReturnTrue/False/Nil bytecode.  A young literal is refused: the
+// scavenge purges entries by key only.
+bool Interpreter::mcfConstantReturn(Oop method, Oop& value) {
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)) return false;
+    ObjectHeader* mo = method.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return false;
+    const int nLits = (int)(hdr.asSmallInteger() & 0x7FFF);
+    const uint8_t* bc = mo->bytes() + (1 + nLits) * 8;
+    const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
+    if (bc >= end) return false;
+    namespace S = jit::SistaV1;
+    switch (bc[0]) {
+        case S::ReturnTrue:  value = memory_.trueObject(); return true;
+        case S::ReturnFalse: value = memory_.falseObject(); return true;
+        case S::ReturnNil:   value = memory_.nil(); return true;
+        default: break;
+    }
+    int len;
+    switch (bc[0]) {
+        case S::PushTrue:  value = memory_.trueObject(); len = 1; break;
+        case S::PushFalse: value = memory_.falseObject(); len = 1; break;
+        case S::PushNil:   value = memory_.nil(); len = 1; break;
+        case S::PushZero:  value = Oop::fromSmallInteger(0); len = 1; break;
+        case S::PushOne:   value = Oop::fromSmallInteger(1); len = 1; break;
+        case S::PushInteger:
+            if (bc + 1 >= end) return false;
+            value = Oop::fromSmallInteger(bc[1]); len = 2; break;
+        case S::PushCharacter:
+            if (bc + 1 >= end) return false;
+            value = Oop::fromCharacter(bc[1]); len = 2; break;
+        default:
+            if (bc[0] >= S::PushLitConstBase && bc[0] <= S::PushLitConstLast
+                    && bc[0] - S::PushLitConstBase < nLits) {
+                value = mo->slotAt(1 + (bc[0] - S::PushLitConstBase));
+                len = 1;
+                break;
+            }
+            return false;
+    }
+    if (bc + len >= end || bc[len] != S::ReturnTop) return false;
+    return !value.isObject() || !memory_.isYoung(value);
+}
+
 // May a call-cache entry be keyed by this method or CompiledBlock?  Young
 // ones may: the scavenge purges their entries (mcfPurgeCallCacheRange).
 // Methods compiled at run time stayed young until the next scavenge, and
@@ -685,6 +731,11 @@ bool Interpreter::mcfActivate(Oop method) {
             e.jm = jm;
             e.prim = 0;
             e.bcEndOff = mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm);
+            Oop constant;
+            if (!hasPrim && mcfConstantReturn(method, constant)) {
+                e.prim = jit::kMcfReturnsValue;
+                e.bcEndOff = constant.rawBits();
+            }
         }
     }
     // activateMethod has already run (and failed) the primitive and stored
@@ -848,6 +899,12 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     }
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
     if (e && e->jm && !e->prim && mcfReceiverOk(e->jm, rcv)) return e;
+    if (e && e->prim == jit::kMcfReturnsValue) {
+        // A method answering one constant (mcfConstantReturn).
+        st->sp[-(nArgs + 1)] = Oop::fromRawBits(e->bcEndOff);
+        st->sp -= nArgs;
+        return kMcfExtDone;
+    }
     if (e && !e->jm && e->prim && e->prim < 1024) {
         // A primitive entry (mcfNotePrimitiveTarget): run it.
         st->cachedTarget = target;
@@ -939,6 +996,16 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
         // so enter it here, under mcfActivate's conditions.
         if (jit::mcfCallFind(method.rawBits())) return;
         jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+        Oop constant;
+        if (mcfCacheableOop(method) && mcfConstantReturn(method, constant)) {
+            // Answered at the call site: no machine code needed.
+            jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
+            e.methodBits = method.rawBits();
+            e.jm = jm;
+            e.prim = jit::kMcfReturnsValue;
+            e.bcEndOff = constant.rawBits();
+            return;
+        }
         if (!jm || !jm->isExecutable() || jm->numBytecodes == 0 || jm->isStubOnEntry) return;
         if (jm->hasRecvFieldAccess && !receiver.isObject()) return;
         const uint64_t bcInfo = mcfPackBcInfo(method.rawBits(),

@@ -1868,6 +1868,7 @@ public:
     bool mcfIsIdentityEquals(Oop method);
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
     bool mcfCacheableOop(Oop m) const;
+    bool mcfConstantReturn(Oop method, Oop& value);
     void mcfFillICAtExit(jit::JITState& st);
     void mcfDeriveView(jit::JITState& st);
     static constexpr size_t kBcEndMemoSize = 256;

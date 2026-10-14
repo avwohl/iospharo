@@ -198,6 +198,7 @@ DEBUG_BOOL(PHARO_MCF_NO_PROMPT_YIELD)           // MCF: a bytecode exit taken fo
 DEBUG_BOOL(PHARO_MCF_NO_EXTRAS_SHORTCUT)        // MCF: an IC hit walks the whole specialization chain even when no tested extras bit is set
 DEBUG_BOOL(PHARO_MCF_NO_DIRECT_FIELDS)          // MCF: T1 call/return reach frameDepth_, the contexts and the countdown through state pointers, not at fixed offsets from x0
 DEBUG_BOOL(PHARO_MCF_NO_LAZY_RET_POP)           // MCF: ReturnTop pops the value before the native return (the return resets sp anyway)
+DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)        // MCF: a method answering one constant (^ $!, ^ true, ^ #sym) is called, not answered at the call site
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
