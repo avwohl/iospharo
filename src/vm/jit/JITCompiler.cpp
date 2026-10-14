@@ -2763,6 +2763,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Fill in method header
     jitMethod->compiledMethodOop = compiledMethod.rawBits();
+    noteJitOop(jitMethod->compiledMethodOop);
     jitMethod->refreshLiteralsCache();  // FSR M0
     jitMethod->methodHeader = static_cast<uint64_t>(headerBits);
     jitMethod->codeSize = totalSize;
@@ -2852,6 +2853,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             std::memcpy(icBufferBase,
                         oldVersion->icZoneStart(),
                         icDataSize);
+            g_jitMayHoldYoung = true;   // copied oops: be conservative
         }
 
         // Get special selectors array for 0x70-0x7F sends
@@ -2927,11 +2929,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 }
                 uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
                 icSlots[18] = selectorBits;
+                noteJitOop(selectorBits);
                 // Task #41: also store in side-channel array.  Survives GC
                 // memset of IC slots, so the megacache miss path has a
                 // stable selector even when icSlots[18] has been zeroed.
                 if (uint64_t* sba = jitMethod->selBitsArray()) {
                     sba[sendIdx] = selectorBits;
+                    noteJitOop(selectorBits);
                 }
 
                 if (GET_DEBUG_BOOL(PHARO_IC_HIT_DBG)) {

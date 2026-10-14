@@ -13577,6 +13577,9 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         }
     }
 
+    if (isNewSpaceBits(selector.rawBits()) || isNewSpaceBits(classOop.rawBits())
+            || isNewSpaceBits(method.rawBits()))
+        g_mcacheMayHoldYoung = true;   // the next scavenge walks the cache
     // Primary slot: use if empty or same key
     size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
     MethodCacheEntry& e1 = methodCache_[h1];
@@ -25295,9 +25298,14 @@ void Interpreter::afterGC(bool fullGC) {
         // recovery) silently failed open after any scavenge that moved
         // a young method — the inline-getter IC poisoning behind the
         // MAX_IC=1 wrong-object residual.
-        jitRuntime_.rebuildMethodMap(/* clearCallCache */ false);
-        jit::mcfPurgeCallCacheRange(reinterpret_cast<uint64_t>(memory_.newSpaceStart()),
-                                    reinterpret_cast<uint64_t>(memory_.newSpaceEnd()));
+        // Only when the JIT tables could hold a young method: otherwise the
+        // scavenge moved no compiled method (two walks of every compiled
+        // method and a 16K-entry purge, at every scavenge).
+        if (g_jitWalkedAtLastScavenge) {
+            jitRuntime_.rebuildMethodMap(/* clearCallCache */ false);
+            jit::mcfPurgeCallCacheRange(reinterpret_cast<uint64_t>(memory_.newSpaceStart()),
+                                        reinterpret_cast<uint64_t>(memory_.newSpaceEnd()));
+        }
         // interpHints_ raw-bits entries go stale the same way when a
         // scavenge moves a young method (see recoverSistaAfterGC).
         interpHints_.clear();
@@ -29587,6 +29595,7 @@ void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop 
             }
             icData[e * 3] = lookupKey;
             icData[e * 3 + 1] = resolvedMethod.rawBits();
+            noteJitOop(resolvedMethod.rawBits());
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
             dbgPatched++;
@@ -29794,6 +29803,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     }
                     icData[firstEmpty * 3]     = lookupKey;
                     icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
+                    noteJitOop(cachedMethod.rawBits());
                     icData[firstEmpty * 3 + 2] = pkExtra;
                     if (firstEmpty == 0 && callerMethod.isObject()) {
                         jitRuntime_.rederiveSiteForICData(
@@ -29930,6 +29940,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                             }
                             icData[e * 3 + 0] = key;
                             icData[e * 3 + 1] = cachedMethod.rawBits();
+                            noteJitOop(cachedMethod.rawBits());
                             icData[e * 3 + 2] = (1ULL << 59);  // BLOCK_VALUE_BIT only
                             break;
                         }
@@ -30266,6 +30277,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         }
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
+        noteJitOop(cachedMethod.rawBits());
         icData[firstEmpty * 3 + 2] = newExtra;
         // PMS §6: slot-0 fill -> re-derive (owner via methodMap, post
         // any eager compile).

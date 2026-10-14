@@ -696,6 +696,7 @@ void Interpreter::mcfActivateBlock() {
         Oop hdr = method_.asObjectPtr()->slotAt(0);
         jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method_.rawBits());
         e.methodBits = method_.rawBits();
+        noteJitOop(e.methodBits);
         e.jm = jm;
         e.bcEndOff = bcInfo;
         e.prim = jit::kMcfBlockEntry | (uint64_t)((hdr.asSmallInteger() >> 24) & 0xF)
@@ -834,6 +835,7 @@ bool Interpreter::mcfActivate(Oop method) {
                 && mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm)) {
             jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
             e.methodBits = method.rawBits();
+            noteJitOop(e.methodBits);
             e.jm = jm;
             e.prim = 0;
             e.bcEndOff = mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm);
@@ -1186,6 +1188,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
             // Answered at the call site: no machine code needed.
             jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
             e.methodBits = method.rawBits();
+            noteJitOop(e.methodBits);
             e.jm = jm;
             e.prim = jit::kMcfReturnsValue;
             e.bcEndOff = constant.rawBits();
@@ -1198,6 +1201,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
         if (!bcInfo) return;
         jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
         e.methodBits = method.rawBits();
+        noteJitOop(e.methodBits);
         e.jm = jm;
         e.prim = 0;
         e.bcEndOff = bcInfo;
@@ -1212,6 +1216,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
         if (!ep) return;
         jit::McfCallEntry& e = *ep;
         e.methodBits = method.rawBits();
+        noteJitOop(e.methodBits);
         e.jm = nullptr;
         e.bcEndOff = 0;
         e.prim = jit::kMcfBlockValueMethod;
@@ -1222,6 +1227,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
     if (!ep) return;   // has an entry, or both are native-call entries
     jit::McfCallEntry& e = *ep;
     e.methodBits = method.rawBits();
+    noteJitOop(e.methodBits);
     e.jm = nullptr;
     e.bcEndOff = 0;
     e.prim = static_cast<uint64_t>(p);

@@ -358,7 +358,10 @@ public:
     /// compaction keeps All so SURVIVING cache entries get their moved
     /// pointers; dead entries must be voided between mark and update by
     /// purgeDeadCacheRoots() or the update pass walks dead oops.
-    enum class RootScope { All, StrongOnly };
+    // Young: a scavenge.  Like All, but the method cache and the JIT tables
+    // are skipped unless a young object was stored into them since the last
+    // scavenge (g_mcacheMayHoldYoung, g_jitMayHoldYoung; ObjectMemory.hpp).
+    enum class RootScope { All, StrongOnly, Young };
 
     /// Visit every Oop root the interpreter holds.
     /// Visitor signature: void(Oop&) — visitor may update the Oop in-place.
@@ -4065,7 +4068,14 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     // frame, a JIT inline cache, the J2J save pool, ... Costs one
     // predictable branch per root visit when unset.
     const char* watchCls = GET_DEBUG_STR(PHARO_WATCH_ROOT_CLASS);
+    bool verifyingSkipped = false;   // PHARO_SCAV_TABLE_VERIFY, below
     auto visitor = [&](Oop& o) {
+        if (__builtin_expect(verifyingSkipped, 0) && isNewSpaceBits(o.rawBits())) {
+            static int nv = 0;
+            if (++nv <= 50)
+                fprintf(stderr, "[SCAV-TABLE-VERIFY] young oop 0x%llx in %s, flag was clear\n",
+                        (unsigned long long)o.rawBits(), rootTag_ ? rootTag_ : "?");
+        }
         if (__builtin_expect(watchCls != nullptr, 0)
                 && o.isObject() && o.rawBits() > 0x10000
                 && memory_.classNameOf(o) == watchCls) {
@@ -4082,7 +4092,13 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     // they can't pin otherwise-dead classes/methods.  Dead entries are
     // voided by purgeDeadCacheRoots() before the update pass (All)
     // walks the survivors.
-    const bool visitCacheRoots = (scope == RootScope::All);
+    const bool visitCacheRoots = (scope == RootScope::All || scope == RootScope::Young);
+    // PHARO_SCAV_TABLE_VERIFY: walk the tables anyway, and report any young
+    // object in a table whose flag said it held none (a writer that does not
+    // call noteJitOop).
+    const bool tableVerify = GET_DEBUG_BOOL(PHARO_SCAV_TABLE_VERIFY) && scope == RootScope::Young;
+    const bool youngOnly = scope == RootScope::Young
+        && !GET_DEBUG_BOOL(PHARO_SCAV_WALK_ALL_TABLES) && !tableVerify;
 
     // Current frame Oops.  Each gets its OWN tag: "vm-registers" covers a
     // dozen unrelated fields, and when one of them is the reason a dead
@@ -4213,7 +4229,8 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     auto rtA = rootTimed ? rootNow() : std::chrono::steady_clock::time_point{};
     rootTag_ = "method-cache";
     // Method cache (weak cache root — see visitCacheRoots above)
-    if (visitCacheRoots) {
+    verifyingSkipped = tableVerify && !g_mcacheMayHoldYoung;
+    if (visitCacheRoots && (!youngOnly || g_mcacheMayHoldYoung)) {
         for (auto& entry : methodCache_) {
             visitor(entry.selector);
             visitor(entry.classOop);
@@ -4233,7 +4250,8 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
       // JIT caches (method headers, ICs, count/failed maps) are weak
       // cache roots — skipped under StrongOnly (fullGC mark), voided by
       // purgeDeadCacheRoots(), survivors updated by the All pass.
-      if (visitCacheRoots) {
+      verifyingSkipped = tableVerify && !g_jitMayHoldYoung;
+      if (visitCacheRoots && (!youngOnly || g_jitMayHoldYoung)) {
         // Ensure the whole code zone is writable before updating Oop fields.
         // updatePointersAfterCompact rewrites method header and IC Oops in
         // place; if the zone is left executable after a JIT call path that
@@ -4389,7 +4407,7 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
 
         // Tier 2 map: keys are CompiledMethod Oop bits (needs GC update).
         // Weak cache root like the count map.
-        if (visitCacheRoots) {
+        if (visitCacheRoots && (!youngOnly || g_jitMayHoldYoung)) {
             for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
                 auto& entry = jitRuntime_.tier2Entry(i);
                 if (entry.key != 0) {
@@ -4404,6 +4422,7 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         g_rootTimeUs[1] += std::chrono::duration<double, std::micro>(rootNow() - rtA).count();
         rtA = rootNow();
     }
+    verifyingSkipped = false;
     rootTag_ = "jit-state";
     // Live JITState: its Oop fields aren't reachable any other way while
     // JIT code is on the C stack. Without this, GC compaction would move

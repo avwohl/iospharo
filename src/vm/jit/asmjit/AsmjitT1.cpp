@@ -14403,6 +14403,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
 
     jm->compiledMethodOop = compiledMethod.rawBits();
+    noteJitOop(jm->compiledMethodOop);
     jm->refreshLiteralsCache();  // FSR M0
     jm->methodHeader      = static_cast<uint64_t>(headerBits);
     // Pre-compute bcStart so the inline-J2J emit can read it in one load
@@ -15046,6 +15047,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 }
             }
             sba[siteIdx++] = selBits;
+            noteJitOop(selBits);
             // Also seed the in-IC slot[18] (selectorBits) so the
             // stencil-style probe contract works.  recoverAfterGC
             // zeros this on compaction; jit_rt_ic_miss recovers from
@@ -15055,6 +15057,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 uint64_t* siteSlots = reinterpret_cast<uint64_t*>(
                     icStart + (siteIdx - 1) * IC_BYTES_PER_SITE);
                 siteSlots[IC_SELBITS_SLOT] = selBits;
+                noteJitOop(selBits);
             }
         });
 

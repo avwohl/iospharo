@@ -47,7 +47,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "YoungTables.hpp"
+
 namespace pharo {
+
 
 // Forward declaration
 class Interpreter;

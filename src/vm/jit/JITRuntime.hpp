@@ -13,6 +13,7 @@
 #ifndef PHARO_JIT_RUNTIME_HPP
 #define PHARO_JIT_RUNTIME_HPP
 
+#include "../YoungTables.hpp"
 #include "JITConfig.hpp"
 #include "ZoneEviction.hpp"
 #include "JITState.hpp"
@@ -522,6 +523,7 @@ private:
         for (size_t p = 0; p < 16; p++) {
             if (tier2Map_[idx].key == 0 || tier2Map_[idx].key == methodBits) {
                 tier2Map_[idx].key = methodBits;
+                noteJitOop(methodBits);
                 tier2Map_[idx].func = func;
                 return;
             }
@@ -616,6 +618,7 @@ public:
         // Window full — overwrite the first probe slot (eviction: the
         // displaced method may thrash again briefly; bounded).
         initialCompileFailedKeys_[idx] = methBits;
+        noteJitOop(methBits);
     }
     void rehashInitialCompileFailed() {
         // Heap-allocate the temp (128 KB — too big for the stack; same

@@ -209,6 +209,8 @@ DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)        // the interpreter's periodic ch
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)             // MCF: basicNew (primKind 17) is not allocated inline at the call site
 DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)             // MCF: a return into a sender context continues its method in the interpreter, not in machine code
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_SITE_CACHE)      // MCF: naked ExtSend sites (3+ arguments) have no per-site class/method cache; every send looks up in pharo_mcf_extsend
+DEBUG_BOOL(PHARO_SCAV_WALK_ALL_TABLES)          // scavenge visits the method cache and JIT tables every time, not only when a young object was stored there
+DEBUG_BOOL(PHARO_SCAV_TABLE_VERIFY)             // scavenge walks the method cache and JIT tables even when their young flags are clear, and reports any young object found there
 DEBUG_BOOL(PHARO_NLR_CENSUS)                    // count non-local returns that cross an ensure: frame (frame depth, hops, home selector)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read

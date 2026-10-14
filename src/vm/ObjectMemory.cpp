@@ -132,6 +132,8 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
         return false;
     }
     newSpaceEnd_ = newSpaceStart_ + config.newSpaceSize;
+    g_newSpaceLo = reinterpret_cast<uint64_t>(newSpaceStart_);
+    g_newSpaceHi = reinterpret_cast<uint64_t>(newSpaceEnd_);
 
     // Split new space into eden and survivor
     size_t edenSize = (config.newSpaceSize * config.edenRatio) / 100;
@@ -2663,8 +2665,13 @@ GCResult ObjectMemory::scavenge() {
     size_t scavRecentBytes = 0, scavRemembered = rememberedSet_.size();
     if (scavStats) scavT0 = ScavClock::now();
     // Roots: interpreter
+    // The scavenge tenures every survivor, so after it no VM table holds a
+    // young object: the flags start clear for the next one.
+    g_jitWalkedAtLastScavenge = g_jitMayHoldYoung || GET_DEBUG_BOOL(PHARO_SCAV_WALK_ALL_TABLES);
     if (interpreter_) {
-        interpreter_->forEachRoot(visitRoot);
+        interpreter_->forEachRoot(visitRoot, Interpreter::RootScope::Young);
+        g_mcacheMayHoldYoung = false;
+        g_jitMayHoldYoung = false;
         // jit-may22b Step 1: rekey Sista's cache for new→old tenure
         // forwarding too.  Without this, methods compiled while in
         // new space have cache keys that go stale post-scavenge

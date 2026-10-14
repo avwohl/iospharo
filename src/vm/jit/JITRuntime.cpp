@@ -643,6 +643,7 @@ extern "C" void jit_rt_recompile_queue(void* calleeJM) {
             if (g_recompileQueue[i] == methBits) return;
         }
         g_recompileQueue[head] = methBits;
+        noteJitOop(methBits);
         g_recompileQueueHead = head + 1;
     }
 }
@@ -694,6 +695,7 @@ void JITRuntime::noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra) {
             if (g_recompileQueue[i] == methBits) return;  // already queued
         }
         g_recompileQueue[head] = methBits;
+        noteJitOop(methBits);
         g_recompileQueueHead = head + 1;
     }
 }
@@ -803,6 +805,7 @@ extern "C" void jit_t2_send(JITState* state) {
             if (classIdx != 0) {
                 ic[0] = classIdx;
                 ic[1] = resolved.rawBits();
+                noteJitOop(ic[1]);
             }
         }
     }
@@ -1096,6 +1099,7 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
     }
     icData[firstEmpty * 3]     = lookupKey;
     icData[firstEmpty * 3 + 1] = methodBits;
+    noteJitOop(methodBits);
     icData[firstEmpty * 3 + 2] = extra;
 
     // Account for late-spec opportunity on tier=2 callers.  Same hook
@@ -3115,6 +3119,7 @@ bool JITRuntime::queueInitialCompile(Oop compiledMethod) {
             if (g_initialCompileQueue[i] == methBits) return true;  // dedup
         }
         g_initialCompileQueue[head] = methBits;
+        noteJitOop(methBits);
         g_initialCompileQueueHead = head + 1;
         return true;
     }
@@ -4384,6 +4389,7 @@ void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
         }
         if (countMap_[i].key == 0) {
             countMap_[i].key = key;
+            noteJitOop(key);
             countMap_[i].count = 1;
             // jit-may22b Step 13: hot-loop methods compile immediately.
             if (threshold <= 1 || methodHasBackwardJump()) {
