@@ -337,6 +337,8 @@ inline uint32_t g_byteSymbolClassIndex = 0;
 inline uint8_t g_blockValueOverridden = 0;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
+// MCF: shared inline fast paths for IC-site primitives, by arity 0-2.
+inline uint64_t g_mcfPrimStub[3] = {0, 0, 0};
 inline uint64_t g_mcfBlockStub = 0;
 void mcfBuildStubs();
 

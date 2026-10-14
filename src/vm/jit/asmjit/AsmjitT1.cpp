@@ -5601,6 +5601,190 @@ static uint64_t buildMcfStubPage(void (*emit)(asmjit::a64::Assembler&)) {
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+// Machine-code frames: inline fast paths for the primitives T1 code calls
+// most through pharo_mcf_prim (lexicon: 400M calls, each a C call that
+// syncs the interpreter's registers).  w10 = the primitive index, x25 = sp.
+// Each path checks every condition the C primitive checks and branches to
+// `slow` (the C call) otherwise; on success it leaves the result on the
+// stack and in x26 and continues at `done`.  Keeps x5, x6, x10.
+// Shared per arity (one stub page each; inline at every send site it
+// overflowed the code zone).  Called with bl from the IC-site primitive
+// path: x7 = 1 on success, 0 to take the C call.
+static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
+    using namespace asmjit::a64;
+    asmjit::Label slow = a.new_label();
+    asmjit::Label result = a.new_label();   // x7 = result
+    a.ldur(x1, ptr(x25, -8 * (nArgs + 1)));        // receiver
+    if (nArgs == 0) {
+        asmjit::Label p62 = a.new_label(), bytes = a.new_label();
+        // 171 Character>>value / asInteger: Character -> SmallInteger.
+        a.cmp(w10, asmjit::Imm(171));
+        a.b_ne(p62);
+        a.and_(x2, x1, asmjit::Imm(7));
+        a.cmp(x2, asmjit::Imm(3));
+        a.b_ne(slow);
+        a.and_(x7, x1, asmjit::Imm(~7ULL));
+        a.orr(x7, x7, asmjit::Imm(1));
+        a.b(result);
+        // 62 size: pointer-indexable without fixed fields, or bytes.
+        a.bind(p62);
+        a.cmp(w10, asmjit::Imm(62));
+        a.b_ne(slow);
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.ldr(x3, ptr(x1));
+        a.lsr(x7, x3, asmjit::Imm(56));            // slot count
+        a.cmp(x7, asmjit::Imm(255));
+        a.b_eq(slow);
+        a.ubfx(x4, x3, asmjit::Imm(24), asmjit::Imm(5));   // format
+        a.cmp(x4, asmjit::Imm(2));
+        a.b_ne(bytes);
+        a.lsl(x7, x7, asmjit::Imm(3));
+        a.orr(x7, x7, asmjit::Imm(1));
+        a.b(result);
+        a.bind(bytes);
+        a.sub(x8, x4, asmjit::Imm(16));
+        a.cmp(x8, asmjit::Imm(7));
+        a.b_hi(slow);
+        a.lsl(x7, x7, asmjit::Imm(3));
+        a.sub(x7, x7, x8);                         // bytes
+        a.lsl(x7, x7, asmjit::Imm(3));
+        a.orr(x7, x7, asmjit::Imm(1));
+        a.b(result);
+    } else if (nArgs == 1) {
+        asmjit::Label p170 = a.new_label(), pAt = a.new_label(), atBytes = a.new_label();
+        a.ldur(x2, ptr(x25, -8));                  // the argument
+        // 110 ==
+        a.cmp(w10, asmjit::Imm(110));
+        a.b_ne(p170);
+        a.ldp(x7, x8, ptr(x0, OFF_TRUEOOP));
+        a.cmp(x1, x2);
+        a.csel(x7, x7, x8, CondCode::kEQ);
+        a.b(result);
+        // 170 Character class>>value: SmallInteger 0..2^30-1 -> Character.
+        a.bind(p170);
+        a.cmp(w10, asmjit::Imm(170));
+        a.b_ne(pAt);
+        a.and_(x3, x2, asmjit::Imm(7));
+        a.cmp(x3, asmjit::Imm(1));
+        a.b_ne(slow);
+        a.asr(x3, x2, asmjit::Imm(3));
+        a.mov(x4, asmjit::Imm(0x3FFFFFFF));
+        a.cmp(x3, x4);
+        a.b_hi(slow);                              // unsigned: negatives too
+        a.orr(x7, x2, asmjit::Imm(2));             // (v << 3) | 3
+        a.b(result);
+        // 60 at: (pointers, or bytes as SmallInteger) and 63 String>>at:
+        // (bytes as Character).
+        a.bind(pAt);
+        a.cmp(w10, asmjit::Imm(60));
+        a.ccmp(w10, asmjit::Imm(63), 4, CondCode::kNE);   // Z if 60 or 63
+        a.b_ne(slow);
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.and_(x3, x2, asmjit::Imm(7));
+        a.cmp(x3, asmjit::Imm(1));
+        a.b_ne(slow);
+        a.asr(x3, x2, asmjit::Imm(3));             // index, 1-based
+        a.cmp(x3, asmjit::Imm(1));
+        a.b_lt(slow);
+        a.ldr(x4, ptr(x1));
+        a.lsr(x8, x4, asmjit::Imm(56));
+        a.cmp(x8, asmjit::Imm(255));
+        a.b_eq(slow);
+        a.ubfx(x4, x4, asmjit::Imm(24), asmjit::Imm(5));
+        a.cmp(x4, asmjit::Imm(2));
+        a.b_ne(atBytes);
+        a.cmp(w10, asmjit::Imm(60));               // String>>at: on pointers: C
+        a.b_ne(slow);
+        a.cmp(x3, x8);
+        a.b_hi(slow);
+        a.ldr(x7, ptr(x1, x3, lsl(3)));           // slot index-1 is at 8*index
+        a.b(result);
+        a.bind(atBytes);
+        a.sub(x4, x4, asmjit::Imm(16));
+        a.cmp(x4, asmjit::Imm(7));
+        a.b_hi(slow);
+        a.lsl(x8, x8, asmjit::Imm(3));
+        a.sub(x8, x8, x4);                         // byte count
+        a.cmp(x3, x8);
+        a.b_hi(slow);
+        a.add(x4, x1, x3);
+        a.ldrb(w7, ptr(x4, 7));                    // byte index-1 at 8+index-1
+        a.lsl(x7, x7, asmjit::Imm(3));
+        a.cmp(w10, asmjit::Imm(63));
+        a.mov(x8, asmjit::Imm(3));                 // Character tag
+        a.mov(x9, asmjit::Imm(1));                 // SmallInteger tag
+        a.csel(x8, x8, x9, CondCode::kEQ);
+        a.orr(x7, x7, x8);
+        a.b(result);
+    } else if (nArgs == 2) {
+        asmjit::Label p64 = a.new_label();
+        a.ldur(x2, ptr(x25, -16));                 // index
+        a.ldur(x3, ptr(x25, -8));                  // value
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(slow);
+        a.and_(x4, x2, asmjit::Imm(7));
+        a.cmp(x4, asmjit::Imm(1));
+        a.b_ne(slow);
+        a.asr(x4, x2, asmjit::Imm(3));             // index, 1-based
+        a.cmp(x4, asmjit::Imm(1));
+        a.b_lt(slow);
+        a.ldr(x8, ptr(x1));
+        a.tbnz(x8, 23, slow);                      // immutable
+        a.lsr(x9, x8, asmjit::Imm(56));
+        a.cmp(x9, asmjit::Imm(255));
+        a.b_eq(slow);
+        a.ubfx(x8, x8, asmjit::Imm(24), asmjit::Imm(5));
+        // 61 at:put: on pointers without fixed fields.
+        a.cmp(w10, asmjit::Imm(61));
+        a.b_ne(p64);
+        a.cmp(x8, asmjit::Imm(2));
+        a.b_ne(slow);
+        a.cmp(x4, x9);
+        a.b_hi(slow);
+        a.str(x3, ptr(x1, x4, lsl(3)));
+        emitRememberBarrierA64(a, x1, x3, x11, x12, x13);
+        a.mov(x7, x3);
+        a.b(result);
+        // 64 String>>at:put: a Character below 256 into a byte string.
+        a.bind(p64);
+        a.cmp(w10, asmjit::Imm(64));
+        a.b_ne(slow);
+        a.sub(x8, x8, asmjit::Imm(16));
+        a.cmp(x8, asmjit::Imm(7));
+        a.b_hi(slow);
+        a.and_(x11, x3, asmjit::Imm(7));
+        a.cmp(x11, asmjit::Imm(3));
+        a.b_ne(slow);
+        a.lsr(x11, x3, asmjit::Imm(3));
+        a.cmp(x11, asmjit::Imm(255));
+        a.b_hi(slow);
+        a.lsl(x9, x9, asmjit::Imm(3));
+        a.sub(x9, x9, x8);                         // byte count
+        a.cmp(x4, x9);
+        a.b_hi(slow);
+        a.add(x12, x1, x4);
+        a.strb(w11, ptr(x12, 7));
+        a.mov(x7, x3);
+        a.b(result);
+    }
+    a.bind(result);
+    if (nArgs) a.sub(x25, x25, asmjit::Imm(8 * nArgs));
+    a.stur(x7, ptr(x25, -8));
+    a.mov(x26, x7);
+    a.mov(x7, asmjit::Imm(1));
+    a.ret(x30);
+    a.bind(slow);
+    a.mov(x7, asmjit::Imm(0));
+    a.ret(x30);
+}
+static void emitMcfInlinePrims0(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 0); }
+static void emitMcfInlinePrims1(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 1); }
+static void emitMcfInlinePrims2(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 2); }
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
 // Machine-code frames: a send with no inline cache (naked ExtSend /
 // ExtSuperSend, or a special arithmetic selector whose inline fast path
 // failed).  x5 = the send's ip.  pharo_mcf_extsend looks it up: a native
@@ -10688,6 +10872,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     asmjit::Label mcfPrimFail = a.new_label();
                     asmjit::Label mcfDeopt = a.new_label();
                     a.bind(mcfPrim);
+                    if (nArgs <= 2 && g_mcfPrimStub[nArgs] != 0
+                            && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)) {
+                        a.str(x30, ptr_pre(sp, -16));
+                        a.mov(x16, asmjit::Imm(g_mcfPrimStub[nArgs]));
+                        a.blr(x16);
+                        a.ldr(x30, ptr_post(sp, 16));
+                        a.cbnz(x7, mcfCont);
+                    }
                     emitSyncSpToState(a);
                     // The ip after the send, as the interpreter has it when a
                     // primitive runs: a primitive that switches process or
@@ -14024,6 +14216,11 @@ size_t asmjitT1Failed()   { return g_failed;   }
 // set (the stubs bake its offsets in).
 void pharo::jit::mcfBuildStubs() {
 #if defined(__aarch64__) || defined(_M_ARM64)
+    if (!g_mcfPrimStub[0]) {
+        g_mcfPrimStub[0] = buildMcfStubPage(emitMcfInlinePrims0);
+        g_mcfPrimStub[1] = buildMcfStubPage(emitMcfInlinePrims1);
+        g_mcfPrimStub[2] = buildMcfStubPage(emitMcfInlinePrims2);
+    }
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
     if (GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) {

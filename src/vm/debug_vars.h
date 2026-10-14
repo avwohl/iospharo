@@ -174,6 +174,8 @@ DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also enter / resume block
 DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)            // MCF: OSR at a backward jump does not enter block frames (a loop in a block run once stays interpreted)
 DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)             // MCF: count native calls (method/block stubs) and native returns; printed with the JIT stats
 DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)             // MCF: count native calls per callee method (C call in the stub; slow); top 60 printed with the JIT stats
+DEBUG_BOOL(PHARO_MCF_PRIM_CENSUS)             // MCF: count primitives called natively (mcfCallPrimitive) by index
+DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)          // MCF: IC-site primitives 60-64/110/170/171 always go through pharo_mcf_prim (no inline fast path)
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)

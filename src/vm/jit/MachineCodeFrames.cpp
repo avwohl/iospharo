@@ -242,6 +242,20 @@ bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
 // primitive pushed a frame or switched process: the interpreter's state is
 // now the truth and machine code must exit without touching it.
 int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_PRIM_CENSUS), 0)) {
+        static uint64_t counts[1024], total = 0;
+        if (primIndex >= 0 && primIndex < 1024) counts[primIndex]++;
+        if ((++total & 0x3FFFFFF) == 0) {
+            for (int p = 0; p < 1024; p++)
+                if (counts[p] > total / 200) {
+                    Oop rcv = st->sp[-(nArgs + 1)];
+                    fprintf(stderr, "[MCF-PRIM] %d: %llu (%.1f%%) e.g. rcv %s\n", p,
+                            (unsigned long long)counts[p], 100.0 * counts[p] / total,
+                            p == primIndex ? memory_.classNameOf(rcv).c_str() : "");
+                }
+            fprintf(stderr, "[MCF-PRIM] total %llu\n", (unsigned long long)total);
+        }
+    }
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);           // unconditionally: see mcfRun
     // The ip after the send (both callers store it): a process switch or a
