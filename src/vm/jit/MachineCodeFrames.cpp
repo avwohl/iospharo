@@ -1141,7 +1141,22 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
                                  (e[1].methodBits ? memory_.selectorOf(Oop::fromRawBits(e[1].methodBits)) : "empty");
                       }()
                     + " exitBC=" + std::to_string(st.ip ? *st.ip : -1)
-                    + " reason=" + std::to_string(st.exitReason);
+                    + " reason=" + std::to_string(st.exitReason)
+                    + [&]() -> std::string {
+                          // A block receiver: why the native block call refused it.
+                          if (!rcv.isObject() || rcv.asObjectPtr()->classIndex() != jit::g_mcfFbcClassIndex
+                                  || rcv.asObjectPtr()->slotCount() < 4) return "";
+                          Oop cb = rcv.asObjectPtr()->slotAt(1);
+                          if (!cb.isObject()) return " blk=imm";
+                          jit::JITMethod* bj = jitRuntime_.methodMap().lookup(cb.rawBits());
+                          jit::McfCallEntry* be = jit::mcfCallFind(cb.rawBits());
+                          return std::string(" blk=") + (!bj ? "nojm" : !bj->isExecutable() ? "noexec"
+                                 : bj->numBytecodes == 0 ? "nobc" : bj->isStubOnEntry ? "stub" : "jm")
+                                 + (memory_.isYoung(cb) ? ",young" : "")
+                                 + (be ? ",cached" : ",notcached")
+                                 + (mcfBlockHasNLR(cb) ? ",nlr" : "")
+                                 + " home=" + memory_.selectorOf(cb);
+                      }();
                 bySite[key]++;
                 if ((n & 0xFFFFF) == 0) {
                     std::vector<std::pair<uint64_t, std::string>> v;

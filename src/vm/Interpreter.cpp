@@ -10699,6 +10699,24 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
         }
     }
     if (!haveEnsure) return false;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NLR_CENSUS), 0)) {
+        static uint64_t n = 0, sumDepth = 0, sumHops = 0;
+        static std::unordered_map<std::string, uint64_t> byHome;
+        n++; sumDepth += frameDepth_; sumHops += frameDepth_ - homeFrame;
+        byHome[memory_.selectorOf(savedFrames_[homeFrame].savedMethod) + " <- "
+               + memory_.selectorOf(method_)]++;
+        if ((n & 0x3FFF) == 0) {
+            fprintf(stderr, "[NLR-CENSUS] n=%llu avgDepth=%llu avgHops=%llu\n",
+                    (unsigned long long)n, (unsigned long long)(sumDepth / n),
+                    (unsigned long long)(sumHops / n));
+            std::vector<std::pair<uint64_t, std::string>> v;
+            for (auto& kv : byHome) v.push_back({kv.second, kv.first});
+            std::sort(v.rbegin(), v.rend());
+            for (size_t k = 0; k < v.size() && k < 8; k++)
+                fprintf(stderr, "[NLR-CENSUS]   %llu %s\n", (unsigned long long)v[k].first,
+                        v[k].second.c_str());
+        }
+    }
 
     // Sender hops from the live frame's context to the home frame's context:
     // savedFrames_[frameDepth_-1] is 1 hop, savedFrames_[homeFrame] is
