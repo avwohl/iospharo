@@ -422,6 +422,8 @@ public:
 
     /// Get the special objects array
     Oop specialObjectsArray() const { return specialObjectsArray_; }
+    // Where the special objects array oop lives (machine code reads it).
+    const Oop* specialObjectsArrayAddr() const { return &specialObjectsArray_; }
 
     /// Set the special objects array (during image loading)
     void setSpecialObjectsArray(Oop array) { specialObjectsArray_ = array; }

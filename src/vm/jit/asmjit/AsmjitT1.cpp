@@ -5857,6 +5857,61 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             }
             a.bind(notNew);
         }
+        // 85 signal with no waiting process, 86 wait with an excess signal:
+        // the semaphore's count, no process switch (Semaphore critical:
+        // costs one of each).  Waiters, the low-space semaphore, a pending
+        // finalization signal (wait), anything odd: the C call.
+        if (g_mcfSpecialObjectsAddr && g_mcfFinalizationFlagAddr
+                && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_SEMAPHORE)) {
+            asmjit::Label notSem = a.new_label(), isWait = a.new_label();
+            a.cmp(w10, asmjit::Imm(85));
+            a.b_eq(isWait);                            // (85 and 86 share the checks)
+            a.cmp(w10, asmjit::Imm(86));
+            a.b_ne(notSem);
+            a.bind(isWait);
+            a.tst(x1, asmjit::Imm(7));
+            a.b_ne(slow);
+            a.ldrb(w3, ptr(x1, 7));
+            a.cmp(w3, asmjit::Imm(3));
+            a.b_lo(slow);
+            a.ldr(x4, ptr(x1));
+            a.ubfx(x4, x4, asmjit::Imm(24), asmjit::Imm(5));
+            a.cmp(x4, asmjit::Imm(1));                 // fixed-size pointers
+            a.b_ne(slow);
+            a.mov(x9, asmjit::Imm((uint64_t)g_mcfSpecialObjectsAddr));
+            a.ldr(x9, ptr(x9));                        // special objects array
+            a.ldr(x9, ptr(x9, 8 + 8 * (int)SpecialObjectIndex::TheLowSpaceSemaphore));
+            a.cmp(x1, x9);
+            a.b_eq(slow);
+            a.ldr(x3, ptr(x1, 8 + 16));                // excessSignals
+            a.and_(x4, x3, asmjit::Imm(7));
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_ne(slow);
+            {
+                asmjit::Label doWait = a.new_label();
+                a.cmp(w10, asmjit::Imm(86));
+                a.b_eq(doWait);
+                a.ldr(x4, ptr(x1, 8));                 // firstLink
+                a.ldr(x9, ptr(x0, OFF_MCF_NIL));
+                a.cmp(x4, x9);
+                a.b_ne(slow);                          // a waiter to resume
+                a.add(x3, x3, asmjit::Imm(8));         // excessSignals + 1
+                a.str(x3, ptr(x1, 8 + 16));
+                a.mov(x7, x1);
+                a.b(result);
+                a.bind(doWait);
+                a.mov(x9, asmjit::Imm((uint64_t)g_mcfFinalizationFlagAddr));
+                a.ldrb(w9, ptr(x9));
+                a.cbnz(w9, slow);
+                a.cmp(x3, asmjit::Imm(9));             // excessSignals >= 1
+                a.b_lt(slow);
+                a.sub(x3, x3, asmjit::Imm(8));
+                a.str(x3, ptr(x1, 8 + 16));
+                a.mov(x7, x1);
+                a.b(result);
+            }
+            a.bind(notSem);
+        }
         // 111 class of a heap object (an immediate's takes the C call).
         a.cmp(w10, asmjit::Imm(111));
         a.b_ne(p175);

@@ -1293,6 +1293,9 @@ void Interpreter::mcfInit() {
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
     g_mcfInterp = this;
     jit::g_mcfClearMemosHook = [] { g_mcfInterp->mcfClearMemos(); };
+    // Read by mcfBuildStubs (the primitive stub's Semaphore path).
+    jit::g_mcfSpecialObjectsAddr = memory_.specialObjectsArrayAddr();
+    jit::g_mcfFinalizationFlagAddr = &finalizationCheckAfterGC_;
     if (::pharo::mcfEnabled()) jit::mcfBuildStubs();
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
     jit::g_mcfContextClassIndex = contextClassIndex_;

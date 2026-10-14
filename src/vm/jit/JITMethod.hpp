@@ -335,6 +335,11 @@ inline uint32_t g_mcfFbcClassIndex = 0;
 // by the primitive stub: a quick field primitive on a Context takes the C
 // call (lazy contexts sync first).  0 = not known yet: always the C call.
 inline uint32_t g_mcfContextClassIndex = 0;
+// For the primitive stub's Semaphore signal/wait: the special objects array
+// oop (the low-space semaphore takes the C call) and the interpreter's
+// finalizationCheckAfterGC_ (a wait flushes it in C first).
+inline const void* g_mcfSpecialObjectsAddr = nullptr;
+inline const bool* g_mcfFinalizationFlagAddr = nullptr;
 // McfCallEntry.prim for a CompiledBlock T1 code may call natively:
 // kMcfBlockEntry | numArgs.  Never a primitive index (those are < 1024).
 constexpr uint64_t kMcfBlockEntry = 0x10000;

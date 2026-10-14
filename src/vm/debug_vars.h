@@ -209,6 +209,7 @@ DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)            // MCF: unary field-reading meth
 DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)        // the interpreter's periodic check (process switch, timers, signals) runs at whatever bytecode it falls on, not only at interrupt points (sends, back jumps, frame entry)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)             // MCF: basicNew (primKind 17) is not allocated inline at the call site
 DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW)               // MCF: the primitive stub does not allocate for basicNew (70); the C primitive does
+DEBUG_BOOL(PHARO_MCF_NO_STUB_SEMAPHORE)         // MCF: the primitive stub does not answer an uncontended Semaphore signal/wait (85/86); the C primitive does
 DEBUG_BOOL(PHARO_MCF_NO_VNCS_CALL)              // MCF: valueNoContextSwitch (primitive 209, how ensure: runs its receiver) exits to the interpreter instead of a native block call
 DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)             // MCF: a return into a sender context continues its method in the interpreter, not in machine code
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_SITE_CACHE)      // MCF: naked ExtSend sites (3+ arguments) have no per-site class/method cache; every send looks up in pharo_mcf_extsend
