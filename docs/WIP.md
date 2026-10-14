@@ -15,7 +15,38 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-14, evening) -- correctness fixes from the package differences; sweep L10 running
+## Right now (2026-10-14, night) -- speed: registers, leaner calls, simStack; sweep L13 running
+
+Pushed: origin/jit at `04a4a843` (sweep L11: 27803 / 7 / 1, the best so
+far, nothing outside the earlier lists).  Not pushed yet: `972f27f0`
+(packed call-cache entry, ldp return), `3a688767` + `bf…` simStack,
+`67190b60`, `51484071` (lazy view).  Sweep L12 (`3a688767`): 4 non-passes
+outside earlier lists, all pass alone on HEAD (timing tests run while I
+benchmarked).  Sweep L13 on `51484071` is running.
+
+Speed steps, lexicon instructions in billions (cycles in brackets):
+
+    start of day                      714   [168]
+    register receiver/tempBase (x21/x22)    [159]
+    leaner record push, no code epoch 674   [145]
+    inline primitive stubs            651   [140]
+    simStack (deferred pushes)        640   [137]
+    simStack constants, ==, stores    625
+    lazy state view                   614
+
+printString (3M) 29.7 -> 18.4 billion.  Against stock Cog under Rosetta
+(indicative, machine loaded): arithmetic loop 24 ms vs 41 ms (faster);
+send loop 205 vs 55; printString 114 vs 56; collect: 46 vs 15.  Sends
+remain the gap: about 150 instructions per native call and return.  Next
+levers: lite frame records, cheaper interrupt checks, a direct callee in
+the inline cache (skip the call-cache probe), and simStack consumers for
+remote temps.
+
+Lesson (memory per-site-code-growth-thrashes-zone): code emitted at every
+send site must be small; the first inline-primitive version overflowed
+the code zone and made lexicon 2.5x slower.
+
+## 2026-10-14, evening -- correctness fixes from the package differences
 
 Commits after the push of `eb0bdbdb` (not pushed yet; sweep L10 on
 `141818ec` must be clean first):

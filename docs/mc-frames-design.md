@@ -417,6 +417,36 @@ Open items:
   (0.8 million in lexicon).  `read:into:startingAt:count:` (FilePlugin,
   not in the allowlist) also exits.
 
+### Speed work, 2026-10-14
+
+Measurements are lexicon instructions (billions) unless stated.
+
+1. **Register copies.**  T1 code keeps the receiver in x21 and tempBase
+   in x22 (`t1TbReg`).  Every store writes both the state field and the
+   register.  Every entry (`JIT_CALL`, `JIT_RESUME_CALL`,
+   `pharo_jit_osr_resume`) and every reload after a helper call loads
+   them.  The J2J trampoline pins x21/x22 for itself; it does not run
+   under MCF.  Cycles 168 -> 159.
+2. **Leaner call stub.**  The frame record goes out in `stp` pairs.  The
+   code epoch is gone from calls and returns: `mcfCodeChanged` clears the
+   return memos of the live frames instead (`mcfClearMemos`).  The
+   callee's temp count and bytecode start come from the call-cache entry
+   (`mcfPackBcInfo`), not from its JITMethod header.  714 -> 649.
+3. **Inline primitives.**  `at:`, `at:put:`, `size`, String `at:` /
+   `at:put:`, `==`, Character `value:` and `value` run in three shared
+   stubs (by arity) before the C call `pharo_mcf_prim`.  651.
+4. **simStack** (docs/simstack-design.md, top section).  625.
+5. **Lazy state view.**  Calls and returns write no method, literals,
+   arg count, JIT method or bytecode end.  Machine code publishes x19 at
+   every exit and helper call; `mcfDeriveView` derives the rest in C++.
+   A machine-code push leaves `savedBytecodeEnd` null; the interpreter
+   derives it.  `rebuildMethodMap` refreshes `literalsCache` and
+   `bcStartCache` after a GC that moved methods.  614.
+
+Remaining cost per native call and return: about 150 instructions (call
+site, IC, call-cache probe, stub, frame record, return checks).  Stock
+Cog under Rosetta runs a send loop about 4x faster.
+
 ## 5. Debugging the mode
 
 The switches below are plain `DEBUG_BOOL` / `DEBUG_INT` knobs: they work
