@@ -30,10 +30,28 @@ Two more exit-per-call shapes removed:
   send; it took the prefix bail, so the rest of a big method (parsers)
   ran interpreted.
 
-Next: a non-local return through ensure: costs ~16,000 instructions
-(Cog ~420 ns under Rosetta, ours ~650 ns); ~5,800 of them are frame
-materialization (at the return and again at resume:through:'s
-thisContext).  Profiling by source line with build-prof (-g).
+Then (lexicon 321.1 -> 303.7 billion instructions, sweep L26 on
+`35ad5971`: 27801 / 10 / 1):
+- 7cb8ddcf: contexts made for frames are sized as Cog sizes them (6 +
+  16, or 6 + 56 with the large-frame bit) instead of 6 + temps + 32 at
+  least; the stack-tail clear uses raw stores.
+- e3be2488: ExtSend sites cache primitive targets; pharo_mcf_prim
+  answers primitive 105 (bytes/Array) without the state sync.  `,` 52 ->
+  34 ms per 300K (Cog 24).
+- e3d47401: inline at:/at:put:/size read the overflow slot count (a 64
+  KB stream buffer has 8K slots and took the primitive stub).
+- d53cfdbd: an IC hit on a primitive entry branches to it first.
+
+Profile of lexicon (interpreter thread, `sample` + PHARO_JIT_PERF_MAP on
+build-prof, a -g release tree): machine-code methods 55%, C++ 26%,
+stubs 19% (call stub 10.6%).  IPC is 4.3, so the cost is instruction
+count, not stalls.  A send + return is ~150 instructions (Cog ~40):
+the SavedFrame record (11 stores), the state mirrors, the IC extras
+decode and the call-cache probe.  Non-local return through ensure: is
+~15,500 instructions (Cog ~420 ns under Rosetta).
+
+Open: FreeTypeCacheTest>>testGlyphAccessIsThreadSafeWhenAskingWidth
+failed in L26 (never in L1-L25) and 1 of 4 alone on HEAD; A/B running.
 
 ## Earlier (2026-10-15, early) -- stalls and stubs; pushed `eebd43a3`, sweep L25 on `253d78f3`
 
