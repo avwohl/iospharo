@@ -328,3 +328,26 @@ Open items:
   (docs/deferred.md: married, read-through contexts).
 - The default mode with `PHARO_NO_MCF` pays the larger SavedFrame
   (printString 83.7 -> 84.7).
+
+## 5. Debugging the mode
+
+The switches below are plain `DEBUG_BOOL` / `DEBUG_INT` knobs: they work
+only in a build with `-DPHARO_DIAG_KNOBS=ON` (build-dbg, build-dbg2).
+
+| Knob | Effect |
+|---|---|
+| `PHARO_NO_MCF` | Turn the mode off (works in every build). |
+| `PHARO_MCF_VERIFY` | Oracles: memo target, call target, `==` result, pushed frame against `pushFrame`, receiver = fp[0] in a method frame. |
+| `PHARO_MCF_CENSUS` | Classify every send exit; print the top selectors, receiver classes and primitives. |
+| `PHARO_MCF_NO_CALL`, `PHARO_MCF_NO_RET`, `PHARO_MCF_NO_EQ`, `PHARO_MCF_NO_BLOCK_CALL`, `PHARO_MCF_NO_SPECS`, `PHARO_MCF_NO_POLY` | Turn one part off, to bisect. |
+| `PHARO_MCF_CALL_MOD` / `_REM` | Only methods whose selector hash matches are called natively (bisect a method set). |
+| `PHARO_MCF_COMPILE_MOD` / `_REM` | Only matching methods run in machine code. |
+| `PHARO_MCF_WATCH_OOP` | Log every primitive store of this oop, with the frame chain. |
+| `PHARO_MCF_BLOCKS` | Also enter / resume block frames from the interpreter (off: slower). |
+| `PHARO_MATFS_CENSUS` | Count materializeFrameStack calls and frames walked. |
+
+How the stale-receiver bug was found (2026-10-13), as a pattern: the five
+value oracles were silent; the receiver invariant caught it in one run.
+Check the basic frame invariants first.  A bisect by selector hash is
+timing-sensitive when the filter itself does string work (the Metacello
+failure vanished under it); use a deterministic repro when one exists.
