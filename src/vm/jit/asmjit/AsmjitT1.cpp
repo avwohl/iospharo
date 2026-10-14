@@ -5273,17 +5273,46 @@ static uint64_t getSharedReturnPreludeStub() {
 static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
-    a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));        // interrupt checks
+    // Interrupt checks: a native call spends 1 + numBytecodes/8 of the
+    // checkpoint countdown.  The full numBytecodes made a small hot callee
+    // exit to a checkpoint every ~50 calls, about once a microsecond, and
+    // each exit runs the send through the interpreter.
+    a.ldr(x10, ptr(x0, OFF_MCF_CTDN_PTR));
     a.ldr(w11, ptr(x10));
     a.ldrh(w8, ptr(x9, (int)offsetof(JITMethod, numBytecodes)));
+    a.lsr(w8, w8, asmjit::Imm(3));
+    a.add(w8, w8, asmjit::Imm(1));
     a.subs(w11, w11, w8);
     a.b_le(fail);
     a.str(w11, ptr(x10));
     a.ldr(x10, ptr(x0, OFF_MCF_DEPTH_PTR));
     a.ldr(x11, ptr(x10));
-    // At depth 0 the caller lives in activeContext_, and pushFrame must
-    // store the caller's pc into it.
-    a.cbz(x11, fail);
+    // At depth 0 the caller lives in activeContext_: store the caller's pc
+    // into it, as pushFrame does on its 0 -> 1 push.  Refusing here instead
+    // sent every send of a method resumed at depth 0 (after a process
+    // switch or a thisContext collapse) through the interpreter for the
+    // rest of its run.
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
+        a.cbz(x11, fail);
+    } else {
+        asmjit::Label notDepth0 = a.new_label();
+        a.cbnz(x11, notDepth0);
+        a.ldr(x16, ptr(x0, OFF_MCF_ACTCTX_PTR));
+        a.ldr(x16, ptr(x16));                      // activeContext_
+        a.ldr(x17, ptr(x0, OFF_MCF_NIL));
+        a.cmp(x16, x17);
+        a.b_eq(fail);
+        a.tst(x16, asmjit::Imm(0x7));
+        a.b_ne(fail);
+        a.ldr(x17, ptr(x0, OFF_METHOD));           // the caller's method
+        a.add(x17, x17, asmjit::Imm(8));           // its bytes
+        a.sub(x17, x13, x17);                      // savedIP - bytes
+        a.add(x17, x17, asmjit::Imm(1));           // 1-based pc
+        a.lsl(x17, x17, asmjit::Imm(3));
+        a.add(x17, x17, asmjit::Imm(1));           // SmallInteger tag
+        a.str(x17, ptr(x16, OBJ_SLOT_0 + 8));      // activeContext_ pc
+        a.bind(notDepth0);
+    }
     a.ldr(x8, ptr(x0, OFF_MCF_DEPTH_LIMIT));
     a.cmp(x11, x8);
     a.b_hs(fail);                                  // near overflow: interpreter
@@ -5357,6 +5386,25 @@ static void emitMcfVerifyPushCall(asmjit::a64::Assembler& a) {
     a.blr(x16);
     a.ldr(x9, ptr(sp, 16));
     a.ldp(x0, x30, ptr_post(sp, 32));
+}
+
+// Probe the two-way MCF call cache for x6 (a method or CompiledBlock oop):
+// x7 = the matching entry, x9 = its jm; clobbers x8; branches to miss.
+static void emitMcfCacheProbe(asmjit::a64::Assembler& a, const asmjit::Label& miss) {
+    using namespace asmjit::a64;
+    asmjit::Label hit = a.new_label();
+    a.ldr(x7, ptr(x0, OFF_MCF_CALL_CACHE));
+    a.lsr(x8, x6, asmjit::Imm(3));
+    a.and_(x8, x8, asmjit::Imm(kMcfCallCacheSize - 2));
+    a.add(x7, x7, x8, asmjit::a64::lsl(5));
+    a.ldp(x8, x9, ptr(x7));
+    a.cmp(x8, x6);
+    a.b_eq(hit);
+    a.ldp(x8, x9, ptr(x7, 32));
+    a.add(x7, x7, asmjit::Imm(32));
+    a.cmp(x8, x6);
+    a.b_ne(miss);
+    a.bind(hit);
 }
 
 static void emitMcfCallStub(asmjit::a64::Assembler& a) {
@@ -6722,13 +6770,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x6, ptr(x1, 16));                      // slot 1: CompiledBlock
                 a.tst(x6, asmjit::Imm(0x7));
                 a.b_ne(notBlock);
-                a.ldr(x7, ptr(x0, OFF_MCF_CALL_CACHE));
-                a.lsr(x8, x6, asmjit::Imm(3));
-                a.and_(x8, x8, asmjit::Imm(kMcfCallCacheSize - 1));
-                a.add(x7, x7, x8, asmjit::a64::lsl(5));
-                a.ldp(x8, x9, ptr(x7));                      // key, block JM
-                a.cmp(x8, x6);
-                a.b_ne(notBlock);
+                emitMcfCacheProbe(a, notBlock);             // x7 entry, x9 block JM
                 a.ldr(x10, ptr(x7, 24));
                 a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
                 a.cmp(x10, x11);
@@ -10322,13 +10364,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label mcfTInit = a.new_label();
                 asmjit::Label mcfTDone = a.new_label();
                 a.ldr(x6, ptr(x5, 8));                       // cached method
-                a.ldr(x7, ptr(x0, OFF_MCF_CALL_CACHE));
-                a.lsr(x8, x6, asmjit::Imm(3));
-                a.and_(x8, x8, asmjit::Imm(kMcfCallCacheSize - 1));
-                a.add(x7, x7, x8, asmjit::a64::lsl(5));
-                a.ldp(x8, x9, ptr(x7));                      // key, callee JM
-                a.cmp(x8, x6);
-                a.b_ne(mcfSlow);
+                emitMcfCacheProbe(a, mcfSlow);               // x7 entry, x9 callee JM
                 if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
                     // Oracle: the cached method must be what a lookup of
                     // this send's selector in the receiver's class finds.
@@ -10373,13 +10409,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x6, ptr(x1, 16));                  // its CompiledBlock
                     a.tst(x6, asmjit::Imm(0x7));
                     a.b_ne(mcfSlow);
-                    a.ldr(x7, ptr(x0, OFF_MCF_CALL_CACHE));
-                    a.lsr(x8, x6, asmjit::Imm(3));
-                    a.and_(x8, x8, asmjit::Imm(kMcfCallCacheSize - 1));
-                    a.add(x7, x7, x8, asmjit::a64::lsl(5));
-                    a.ldp(x8, x9, ptr(x7));
-                    a.cmp(x8, x6);
-                    a.b_ne(mcfSlow);
+                    emitMcfCacheProbe(a, mcfSlow);
+
                     a.ldr(x10, ptr(x7, 24));
                     a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
                     a.cmp(x10, x11);

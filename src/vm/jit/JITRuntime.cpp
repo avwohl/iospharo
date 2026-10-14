@@ -5114,10 +5114,14 @@ void JITRuntime::flushT2ICs() {
 // pendingICPatch_ poison a different send site's IC with a wrong-slot
 // inline-getter classification — the MAX_IC=1 wrong-object residual
 // (controlled bisect: NO_INLINE_GETTER cures, dummy var doesn't).
-void JITRuntime::rebuildMethodMap() {
+void JITRuntime::rebuildMethodMap(bool clearCallCache) {
     if (!initialized_) return;
     methodMap_.clear();
-    mcfClearCallCache();   // keyed by method oops, which may have moved
+    // The MCF call cache is keyed by method oops and holds only old-space
+    // methods.  A full GC can move or free those; a scavenge cannot, so the
+    // scavenge caller keeps the cache (clearing it at every scavenge sent
+    // every callee back through an exit to refill it).
+    if (clearCallCache) mcfClearCallCache();
     JITMethod* m = codeZone_.firstMethod();
     size_t skippedSuperseded = 0;
     while (m) {

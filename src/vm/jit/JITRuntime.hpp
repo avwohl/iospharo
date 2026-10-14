@@ -353,7 +353,7 @@ public:
     // Rebuild MethodMap keys from GC-updated compiledMethodOop bits.
     // Called by recoverAfterGC (full GC) AND Interpreter::afterGC(false)
     // (per-scavenge) — see the definition for the bug this fixes.
-    void rebuildMethodMap();
+    void rebuildMethodMap(bool clearCallCache = true);
 
     // Access to subsystems
     CodeZone&     codeZone()   { return codeZone_; }

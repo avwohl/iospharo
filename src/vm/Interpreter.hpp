@@ -3863,23 +3863,32 @@ private:
         return o.isObject() && !o.isNil() && contextClassIndex_ != 0 &&
                o.asObjectPtr()->classIndex() == contextClassIndex_;
     }
-    // Primitives that read or write raw Context fields (at:, instVarAt:,
-    // stackp:, copy, become, the unwind and context primitives).
-    static constexpr bool primTouchesContextFields(int p) {
-        switch (p) {
-        case 60: case 61: case 62: case 72: case 73: case 74: case 76:
-        case 128: case 132: case 148: case 168: case 173: case 174:
-        case 195: case 196: case 197: case 210: case 211: case 212: case 213:
-        case 248: case 249:
-            return true;
-        default:
-            return false;
-        }
+    // Primitives that read or write raw Context fields: instVarAt:,
+    // stackp:, copy, become, pointsTo:, the unwind and context primitives.
+    // Not 60-62: Context overrides at:, at:put:, size and their basic
+    // forms with 210-212, so a Context reaches 60-62 only through an
+    // explicit super send.  A bitmap, because this runs on every
+    // primitive call while lazy context stubs exist.
+    static constexpr uint64_t kCtxPrimBits[4] = {
+        0,                                                          // 0-63
+        (1ULL << (72 - 64)) | (1ULL << (73 - 64)) | (1ULL << (74 - 64))
+            | (1ULL << (76 - 64)),                                  // 64-127
+        (1ULL << (128 - 128)) | (1ULL << (132 - 128)) | (1ULL << (148 - 128))
+            | (1ULL << (168 - 128)) | (1ULL << (173 - 128)) | (1ULL << (174 - 128)), // 128-191
+        (1ULL << (195 - 192)) | (1ULL << (196 - 192)) | (1ULL << (197 - 192))
+            | (1ULL << (210 - 192)) | (1ULL << (211 - 192)) | (1ULL << (212 - 192))
+            | (1ULL << (213 - 192)) | (1ULL << (248 - 192)) | (1ULL << (249 - 192)), // 192-255
+    };
+    static bool primTouchesContextFields(int p) {
+        return (unsigned)p < 256 && ((kCtxPrimBits[p >> 6] >> (p & 63)) & 1);
     }
     // With lazyCtxPending_ set: must primitive p, about to run with argc
     // arguments on the stack, see filled-in contexts first?
     bool lazyPrimNeedsSync(int p, int argc) {
-        if (!primTouchesContextFields(p)) return false;
+        if (__builtin_expect(!primTouchesContextFields(p), 1)) return false;
+        return lazyPrimNeedsSyncSlow(p, argc);
+    }
+    [[gnu::noinline]] bool lazyPrimNeedsSyncSlow(int p, int argc) {
         if (p == 72 || p == 128 || p == 248 || p == 249) return true;  // become
         for (int i = 0; i <= argc; i++)
             if (isContextObject(stackValue(i))) return true;

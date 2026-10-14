@@ -5259,7 +5259,12 @@ void Interpreter::interpret() {
         // `dict size` read before its value reached the argument stack.
 
         // -- Timer semaphore (Delay scheduler) --
-        checkTimerSemaphore();
+        // Every 8th checkpoint: the check reads the wall clock and a steady
+        // clock, 1.4% of lexicon when done at every checkpoint (one each
+        // 3-10 us under machine-code frames).  Adds at most ~0.1 ms of
+        // Delay latency; Delays have 1 ms resolution.
+        static uint32_t timerCheckTick = 0;
+        if ((++timerCheckTick & 7) == 0) checkTimerSemaphore();
 
 
         // -- External semaphore signals (from heartbeat/events) --
@@ -5554,8 +5559,15 @@ void Interpreter::interpret() {
             // runs at EVERY checkpoint while displayForm_ is nil — which is
             // FOREVER on headless runs (~10% of SHA256Test's runtime, 2026-06-12
             // sample).  Latching the Display a few ms later is harmless.
-            static uint32_t displayProbeTick = 0;
-            if (displayForm_.isNil() && (++displayProbeTick & 63) == 0) {
+            // Every 64th checkpoint still cost 1.4% of lexicon (2026-10-14):
+            // under machine-code frames checkpoints come far more often per
+            // second.  Probe at most every 100 ms.
+            static auto lastDisplayProbe = std::chrono::steady_clock::time_point{};
+            auto displayNow = displayForm_.isNil()
+                ? std::chrono::steady_clock::now() : lastDisplayProbe;
+            if (displayForm_.isNil()
+                    && displayNow - lastDisplayProbe >= std::chrono::milliseconds(100)) {
+                lastDisplayProbe = displayNow;
                 Oop display = memory_.findGlobal("Display");
                 if (!display.isNil() && display.isObject()) {
                     ObjectHeader* hdr = display.asObjectPtr();
@@ -25078,7 +25090,7 @@ void Interpreter::afterGC(bool fullGC) {
         // recovery) silently failed open after any scavenge that moved
         // a young method — the inline-getter IC poisoning behind the
         // MAX_IC=1 wrong-object residual.
-        jitRuntime_.rebuildMethodMap();
+        jitRuntime_.rebuildMethodMap(/* clearCallCache */ false);
         // interpHints_ raw-bits entries go stale the same way when a
         // scavenge moves a young method (see recoverSistaAfterGC).
         interpHints_.clear();

@@ -173,6 +173,7 @@ DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also enter / resume block
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)
+DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)           // MCF native calls refuse at frame depth 0 (the behaviour before 2026-10-14)
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)            // MCF bisect: no native block call at value / value: sites
 DEBUG_BOOL(PHARO_MCF_NO_EQ)                    // MCF bisect: emit == and ~~ as sends again (no inline identity compare)
 DEBUG_BOOL(PHARO_MCF_NO_SPECS)                 // MCF bisect: no ^literal/^argN/^self dispatch on the non-J2J IC-hit path

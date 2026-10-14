@@ -14407,6 +14407,22 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+#ifndef _WIN32
+    // A read-only handle has no buffered writes, so fstat gives the size.
+    // The seek-to-end below discards the stdio read buffer, and the next
+    // read refills it: SourceFile asks for the size before reads, which
+    // made file reads about 5% of lexicon's time.
+    if (fileIdOop.isObject() && fileIdOop.asObjectPtr()->bytes()[16] == 0) {
+        struct stat st;
+        if (fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode)) {
+            Oop sizeOop = uint64ToOop(memory_, static_cast<uint64_t>(st.st_size));
+            popN(argCount + 1);
+            push(sizeOop);
+            return PrimitiveResult::Success;
+        }
+    }
+#endif
+
     // Save current position
     long currentPos = ftell(file);
     if (currentPos < 0) {

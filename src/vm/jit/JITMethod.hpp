@@ -241,6 +241,43 @@ struct McfCallEntry {
 static_assert(sizeof(McfCallEntry) == 32, "T1 indexes McfCallEntry with lsl #5");
 constexpr size_t kMcfCallCacheSize = 4096;   // T1 masks with kMcfCallCacheSize - 1
 inline McfCallEntry* g_mcfCallCache = nullptr;
+// Two-way set associative: a method's set is entries 2k and 2k+1, k from
+// its oop.  Direct-mapped, pairs that call each other (at:ifPresent: and
+// findElementOrNil:) evicted each other at every call, and every call
+// left machine code (lexicon, 2026-10-14).
+inline McfCallEntry* mcfCallSet(uint64_t bits) {
+    return &g_mcfCallCache[(bits >> 3) & (kMcfCallCacheSize - 2)];
+}
+inline McfCallEntry* mcfCallFind(uint64_t bits) {
+    if (!g_mcfCallCache) return nullptr;
+    McfCallEntry* s = mcfCallSet(bits);
+    if (s[0].methodBits == bits) return &s[0];
+    if (s[1].methodBits == bits) return &s[1];
+    return nullptr;
+}
+// Entry to fill for `bits`: its own entry, else an empty one, else the
+// most recent goes first and the other entry is dropped.
+inline McfCallEntry* mcfCallSlotForCall(uint64_t bits) {
+    McfCallEntry* s = mcfCallSet(bits);
+    if (s[0].methodBits == bits) return &s[0];
+    if (s[1].methodBits == bits) return &s[1];
+    if (!s[0].methodBits) return &s[0];
+    if (!s[1].methodBits) return &s[1];
+    s[1] = s[0];
+    return &s[0];
+}
+// Entry to fill for a primitive target, which never displaces a native-call
+// entry (jm != nullptr); nullptr when both entries are native calls or the
+// method already has an entry.
+inline McfCallEntry* mcfCallSlotForPrim(uint64_t bits) {
+    McfCallEntry* s = mcfCallSet(bits);
+    if (s[0].methodBits == bits || s[1].methodBits == bits) return nullptr;
+    if (!s[0].methodBits) return &s[0];
+    if (!s[1].methodBits) return &s[1];
+    if (!s[1].jm) return &s[1];
+    if (!s[0].jm) return &s[0];
+    return nullptr;
+}
 inline void mcfClearCallCache() {
     if (g_mcfCallCache)
         std::memset(g_mcfCallCache, 0, sizeof(McfCallEntry) * kMcfCallCacheSize);

@@ -351,8 +351,7 @@ void Interpreter::mcfActivateBlock() {
     // Phase 3b: let T1 code call this block natively at value / value:.
     if (!memory_.isYoung(method_) && !mcfBlockHasNLR(method_)) {
         Oop hdr = method_.asObjectPtr()->slotAt(0);
-        jit::McfCallEntry& e = jit::g_mcfCallCache[
-            (method_.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
+        jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method_.rawBits());
         e.methodBits = method_.rawBits();
         e.jm = jm;
         e.bcEndOff = static_cast<uint64_t>(
@@ -437,8 +436,7 @@ bool Interpreter::mcfActivate(Oop method) {
         }
         if (bisectOk && (!hasPrim || mcfPrologueIsPrimitive(method)) && !memory_.isYoung(method)
                 && (!jm->hasRecvFieldAccess || receiver_.isObject())) {
-            jit::McfCallEntry& e = jit::g_mcfCallCache[
-                (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
+            jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
             e.methodBits = method.rawBits();
             e.jm = jm;
             e.prim = 0;
@@ -472,9 +470,9 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method) {
     const int p = primitiveIndexOf(method);
     if (p == 207 && ((hdr.asSmallInteger() >> 24) & 0xF) >= 2) {
         // value:value: and longer: T1 code calls the closure's block natively.
-        jit::McfCallEntry& e = jit::g_mcfCallCache[
-            (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
-        if (e.methodBits == method.rawBits() || (e.methodBits && e.jm)) return;
+        jit::McfCallEntry* ep = jit::mcfCallSlotForPrim(method.rawBits());
+        if (!ep) return;
+        jit::McfCallEntry& e = *ep;
         e.methodBits = method.rawBits();
         e.jm = nullptr;
         e.bcEndOff = 0;
@@ -482,10 +480,9 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method) {
         return;
     }
     if (!mcfPrimCallable(p)) return;
-    jit::McfCallEntry& e = jit::g_mcfCallCache[
-        (method.rawBits() >> 3) & (jit::kMcfCallCacheSize - 1)];
-    if (e.methodBits == method.rawBits()) return;
-    if (e.methodBits && e.jm) return;   // keep a native-call entry
+    jit::McfCallEntry* ep = jit::mcfCallSlotForPrim(method.rawBits());
+    if (!ep) return;   // has an entry, or both are native-call entries
+    jit::McfCallEntry& e = *ep;
     e.methodBits = method.rawBits();
     e.jm = nullptr;
     e.bcEndOff = 0;
@@ -598,7 +595,19 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
                     + " prim=" + std::to_string(hasPrim ? primitiveIndexOf(t) : 0)
                     + (tj && tj->isExecutable() ? " compiled" : "")
                     + " extrasHi=" + std::to_string(st.icDataPtr ? (st.icDataPtr[2] >> 48) : 99999)
-                    + " entryMatch=" + std::to_string(st.icDataPtr && st.icDataPtr[1] == t.rawBits());
+                    + " entryMatch=" + std::to_string(st.icDataPtr && st.icDataPtr[1] == t.rawBits())
+                    + " inCache=" + std::to_string(jit::mcfCallFind(t.rawBits()) != nullptr)
+                    + " young=" + std::to_string(memory_.isYoung(t))
+                    + " slotHas=" + [&]() -> std::string {
+                          if (!jit::g_mcfCallCache) return "-";
+                          if (jit::mcfCallFind(t.rawBits())) return "self";
+                          auto* e = jit::mcfCallSet(t.rawBits());
+                          if (!e[0].methodBits) return "empty";
+                          return memory_.selectorOf(Oop::fromRawBits(e[0].methodBits)) + "/" +
+                                 (e[1].methodBits ? memory_.selectorOf(Oop::fromRawBits(e[1].methodBits)) : "empty");
+                      }()
+                    + " exitBC=" + std::to_string(st.ip ? *st.ip : -1)
+                    + " reason=" + std::to_string(st.exitReason);
                 bySite[key]++;
                 if ((n & 0x3FFFFF) == 0) {
                     std::vector<std::pair<uint64_t, std::string>> v;
