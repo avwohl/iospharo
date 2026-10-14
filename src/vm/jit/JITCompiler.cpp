@@ -1962,6 +1962,24 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
     }
 
+    // Context methods stay interpreted: their field reads must go through
+    // the interpreter's ExtPushRecvVar, which fills in lazy context stubs
+    // (docs/lazy-contexts.md).  Covers T1 on both backends and the stencils.
+    {
+        ObjectHeader* h = compiledMethod.asObjectPtr();
+        int64_t hb = h->slotAt(0).asSmallInteger();
+        size_t bcStart = (size_t)(1 + (hb & 0x7FFF)) * 8;
+        size_t total = h->slotCount() * 8;
+        uint8_t fmt = static_cast<uint8_t>(h->format());
+        size_t unused = (fmt >= 24) ? (size_t)(fmt - 24) : 0;
+        if ((bcStart + unused < total &&
+             SistaV1::readsContextFields(h->bytes() + bcStart, total - bcStart - unused))
+            || interp_.isContextFieldMethod(compiledMethod)) {
+            compilationsFailed_++;
+            return nullptr;
+        }
+    }
+
     // Asmjit-T1 is the default JIT path (since phase4b.37; 37/37 on the
     // differential fuzzer corpus, stencil JIT is 0/37).  See
     // scripts/jit-diff/plan_asmjit_replacement.md.  PHARO_NO_ASMJIT_T1=1

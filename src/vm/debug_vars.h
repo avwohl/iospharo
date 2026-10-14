@@ -166,11 +166,13 @@ DEBUG_BOOL_RT(PHARO_T1_RESUME_INTERNAL_J2J)    // x86_64 opt-in: J2J pool slice 
 DEBUG_BOOL_RT(PHARO_T1_RESUME_EXTERNAL_J2J)    // arm64 opt-out: restore the null-slice external-J2J mode for tryResume-resumed methods (one C++ round trip per send)
 DEBUG_BOOL_RT(PHARO_NO_MCF)                    // arm64 opt-out of machine-code frames (docs/mc-frames-design.md), the default since 2026-10-14: back to the resume-internal / loops-only T1 policy
 DEBUG_BOOL_RT(PHARO_MCF)                       // DEPRECATED no-op: machine-code frames are the arm64 default; PHARO_NO_MCF opts out
+DEBUG_BOOL_RT(PHARO_NO_LAZY_OUTER)             // opt-out of lazy outer contexts (docs/lazy-contexts.md): block creation materializes the whole frame stack again
 DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit (target compiled / primitive / not compiled / IC miss) and print the counts every 4M exits
 DEBUG_BOOL(PHARO_MATFS_CENSUS)                 // count materializeFrameStack calls, frames walked and frames already synced (printed every 64K calls)
 DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also enter / resume block frames in machine code from the interpreter (activateBlock, after a return).  Off: measured slower (block microbenchmark 9.57 -> 9.89 billion instructions, deeptraverser 918 -> 925); native block calls from machine code happen either way
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
+DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)            // MCF bisect: no native block call at value / value: sites
 DEBUG_BOOL(PHARO_MCF_NO_EQ)                    // MCF bisect: emit == and ~~ as sends again (no inline identity compare)
 DEBUG_BOOL(PHARO_MCF_NO_SPECS)                 // MCF bisect: no ^literal/^argN/^self dispatch on the non-J2J IC-hit path

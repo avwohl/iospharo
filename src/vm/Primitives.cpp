@@ -712,6 +712,8 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
     // Note: argCount_ needs to be set for the called primitive
     int oldArgCount = argCount_;
     argCount_ = static_cast<int>(numArgs);
+    if (__builtin_expect(lazyCtxPending_, 0) && lazyPrimNeedsSync(primIndex, (int)numArgs))
+        materializeFrameStack();
     PrimitiveResult result = (this->*primFunc)(static_cast<int>(numArgs));
     argCount_ = oldArgCount;
 
@@ -18550,6 +18552,14 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
         // accessed by raw slot — fail so the Smalltalk fallback uses at: instead
         if (destFmt == ObjectFormat::FixedSize || destFmt == ObjectFormat::ZeroSized ||
             srcFmt == ObjectFormat::FixedSize || srcFmt == ObjectFormat::ZeroSized) {
+            return PrimitiveResult::Failure;
+        }
+
+        // A Context's indexable slots are live only up to its stackp, and
+        // may sit in a frame (lazy context stubs): fail, so the Smalltalk
+        // fallback copies with Context>>at:, which reads them correctly.
+        if ((destFmt == ObjectFormat::IndexableWithFixed && isContextObject(destOop)) ||
+            (srcFmt == ObjectFormat::IndexableWithFixed && isContextObject(sourceOop))) {
             return PrimitiveResult::Failure;
         }
 

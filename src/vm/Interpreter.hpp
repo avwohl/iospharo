@@ -1003,6 +1003,11 @@ private:
     Oop closure_;        // Current FullBlockClosure if executing a block, nil for methods
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
+    // Set when lazyOuterContext() made a context stub whose sender, temps
+    // and stack are not filled in; cleared by a complete materializeFrameStack.
+    bool lazyCtxPending_ = false;
+    bool matfsComplete_ = false;
+    uint32_t contextClassIndex_ = 0;  // class index of Context, set by lazyOuterContext
 
     // Pending NLR through ensure: — tracks NLR continuation when ensure: runs cleanup.
     // Context-based path: nlrTargetCtx_ = home context, set by handleContextNLRUnwind.
@@ -2387,6 +2392,7 @@ public:
     /// Get the class where a CompiledMethod is defined (from last literal).
     /// Available regardless of JIT — used by super-send paths.
     Oop methodClassOf(Oop method) const;
+    bool isContextFieldMethod(Oop compiledCode);
 
     /// Return "ClassName" for a compiled method oop, using methodClassOf +
     /// ObjectMemory::nameOfClass.  Returns "?" when the method's class
@@ -3844,6 +3850,52 @@ private:
 
     /// Materialize inline frame stack into context objects
     Oop materializeFrameStack();
+    Oop materializeFrameStackImpl();
+    /// Lazy outer context (docs/lazy-contexts.md): the current frame's
+    /// context for a new block, without walking or copying the frame stack.
+    Oop lazyOuterContext();
+    /// Bring every live frame's context up to date before image code reads
+    /// a Context, if lazyOuterContext left any stub unsynced.
+    void syncLazyContexts() {
+        if (__builtin_expect(lazyCtxPending_, 0)) materializeFrameStack();
+    }
+    bool isContextObject(Oop o) const {
+        return o.isObject() && !o.isNil() && contextClassIndex_ != 0 &&
+               o.asObjectPtr()->classIndex() == contextClassIndex_;
+    }
+    // Primitives that read or write raw Context fields (at:, instVarAt:,
+    // stackp:, copy, become, the unwind and context primitives).
+    static constexpr bool primTouchesContextFields(int p) {
+        switch (p) {
+        case 60: case 61: case 62: case 72: case 73: case 74: case 76:
+        case 128: case 132: case 148: case 168: case 173: case 174:
+        case 195: case 196: case 197: case 210: case 211: case 212: case 213:
+        case 248: case 249:
+            return true;
+        default:
+            return false;
+        }
+    }
+    // With lazyCtxPending_ set: must primitive p, about to run with argc
+    // arguments on the stack, see filled-in contexts first?
+    bool lazyPrimNeedsSync(int p, int argc) {
+        if (!primTouchesContextFields(p)) return false;
+        if (p == 72 || p == 128 || p == 248 || p == 249) return true;  // become
+        for (int i = 0; i <= argc; i++)
+            if (isContextObject(stackValue(i))) return true;
+        return false;
+    }
+    // A non-local return discards the current frame: mark its context dead
+    // (sender and pc nil), as a normal return does.
+    void widowUnwoundContext() {
+        if (__builtin_expect(currentFrameMaterializedCtx_.isObject()
+                && !currentFrameMaterializedCtx_.isNil(), 0))
+            widowReturningContext();
+    }
+    void syncLazyContextsIfContext(Oop o) {
+        if (__builtin_expect(lazyCtxPending_, 0) && isContextObject(o))
+            materializeFrameStack();
+    }
 
     /// Context switch to a different process
     void transferTo(Oop newProcess);

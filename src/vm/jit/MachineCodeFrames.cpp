@@ -143,6 +143,11 @@ static bool mcfPrimCallable(int p) {
 // now the truth and machine code must exit without touching it.
 int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     stackPointer_ = st->sp;
+    // A primitive on a Context while lazy context stubs exist: fail, so the
+    // send runs through the interpreter, whose registers are exact for the
+    // sync in executePrimitiveInner (here ip is only the method start).
+    if (__builtin_expect(lazyCtxPending_, 0) && lazyPrimNeedsSync(primIndex, nArgs))
+        return 0;
     mcfSyncRegisters(*st);           // unconditionally: see mcfRun
     instructionPointer_ = st->ip;   // bcStart: inside the method, for GC
     Oop* spBefore = stackPointer_;

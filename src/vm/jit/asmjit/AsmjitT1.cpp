@@ -4933,8 +4933,16 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.ldr(x4, ptr(x0, OFF_MCF_MATCTX_PTR));
     a.ldr(x5, ptr(x4));                       // currentFrameMaterializedCtx_
     a.ldr(x6, ptr(x0, OFF_MCF_NIL));
-    a.cmp(x5, x6);
-    a.b_ne(fall);                             // context to widow: interpreter
+    // A frame with a context (it made a block) widows it below, unless a
+    // widow diagnostic wants the interpreter's widowReturningContext.
+    const bool widowInline = !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)
+        && !GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK)
+        && !GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK)
+        && !GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE);
+    if (!widowInline) {
+        a.cmp(x5, x6);
+        a.b_ne(fall);                         // context to widow: interpreter
+    }
     a.sub(x3, x3, asmjit::Imm(1));
     a.ldr(x7, ptr(x0, OFF_MCF_FRAMES));
     a.mov(x8, asmjit::Imm(L.size));
@@ -4982,7 +4990,16 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.ldp(x1, x2, ptr(sp, 16));
         a.ldp(x0, x30, ptr_post(sp, 96));
     }
-    // Commit: popFrame.
+    // Commit: widow the returning frame's context (sender and pc nil,
+    // as widowReturningContext; nil needs no store barrier), then popFrame.
+    if (widowInline) {
+        asmjit::Label noCtx = a.new_label();
+        a.cmp(x5, x6);
+        a.b_eq(noCtx);
+        a.str(x6, ptr(x5, OBJ_SLOT_0));
+        a.str(x6, ptr(x5, OBJ_SLOT_0 + 8));
+        a.bind(noCtx);
+    }
     a.str(x3, ptr(x2));
     a.ldr(x8, ptr(x7, L.materializedContext));
     a.str(x8, ptr(x4));

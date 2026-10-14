@@ -212,6 +212,22 @@ constexpr int bytecodeLength(uint8_t op) {
     return 3;                        // 0xF8..0xFF: 3-byte
 }
 
+// True if the bytecodes read a receiver field with the long form ExtPushRecvVar
+// at an index the short form could reach (0-15).  The compiler does that only
+// for Context fields, which the JIT must leave to the interpreter: its
+// ExtPushRecvVar handler fills in lazy context stubs (docs/lazy-contexts.md).
+inline bool readsContextFields(const uint8_t* bc, size_t len) {
+    bool prefixed = false;
+    for (size_t i = 0; i < len; ) {
+        uint8_t op = bc[i];
+        if (op == ExtPushRecvVar && !prefixed && i + 1 < len && bc[i + 1] < 16)
+            return true;
+        prefixed = (op == ExtendA);
+        i += bytecodeLength(op);
+    }
+    return false;
+}
+
 // Compute the branch target byte index for a jump opcode at position `i`.
 // Caller must have verified the opcode is a jump (isAnyShortJump or
 // one of ExtJump/ExtJumpTrue/ExtJumpFalse).  For ExtJump*, pass the

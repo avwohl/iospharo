@@ -7017,6 +7017,9 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     "C caller receives a zeroed result\n",
                     nestedStepCount, (void*)vmcc);
             fflush(stderr);
+            // The handler process is abandoned with its frames: fill in lazy
+            // context stubs first, as the normal callback return does.
+            if (lazyCtxPending_ && frameDepth_ > 0) materializeFrameStack();
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
@@ -8001,6 +8004,10 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         break;
     }
     case jit::SistaV1::ExtPushRecvVar: { // Push Receiver Variable #i (+ extA * 256)
+        // The compiler gives Context methods the long forms only, so this,
+        // ExtPopStoreRecv and ExtStoreRecv are where a Context method reads or
+        // writes its own fields: fill in lazy context stubs first.
+        syncLazyContextsIfContext(receiver_);
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
@@ -8321,6 +8328,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // ====== 2-byte bytecodes: Store operations (0xF0-0xF7) ======
 
     case jit::SistaV1::ExtPopStoreRecv: { // Pop and Store Receiver Variable #i (+ extA * 256)
+        syncLazyContextsIfContext(receiver_);
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
@@ -8352,6 +8360,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         break;
     }
     case jit::SistaV1::ExtStoreRecv: { // Store Receiver Variable #i (+ extA * 256) - no pop
+        syncLazyContextsIfContext(receiver_);
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
@@ -9860,6 +9869,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                         // process switches) and as globals (fallback for fd=0).
                         nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                         nlrValue_ = nlrVal;
+                        widowUnwoundContext();
                         if (!popFrame()) return;
                         push(nlrVal);
                         // Store homeFrame in the ensure: frame's saved state so
@@ -9878,6 +9888,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                         return;
                     }
                 }
+                widowUnwoundContext();
                 if (!popFrame()) return;
             }
             // At home frame — return from it. Clear NLR state.
@@ -10055,6 +10066,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                                     primitiveIndexOf(rm) == 198) {
                                     nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                                     nlrValue_ = value;
+                                    widowUnwoundContext();
                                     if (!popFrame()) return;
                                     push(value);
                                     if (frameDepth_ > 0) {
@@ -10069,6 +10081,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                                     return;
                                 }
                             }
+                            widowUnwoundContext();
                             if (!popFrame()) return;
                         }
                         returnValue(value);
@@ -10271,6 +10284,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                                     // context and continue the NLR.
                                     nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                                     nlrValue_ = value;
+                                    widowUnwoundContext();
                                     if (!popFrame()) return;
                                     push(value);
                                     if (frameDepth_ > 0) {
@@ -10288,6 +10302,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                         }
                     }
                 }
+                widowUnwoundContext();
                 if (!popFrame()) return;
             }
             // Now we're at homeFrame, returnValue pops this frame and returns to caller
@@ -10457,6 +10472,7 @@ void Interpreter::returnFromBlock() {
                             if (primIndex == 198) {
                                 nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                                 nlrValue_ = value;
+                                widowUnwoundContext();
                                 if (!popFrame()) return;
                                 push(value);
                                 if (frameDepth_ > 0) {
@@ -10474,6 +10490,7 @@ void Interpreter::returnFromBlock() {
                     }
                 }
             }
+            widowUnwoundContext();
             if (!popFrame()) return;
         }
         // Now do a regular return which pops one more frame and pushes the value
@@ -10870,6 +10887,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
 }
 
 void Interpreter::extendedPush() {
+    syncLazyContextsIfContext(receiver_);
     uint8_t descriptor = fetchByte();
     int type = (descriptor >> 6) & 3;
     int index = descriptor & 0x3F;
@@ -10883,6 +10901,7 @@ void Interpreter::extendedPush() {
 }
 
 void Interpreter::extendedStore() {
+    syncLazyContextsIfContext(receiver_);
     uint8_t descriptor = fetchByte();
     int type = (descriptor >> 6) & 3;
     int index = descriptor & 0x3F;
@@ -12504,6 +12523,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             // executePrimitive).  Falls back to executePrimitive for
             // quick prims 256+ (cached->primitive is null for those).
             PrimitiveResult result;
+            if (__builtin_expect(lazyCtxPending_, 0) && lazyPrimNeedsSync(primIdx, argCount))
+                materializeFrameStack();
             if (cached->primitive != nullptr) {
                 result = (this->*(cached->primitive))(argCount);
                 if (result == PrimitiveResult::Success) {
@@ -12976,7 +12997,11 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     }
 
     // Getter: extended pushRecvVar (0xE2 N) + returnTop (0x5C), 0-arg only.
-    if (numArgs == 0 && bcLen >= 3 && bc0 == 0xE2 && bytes[bcStart + 2] == 0x5C) {
+    // Only for N >= 16: the compiler uses the long form for a field that the
+    // short form could reach only in Context methods, which must not be
+    // shortcut (lazy context stubs are filled in by the ExtPushRecvVar
+    // handler; docs/lazy-contexts.md).
+    if (numArgs == 0 && bcLen >= 3 && bc0 == 0xE2 && bc1 >= 16 && bytes[bcStart + 2] == 0x5C) {
         info.getterIndex = (int16_t)bc1;
         return info;
     }
@@ -12990,7 +13015,7 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     }
 
     // Setter: extended (0xF0 N) + returnReceiver (0x58), 1-arg only.
-    if (numArgs == 1 && bcLen >= 3 && bc0 == 0xF0 && bytes[bcStart + 2] == 0x58) {
+    if (numArgs == 1 && bcLen >= 3 && bc0 == 0xF0 && bc1 >= 8 && bytes[bcStart + 2] == 0x58) {
         info.setterIndex = (int16_t)bc1;
         return info;
     }
@@ -18946,6 +18971,32 @@ Oop Interpreter::methodClassOf(Oop method) const {
     return memory_.nil();
 }
 
+// Is compiledCode (a method or a block) a method of Context or of one of its
+// superclasses with fields (InstructionStream)?  Those read and write Context
+// fields, so they stay interpreted (docs/lazy-contexts.md).
+bool Interpreter::isContextFieldMethod(Oop compiledCode) {
+    Oop home = compiledCode;
+    for (int hops = 0; hops < 64 && home.isObject()
+            && home.asObjectPtr()->classIndex() == compiledBlockClassIndex_; hops++) {
+        Oop hdr = memory_.fetchPointer(0, home);
+        if (!hdr.isSmallInteger()) return false;
+        size_t nLits = hdr.asSmallInteger() & 0x7FFF;
+        if (nLits < 1) return false;
+        home = memory_.fetchPointer(nLits, home);
+    }
+    Oop cls = methodClassOf(home);
+    if (!cls.isObject() || cls.isNil()) return false;
+    Oop c = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+    for (int depth = 0; depth < 16 && c.isObject() && !c.isNil(); depth++) {
+        if (c.asObjectPtr()->slotCount() < 3) return false;
+        Oop spec = memory_.fetchPointer(2, c);
+        if (!spec.isSmallInteger() || (spec.asSmallInteger() & 0xFFFF) == 0) return false;
+        if (c.rawBits() == cls.rawBits()) return true;
+        c = memory_.fetchPointer(0, c);   // superclass
+    }
+    return false;
+}
+
 int Interpreter::primitiveIndexOf(Oop method) const {
     if (!method.isObject()) return 0;
 
@@ -19168,7 +19219,8 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
         // GC SAFETY: materializeFrameStack allocates contexts, which may trigger GC.
         // Protect block on the operand stack during allocation.
         push(block);
-        outerContextForBlock = materializeFrameStack();
+        outerContextForBlock = GET_DEBUG_BOOL(PHARO_NO_LAZY_OUTER)
+            ? materializeFrameStack() : lazyOuterContext();
         block = pop();
         // Re-read compiledBlock again (MFS may have triggered another GC)
         compiledBlock = literal(litIndex);
@@ -20314,6 +20366,8 @@ void Interpreter::initializeClassIndexCache() {
     // exact class index rather than trust an 8-byte-object shape.
     boxedFloatClassIndex_ =
         memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassFloat));
+    contextClassIndex_ =
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassMethodContext));
 }
 
 void Interpreter::initializeSelectors() {
@@ -20419,6 +20473,10 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
+    // The process's frames are about to be dropped without a process switch
+    // that materializes them: fill in lazy context stubs first, so a block
+    // that escaped keeps a complete outer context chain.
+    if (lazyCtxPending_ && frameDepth_ > 0) materializeFrameStack();
     {
         Oop proc = getActiveProcess();
         Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
@@ -20963,6 +21021,73 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
+    matfsComplete_ = false;
+    Oop result = materializeFrameStackImpl();
+    if (matfsComplete_) lazyCtxPending_ = false;
+    return result;
+}
+
+// Lazy outer context.  A non-clean block needs its outerContext, and before
+// this a block made at frame depth > 0 called materializeFrameStack(), which
+// walks every saved frame and copies the current frame's temps and stack
+// (lexicon: 51M calls, 11% of its time).  Now the block gets the current
+// frame's context with only method, closure, receiver and pc filled in, and
+// lazyCtxPending_ says the chain is incomplete.  Every place where image code
+// reads or writes a Context calls syncLazyContexts() first, which runs the
+// full materializeFrameStack(), so image code never sees the unfilled stub.
+Oop Interpreter::lazyOuterContext() {
+    Oop context = currentFrameMaterializedCtx_;
+    if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
+        // Reuse only this activation's own context.  Paths that run a callee
+        // without pushing a frame (non-MCF inline J2J) can leave the
+        // caller's context here; materializeFrameStack rewrites it as before.
+        ObjectHeader* ch = context.asObjectPtr();
+        if (ch->slotCount() < 6 || ch->slotAt(3).rawBits() != method_.rawBits()
+                || ch->slotAt(4).rawBits() != closure_.rawBits()
+                || ch->slotAt(5).rawBits() != receiver_.rawBits())
+            return materializeFrameStack();
+        lazyCtxPending_ = true;
+        return context;
+    }
+    if (!method_.isObject()) return materializeFrameStack();
+    Oop methodHeader = memory_.fetchPointer(0, method_);
+    if (!methodHeader.isSmallInteger()) return materializeFrameStack();
+    int numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
+    ObjectHeader* methodHdr = method_.asObjectPtr();
+    uint8_t* mBytes = methodHdr->bytes();
+    if (instructionPointer_ < mBytes || instructionPointer_ >= mBytes + methodHdr->byteSize())
+        return materializeFrameStack();
+    int ipOffset = static_cast<int>(instructionPointer_ - mBytes);
+    // Same size materializeFrameStack gives a fresh current-frame context,
+    // so the later sync into this object fits.
+    Oop* obPre = framePointer_ + 1 + numTemps;
+    ptrdiff_t opPre = stackPointer_ - obPre;
+    size_t contextSize = 6 + numTemps + (opPre > 32 ? (size_t)opPre + 8 : 32);
+    if (contextClassIndex_ == 0) {
+        Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+        if (contextClass.isObject()) contextClassIndex_ = memory_.indexOfClass(contextClass);
+        if (contextClassIndex_ == 0) return materializeFrameStack();
+    }
+    context = memory_.allocateSlots(contextClassIndex_, contextSize, ObjectFormat::IndexableWithFixed);
+    if (context.isNil() || !context.isObject()) return materializeFrameStack();
+    // allocateSlots nil-fills: sender and the operand-stack slots stay nil.
+    // The temps (arguments included) are copied, so a context whose frame
+    // returns before any sync still shows its arguments and its temps as of
+    // block creation, as the old snapshot did.
+    memory_.storePointer(1, context, Oop::fromSmallInteger(ipOffset + 1));
+    memory_.storePointer(3, context, method_);
+    memory_.storePointer(4, context, closure_);
+    memory_.storePointer(5, context, receiver_);
+    int copied = 0;
+    for (; copied < numTemps && (size_t)(6 + copied) < contextSize; copied++)
+        memory_.storePointer(6 + copied, context, framePointer_[1 + copied]);
+    memory_.storePointer(2, context, Oop::fromSmallInteger(copied));
+    currentFrameMaterializedCtx_ = context;
+    lazyCtxPending_ = true;
+    return context;
+}
+
+Oop Interpreter::materializeFrameStackImpl() {
     if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
         doRec("MATFS-IN", activeContext_.rawBits(), (int)frameDepth_,
               framePointer_ ? (int)(stackPointer_ - framePointer_ - 1) : -1,
@@ -21168,6 +21293,7 @@ Oop Interpreter::materializeFrameStack() {
                 memory_.storePointer(ContextFixedFields + i, activeContext_, item);
             }
         }
+        matfsComplete_ = true;
         return activeContext_;
     }
 
@@ -21373,6 +21499,18 @@ Oop Interpreter::materializeFrameStack() {
         && !GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK);
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MATFS_CENSUS), 0)) {
         static uint64_t calls = 0, walked = 0, synced = 0, prefix = 0;
+        static std::unordered_map<uintptr_t, uint64_t> byCaller;
+        byCaller[(uintptr_t)__builtin_return_address(0)]++;
+        if (((calls + 1) & 0x3FFFFF) == 0) {
+            Dl_info di{};
+            for (auto& kv : byCaller) {
+                dladdr((void*)kv.first, &di);
+                fprintf(stderr, "[MATFS-CALLER] 0x%llx (+0x%llx) %llu\n",
+                        (unsigned long long)kv.first,
+                        (unsigned long long)(kv.first - (uintptr_t)di.dli_fbase),
+                        (unsigned long long)kv.second);
+            }
+        }
         calls++;
         size_t firstUnsynced = frameDepth_;
         for (size_t i = startFrame; i < frameDepth_; i++) {
@@ -21856,6 +21994,7 @@ Oop Interpreter::materializeFrameStack() {
                     }
                 }
 
+                matfsComplete_ = true;
                 return context;
             }
         }
@@ -24201,6 +24340,9 @@ PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCo
     if (primitiveIndex < 0 || primitiveIndex >= static_cast<int>(primitiveTable_.size())) {
         return PrimitiveResult::Failure;
     }
+
+    if (__builtin_expect(lazyCtxPending_, 0) && lazyPrimNeedsSync(primitiveIndex, argCount))
+        materializeFrameStack();
 
     // Quick primitives (256-519): return constants or instance variables.
     // In the standard VM, indices 256-519 are ALWAYS quick primitives, never
