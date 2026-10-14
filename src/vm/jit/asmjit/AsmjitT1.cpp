@@ -13471,6 +13471,42 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) {
                 uint8_t nextOp = bcReal[i + 2];
                 int nextLen = SistaV1::bytecodeLength(nextOp);
+                // ExtendA + ExtSend: a send to literal 32-255 (large methods:
+                // parsers, compilers).  The prefix-bail below ran every one
+                // through the interpreter.  Same helper send as a naked
+                // ExtSend, with the extended literal index.
+                if (op == SistaV1::ExtendA && nextOp == SistaV1::ExtSend
+                        && ::pharo::mcfEnabled() && g_mcfCallStub != 0
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_PREFIXED_SEND)
+                        && i + 3 < bcRealLen) {
+                    const int extA = bcReal[i + 1];
+                    const uint8_t sb = bcReal[i + 3];
+                    const int litIdx = (extA << 5) | (sb >> 3);
+                    if (litIdx <= 0xFF) {
+                        if (g_fsrLazy) {
+                            a.ldr(a64::x5, a64::ptr(a64::x19,
+                                  (int)offsetof(JITMethod, bcStartCache)));
+                            a.add(a64::x5, a64::x5, asmjit::Imm(globalIdx));
+                        } else {
+                            a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                            a.add(a64::x5, a64::x5, asmjit::Imm(bcOffsetBase + globalIdx));
+                        }
+                        asmjit::Label extCont = a.new_label();
+                        const uint32_t desc = (uint32_t)litIdx | ((uint32_t)(sb & 7) << 8);
+                        emitMcfHelperSend(a, desc, sb & 7, 4, globalIdx,
+                                          callerArgCount, extCont,
+                                          GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_SITE_CACHE)
+                                              ? nullptr : mcfAllocSiteCache());
+                        a.bind(extCont);
+                        for (int k = 1; k <= 3; k++)
+                            if ((size_t)(globalIdx + k) < bcLabels.size())
+                                a.bind(bcLabels[globalIdx + k]);
+                        i += 3;
+                        continue;
+                    }
+                }
                 // NATIVE prefixed unconditional ExtJump (2026-06-11):
                 // the generic prefix-bail below meant EVERY loop back
                 // edge (to:do:/whileTrue compile to ExtendB+ExtJump

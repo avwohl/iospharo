@@ -993,7 +993,9 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     // the ip after it, as in the interpreter; on failure T1 code exits at
     // the send again.
     uint8_t* const sendIp = st->ip;
-    st->ip += 2;
+    // Past the send: 2 bytes, or 4 with an ExtendA prefix (a send to
+    // literal 32-255).
+    st->ip = const_cast<uint8_t*>(mcfPastSend(sendIp));
     struct RestoreIp { jit::JITState* s; uint8_t* ip; ~RestoreIp() { s->ip = ip; } } restoreIp{st, sendIp};
     const int litIdx = desc & 0xFF;
     const int nArgs = (desc >> 8) & 0xFF;
