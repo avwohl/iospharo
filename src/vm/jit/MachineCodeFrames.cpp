@@ -1636,13 +1636,11 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         case jit::ExitArrayCreate:
         case jit::ExitMustBool:
             instructionPointer_ = st.ip;
-            // A loop's back edge exits when the heartbeat asks for a yield.
-            // Take the yield at the next bytecode: left to the countdown (up
-            // to 1024 bytecodes), the loop went round through the
-            // interpreter, out at every back edge, until it ran down.
-            if (forceYield_.load(std::memory_order_relaxed)
-                    && !GET_DEBUG_BOOL(PHARO_MCF_NO_PROMPT_YIELD))
-                checkCountdown_ = 1;
+            // Do not force the pending yield here (checkCountdown_ = 1, tried
+            // 2026-10-14): that switched process at the bytecode after any
+            // exit -- block creation, overflow, must-be-boolean -- where Cog
+            // never switches (only at sends and back jumps), and RPC tests in
+            // myprecious then timed out 1 run in 3 (0 in 6 without it).
             break;
         default: {
             char msg[96];

@@ -194,7 +194,6 @@ DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE)          // MCF: the special = send on no
 DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL)       // MCF: ensure: / on:do: (marker primitives 198/199) are not called natively from machine code
 DEBUG_BOOL(PHARO_MCF_NO_EAGER_IC_FILL)          // MCF: an IC-miss exit leaves the IC patch to the interpreter send (which some special-selector fast paths never make)
 DEBUG_BOOL(PHARO_MCF_NO_YOUNG_CALL)             // MCF: young methods and CompiledBlocks get no call-cache entry (machine code calls them through an exit)
-DEBUG_BOOL(PHARO_MCF_NO_PROMPT_YIELD)           // MCF: a bytecode exit taken for a heartbeat yield leaves the yield to the interpreter countdown
 DEBUG_BOOL(PHARO_MCF_NO_EXTRAS_SHORTCUT)        // MCF: an IC hit walks the whole specialization chain even when no tested extras bit is set
 DEBUG_BOOL(PHARO_MCF_NO_DIRECT_FIELDS)          // MCF: T1 call/return reach frameDepth_, the contexts and the countdown through state pointers, not at fixed offsets from x0
 DEBUG_BOOL(PHARO_MCF_NO_LAZY_RET_POP)           // MCF: ReturnTop pops the value before the native return (the return resets sp anyway)
