@@ -5061,6 +5061,12 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.str(x8, ptr(x0, OFF_CLOSURE));
     a.mov(x26, x1);                           // TOS mirror = the result
     a.str(wzr, ptr(x0, OFF_EXIT));
+    if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)) {
+        a.mov(x16, asmjit::Imm((uint64_t)&g_mcfCountRets));
+        a.ldr(x17, ptr(x16));
+        a.add(x17, x17, asmjit::Imm(1));
+        a.str(x17, ptr(x16));
+    }
     a.br(x9);
     a.bind(fall);
 }
@@ -5433,9 +5439,19 @@ static void emitMcfCacheProbe(asmjit::a64::Assembler& a, const asmjit::Label& mi
     a.bind(hit);
 }
 
+static void emitMcfCount(asmjit::a64::Assembler& a, uint64_t* counter) {
+    using namespace asmjit::a64;
+    if (!GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)) return;
+    a.mov(x16, asmjit::Imm((uint64_t)counter));
+    a.ldr(x17, ptr(x16));
+    a.add(x17, x17, asmjit::Imm(1));
+    a.str(x17, ptr(x16));
+}
+
 static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     asmjit::Label fail = a.new_label(), tInit = a.new_label(), tDone = a.new_label();
+    emitMcfCount(a, &g_mcfCountCalls);
     emitMcfPushRecord(a, fail);
     emitMcfCalleeView(a);
     a.sub(x16, x25, x11, asmjit::a64::lsl(3));    // callee tempBase (first arg)
@@ -5463,6 +5479,7 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
 static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     asmjit::Label fail = a.new_label();
+    emitMcfCount(a, &g_mcfCountBlockCalls);
     asmjit::Label copyLoop = a.new_label(), copyDone = a.new_label();
     asmjit::Label nilLoop = a.new_label(), nilDone = a.new_label();
     // The temporaries must hold the arguments and the copied values.
@@ -6111,18 +6128,30 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // construction (the jump bytecode's emit leaves g_tos
             // cleared), so the new jump edge is consistent.
 #if PHARO_T1_SP_IN_X25
-            if (tosFam(kTosFamFuseCmpJ) && g_tosBc && g_tosJumpTargetsPtr) {
+            // Default-on (2026-10-14) without the TOS cache, which it does
+            // not need: x1/x4 are loaded above.  Also the 2-byte
+            // ExtJumpTrue/ExtJumpFalse (loops: `1 to: n do:` tests with one).
+            const bool fuseCmpJ = g_useTos ? tosFam(kTosFamFuseCmpJ)
+                                           : !GET_DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ);
+            if (fuseCmpJ && g_tosBc && g_tosJumpTargetsPtr) {
                 int nextIdx = globalIdx + 1;
-                if ((size_t)nextIdx < g_tosBcLen) {
+                if ((size_t)nextIdx + 1 < g_tosBcLen) {
                     uint8_t nop = g_tosBc[nextIdx];
-                    if (SistaV1::isConditionalShortJump(nop)
+                    const bool shortJ = SistaV1::isConditionalShortJump(nop);
+                    const bool extJ = nop == SistaV1::ExtJumpTrue
+                                   || nop == SistaV1::ExtJumpFalse;
+                    if ((shortJ || extJ)
                             && !(*g_tosJumpTargetsPtr)[nextIdx]) {
-                        int targetIdx = SistaV1::shortJumpTarget(nop, nextIdx);
-                        int postIdx = nextIdx + 1;
+                        // No ExtendB prefix can precede: the jump is the
+                        // next bytecode, so its offset is the plain byte.
+                        int targetIdx = shortJ ? SistaV1::shortJumpTarget(nop, nextIdx)
+                                               : nextIdx + 2 + g_tosBc[nextIdx + 1];
+                        int postIdx = nextIdx + (shortJ ? 1 : 2);
                         if (targetIdx > nextIdx
                                 && (size_t)targetIdx < bcLabels.size()
                                 && (size_t)postIdx < bcLabels.size()) {
-                            bool jt = SistaV1::isShortJumpTrue(nop);
+                            bool jt = shortJ ? SistaV1::isShortJumpTrue(nop)
+                                             : nop == SistaV1::ExtJumpTrue;
                             a.cmp(x1, x4);
                             a.sub(x25, x25, asmjit::Imm(16));
                             asmjit::Label tgt = bcLabels[targetIdx];
@@ -6925,6 +6954,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label notBlock = a.new_label();
                 asmjit::Label copyLoop = a.new_label(), copyDone = a.new_label();
                 asmjit::Label nilLoop = a.new_label(), nilDone = a.new_label();
+                // FullBlockClosure>>value overridden (a method proxy):
+                // send it as Cog's JIT does (g_blockValueOverridden).
+                a.mov(x16, asmjit::Imm((uint64_t)&g_blockValueOverridden));
+                a.ldrb(w16, ptr(x16));
+                a.cbnz(w16, notBlock);
                 emitLoadSp(a, x2);
                 a.ldur(x1, ptr(x2, -8 * (nArgs + 1)));       // the closure
                 a.tst(x1, asmjit::Imm(0x7));

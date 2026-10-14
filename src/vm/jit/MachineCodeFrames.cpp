@@ -300,6 +300,36 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
                 if (!st->tempBase[t].isNil()) { why = "temp not nil"; break; }
         }
     }
+    if (!why && st->closure.isNil()) {
+        // The callee must be the method the send at the caller's ip names
+        // (a poisoned inline cache calls another one).  Short and special
+        // sends only; walk the bytecodes to the one that ends at savedIP.
+        const uint8_t* pc = bc0;
+        const uint8_t* prev = nullptr;
+        while (pc < f.savedIP) { prev = pc; pc += jit::SistaV1::bytecodeLength(*pc); }
+        Oop sel = Oop::nil();
+        if (pc == f.savedIP && prev && (prev == bc0 || (prev[-1] != jit::SistaV1::ExtendA
+                                                         && prev[-1] != jit::SistaV1::ExtendB))) {
+            const uint8_t op = *prev;
+            if (op >= jit::SistaV1::ArithBase && op <= jit::SistaV1::ArithBase + 31) {
+                Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+                sel = ss.asObjectPtr()->slotAt((size_t)(op - jit::SistaV1::ArithBase) * 2);
+            } else if (op >= 0x80 && op <= 0xAF && (op & 0x0F) < nLits) {
+                sel = mo->slotAt(1 + (op & 0x0F));
+            }
+        }
+        if (!sel.isNil() && sel.isObject() && sel.asObjectPtr()->isBytesObject()) {
+            const std::string want = memory_.oopToString(sel);
+            const std::string got = memory_.selectorOf(st->method);
+            if (want != got && got != "?") {
+                static int m = 0;
+                if (++m <= 20)
+                    fprintf(stderr, "[MCF-VERIFY-SEL] site sends #%s but calls #%s (caller #%s, rcv %s)\n",
+                            want.c_str(), got.c_str(), memory_.selectorOf(f.savedMethod).c_str(),
+                            memory_.classNameOf(st->receiver).c_str());
+            }
+        }
+    }
     static int n = 0;
     if (!why || ++n > 10) return;
     fprintf(stderr, "[MCF-VERIFY-PUSH] %s: caller=#%s callee=#%s fd=%zu\n", why,

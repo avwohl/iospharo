@@ -1929,6 +1929,11 @@ void Interpreter::dumpJITStats() {
     size_t actTotal = jitActivations_;
     size_t resumeTotal = jitJ2JChains_ + jitJ2JFallbacks_;
     fprintf(stderr, "\n=== JIT Stats ===\n");
+    if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS))
+        fprintf(stderr, "  mcf native calls: method %llu block %llu returns %llu\n",
+                (unsigned long long)jit::g_mcfCountCalls,
+                (unsigned long long)jit::g_mcfCountBlockCalls,
+                (unsigned long long)jit::g_mcfCountRets);
     {
         extern uint64_t g_classOfForwarderFollows;
         fprintf(stderr, "  classOf-forwarder-follows: %llu (each = a dispatch to a "
@@ -4779,7 +4784,9 @@ void Interpreter::interpret() {
     op_value: {
         Oop rcvr = stackValue(0);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
-            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+            && !(__builtin_expect(jit::g_blockValueOverridden, 0)
+                 && specialValueNeedsLookup())) {
             argCount_ = 0;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -4803,7 +4810,9 @@ void Interpreter::interpret() {
         }
         Oop rcvr = stackValue(1);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
-            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+            && !(__builtin_expect(jit::g_blockValueOverridden, 0)
+                 && specialValueNeedsLookup())) {
             argCount_ = 1;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -7863,7 +7872,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         // value (0 args) — fast path for FullBlockClosure
         Oop rcvr = stackValue(0);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
-            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+            && !(__builtin_expect(jit::g_blockValueOverridden, 0)
+                 && specialValueNeedsLookup())) {
             argCount_ = 0;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -7884,7 +7895,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         }
         Oop rcvr = stackValue(1);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
-            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+            && !(__builtin_expect(jit::g_blockValueOverridden, 0)
+                 && specialValueNeedsLookup())) {
             argCount_ = 1;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -18624,6 +18637,12 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
     //   2. Pop receiver
     //   3. Push: nonMethod, selector, argsArray, receiver
     //   4. Send #run:with:in: to nonMethod (3 args)
+#if PHARO_JIT_ENABLED
+    // The exited machine-code send site must not cache the #run:with:in:
+    // lookup below: that is the proxy's method, not this send's target.
+    pendingICPatch_ = nullptr;
+    pendingICOwnerIP_ = nullptr;
+#endif
 
     // GC SAFETY: Push nonMethod and selector onto stack before allocation,
     // since allocateSlots may trigger fullGC which invalidates C++ locals.
@@ -18650,6 +18669,20 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 
     // Pop receiver
     Oop receiver = pop();
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_OBJ_AS_METHOD_TRACE), 0)) {
+        static int n = 0;
+        if (++n <= 40)
+        {
+            const uint8_t* mb = method_.isObject() ? method_.asObjectPtr()->bytes() : nullptr;
+            const bool ipIn = mb && instructionPointer_ >= mb
+                && instructionPointer_ <= mb + method_.asObjectPtr()->byteSize();
+            fprintf(stderr, "[OAM] #%s argc=%d rcv=%s in #%s depth=%zu ipInMethod=%d closure=%d\n",
+                    memory_.oopToString(selector).c_str(), argCount,
+                    memory_.classNameOf(receiver).c_str(),
+                    memory_.selectorOf(method_).c_str(), frameDepth_, (int)ipIn,
+                    (int)!closure_.isNil());
+        }
+    }
 
     // Push: nonMethod (becomes the new receiver of #run:with:in:)
     push(nonMethod);
@@ -20421,6 +20454,7 @@ void Interpreter::initializeClassIndexCache() {
     jit::g_byteStringClassIndex = lookupClassIndexByName("ByteString");
 #endif
     fullBlockClosureClassIndex_ = lookupClassIndexByName("FullBlockClosure");
+    recheckBlockValueOverride();
 #if PHARO_JIT_ENABLED
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
 #endif
@@ -25736,6 +25770,41 @@ void Interpreter::drainMournQueueNatively() {
     }
 }
 
+bool Interpreter::specialValueNeedsLookup() {
+#if PHARO_JIT_ENABLED
+    // A block's code is compiled with its home method: ask about that.
+    Oop m = method_;
+    for (int hops = 0; hops < 16 && m.isObject() && !m.isNil()
+            && m.asObjectPtr()->classIndex() == compiledBlockClassIndex_; hops++) {
+        const size_t nl = memory_.numLiteralsOf(m);
+        if (nl == 0) return false;
+        m = memory_.fetchPointer(nl, m);        // outer code: the last literal
+    }
+    if (!m.isObject() || m.isNil()) return false;
+    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(m.rawBits());
+    return jm && jm->isExecutable();
+#else
+    return false;
+#endif
+}
+
+void Interpreter::recheckBlockValueOverride() {
+#if PHARO_JIT_ENABLED
+    if (fullBlockClosureClassIndex_ == 0) return;
+    Oop cls = memory_.classAtIndex(fullBlockClosureClassIndex_);
+    Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+    if (cls.isNil() || !ss.isObject() || ss.asObjectPtr()->slotCount() < 54) return;
+    bool overridden = false;
+    for (int k : {25, 26}) {         // special selectors #value, #value: (0x79, 0x7A)
+        Oop m = lookupMethodForSend(ss.asObjectPtr()->slotAt(k * 2), cls);
+        if (!m.isObject() || m.isNil() || !m.asObjectPtr()->isCompiledMethod()
+                || primitiveIndexOf(m) != 207)
+            overridden = true;
+    }
+    jit::g_blockValueOverridden = overridden ? 1 : 0;
+#endif
+}
+
 #if PHARO_JIT_ENABLED  // re-open: tryOSRAtBackwardJump and below are JIT-only
 
 void Interpreter::tryOSRAtBackwardJump() {
@@ -27100,7 +27169,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
                     }
                     if (state.icDataPtr) {
                         upgradeICToJ2J(state.icDataPtr, state.cachedTarget,
-                                       state.sendArgCount, state.method);
+                                       state.sendArgCount, state.method, state.sp);
                     }
                     if (!pharo_jit_convert_send(&state)) break;
                 }
@@ -27953,7 +28022,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
             }
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
-            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
+            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method, state.sp);
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_SEND_CENSUS), 0))
                 g_j2jDeclineHisto[memory_.selectorOf(cached) + "@"
                                   + std::to_string(g_j2jDeclineLine)]++;
@@ -28805,6 +28874,14 @@ void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop 
         }
     }
 
+    // The patch belongs to one send: the site's own selector.  A path that
+    // passed sendSelector's ip check without applying the patch (a send
+    // the interpreter finished another way) left it for the next send,
+    // which wrote ITS class and method into the site: a value: site got
+    // CompiledMethod -> #selector inside Symbol>>value:'s perform:.
+    // icData[18] is 0 after a GC; then the ip check is all there is.
+    if (icData[18] != 0 && icData[18] != selector.rawBits()) return;
+
     // jit-may22b Step 11: trivial-forwarder collapse.
     // If the resolved method's body is exactly `^ self foo: anInteger`
     // (pushReceiver + pushTemp + Send1 + returnTop), bypass the
@@ -29459,7 +29536,7 @@ void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop 
 }
 
 void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount,
-                                  Oop callerMethod) {
+                                  Oop callerMethod, const Oop* sendSp) {
     g_j2jDeclineLine = 0;
     static bool j2jEnabled = !GET_DEBUG_BOOL(PHARO_NO_J2J);
     static bool fillEnabled = !GET_DEBUG_BOOL(PHARO_NO_IC_FILL);
@@ -29713,10 +29790,15 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                         // For block-value sends, classKey is always
                         // FullBlockClosure-equivalent (the IC HIT already
                         // matched the receiver class).
-                        for (uint32_t e = 0; e < jit::IC_ENTRIES_PER_SITE; ++e) {
+                        // The key is the SEND's receiver.  It was receiver_,
+                        // the sending frame's receiver: inside
+                        // CompiledMethod>>valueWithReceiver:arguments:
+                        // that filled the site with CompiledMethod ->
+                        // BlockClosure>>value, and the next such send ran
+                        // the block method on a CompiledMethod.
+                        for (uint32_t e = 0; sendSp && e < jit::IC_ENTRIES_PER_SITE; ++e) {
                             if (icData[e * 3] != 0) continue;  // occupied
-                            // Reconstruct lookupKey from receiver_.
-                            uint64_t rb = receiver_.rawBits();
+                            uint64_t rb = sendSp[-(sendArgCount + 1)].rawBits();
                             uint32_t key;
                             if ((rb & 7) == 0 && rb >= 0x10000) {
                                 uint32_t classBits =
@@ -31219,7 +31301,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 if (state.icDataPtr) {
                     upgradeICToJ2J(state.icDataPtr, state.cachedTarget,
-                                   state.sendArgCount, state.method);
+                                   state.sendArgCount, state.method, state.sp);
                 }
                 if (!pharo_jit_convert_send(&state)) break;
                 // Fall through to J2JCall handler
@@ -32707,7 +32789,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
-            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
+            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method, state.sp);
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_SEND_CENSUS), 0))
                 g_j2jDeclineHisto[memory_.selectorOf(cached) + "@"
                                   + std::to_string(g_j2jDeclineLine)]++;

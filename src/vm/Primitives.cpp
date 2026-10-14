@@ -945,6 +945,13 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     Oop method = stackValue(0);
     // Get args array
     Oop argsArray = stackValue(1);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_OBJ_AS_METHOD_TRACE), 0)) {
+        static int n = 0;
+        if (++n <= 40)
+            fprintf(stderr, "[P188] argc=%d rcvSlot=%s m=#%s caller=#%s\n", argCount,
+                    memory_.classNameOf(stackValue(argCount)).c_str(),
+                    memory_.selectorOf(method).c_str(), memory_.selectorOf(method_).c_str());
+    }
 
     // Validate method is a CompiledMethod
     if (!method.isObject()) {
@@ -1005,7 +1012,12 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
         size_t savedFrameDepth = frameDepth_;
         int savedArgCount = argCount_;
         Oop savedNewMethod = newMethod_;
-        method_ = method;
+        // method_ stays the SENDING frame's method.  It was set to `method`
+        // here, and a primitive that activates (207: BlockClosure>>value on a
+        // block) then recorded the caller's frame with that method and the
+        // caller's receiver and ip.  After a process switch the record became
+        // a Context running BlockClosure>>value on a CompiledMethod (a method
+        // proxy's valueWithReceiver:arguments: under valueUnpreemptively).
         // primitiveExternalCall (117) reads its plugin spec from newMethod_:
         // without this, `withArgs:executeMethod:` on a named-primitive method
         // resolved the OUTER method's literal.
@@ -9525,6 +9537,7 @@ PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
     }
     flushMethodCache();
     flushJITCaches();
+    recheckBlockValueOverride();
     primitiveSuccess(stackTop());
     return PrimitiveResult::Success;
 }
@@ -12669,6 +12682,7 @@ PrimitiveResult Interpreter::primitiveFlushCacheByMethod(int argCount) {
         }
     }
     flushJITCaches();  // JIT ICs may cache this method
+    recheckBlockValueOverride();
     return PrimitiveResult::Success;
 }
 
@@ -12687,6 +12701,7 @@ PrimitiveResult Interpreter::primitiveFlushCacheBySelector(int argCount) {
         }
     }
     flushJITCaches();  // JIT ICs may cache methods for this selector
+    recheckBlockValueOverride();
     return PrimitiveResult::Success;
 }
 
@@ -12804,7 +12819,7 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
         Oop savedNewMethod = newMethod_;
         size_t savedFrameDepth = frameDepth_;
         int savedArgCount = argCount_;
-        method_ = method;
+        // method_ stays the sending frame's (see primitiveExecuteMethodArgsArray).
         newMethod_ = method;
         primitiveFailed_ = false;
         primFailCode_ = 0;

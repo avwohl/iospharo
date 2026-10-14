@@ -172,6 +172,7 @@ DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit 
 DEBUG_BOOL(PHARO_MATFS_CENSUS)                 // count materializeFrameStack calls, frames walked and frames already synced (printed every 64K calls)
 DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also enter / resume block frames in machine code from the interpreter (activateBlock, after a return).  Off: measured slower (block microbenchmark 9.57 -> 9.89 billion instructions, deeptraverser 918 -> 925); native block calls from machine code happen either way
 DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)            // MCF: OSR at a backward jump does not enter block frames (a loop in a block run once stays interpreted)
+DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)             // MCF: count native calls (method/block stubs) and native returns; printed with the JIT stats
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)
@@ -326,6 +327,7 @@ DEBUG_BOOL(PHARO_T1_DISAGREE_DUMP)        // x86 coverage diag: on a prescan/emi
 DEBUG_BOOL(PHARO_T1_RETPRELUDE_STATS)     // B0.5 sizing: tally per-method return-op count + emitted bytes across a run; dump histogram + saveable-bytes at exit.  Measurement only, no codegen effect.
 DEBUG_BOOL(PHARO_T1_SHARED_RETPRELUDE)    // out-of-line-dispatch B0.5 (docs/out-of-line-dispatch-design.md): route EVERY real non-block arm64 method's return ops to ONE zone-GLOBAL shared return-prelude+epilogue stub (a standalone never-freed MAP_JIT page), via `mov x16,stub; br x16` (x30 stays the live return link — no bl).  Single-return methods shrink too (~1.8% total zone).  Disabled under per-method VERIFY knobs (the VERIFY epilogue needs g_codeStartLabel) -> falls back to inline.  Opt-in; knob-off byte-identical.  Zone/i-cache win, latency-neutral.  (B0 was the per-method >=2-return precursor; B0.5 supersedes it.)
 DEBUG_INT(PHARO_T1_TOS_MASK, -1)          // bit per converted family (-1 = all): per-term A/B + miscompile bisect. Note: all-on (-1) is net-NEGATIVE; the loop-body subset 101 (Push|Dup|PopStore|Arith) is perf-NEUTRAL (measured) — see PHARO_T1_TOS_REG
+DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ)             // T1: a SmallInteger compare followed by a forward conditional jump materializes the Boolean again (no cmp + b.cond fusion)
 DEBUG_BOOL(PHARO_T1_TOS_POISON)           // movz x26,#0xDEAD at every invalidation point — stale-valid consumers crash deterministically
 DEBUG_BOOL(PHARO_T1_TOS_VERIFY)           // before every cache-consuming emit: ldur/cmp/b.eq/brk — THE net for the valid-but-stale direction
 DEBUG_BOOL(PHARO_T1_REGSTACK_CENSUS)      // Phase-1 go/no-go measurement (docs/t1-codegen-plan.md): per compiled method, count how many operand loads a static stack-to-register map could keep out of memory (removable = consumed by inlined arith within a straight-line run, no send/merge). Pure measurement, no codegen change. Prints [REGSTACK-CENSUS] at JIT-stats dump.
@@ -479,6 +481,7 @@ DEBUG_BOOL(PHARO_NO_MULTISLOT_GETTER)
 DEBUG_BOOL(PHARO_NO_OSR)
 DEBUG_BOOL(PHARO_NO_OSR_RECOMPILE)
 DEBUG_BOOL(PHARO_OSR_TRACE)                  // trace the first 20 OSR checks at backward jumps (method, compiled?, block?)
+DEBUG_BOOL(PHARO_OBJ_AS_METHOD_TRACE)          // trace the first 40 objects-as-methods dispatches (run:with:in:) and primitive 188 calls
 DEBUG_BOOL(PHARO_NO_QUEUE_COMPILE)
 DEBUG_BOOL(PHARO_NO_RESUME)
 DEBUG_BOOL(PHARO_NO_RETLIT)

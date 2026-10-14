@@ -1577,6 +1577,12 @@ private:
     /// Flush JIT inline caches and mega cache.
     /// Must be called after GC (compaction moves objects, invalidating cached Oops),
     /// after become:, and after method changes.
+    void recheckBlockValueOverride();
+    // While FullBlockClosure>>value is overridden: must this special
+    // #value send look the method up?  Yes in a method that has machine
+    // code (Cog's JIT sends it), no in a cold one (Cog's interpreter takes
+    // its shortcut, and OCSpecialSelectorTest pins that).
+    bool specialValueNeedsLookup();
     void flushJITCaches() {
 #if PHARO_JIT_ENABLED
         if (jitRuntime_.isInitialized()) {
@@ -2194,7 +2200,8 @@ public:
     /// Called from ExitSendCached handlers when an IC hit goes through C++.
     /// callerMethod is the JIT method whose IC is being filled (for debug only).
     void upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount,
-                        Oop callerMethod = Oop::fromRawBits(0));
+                        Oop callerMethod = Oop::fromRawBits(0),
+                        const Oop* sendSp = nullptr);
 
     /// Method lookup for T2 inline send helper.
     /// Probes method cache first, falls back to full hierarchy lookup.

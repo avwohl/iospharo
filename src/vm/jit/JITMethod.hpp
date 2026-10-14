@@ -319,9 +319,18 @@ constexpr uint64_t kMcfBlockValueMethod = 0x20000;
 constexpr uint64_t kMcfBlockNLR = 0x40000;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
+// PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and
+// native returns (diagnostic; printed with the JIT stats).
+inline uint64_t g_mcfCountCalls = 0, g_mcfCountBlockCalls = 0, g_mcfCountRets = 0;
 // Class indices for T1's inline String = (set by initializeClassIndexCache).
 inline uint32_t g_byteStringClassIndex = 0;
 inline uint32_t g_byteSymbolClassIndex = 0;
+// FullBlockClosure>>value / value: are not the standard primitive-207
+// methods (a method proxy or a user override is installed).  Compiled
+// special #value sites then send with a full lookup, as Cog's JIT does;
+// the interpreter keeps its shortcut, as Cog's interpreter does
+// (OCSpecialSelectorTest pins that).  Set by recheckBlockValueOverride.
+inline uint8_t g_blockValueOverridden = 0;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
 inline uint64_t g_mcfBlockStub = 0;

@@ -10,7 +10,13 @@
    its sender, temps and stack as image code would see them;
  - blocks with a non-local return are called natively and must still return
    to the right activation, and their local returns must deliver their value;
- - super sends and 3+ argument sends exit or call natively through a helper.
+ - super sends and 3+ argument sends exit or call natively through a helper;
+ - primitive 188 (withArgs:executeMethod:, valueWithReceiver:arguments:) ran
+   BlockClosure>>value's primitive with method_ set to BlockClosure>>value,
+   so the caller's frame was recorded with the wrong method; after a process
+   switch it resumed as BlockClosure>>value on a CompiledMethod (DNU
+   #numArgsError:).  Method proxies (methodproxies, OCSpecialSelectorTest)
+   reach it through valueUnpreemptively.
 
  Written 2026-10-14."!
 
@@ -85,6 +91,14 @@ testLazyOuterContextReadsLiveValues
   self assert: ctx isDead.
   ctx := self repeat: [ [ :x | | t b | t := x * 2. b := [ ^ t ]. b outerContext sender ] value: 3 ].
   self assert: ctx notNil!
+
+testExecuteMethodOnBlockAcrossProcessSwitch
+  | r |
+  r := OrderedCollection new.
+  [ 30 timesRepeat: [ Processor yield ] ] forkAt: Processor activePriority.
+  1 to: 20 do: [ :i |
+    r add: ((BlockClosure >> #value) valueWithReceiver: [ Processor yield. i ] arguments: #()) ].
+  self assert: r asArray equals: (1 to: 20) asArray!
 
 testSuperAndLongSends
   self assert: (self repeat: [ self three: 1 with: 2 and: 3 ]) equals: 6.
