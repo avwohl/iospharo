@@ -21202,14 +21202,22 @@ Oop Interpreter::lazyOuterContext() {
     // The temps (arguments included) are copied, so a context whose frame
     // returns before any sync still shows its arguments and its temps as of
     // block creation, as the old snapshot did.
-    memory_.storePointer(1, context, Oop::fromSmallInteger(ipOffset + 1));
-    memory_.storePointer(3, context, method_);
-    memory_.storePointer(4, context, closure_);
-    memory_.storePointer(5, context, receiver_);
+    // A young context (the usual case) needs no store barrier: write it
+    // directly, as createFullBlockWithLiteral does for a young closure.
+    const bool youngCtx = memory_.isYoung(context);
+    ObjectHeader* ctxHdr = context.asObjectPtr();
+    auto put = [&](size_t k, Oop v) {
+        if (youngCtx) ctxHdr->slots()[k] = v;
+        else memory_.storePointer(k, context, v);
+    };
+    put(1, Oop::fromSmallInteger(ipOffset + 1));
+    put(3, method_);
+    put(4, closure_);
+    put(5, receiver_);
     int copied = 0;
     for (; copied < numTemps && (size_t)(6 + copied) < contextSize; copied++)
-        memory_.storePointer(6 + copied, context, framePointer_[1 + copied]);
-    memory_.storePointer(2, context, Oop::fromSmallInteger(copied));
+        put(6 + copied, framePointer_[1 + copied]);
+    put(2, Oop::fromSmallInteger(copied));
     currentFrameMaterializedCtx_ = context;
     lazyCtxPending_ = true;
     return context;
