@@ -175,6 +175,7 @@ DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native ret
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)
 DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)           // MCF native calls refuse at frame depth 0 (the behaviour before 2026-10-14)
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)          // MCF: naked ExtSend/ExtSuperSend take the generic bytecode exit (no return memo) and methods with a super send stay stubs
+DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)          // MCF: naked ExtSend/ExtSuperSend never call natively through pharo_mcf_extsend (always the send exit)
 DEBUG_STR(PHARO_MCF_WATCH_SEL)                 // log why mcfActivate does not make methods with this selector native-callable
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)            // MCF bisect: no native block call at value / value: sites
 DEBUG_BOOL(PHARO_MCF_NO_EQ)                    // MCF bisect: emit == and ~~ as sends again (no inline identity compare)

@@ -5270,6 +5270,12 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
                     static_assert((1ULL << 60) & 0xFFFF000000000000ULL,
                                   "bit 60 must lie within FLAGS_MASK");
                     constexpr uint64_t FLAGS_MASK = 0xFFFF000000000000ULL;
+                    // selectorBits comes back from selBitsArray (a GC root,
+                    // updated by this GC).  Leaving it 0 disarmed the MCF
+                    // megacache probe, which needs the site's selector, at
+                    // every megamorphic site for the rest of the run after
+                    // the first full GC (lexicon: 7.5M exits, 2026-10-14).
+                    const uint64_t* sba = m->selBitsArray();
                     for (uint32_t i = 0; i < m->numICEntries; i++) {
                         uint64_t* slots = reinterpret_cast<uint64_t*>(
                             icStart + i * IC_BYTES_PER_SITE);
@@ -5278,7 +5284,7 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
                             slots[e * 3 + 1] = 0;                 // method
                             slots[e * 3 + 2] &= FLAGS_MASK;       // extras: flags only
                         }
-                        slots[IC_SELBITS_SLOT]  = 0;              // selectorBits
+                        slots[IC_SELBITS_SLOT]  = sba ? sba[i] : 0;   // selectorBits
                         slots[IC_HITCOUNT_SLOT] = 0;              // hitCount
                     }
                 }

@@ -48,6 +48,15 @@ extern "C" void pharo_mcf_verify_push(jit::JITState* st) {
     st->interp->mcfVerifyPush(st);
 }
 
+// Called from T1 code at a naked ExtSend / ExtSuperSend, which have no
+// inline cache: answers the call-cache entry of the method the send runs
+// when T1 code may call it natively, else nullptr (the send then exits to
+// the interpreter with a return memo).  desc = literal index | nArgs << 8
+// | super << 16.  Looks up only; no Smalltalk runs, nothing allocates.
+extern "C" void* pharo_mcf_extsend(jit::JITState* st, uint32_t desc) {
+    return st->interp->mcfExtSendTarget(st, desc);
+}
+
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
@@ -473,6 +482,38 @@ bool Interpreter::mcfActivate(Oop method) {
     }
     mcfRun(jm, entry);
     return true;
+}
+
+void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
+    const int litIdx = desc & 0xFF;
+    const int nArgs = (desc >> 8) & 0xFF;
+    const bool super = (desc >> 16) & 1;
+    Oop method = st->method;
+    if (!method.isObject() || method.rawBits() < 0x10000) return nullptr;
+    ObjectHeader* mo = method.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger() || litIdx >= (int)(hdr.asSmallInteger() & 0x7FFF))
+        return nullptr;
+    Oop selector = mo->slotAt(1 + litIdx);
+    Oop rcv = st->sp[-(nArgs + 1)];
+    Oop cls;
+    if (super) {
+        // A naked super send is the method form (blocks use directed super
+        // sends): the superclass of the method's class, as the interpreter.
+        if (mo->classIndex() != compiledMethodClassIndex_) return nullptr;
+        Oop mc = methodClassOf(method);
+        if (!mc.isObject() || mc.isNil()) return nullptr;
+        cls = superclassOf(mc);
+    } else {
+        cls = memory_.classOf(rcv);
+    }
+    if (!cls.isObject() || cls.isNil()) return nullptr;
+    Oop target = lookupMethodForSend(selector, cls);
+    if (!target.isObject() || target.isNil()) return nullptr;
+    jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
+    if (!e || !e->jm || e->prim) return nullptr;
+    if (!mcfReceiverOk(e->jm, rcv)) return nullptr;
+    return e;
 }
 
 // A send left machine code for this method.  When it is a primitive T1 code

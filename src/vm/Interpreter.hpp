@@ -1839,6 +1839,7 @@ public:
     void mcfInit();
     bool mcfPrologueIsPrimitive(Oop method);
     void mcfNotePrimitiveTarget(Oop method);
+    void* mcfExtSendTarget(jit::JITState* st, uint32_t desc);
     void mcfVerifyMemo(const SavedFrame& f, const char* site);
     int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
     void mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where);

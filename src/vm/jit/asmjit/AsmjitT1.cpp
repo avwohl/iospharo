@@ -52,6 +52,7 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
 // Machine-code frames: run a primitive from T1 code (MachineCodeFrames.cpp).
 extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
+extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -11669,6 +11670,53 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
                 a.add(a64::x5, a64::x5,
                       asmjit::Imm(bcOffsetBase + globalIdx));
+                }
+                if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)
+                        && g_mcfCallStub != 0) {
+                    // Machine-code frames: no inline cache here, so ask
+                    // pharo_mcf_extsend for the target's call-cache entry
+                    // and call it natively through the shared stub; any
+                    // refusal takes the send exit below.
+                    using namespace asmjit::a64;
+                    asmjit::Label extExit = a.new_label();
+                    asmjit::Label extCont = a.new_label();
+                    const uint32_t desc = (uint32_t)(bcReal[i + 1] >> 3)
+                        | ((uint32_t)(bcReal[i + 1] & 7) << 8)
+                        | (op == SistaV1::ExtSuperSend ? (1u << 16) : 0u);
+                    a.str(x5, ptr(x0, OFF_IP));      // for GC during the lookup
+                    emitSyncSpToState(a);
+                    a.stp(x0, x30, ptr_pre(sp, -16));
+                    a.mov(w1, asmjit::Imm(desc));
+                    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_extsend));
+                    a.blr(x16);
+                    a.mov(x7, x0);
+                    a.ldp(x0, x30, ptr_post(sp, 16));
+                    a.cbz(x7, extExit);
+                    a.ldp(x6, x9, ptr(x7));                  // method, callee JM
+                    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                    a.add(x13, x13, asmjit::Imm(globalIdx + 2));   // ip after the send
+                    a.adr(x14, extCont);
+                    a.adr(x15, extExit);
+                    a.mov(w12, asmjit::Imm((bcReal[i + 1] & 7) | (callerArgCount << 8)));
+                    a.mov(x16, asmjit::Imm(g_mcfCallStub));
+                    a.br(x16);
+                    a.bind(extExit);
+                    // The stub's refusal path: x5 was clobbered, recompute.
+                    a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                    a.add(x5, x5, asmjit::Imm(globalIdx));
+                    a.str(x5, ptr(x0, OFF_IP));
+                    a.str(xzr, ptr(x0, OFF_ICDATAPTR));
+                    a.mov(w3, Imm((int)(bcReal[i + 1] & 7)));
+                    a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+                    a.mov(w3, Imm(EXIT_SEND));
+                    a.str(w3, ptr(x0, OFF_EXIT));
+                    emitSyncSpToState(a);
+                    a.ret(x30);
+                    a.bind(extCont);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i += 1;
+                    continue;
                 }
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                 if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)) {
