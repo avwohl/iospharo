@@ -5119,8 +5119,10 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.ldr(x19, ptr(x7, L.mcJM));
         a.str(x19, ptr(x0, OFF_JITMETHOD));
     }
-    a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-    a.str(x8, ptr(x0, OFF_IP));
+    if (!::pharo::mcfLazyView() || GET_DEBUG_BOOL(PHARO_MCF_KEEP_IP_STORE)) {
+        a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+        a.str(x8, ptr(x0, OFF_IP));
+    }
     a.mov(x26, x1);                           // TOS mirror = the result
     // No exitReason store: every exit sets its own reason.
     if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)) {
@@ -5473,9 +5475,13 @@ static void emitMcfCalleeView(asmjit::a64::Assembler& a) {
     // entry.bcEndOff packs the bytecode end, start and temp count
     // (mcfPackBcInfo).  x17 = the temp count on exit; clobbers x10.
     a.ldr(x10, ptr(x7, 16));
-    a.ubfx(x17, x10, asmjit::Imm(24), asmjit::Imm(24));
-    a.add(x17, x6, x17);
-    a.str(x17, ptr(x0, OFF_IP));                   // bytecode start
+    // The state's ip is written by every exit and helper call that reads
+    // it (they store their own bytecode), so the call need not set it.
+    if (!lazy || GET_DEBUG_BOOL(PHARO_MCF_KEEP_IP_STORE)) {
+        a.ubfx(x17, x10, asmjit::Imm(24), asmjit::Imm(24));
+        a.add(x17, x6, x17);
+        a.str(x17, ptr(x0, OFF_IP));               // bytecode start
+    }
     if (!lazy) {
         a.and_(x17, x10, asmjit::Imm(0xFFFFFF));
         a.str(x17, ptr(x0, OFF_MCF_BCEND_OFF));
