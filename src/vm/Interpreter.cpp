@@ -9626,6 +9626,18 @@ void Interpreter::returnValue(Oop value) {
                             doRec("RET-INTO", sender.rawBits(), origSp,
                                   (int)(stackPointer_ - framePointer_ - 1),
                                   (int)(instructionPointer_ - g_doBase), g_stepNum);
+#if PHARO_JIT_ENABLED
+                        // Returned into a context: its method continues in
+                        // machine code when it has some (mcfRun re-enters
+                        // on its own when this return came from there).
+                        // Otherwise every caller below a non-local return
+                        // through ensure: finished interpreted -- 16% of
+                        // lexicon, all of it after Symbol class>>intern:.
+                        if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)) {
+                            mcfReturnedIntoContext_ = true;
+                            mcfResumeAfterReturn(nullptr);
+                        }
+#endif
                         return true;
                     }
                 }
@@ -21794,7 +21806,11 @@ Oop Interpreter::materializeFrameStackImpl() {
             // Get Context class and its index in the class table
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
             // Use indexOfClass to get the class table index, NOT the object's own classIndex (which is the metaclass)
-            uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
+            uint32_t classIndex = contextClassIndex_;   // cached: indexOfClass per frame was a hash probe
+            if (classIndex == 0) {
+                classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
+                contextClassIndex_ = classIndex;
+            }
             if (classIndex == 0) {
                 classIndex = 36;  // Fallback to typical Context class index
             }
@@ -21834,9 +21850,17 @@ Oop Interpreter::materializeFrameStackImpl() {
 
         // Initialize context (sender via cycle guard)
         setSenderSafe(context, sender);
-        memory_.storePointer(1, context, Oop::fromSmallInteger(pc));        // pc
+        // A context just allocated is young (the usual case): its slots need
+        // no store barrier, and nothing allocates before they are filled.
+        const bool rawCtx = freshContext && memory_.isYoung(context);
+        Oop* const rawSlots = context.asObjectPtr()->slots();
+        auto ctxPut = [&](size_t k, Oop v) {
+            if (rawCtx) rawSlots[k] = v;
+            else memory_.storePointer(k, context, v);
+        };
+        ctxPut(1, Oop::fromSmallInteger(pc));                               // pc
         // stackp is set below after we know how many items we saved
-        memory_.storePointer(3, context, frame.savedMethod);                // method
+        ctxPut(3, frame.savedMethod);                // method
         // PHARO_BLOCK_SAVE_PROBE: flag malformed contexts — a CompiledBlock
         // method with a nil closure builds a Context that lies about being
         // a method activation (slot 4 nil), breaking home/sender resolution
@@ -21863,8 +21887,8 @@ Oop Interpreter::materializeFrameStackImpl() {
                             : "imm", i);
             }
         }
-        memory_.storePointer(4, context, frame.savedClosure);                // closureOrNil
-        memory_.storePointer(5, context, frame.savedReceiver);              // receiver
+        ctxPut(4, frame.savedClosure);                // closureOrNil
+        ctxPut(5, frame.savedReceiver);              // receiver
 
         // Copy temps AND expression stack items from the inline stack.
         // The saved FP points to the receiver; temps start at savedFP + 1.
@@ -21877,7 +21901,7 @@ Oop Interpreter::materializeFrameStackImpl() {
             size_t ctxCap = context.asObjectPtr()->slotCount();
             for (int t = 0; t < numTemps && (size_t)(6 + t) < ctxCap; t++) {
                 Oop temp = *(frame.savedFP + 1 + t);
-                memory_.storePointer(6 + t, context, temp);
+                ctxPut(6 + t, temp);
                 savedCount++;
             }
 
@@ -21926,7 +21950,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                                 i, e, exprCount, ctxCap, numTemps);
                         break;
                     }
-                    memory_.storePointer(6 + numTemps + e, context, *(exprStart + e));
+                    ctxPut(6 + numTemps + e, *(exprStart + e));
                     savedCount++;
                 }
             }
@@ -21952,7 +21976,7 @@ Oop Interpreter::materializeFrameStackImpl() {
         } else {
             // Initialize temps to nil
             for (int t = 0; t < numTemps; t++) {
-                memory_.storePointer(6 + t, context, memory_.nil());
+                ctxPut(6 + t, memory_.nil());
                 savedCount++;
             }
         }

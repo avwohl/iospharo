@@ -1673,7 +1673,22 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             // returnValue at any depth, as the interpreter does.
             if (!blockFrame && (depth == 0
                                 || savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX)) {
+                mcfReturnedIntoContext_ = false;
                 returnFromMethodSlow(value);
+                // Returned into a context (depth 0): continue it here when its
+                // method has machine code, as mcfResumeAfterReturn does.
+                if (mcfReturnedIntoContext_ && running_ && frameDepth_ == 0
+                        && checkCountdown_ > 0 && method_.isObject()) {
+                    mcfReturnedIntoContext_ = false;
+                    jit::JITMethod* rj = jitRuntime_.methodMap().lookup(method_.rawBits());
+                    if (rj && rj->isExecutable() && mcfIsMethodFrame() && mcfReceiverOk(rj, receiver_)) {
+                        if (void* re = mcfEntryFor(rj, instructionPointer_)) {
+                            jm = rj;
+                            entry = re;
+                            continue;
+                        }
+                    }
+                }
                 mcfActive_ = false;
                 return;
             }

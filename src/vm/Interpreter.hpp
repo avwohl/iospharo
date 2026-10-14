@@ -1869,6 +1869,9 @@ public:
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
     bool mcfCacheableOop(Oop m) const;
     bool atInterruptPoint() const;
+    // Set by returnValue when a return resumed a sender context; mcfRun then
+    // continues that context's method in machine code.
+    bool mcfReturnedIntoContext_ = false;
     bool mcfConstantReturn(Oop method, Oop& value);
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
     bool mcfTinyShape(Oop method, uint64_t& prim);
