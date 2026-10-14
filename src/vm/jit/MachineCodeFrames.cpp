@@ -269,6 +269,21 @@ int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_PRIM_CENSUS), 0)) {
         static uint64_t counts[1024], total = 0;
         if (primIndex >= 0 && primIndex < 1024) counts[primIndex]++;
+        static std::unordered_map<std::string, uint64_t> byCaller;
+        if (primIndex == 60) {
+            mcfDeriveView(*st);
+            byCaller[memory_.selectorOf(st->method) + " ip-op=" + std::to_string(st->ip ? st->ip[-1] : -1)]++;
+            if ((total & 0xFFFFFF) == 0) {
+                std::vector<std::pair<uint64_t, std::string>> v;
+                uint64_t sum = 0;
+                for (auto& kv : byCaller) { v.push_back({kv.second, kv.first}); sum += kv.second; }
+                std::sort(v.rbegin(), v.rend());
+                fprintf(stderr, "[MCF-PRIM60] keys=%zu sum=%llu\n", v.size(), (unsigned long long)sum);
+                for (size_t k = 0; k < v.size() && k < 8; k++)
+                    fprintf(stderr, "[MCF-PRIM60] %llu from #%s\n",
+                            (unsigned long long)v[k].first, v[k].second.c_str());
+            }
+        }
         if ((++total & 0x3FFFFFF) == 0) {
             for (int p = 0; p < 1024; p++)
                 if (counts[p] > total / 200) {

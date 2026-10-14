@@ -5647,6 +5647,19 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
     using namespace asmjit::a64;
     asmjit::Label slow = a.new_label();
     asmjit::Label result = a.new_label();   // x7 = result
+    // Slot count of the object at x1 into `cnt` (from header `hdr`): the
+    // header byte, or for 255 the overflow word before the header (large
+    // objects: a big dictionary's array).
+    auto slotCountTo = [&](const asmjit::a64::Gp& cnt, const asmjit::a64::Gp& hdr) {
+        asmjit::Label have = a.new_label();
+        a.lsr(cnt, hdr, asmjit::Imm(56));
+        a.cmp(cnt, asmjit::Imm(255));
+        a.b_ne(have);
+        a.ldur(cnt, ptr(x1, -8));
+        a.lsl(cnt, cnt, asmjit::Imm(8));
+        a.lsr(cnt, cnt, asmjit::Imm(8));
+        a.bind(have);
+    };
     a.ldur(x1, ptr(x25, -8 * (nArgs + 1)));        // receiver
     if (nArgs == 0) {
         asmjit::Label p62 = a.new_label(), bytes = a.new_label();
@@ -5666,9 +5679,7 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.tst(x1, asmjit::Imm(7));
         a.b_ne(slow);
         a.ldr(x3, ptr(x1));
-        a.lsr(x7, x3, asmjit::Imm(56));            // slot count
-        a.cmp(x7, asmjit::Imm(255));
-        a.b_eq(slow);
+        slotCountTo(x7, x3);                       // slot count
         a.ubfx(x4, x3, asmjit::Imm(24), asmjit::Imm(5));   // format
         a.cmp(x4, asmjit::Imm(2));
         a.b_ne(bytes);
@@ -5722,9 +5733,7 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.cmp(x3, asmjit::Imm(1));
         a.b_lt(slow);
         a.ldr(x4, ptr(x1));
-        a.lsr(x8, x4, asmjit::Imm(56));
-        a.cmp(x8, asmjit::Imm(255));
-        a.b_eq(slow);
+        slotCountTo(x8, x4);
         a.ubfx(x4, x4, asmjit::Imm(24), asmjit::Imm(5));
         a.cmp(x4, asmjit::Imm(2));
         a.b_ne(atBytes);
@@ -5765,9 +5774,7 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.b_lt(slow);
         a.ldr(x8, ptr(x1));
         a.tbnz(x8, 23, slow);                      // immutable
-        a.lsr(x9, x8, asmjit::Imm(56));
-        a.cmp(x9, asmjit::Imm(255));
-        a.b_eq(slow);
+        slotCountTo(x9, x8);
         a.ubfx(x8, x8, asmjit::Imm(24), asmjit::Imm(5));
         // 61 at:put: on pointers without fixed fields.
         a.cmp(w10, asmjit::Imm(61));
