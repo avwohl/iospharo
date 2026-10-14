@@ -319,6 +319,9 @@ constexpr uint64_t kMcfBlockValueMethod = 0x20000;
 constexpr uint64_t kMcfBlockNLR = 0x40000;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
+// Class indices for T1's inline String = (set by initializeClassIndexCache).
+inline uint32_t g_byteStringClassIndex = 0;
+inline uint32_t g_byteSymbolClassIndex = 0;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
 inline uint64_t g_mcfBlockStub = 0;

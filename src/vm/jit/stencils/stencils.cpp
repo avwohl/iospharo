@@ -958,7 +958,10 @@ extern "C" void stencil_equalSmallInt(JITState* s) {
     // `key = arg` site (dict 50K bench).  PHARO_NO_BYTESTRING_EQ_INLINE=1
     // to opt out via stencil rebuild (no runtime gate to keep hot
     // path tight).
-    if ((a.bits & 7) == 0 && a.bits >= 0x10000
+    // DISABLED 2026-10-14: any two byte objects matched, so large integers
+    // of opposite sign and 'ab' = #[97 98] answered true.  A stencil has no
+    // class indices to restrict it to String>>='s case; the send is right.
+    if (false && (a.bits & 7) == 0 && a.bits >= 0x10000
             && (b.bits & 7) == 0 && b.bits >= 0x10000) {
         uint64_t hdr_a = *reinterpret_cast<uint64_t*>(a.bits);
         uint64_t hdr_b = *reinterpret_cast<uint64_t*>(b.bits);

@@ -6194,6 +6194,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Headers.
             a.ldr(x5, ptr(x1));                // header_a
             a.ldr(x6, ptr(x4));                // header_b
+            // Only String>>='s case: a ByteString receiver and a ByteString
+            // or ByteSymbol argument.  Any byte object matched before, so
+            // `(2 raisedTo: 100) = (2 raisedTo: 100) negated` (large
+            // integers are bytes) and `'ab' = #[97 98]` answered true.
+            if (g_byteStringClassIndex == 0) {
+                a.b(bsBail);
+            } else {
+                a.and_(w7, w5, asmjit::Imm(0x3FFFFF));
+                a.mov(w8, asmjit::Imm(g_byteStringClassIndex));
+                a.cmp(w7, w8);
+                a.b_ne(bsBail);
+                asmjit::Label argOk = a.new_label();
+                a.and_(w7, w6, asmjit::Imm(0x3FFFFF));
+                a.cmp(w7, w8);
+                a.b_eq(argOk);
+                a.mov(w8, asmjit::Imm(g_byteSymbolClassIndex));
+                a.cmp(w7, w8);
+                a.b_ne(bsBail);
+                a.bind(argOk);
+            }
             // fmt_a / fmt_b in 16-23
             a.lsr(x7, x5, asmjit::Imm(24));
             a.and_(x7, x7, asmjit::Imm(0x1F));

@@ -20416,6 +20416,10 @@ void Interpreter::initializeClassIndexCache() {
     // interned).  For any non-Symbol arg the primitive falls back to the correct
     // Smalltalk refersToLiteral: (value-equality via literalEqual:).
     byteSymbolClassIndex_ = lookupClassIndexByName("ByteSymbol");
+#if PHARO_JIT_ENABLED
+    jit::g_byteSymbolClassIndex = byteSymbolClassIndex_;
+    jit::g_byteStringClassIndex = lookupClassIndexByName("ByteString");
+#endif
     fullBlockClosureClassIndex_ = lookupClassIndexByName("FullBlockClosure");
 #if PHARO_JIT_ENABLED
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;

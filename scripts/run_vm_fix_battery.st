@@ -28,7 +28,8 @@ s := WriteStream on: String new.
 #( 'test_warpblt.st' 'test_pointsto.st' 'test_bitblt_lowdepth.st'
    'test_bitblt_depth.st' 'test_bitblt_translucent.st'
    'test_bitblt_depth_matrix.st' 'test_nonlocal_return.st'
-   'test_directory_enumeration.st' 'test_deep_stack_unwind.st' )
+   'test_directory_enumeration.st' 'test_deep_stack_unwind.st'
+   'test_jit_semantics.st' )
   do: [ :n |
     | ref |
     ref := dir / n.
@@ -42,7 +43,7 @@ s := WriteStream on: String new.
 names := #( "our behaviour tests"
             #WarpBltTest #ObjectPointsToTest #BitBltLowDepthTest
             #BitBltDepthMatrixTest #NonLocalReturnActivationTest
-            #DirectoryEnumerationTest #DeepStackUnwindTest
+            #DirectoryEnumerationTest #DeepStackUnwindTest #JITSemanticsTest
             "stock classes over the same primitives"
             #BitBltTest #FormTest #ColorTest #ColorFormTest
             #GIFReadWriterTest #BMPReadWriterTest #PNGReadWriterTest
