@@ -1296,8 +1296,8 @@ void Interpreter::mcfInit() {
     // Read by mcfBuildStubs (the primitive stub's Semaphore path).
     jit::g_mcfSpecialObjectsAddr = memory_.specialObjectsArrayAddr();
     jit::g_mcfFinalizationFlagAddr = &finalizationCheckAfterGC_;
+    jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;   // the stubs bake it
     if (::pharo::mcfEnabled()) jit::mcfBuildStubs();
-    jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
     jit::g_mcfContextClassIndex = contextClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),
     // a 128 KB memset the default mode must not pay.
@@ -1547,6 +1547,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         c.mcfBlockStubAddr = jit::g_mcfBlockStub;
         for (int k = 0; k < 3; k++) c.mcfPrimStubAddr[k] = jit::g_mcfPrimStub[k];
         c.mcfTinyStubAddr = jit::g_mcfTinyStub;
+        c.mcfBlockCreateStubAddr = jit::g_mcfBlockCreateStub;
         mcfConstEpoch_ = 0;
     }
     jit::JITState& st = *mcfState_;

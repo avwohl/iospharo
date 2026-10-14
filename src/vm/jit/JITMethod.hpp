@@ -410,6 +410,8 @@ inline void mcfClearSiteCaches() {
     for (uint64_t* c : ch) std::memset(c, 0, kMcfSiteCacheChunk * 2 * sizeof(uint64_t));
 }
 inline uint64_t g_mcfBlockStub = 0;
+// MCF: closure creation in machine code (emitMcfBlockCreateStub).
+inline uint64_t g_mcfBlockCreateStub = 0;
 void mcfBuildStubs();
 
 struct JITMethod {

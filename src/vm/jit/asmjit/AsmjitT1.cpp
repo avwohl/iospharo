@@ -4965,6 +4965,7 @@ constexpr int OFF_MCF_CALL_STUB    = 432;
 constexpr int OFF_MCF_BLOCK_STUB   = 440;
 constexpr int OFF_MCF_PRIM_STUB    = 448;   // + 8 * nArgs
 constexpr int OFF_MCF_TINY_STUB    = 472;
+constexpr int OFF_MCF_BLKCREATE_STUB = 480;
 static_assert(OFF_MCF_FRAMES == offsetof(JITState, mcfFrames), "OFF_MCF_FRAMES");
 static_assert(OFF_MCF_DEPTH_PTR == offsetof(JITState, mcfFrameDepthPtr), "OFF_MCF_DEPTH_PTR");
 static_assert(OFF_MCF_MATCTX_PTR == offsetof(JITState, mcfMatCtxPtr), "OFF_MCF_MATCTX_PTR");
@@ -6246,6 +6247,154 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
     a.ret(x30);
 }
 static void emitMcfInlinePrims0(asmjit::a64::Assembler& a) { emitMcfInlinePrims(a, 0); }
+
+// Machine-code frames: PushFullBlock without the C call, for the common
+// case -- createFullBlockWithLiteral + lazyOuterContext done here.
+// In: x1 = the CompiledBlock literal, w2 = numCopied | receiverOnStack << 8
+// | numTemps << 16 (of the code making the block), x3 = the frame's pc as
+// a SmallInteger (the ip after the PushFullBlock).  Out: x7 = the closure,
+// pushed (and in x26), or 0 with nothing changed but possibly the frame's
+// new context: then the C call (which finds and reuses that context).
+// Only at frame depth > 0 (at 0 the outer context is activeContext_), only
+// from eden (no GC), and the frame's context, when it has one, must be its
+// own (method, closure, receiver), as lazyOuterContext checks.  Clobbers
+// x1-x17; keeps x0, x19-x28 but x25/x26.
+static void emitMcfBlockCreateStub(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    const McfFrameLayout& L = g_mcfLayout;
+    asmjit::Label fail = a.new_label(), haveCtx = a.new_label(), mkClosure = a.new_label();
+    asmjit::Label fill = a.new_label(), filled = a.new_label(), tcopy = a.new_label();
+    asmjit::Label tdone = a.new_label(), cfill = a.new_label(), cdone = a.new_label();
+    asmjit::Label sizeOk = a.new_label(), csz = a.new_label();
+    mcfFieldLdr(a, x8, L.dirDepth, OFF_MCF_DEPTH_PTR, x16);
+    a.cbz(x8, fail);                                // depth 0: activeContext_
+    a.mov(x9, asmjit::Imm((uint64_t)&g_mcfContextClassIndex));
+    a.ldr(w9, ptr(x9));
+    a.cbz(w9, fail);
+    a.ldr(x14, ptr(x0, OFF_MCF_NIL));               // x14 = nil throughout
+    a.ldr(x15, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));   // this code's method
+    a.ldr(x13, ptr(x0, OFF_CLOSURE));               // this frame's closure
+    mcfFieldLdr(a, x8, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x16);
+    a.cmp(x8, x14);
+    a.b_ne(haveCtx);
+    // A lazy context for this frame: 6 + numTemps + max(32, stack + 8) slots.
+    a.ubfx(x4, x2, asmjit::Imm(16), asmjit::Imm(6));    // numTemps
+    a.add(x5, x22, x4, lsl(3));                     // first operand-stack slot
+    a.sub(x5, x25, x5);
+    a.asr(x5, x5, asmjit::Imm(3));                  // operand-stack depth
+    a.add(x5, x5, asmjit::Imm(8));
+    a.cmp(x5, asmjit::Imm(40));                     // depth > 32 -> depth + 8
+    a.b_hi(sizeOk);
+    a.mov(x5, asmjit::Imm(32));
+    a.bind(sizeOk);
+    a.add(x5, x5, x4);
+    a.add(x5, x5, asmjit::Imm(6));                  // slots
+    a.cmp(x5, asmjit::Imm(254));
+    a.b_hi(fail);
+    a.mov(x11, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+    a.ldr(x8, ptr(x11));                            // the context
+    a.add(x12, x8, x5, lsl(3));
+    a.add(x12, x12, asmjit::Imm(8));
+    a.mov(x10, asmjit::Imm((uint64_t)g_jitSurvivorStartCell));
+    a.ldr(x10, ptr(x10));
+    a.cmp(x12, x10);
+    a.b_hi(fail);
+    a.lsl(x10, x5, asmjit::Imm(56));
+    a.orr(x10, x10, asmjit::Imm(3ULL << 24));       // IndexableWithFixed
+    a.orr(x10, x10, x9);
+    a.str(x10, ptr(x8));
+    a.add(x6, x8, asmjit::Imm(8));
+    a.mov(x7, x5);
+    a.bind(fill);
+    a.cbz(x7, filled);
+    a.str(x14, ptr_post(x6, 8));
+    a.sub(x7, x7, asmjit::Imm(1));
+    a.b(fill);
+    a.bind(filled);
+    a.str(x12, ptr(x11));                           // commit
+    a.str(x3, ptr(x8, 8 + 8));                      // pc
+    a.lsl(x6, x4, asmjit::Imm(3));
+    a.orr(x6, x6, asmjit::Imm(1));
+    a.str(x6, ptr(x8, 8 + 16));                     // stackp = numTemps
+    a.stp(x15, x13, ptr(x8, 8 + 24));               // method, closureOrNil
+    a.str(x21, ptr(x8, 8 + 40));                    // receiver
+    a.mov(x6, asmjit::Imm(0));
+    a.bind(tcopy);
+    a.cmp(x6, x4);
+    a.b_hs(tdone);
+    a.ldr(x7, ptr(x22, x6, lsl(3)));
+    a.add(x10, x8, x6, lsl(3));
+    a.str(x7, ptr(x10, 8 + 48));
+    a.add(x6, x6, asmjit::Imm(1));
+    a.b(tcopy);
+    a.bind(tdone);
+    mcfFieldStr(a, x8, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x16, false);
+    a.b(mkClosure);
+    a.bind(haveCtx);
+    // Reuse only this activation's own context.
+    a.ldp(x10, x11, ptr(x8, 8 + 24));               // method, closure
+    a.cmp(x10, x15);
+    a.b_ne(fail);
+    a.cmp(x11, x13);
+    a.b_ne(fail);
+    a.ldr(x10, ptr(x8, 8 + 40));
+    a.cmp(x10, x21);
+    a.b_ne(fail);
+    a.bind(mkClosure);
+    a.mov(x10, asmjit::Imm((uint64_t)g_lazyCtxPendingAddr));
+    a.mov(w11, asmjit::Imm(1));
+    a.strb(w11, ptr(x10));                          // lazyCtxPending_
+    // The closure: 4 + numCopied slots.
+    a.and_(w5, w2, asmjit::Imm(0xFF));              // numCopied
+    a.add(x6, x5, asmjit::Imm(4));                  // slots
+    a.mov(x11, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+    a.ldr(x7, ptr(x11));                            // the closure
+    a.add(x12, x7, x6, lsl(3));
+    a.add(x12, x12, asmjit::Imm(8));
+    a.mov(x10, asmjit::Imm((uint64_t)g_jitSurvivorStartCell));
+    a.ldr(x10, ptr(x10));
+    a.cmp(x12, x10);
+    a.b_hi(csz);                                    // eden full: C (the context stays)
+    a.mov(w9, asmjit::Imm(g_mcfFbcClassIndex));
+    a.cbz(w9, csz);
+    a.lsl(x10, x6, asmjit::Imm(56));
+    a.orr(x10, x10, asmjit::Imm(3ULL << 24));
+    a.orr(x10, x10, x9);
+    a.str(x10, ptr(x7));
+    a.str(x12, ptr(x11));                           // commit
+    a.stp(x8, x1, ptr(x7, 8));                      // outerContext, compiledBlock
+    a.ldr(x10, ptr(x1, 8));                         // the block's header (SmallInteger)
+    a.lsr(x10, x10, asmjit::Imm(3 + 24));
+    a.and_(x10, x10, asmjit::Imm(0xF));             // numArgs
+    a.lsl(x10, x10, asmjit::Imm(3));
+    a.orr(x10, x10, asmjit::Imm(1));
+    // Receiver: popped when on the stack (it is on top), else this frame's.
+    {
+        asmjit::Label rcvDone = a.new_label();
+        a.mov(x11, x21);
+        a.tbz(w2, asmjit::Imm(8), rcvDone);
+        a.ldr(x11, ptr_pre(x25, -8));
+        a.bind(rcvDone);
+    }
+    a.stp(x10, x11, ptr(x7, 8 + 16));               // numArgs, receiver
+    // Copied values, popped last first into slots 4 + i.
+    a.add(x10, x7, x5, lsl(3));
+    a.add(x10, x10, asmjit::Imm(8 + 32));           // past the last copied slot
+    a.bind(cfill);
+    a.cbz(x5, cdone);
+    a.ldr(x11, ptr_pre(x25, -8));
+    a.str(x11, ptr_pre(x10, -8));
+    a.sub(x5, x5, asmjit::Imm(1));
+    a.b(cfill);
+    a.bind(cdone);
+    a.str(x7, ptr_post(x25, 8));                    // push
+    a.mov(x26, x7);
+    a.ret(x30);
+    a.bind(csz);
+    a.bind(fail);
+    a.mov(x7, asmjit::Imm(0));
+    a.ret(x30);
+}
 
 // Machine-code frames: a unary method of field-reading bytecodes answered
 // at the call site (kMcfTinyShape, decoded from x10 = entry.prim).  Called
@@ -13473,6 +13622,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE) || mcfBlockCreate)
                     && (ibcMax < 0 || g_ibcEmits < ibcMax);
                 if (inlineBlockCreate) g_ibcEmits++;
+                if (mcfBlockCreate && g_mcfBlockCreateStub != 0
+                        && !(flags & 0x40)) {           // needs the outer context
+                    // The machine-code closure creation (emitMcfBlockCreateStub);
+                    // its refusals fall through to the C call below.
+                    const int ctNumTemps = callerTempCount;   // this code's temps
+                    const int64_t pcAfter = (int64_t)(bcOffsetBase + globalIdx + 3 - 8) + 1;
+                    a.ldr(a64::x16, a64::ptr(a64::x19, (int)offsetof(JITMethod, literalsCache)));
+                    a.ldr(a64::x1, a64::ptr(a64::x16, 8 * litIdx));
+                    a.mov(a64::w2, asmjit::Imm((uint32_t)(flags & 0x3F)
+                                                | ((uint32_t)((flags >> 7) & 1) << 8)
+                                                | ((uint32_t)ctNumTemps << 16)));
+                    a.mov(a64::x3, asmjit::Imm((uint64_t)((pcAfter << 3) | 1)));
+                    a.str(a64::x30, a64::ptr_pre(a64::sp, -16));
+                    a.ldr(a64::x16, a64::ptr(a64::x0, OFF_MCF_BLKCREATE_STUB));
+                    a.blr(a64::x16);
+                    a.ldr(a64::x30, a64::ptr_post(a64::sp, 16));
+                    a.cbnz(a64::x7, bcrDone);
+                }
                 if (inlineBlockCreate) {
                     // INLINE block create (2026-06-11, the dict-bench
                     // per-at: lever): call jit_rt_block_create via blr
@@ -15460,6 +15627,11 @@ void pharo::jit::mcfBuildStubs() {
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
     if (!g_mcfTinyStub) g_mcfTinyStub = buildMcfStubPage(emitMcfTinyShapes);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
+    if (!g_mcfBlockCreateStub && g_jitEdenFreeCell && g_jitSurvivorStartCell
+            && g_lazyCtxPendingAddr && g_mcfFbcClassIndex
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_BLOCK_CREATE)
+            && !GET_DEBUG_BOOL(PHARO_NO_LAZY_OUTER))
+        g_mcfBlockCreateStub = buildMcfStubPage(emitMcfBlockCreateStub);
     if (GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) {
         static bool stubsMapped = false;
         if (!stubsMapped) {
