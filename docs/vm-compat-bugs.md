@@ -14,10 +14,15 @@ a ProcessLocalVariable around 30 ms Delays.  Measured with
   0 failures on our VM and 0 on stock Cog.
 
 So it needs the runner and the fake-GUI cycle loop (a priority-40 World
-cycle every 25 ms) together, and the JIT plays no part.  Not yet known
-which assertion fails: the runner records no stack for a failure raised
-in a forked process.  Next step: log checkLocal: actual/expected and the
-active process from inside the prepped image.
+cycle every 25 ms) together, and the JIT plays no part.
+
+Instrumented (checkLocal: logging actual/expected and the stop flags,
+prepped into the image): no check ever fails; the failing runs log
+`p1 true p2 false`.  The second process never finishes -- it stays in one
+of its 30 ms Delays for the whole 5 s the test waits.  c6e7182a (switch
+process only at interrupt points) cut the rate from about 1 in 3 to 1 in
+8; the lost Delay wakeup remains.  Next step: trace the DelayScheduler
+(timingSemaphore signals, the VM timer check) on a failing run.
 
 ## ~~arm64 JIT crashes (SIGBUS) on a runtime-compiled hot loop~~ — FIXED `260692fa` (2026-08-19), VERIFIED 2026-08-22
 
