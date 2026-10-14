@@ -15,6 +15,35 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-15, early) -- stalls and stubs; pushed `eebd43a3`, sweep L25 on `253d78f3`
+
+Pushed: origin/jit at `eebd43a3` (sweeps L23 27799/10/3, L24 27800/10/2;
+every new entry passes alone; SpAthensAdapterTest>>testResize... is a
+pre-existing 1-in-3 flake on every binary back to L19).
+
+Three "stable slow states" found and fixed -- each made machine code
+leave at every iteration of a loop, with no test failing:
+- a089f65d / aee72a62: the interpreter's checkpoint, deferred to an
+  interrupt point (c6e7182a), did not count special-selector sends
+  (`s next`) or arithmetic sends on non-SmallIntegers as sends; the MCF
+  call stub then refused every call on the spent countdown (4.2x, 2.9x).
+- eebd43a3: an ensure: activation's switch suppression went stale and
+  held back every heartbeat yield; back edges polling forceYield_ exited
+  each iteration (an ensure: loop 2.9x).
+Signature in the MCF exit census: about one exit per iteration for a
+callee that is compiled and in the call cache, or a back-edge exit
+(reason 6 at an ExtendB) per iteration.
+
+Stubs: valueNoContextSwitch (how ensure: runs its block) is a native
+block call (5dc0ab1f); uncontended Semaphore signal/wait in the primitive
+stub (da644162); closures and their lazy outer contexts are created in
+machine code (253d78f3, 51M a lexicon run).  Call path: stub addresses
+in the state, savedArgCount by one strb (~122 instructions a send+return).
+
+lexicon instructions (billions): 351 -> 346 (call path) -> 345 (stalls)
+-> 337 (valueNoContextSwitch) -> 335 (semaphore) -> 321 (closures).
+Non-local returns through ensure: are still 49 of the 321.
+
 ## Right now (2026-10-14, night 7) -- unwinding and stub coverage; pushed `6aaa0050`
 
 Pushed: origin/jit at `6aaa0050` (sweep L22: 27800 / 11 / 3; its four new
