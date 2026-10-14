@@ -1032,6 +1032,38 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         jm = st.jitMethod;
         const bool blockFrame = !st.closure.isNil();
         mcfSyncRegisters(st);
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_CENSUS), 0)) {
+            static std::unordered_map<std::string, uint64_t> byReason;
+            static uint64_t nAll = 0;
+            std::string k = "reason=" + std::to_string(st.exitReason);
+            if (st.exitReason != jit::ExitSend && st.exitReason != jit::ExitSendCached
+                    && st.ip) {
+                k += " op=" + std::to_string(*st.ip) + " in #" + memory_.selectorOf(st.method);
+            }
+            if (st.exitReason == jit::ExitReturn) {
+                size_t d = frameDepth_;
+                if (d == 0) k += " why=depth0";
+                else {
+                    const SavedFrame& f = savedFrames_[d - 1];
+                    k += f.homeFrameDepth != SIZE_MAX ? (blockFrame ? " home(blk)" : " why=home") : "";
+                    k += f.materializedRetSlot ? " why=retslot" : "";
+                    k += !f.mcReturn ? " why=nomemo" : "";
+                    k += (f.mcReturn && f.mcKeyIP != f.savedIP) ? " why=keyip" : "";
+                    k += (f.mcReturn && f.mcEpoch != jit::g_mcCodeEpoch) ? " why=epoch" : "";
+                    k += blockFrame ? " blk" : " meth";
+                    k += " caller=#" + memory_.selectorOf(f.savedMethod);
+                }
+            }
+            byReason[k]++;
+            if ((++nAll & 0x1FFFFF) == 0) {
+                std::vector<std::pair<uint64_t, std::string>> v;
+                for (auto& kv : byReason) v.push_back({kv.second, kv.first});
+                std::sort(v.rbegin(), v.rend());
+                for (size_t q = 0; q < v.size() && q < 14; q++)
+                    fprintf(stderr, "[MCF-EXITS] %llu %s\n", (unsigned long long)v[q].first, v[q].second.c_str());
+                byReason.clear();
+            }
+        }
         switch (st.exitReason) {
         case jit::ExitSend:
             // IC miss: the interpreter's lookup patches the site (the same
@@ -1074,8 +1106,10 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             // A block's local return (BlockReturnTop) is returnValue, like
             // the interpreter's op_blockReturnTop; ^ in a block exits as a
             // bytecode for the interpreter (non-local return).
-            if (depth == 0 || (!blockFrame
-                               && savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX)) {
+            // A block frame's ExitReturn is its local return (BlockReturnTop),
+            // returnValue at any depth, as the interpreter does.
+            if (!blockFrame && (depth == 0
+                                || savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX)) {
                 returnFromMethodSlow(value);
                 mcfActive_ = false;
                 return;

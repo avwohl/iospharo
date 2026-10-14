@@ -178,6 +178,7 @@ DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT)          // MCF: naked ExtSend/ExtSuperSen
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_CALL)          // MCF: naked ExtSend/ExtSuperSend never call natively through pharo_mcf_extsend (always the send exit)
 DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL)        // MCF: blocks with a non-local return are never called natively (the behaviour before 2026-10-14)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)   // MCF: PushFullBlock exits to the interpreter again (ExitBlockCreate) instead of pharo_mcf_block_create
+DEBUG_BOOL(PHARO_MCF_NO_BLOCK_RETURN)          // MCF: a block's local return (BlockReturnTop/Nil) takes the generic bytecode exit again
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
 DEBUG_BOOL(PHARO_EFC_CENSUS)                   // count executeFromContext calls by caller address
 DEBUG_BOOL(PHARO_THISCTX_CENSUS)               // count thisContext (PushThisContext) by method, collapsing or at depth 0

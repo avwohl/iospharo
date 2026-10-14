@@ -4964,9 +4964,19 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     a.ldr(x7, ptr(x0, OFF_MCF_FRAMES));
     a.mov(x8, asmjit::Imm(L.size));
     a.madd(x7, x3, x8, x7);                   // x7 = &savedFrames_[depth-1]
-    a.ldr(x8, ptr(x7, L.homeFrameDepth));
-    a.cmn(x8, asmjit::Imm(1));
-    a.b_ne(fall);                             // block frame
+    // A method frame whose record has a home frame index is the ensure:
+    // continuation of a non-local return: the interpreter's.  A block
+    // frame's own local return is an ordinary pop, whatever its index.
+    {
+        asmjit::Label noHome = a.new_label();
+        a.ldr(x8, ptr(x7, L.homeFrameDepth));
+        a.cmn(x8, asmjit::Imm(1));
+        a.b_eq(noHome);
+        a.ldr(x8, ptr(x0, OFF_CLOSURE));
+        a.cmp(x8, x6);                        // nil: a method frame
+        a.b_eq(fall);
+        a.bind(noHome);
+    }
     a.ldr(x8, ptr(x7, L.materializedRetSlot));
     a.cbnz(x8, fall);
     a.ldr(x9, ptr(x7, L.mcReturn));
@@ -5695,6 +5705,35 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // handles it correctly; subsequent JIT code is unreachable
     // anyway since block returns terminate the block body.
     if (op == SistaV1::BlockReturnNil || op == SistaV1::BlockReturnTop) {
+        // Machine-code frames: without an extension prefix (an unprefixed
+        // opcode reaches here) a FullBlock's local return is an ordinary
+        // frame return (the interpreter's returnValue), so take the method
+        // return path: the native MCF return, else ExitReturn.  The generic
+        // exit below then ran the rest of the caller interpreted (lexicon:
+        // 14M block returns, 2026-10-14).
+        if (g_emitIsBlock && ::pharo::mcfEnabled()
+                && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_RETURN)) {
+            if (op == SistaV1::BlockReturnTop) {
+                emitLoadSp(a, x2);
+                a.sub(x2, x2, asmjit::Imm(8));
+                emitStoreSp(a, x2);
+                a.ldr(x1, ptr(x2));
+            } else {
+                a.mov(x1, asmjit::Imm(nilBits));
+            }
+            if (g_sharedRetPreludeStub) {
+                a.mov(x16, asmjit::Imm(g_sharedRetPreludeStub));
+                a.br(x16);
+                return true;
+            }
+            emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);   // the native MCF return
+            a.str(x1, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
+            a.ret(x30);
+            return true;
+        }
         if (g_fsrLazy) {
             // M4: the method mirror may be stale (per-call store
             // deleted) — derive the exit ip from x19's bcStartCache.
