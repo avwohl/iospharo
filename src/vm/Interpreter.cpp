@@ -24951,6 +24951,7 @@ void Interpreter::prepareForGC() {
 }
 
 void Interpreter::afterGC(bool fullGC) {
+    nlrMemoBlock_ = Oop::fromRawBits(0);   // mcfSetBlockHome memo holds raw oops
     stepCountAtLastGC_ = g_stepNum;
 #if PHARO_JIT_ENABLED
     // Machine-code frames: a pending memo is keyed by a raw ip.  Objects

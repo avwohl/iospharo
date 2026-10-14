@@ -1006,6 +1006,10 @@ private:
     // Set when lazyOuterContext() made a context stub whose sender, temps
     // and stack are not filled in; cleared by a complete materializeFrameStack.
     bool lazyCtxPending_ = false;
+    // mcfSetBlockHome's memo (raw oops: cleared by afterGC).
+    Oop nlrMemoBlock_ = Oop::fromRawBits(0);
+    Oop nlrMemoHome_ = Oop::fromRawBits(0);
+    size_t nlrMemoFrame_ = 0;
     bool matfsComplete_ = false;
     uint32_t contextClassIndex_ = 0;  // class index of Context, set by lazyOuterContext
 

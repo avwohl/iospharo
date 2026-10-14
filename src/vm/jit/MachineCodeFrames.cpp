@@ -522,10 +522,33 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
     ObjectHeader* clo = closure.asObjectPtr();
     Oop compiledBlock = clo->slotAt(1);
     Oop outerContext = clo->slotAt(0);
+    // Memo of the last answer.  findBlockHomeFrame first looks for the frame
+    // whose context IS the closure's outer context and whose method is the
+    // block's home method: one frame at most can match, so a frame that
+    // still matches is its answer.  A do: loop calls the same block once
+    // per element and the search walked the frames each time (6% of
+    // myprecious round trips).  Cleared at every GC.
+    if (compiledBlock.rawBits() == nlrMemoBlock_.rawBits()
+            && nlrMemoFrame_ < frameDepth_
+            && outerContext.isObject() && !outerContext.isNil()
+            && savedFrames_[nlrMemoFrame_].materializedContext.rawBits() == outerContext.rawBits()
+            && savedFrames_[nlrMemoFrame_].savedMethod.rawBits() == nlrMemoHome_.rawBits()) {
+        savedFrames_[frameDepth_ - 1].homeFrameDepth = nlrMemoFrame_;
+        return;
+    }
     Oop home = blockHomeMethodForNLR(compiledBlock);
     size_t homeFrame = SIZE_MAX;
-    if (home.isObject() && !home.isNil())
+    if (home.isObject() && !home.isNil()) {
+        Oop primaryHome = home;
         homeFrame = findBlockHomeFrame(home, outerContext, compiledBlock);
+        if (homeFrame != SIZE_MAX && outerContext.isObject() && !outerContext.isNil()
+                && savedFrames_[homeFrame].materializedContext.rawBits() == outerContext.rawBits()
+                && savedFrames_[homeFrame].savedMethod.rawBits() == primaryHome.rawBits()) {
+            nlrMemoBlock_ = compiledBlock;
+            nlrMemoHome_ = primaryHome;
+            nlrMemoFrame_ = homeFrame;
+        }
+    }
     savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
 }
 
@@ -762,7 +785,13 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
             sel += std::string(bj && bj->isExecutable() && bj->numBytecodes ? " blkCompiled" : " blkNotCompiled")
                 + (mcfBlockHasNLR(cb) ? " NLR" : "") + (memory_.isYoung(cb) ? " young" : "")
                 + (jit::mcfCallFind(cb.rawBits()) ? " inCache" : " notInCache")
-                + " slots=" + std::to_string(rcv.asObjectPtr()->slotCount());
+                + " slots=" + std::to_string(rcv.asObjectPtr()->slotCount())
+                + " home=" + memory_.selectorOf(blockHomeMethodForNLR(cb))
+                + " caller=" + memory_.selectorOf(st.method)
+                + " tc=" + std::to_string(bj ? (int)bj->tempCount : -1)
+                + " fd=" + std::to_string(frameDepth_)
+                + " ctdn=" + std::to_string(checkCountdown_)
+                + " callerNB=" + std::to_string(st.jitMethod ? (int)st.jitMethod->numBytecodes : -1);
         }
         byMiss["#" + sel + " rcv=" + (rcv.isObject() ? memory_.classNameOf(rcv)
                : rcv.isSmallInteger() ? std::string("SmI") : std::string("imm"))
@@ -911,7 +940,14 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         currentJITState_ = &st;
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyReceiver(&st, "entry");
-        checkCountdown_ -= jm->numBytecodes;
+        // The checkpoint countdown pays for this entry as for a native call:
+        // 1 + numBytecodes/8.  Charging all of numBytecodes at every entry
+        // (and machine code is re-entered after every exit) drained the
+        // countdown, the native call stub then refused every call, and each
+        // refusal is another exit: myprecious's includes: loop exited at
+        // every element with the countdown at -3 (15M exits per 6000 round
+        // trips, 2026-10-14).
+        checkCountdown_ -= 1 + (int)(jm->numBytecodes >> 3);
         g_stepNum += jm->numBytecodes;
 
         pharo_jit_osr_resume(&st, entry);
