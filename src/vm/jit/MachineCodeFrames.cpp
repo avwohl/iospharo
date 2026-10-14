@@ -219,6 +219,7 @@ static bool mcfPrimCallable(int p) {
     case 148:                                    // shallowCopy
     case 165: case 166:                          // integerAt: integerAt:put:
     case 85: case 86:                            // signal wait (a switch -> 2)
+    case 159:                                    // hashMultiply (every Dictionary at: with an integer key)
     case 195:                                    // findNextUnwindContextUpTo:
     case 210: case 211: case 212:                // Context tempAt: tempAt:put: size
     case 169: case 170: case 171:                // ~~ and immediate conversions
