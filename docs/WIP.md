@@ -15,6 +15,35 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, night 3) -- benchmark suite against Cog; sweep L17
+
+Pushed: origin/jit at `477275fb` (sweep L16: 27801 / 8 / 2; the only new
+entry, MCSmalltalkhubRepositoryTest testVersionFromFileNamed, read a
+truncated download and passes alone).  Sweep L17 runs on `08deb8cf`.
+
+Benchmark suite ($S/suite.st, ms, ours vs stock Cog under Rosetta; both
+measured while a sweep ran):
+
+    fib30            15 / 7      send cost (about 195 instructions per call)
+    loop30M          82-120 / 148
+    collect3M        99 / 171    was 210: block shapes (08deb8cf)
+    inject3M         48 / 51     was 158: block shapes
+    printString300K  52 / 49
+    dict300K         155 / 123
+    ocAdd3M          53 / 97
+    string100K       90 / 49     was 151: failed primitive runs the body (79c9fd55)
+    float10M         277 / 198   was 1642: mixed SmallInteger/Float inline (785fd2b5)
+    sort1M           235 / 158
+    compile200       22 / 90
+    setStr300K       175 / 138
+
+Fixes behind those numbers: the interpreter's block-shape shortcuts in
+primitive 207 kept such blocks from ever compiling, so machine code exited
+at every call; a failed primitive in a helper send exited and the
+interpreter retried it; `i * 1.5` went through six image sends.  Also
+constant-return call entries (`^ $!`) and a single `cbnz` for an
+ordinary callee's entry kind (3360d7b9).  lexicon 477 -> 471 billion.
+
 ## Right now (2026-10-14, night 2) -- speed round; sweep L15 on `92e646f5`
 
 Pushed: origin/jit at `bdc7a854` (sweep L14: 27806 P / 5 F / 1 E, the
