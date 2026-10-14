@@ -4960,6 +4960,7 @@ constexpr int OFF_MCF_NIL          = 392;
 constexpr int OFF_MCF_EPOCH_PTR    = 400;
 constexpr int OFF_MCF_CALL_CACHE   = 408;
 constexpr int OFF_MCF_BCEND_OFF    = 416;
+constexpr int OFF_MCF_SITE_CACHE   = 424;
 static_assert(OFF_MCF_FRAMES == offsetof(JITState, mcfFrames), "OFF_MCF_FRAMES");
 static_assert(OFF_MCF_DEPTH_PTR == offsetof(JITState, mcfFrameDepthPtr), "OFF_MCF_DEPTH_PTR");
 static_assert(OFF_MCF_MATCTX_PTR == offsetof(JITState, mcfMatCtxPtr), "OFF_MCF_MATCTX_PTR");
@@ -6754,6 +6755,36 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Not SmallIntegers (nor the inline Float / String cases): send
             // the special selector properly instead of the generic exit,
             // after which the rest of the method ran interpreted.
+            if (op == 0x66 && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE)) {
+                // = through a per-site cache (dictionaries keyed by
+                // classes compare keys with Object>>=: 360M helper sends
+                // in a myprecious run).  Hit: identity, inline.
+                uint64_t* slot = mcfAllocSiteCache();
+                asmjit::Label miss = a.new_label(), immKey = a.new_label(), haveKey = a.new_label();
+                a.mov(x10, asmjit::Imm((uint64_t)slot));
+                a.ldr(x8, ptr(x10));
+                a.cbz(x8, miss);
+                a.ldp(x1, x4, ptr(x25, -16));
+                a.and_(x9, x1, asmjit::Imm(7));
+                a.cbnz(x9, immKey);
+                a.ldr(w9, ptr(x1));
+                a.and_(w9, w9, asmjit::Imm(0x3FFFFF));
+                a.b(haveKey);
+                a.bind(immKey);
+                a.orr(w9, w9, asmjit::Imm(0x80000000u));
+                a.bind(haveKey);
+                a.cmp(x9, x8);
+                a.b_ne(miss);
+                a.cmp(x1, x4);
+                a.ldp(x6, x7, ptr(x0, OFF_TRUEOOP));
+                a.csel(x6, x6, x7, CondCode::kEQ);
+                a.stur(x6, ptr(x25, -16));
+                a.sub(x25, x25, asmjit::Imm(8));
+                a.mov(x26, x6);
+                a.b(end);
+                a.bind(miss);
+                a.str(x10, ptr(x0, OFF_MCF_SITE_CACHE));
+            }
             emitMcfHelperSend(a, (uint32_t)(op - 0x60) | (1u << 8) | (1u << 17),
                               1, 1, globalIdx, callerArgCount, end);
         } else {

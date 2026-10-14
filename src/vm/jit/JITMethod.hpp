@@ -344,6 +344,28 @@ inline uint8_t g_blockValueOverridden = 0;
 inline uint64_t g_mcfCallStub = 0;
 // MCF: shared inline fast paths for IC-site primitives, by arity 0-2.
 inline uint64_t g_mcfPrimStub[3] = {0, 0, 0};
+// MCF: per-site caches of the special = send (no inline cache of its own):
+// {receiver class key, kind}.  Kind 1: that class's = is Object>>= (^self
+// == anObject), answered inline.  Allocated at compile time, never freed;
+// mcfClearSiteCaches empties them when methods change.
+inline std::vector<uint64_t*>& mcfSiteCacheChunks() {
+    static std::vector<uint64_t*> chunks;
+    return chunks;
+}
+inline size_t g_mcfSiteCacheUsed = 0;
+constexpr size_t kMcfSiteCacheChunk = 4096;   // slots of 2 words
+inline uint64_t* mcfAllocSiteCache() {
+    auto& ch = mcfSiteCacheChunks();
+    if (ch.empty() || g_mcfSiteCacheUsed == kMcfSiteCacheChunk) {
+        ch.push_back(new uint64_t[kMcfSiteCacheChunk * 2]());
+        g_mcfSiteCacheUsed = 0;
+    }
+    return ch.back() + 2 * g_mcfSiteCacheUsed++;
+}
+inline void mcfClearSiteCaches() {
+    auto& ch = mcfSiteCacheChunks();
+    for (uint64_t* c : ch) std::memset(c, 0, kMcfSiteCacheChunk * 2 * sizeof(uint64_t));
+}
 inline uint64_t g_mcfBlockStub = 0;
 void mcfBuildStubs();
 

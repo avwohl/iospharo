@@ -59,6 +59,20 @@ extern "C" void* pharo_mcf_extsend(jit::JITState* st, uint32_t desc) {
 
 // Called from the native block stub for a block with a non-local return,
 // after the block's frame record is pushed: store its home frame index.
+// A CompiledMethod whose whole body is ^self == anObject (Object>>=).
+bool Interpreter::mcfIsIdentityEquals(Oop m) {
+    if (!m.isObject() || m.asObjectPtr()->classIndex() != compiledMethodClassIndex_) return false;
+    ObjectHeader* mo = m.asObjectPtr();
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return false;
+    const int64_t h = hdr.asSmallInteger();
+    if (((h >> 24) & 0xF) != 1 || ((h >> 16) & 1)) return false;   // 1 arg, no primitive
+    const uint8_t* bc = mo->bytes() + (1 + (h & 0x7FFF)) * 8;
+    const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
+    return end - bc >= 4 && bc[0] == jit::SistaV1::PushReceiver && bc[1] == 0x40
+        && bc[2] == jit::SistaV1::SpecialSendBase + 6 && bc[3] == jit::SistaV1::ReturnTop;
+}
+
 // McfCallEntry::bcEndOff, packed; 0 when a field does not fit (the
 // caller then makes no native-call entry).
 static inline uint64_t mcfPackBcInfo(uint64_t methodBits, const uint8_t* bcEnd,
@@ -732,6 +746,8 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
 
 void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     mcfDeriveView(*st);
+    uint64_t* const siteCache = st->mcfSiteCache;   // set only by an = site
+    st->mcfSiteCache = nullptr;
     // st->ip is the send (2 bytes: no prefix).  A primitive run below sees
     // the ip after it, as in the interpreter; on failure T1 code exits at
     // the send again.
@@ -760,6 +776,19 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         selector = mo->slotAt(1 + litIdx);
     }
     Oop rcv = st->sp[-(nArgs + 1)];
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_EXTSEND_CENSUS), 0)) {
+        static std::unordered_map<std::string, uint64_t> by;
+        static uint64_t n = 0;
+        by[memory_.oopToString(selector) + (special ? " [special]" : "") + " rcv=" +
+           (rcv.isObject() ? memory_.classNameOf(rcv) : rcv.isSmallInteger() ? "SmI" : "imm")]++;
+        if ((++n & 0xFFFFF) == 0) {
+            std::vector<std::pair<uint64_t, std::string>> v;
+            for (auto& kv : by) v.push_back({kv.second, kv.first});
+            std::sort(v.rbegin(), v.rend());
+            for (size_t k = 0; k < v.size() && k < 15; k++)
+                fprintf(stderr, "[EXTSEND] %llu %s\n", (unsigned long long)v[k].first, v[k].second.c_str());
+        }
+    }
     Oop cls;
     if (super) {
         // A naked super send is the method form (blocks use directed super
@@ -774,6 +803,19 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     if (!cls.isObject() || cls.isNil()) return nullptr;
     Oop target = lookupMethodForSend(selector, cls);
     if (!target.isObject() || target.isNil()) return nullptr;
+    // Object>>= (^self == anObject): answer it here, and let the = site
+    // answer it inline from now on for this receiver class.
+    if (special && litIdx == 6 && nArgs == 1 && mcfIsIdentityEquals(target)) {
+        Oop arg = st->sp[-1];
+        if (siteCache) {
+            siteCache[0] = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                          : (0x80000000ull | (rcv.rawBits() & 7));
+            siteCache[1] = 1;
+        }
+        st->sp[-2] = rcv.rawBits() == arg.rawBits() ? memory_.trueObject() : memory_.falseObject();
+        st->sp -= 1;
+        return kMcfExtDone;
+    }
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
     if (e && e->jm && !e->prim && mcfReceiverOk(e->jm, rcv)) return e;
     if (e && !e->jm && e->prim && e->prim < 1024) {

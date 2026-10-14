@@ -1588,6 +1588,7 @@ private:
         if (jitRuntime_.isInitialized()) {
             jitRuntime_.flushCaches();
         }
+        jit::mcfClearSiteCaches();
 #endif
     }
 
@@ -1859,6 +1860,7 @@ public:
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
     void mcfCallCensusDump();
     void mcfClearMemos();
+    bool mcfIsIdentityEquals(Oop method);
     void mcfDeriveView(jit::JITState& st);
     static constexpr size_t kBcEndMemoSize = 256;
     struct BcEndMemo { uint64_t method = 0; uint64_t off = 0; };

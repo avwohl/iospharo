@@ -176,6 +176,7 @@ DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)            // MCF: OSR at a backward jump do
 DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)             // MCF: count native calls (method/block stubs) and native returns; printed with the JIT stats
 DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)             // MCF: count native calls per callee method (C call in the stub; slow); top 60 printed with the JIT stats
 DEBUG_BOOL(PHARO_MCF_PRIM_CENSUS)             // MCF: count primitives called natively (mcfCallPrimitive) by index
+DEBUG_BOOL(PHARO_MCF_EXTSEND_CENSUS)           // MCF: count sends through pharo_mcf_extsend (no-IC sends) by selector and receiver class
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)          // MCF: IC-site primitives 60-64/110/170/171 always go through pharo_mcf_prim (no inline fast path)
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
@@ -187,6 +188,7 @@ DEBUG_BOOL(PHARO_MCF_NO_NLR_BLOCK_CALL)        // MCF: blocks with a non-local r
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)   // MCF: PushFullBlock exits to the interpreter again (ExitBlockCreate) instead of pharo_mcf_block_create
 DEBUG_BOOL(PHARO_MCF_NO_BLOCK_RETURN)          // MCF: a block's local return (BlockReturnTop/Nil) takes the generic bytecode exit again
 DEBUG_BOOL(PHARO_MCF_NO_ARITH_SEND)            // MCF: arithmetic special sends whose inline path fails take the generic bytecode exit again
+DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE)          // MCF: the special = send on non-SmallIntegers always calls pharo_mcf_extsend (no per-site identity-= cache)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)          // MCF: PushArray takes ExitArrayCreate instead of building the Array in machine code
 DEBUG_BOOL(PHARO_FILE_CENSUS)                  // count primitiveFileRead calls and bytes requested/read
 DEBUG_BOOL(PHARO_EFC_CENSUS)                   // count executeFromContext calls by caller address

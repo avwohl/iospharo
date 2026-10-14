@@ -2091,6 +2091,13 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
             if (!(kp >= edenAllocBase_ && kp < edenFree_)) { youngOnly = false; break; }
         }
     }
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BECOME_CENSUS), 0)) {
+        static uint64_t yo = 0, full = 0;
+        (youngOnly ? yo : full)++;
+        if (((yo + full) & 63) == 0)
+            fprintf(stderr, "[BECOME-KIND] youngOnly=%llu full=%llu\n",
+                    (unsigned long long)yo, (unsigned long long)full);
+    }
     if (youngOnly) {
         drainJitRememberBuffer();   // overflow ruled out above
         auto visitRegion = [&](uint8_t* start, uint8_t* end) {
