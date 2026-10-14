@@ -15,6 +15,37 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Right now (2026-10-14, night 7) -- unwinding and stub coverage; pushed `6aaa0050`
+
+Pushed: origin/jit at `6aaa0050` (sweep L22: 27800 / 11 / 3; its four new
+entries pass alone and in their batch, run under lldb load).
+
+Sweep L21 (`61a816e4`) caught a real bug: the ExtSend site caches hold
+method oops that a full GC's compaction moves; a stale entry called
+FormSet>>asForm for extent:depth:forms:.  The per-become cache flush had
+hidden it until 5ae06110 removed that flush.  Fixed in 6aaa0050
+(recoverJITAfterGC empties them); found by knob bisection under
+PHARO_DET_SCHED on batch 1751-1800.
+
+lexicon instructions (billions): 364 -> 360 (stub: quick primitives,
+class, behaviorHash, basicNew, CompiledMethod at:; hot-path counters
+gated) -> 352 (a non-local return through ensure: restores the frames
+below its home instead of resuming each from its context;
+fetchPointer inline) -> 351 (no cycle walk for fresh contexts).
+
+Wall time, quiet machine: lexicon 19.4 s, Cog 11.3 s.  Suite (ms, ours /
+Cog): fib30 15/7, loop30M 115/133, collect3M 96/135, inject3M 47/31,
+printString 51/47, dict 136/122, ocAdd 79/101, string 69/49, float 190/199,
+sort 228/155, compile 19/88, setStr 163/135.
+
+Measured, not done: each non-local return through ensure: (1.7M a
+lexicon run) still costs ~27K instructions: materializing ~15 frames
+(only ~5 are needed by the image's protocol) and running the protocol in
+context land.  The old native unwind path (PHARO_NATIVE_NLR_UNWIND) is
+14% faster on lexicon but skips ifCurtailed: blocks and loses an
+exception raised in an unwind block, so it stays off.  A send + return
+in machine code is ~147 instructions (Cog ~25).
+
 ## Right now (2026-10-14, night 6) -- runtime costs outside machine code; sweep L20 on `4f906387`
 
 Pushed: origin/jit at `1ad9a30d` (sweep L19: 27801 / 10 / 1; its new
