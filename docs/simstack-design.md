@@ -1,5 +1,44 @@
 # T1 TOS register cache — definitive design (arm64)
 
+## 2026-10-14: the deferred simStack is in (machine-code frames only)
+
+The rest of this file is the June 2026 design.  It rejected a deferred
+simStack.  On 2026-10-14 a deferred simStack went in after all
+(`3a688767`), because two things changed: machine-code frames keep the
+receiver in x21 and tempBase in x22, so a deferred push costs one load
+when it is used; and the measured win is large (an arithmetic loop 77 ms
+to 21 ms, printString 31% fewer instructions).
+
+Rules (all in `AsmjitT1.cpp`, `simTry` and the `sim*` helpers):
+
+1. Pushes of a temp, a receiver field, the receiver, a literal, true,
+   false, nil and small constants emit no code.  They go on a
+   compile-time stack of descriptors.
+2. Pop, dup, pop-store into a temp or a receiver field, and SmallInteger
+   `+ - < > <= >= = ~=` consume descriptors from registers.  A comparison
+   that a forward conditional jump follows becomes `cmp` and `b.cond`.
+   Results go to the pool registers x9-x15.
+3. Every other bytecode first flushes the pending items to the real
+   operand stack.  Jump targets also flush, before their label.  The
+   existing emitter therefore always sees the memory stack.
+4. A consumer with a slow path flushes the items below its operands
+   first.  The slow path stores its operands to memory and then runs the
+   existing emitter for the bytecode.  At that time no pool register is
+   live, so code such as the inline ByteString `=`, which uses x8-x15,
+   is safe.  A non-fused result is loaded back from the stack after the
+   slow path.
+5. Before a store into temp n or field n, pending reads of that slot
+   are loaded into registers (`x := x + (x := 10)` keeps its meaning).
+6. A position where items are pending gets bcToCode 0: no re-entry
+   there.  Sends and jump targets flush, so the continuations and OSR
+   entries are not affected.
+7. Pool registers hold oops only in straight-line code with no call, no
+   allocation and no exit.  Every slow path flushes first, so GC never
+   sees a register-only oop.
+
+Opt-out: `PHARO_T1_NO_SIMSTACK`.  It is also off without machine-code
+frames and with the TOS cache.
+
 Status: APPROVED FOR IMPLEMENTATION (synthesis of three candidate designs +
 adversarial reviews, 2026-06-10). Every reviewer finding is resolved in §10
 or listed as an open question with a probe in §11.
