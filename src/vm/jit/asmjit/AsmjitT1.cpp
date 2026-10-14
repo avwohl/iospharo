@@ -11926,6 +11926,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
                 a.br(x16);
                 a.bind(mcfSpecial);
+                // A plain primitive (1-1023) first: every other kind is a
+                // flag value of 0x10000 or more.  The flag tests below took
+                // ~10 instructions before each primitive call.
+                if (!GET_DEBUG_BOOL(PHARO_MCF_NO_PRIM_FIRST)) {
+                    a.cmp(x10, asmjit::Imm(1024));
+                    a.b_lo(mcfPrim);
+                }
                 if (nArgs == 0 && g_mcfTinyStub != 0 && !GET_DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)) {
                     // A unary field-reading method: the shared stub answers
                     // it, or the method is called after all.

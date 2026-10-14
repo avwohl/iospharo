@@ -209,6 +209,7 @@ DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)            // MCF: unary field-reading meth
 DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)        // the interpreter's periodic check (process switch, timers, signals) runs at whatever bytecode it falls on, not only at interrupt points (sends, back jumps, frame entry)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)             // MCF: basicNew (primKind 17) is not allocated inline at the call site
 DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW)               // MCF: the primitive stub does not allocate for basicNew (70); the C primitive does
+DEBUG_BOOL(PHARO_MCF_NO_PRIM_FIRST)             // MCF: an IC hit on a primitive entry tests the special entry kinds first (old order)
 DEBUG_BOOL(PHARO_MCF_NO_FAST_REPLACE)           // MCF: primitive 105 from machine code takes the full primitive call (no bytes/Array fast path)
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_PRIM_CACHE)     // MCF: an ExtSend site does not cache a primitive target (every call looks it up in C)
 DEBUG_BOOL(PHARO_MCF_NO_PREFIXED_SEND)          // MCF: ExtendA + ExtSend (a send to literal 32-255) exits to the interpreter instead of a helper send
