@@ -49,6 +49,11 @@
 
 namespace pharo {
 
+// SmallInteger>>hashMultiply: (value * kHashMultiplyConstant) bitAnd:
+// kHashMultiplyMask.  Shared by the primitive and T1's inline stub.
+constexpr uint32_t kHashMultiplyConstant = 1664525;
+constexpr uint32_t kHashMultiplyMask = 0x0FFFFFFF;   // 28 bits
+
 /// Object format types
 enum class ObjectFormat : uint8_t {
     // Fixed-size objects

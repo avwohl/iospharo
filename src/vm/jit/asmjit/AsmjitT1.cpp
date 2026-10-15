@@ -1848,7 +1848,8 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     if (bcLen < 3 || bc[0] != SistaV1::CallPrimitive) return -1;
     int primIndex = bc[1] | ((bc[2] & 0x1F) << 8);
 #if defined(__x86_64__) || defined(_M_X64)
-    // emitPrimProlog_x86 implements ONLY prims 1,2,3-8,9,14,15,16,110.
+    // emitPrimProlog_x86 implements ONLY prims 1,2,3-8,9,14,15,16,110,
+    // 60/62, and the SmallFloat64 541/542/549/550.
     // The remaining prims that the arm64 emitPrimProlog handles
     // (10-13 = \\ // bitShift: /, 60-62 = at:/at:put:/size,
     // 541/542/549 = SmallFloat +/-/*) have NO x86 prologue: advertising
@@ -6030,9 +6031,9 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             a.cmp(x2, asmjit::Imm(1));
             a.b_ne(slow);
             a.asr(x3, x1, asmjit::Imm(3));
-            a.mov(w4, asmjit::Imm(1664525));
+            a.mov(w4, asmjit::Imm(pharo::kHashMultiplyConstant));
             a.mul(w3, w3, w4);                         // mod 2^32, as the uint32 product
-            a.and_(w3, w3, asmjit::Imm(0x0FFFFFFF));
+            a.and_(w3, w3, asmjit::Imm(pharo::kHashMultiplyMask));
             a.lsl(x7, x3, asmjit::Imm(3));
             a.orr(x7, x7, asmjit::Imm(1));
             a.b(result);
@@ -8539,8 +8540,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // send, so ZeroDivide and boxing stay the image's; SmallInteger
             // / SmallInteger (a Fraction) never gets here.  Each i / f
             // was an 8-send coercion chain with a perform exit.  Registers:
-            // x1 receiver, x2 sp, x5 this site's IC pointer -- x5 is live
-            // for the send below and is not touched.
+            // x1 receiver, x2 sp; x5 is this site's IC pointer only in the
+            // unpatched shape (the patched heads materialize it at Lprobe /
+            // LmissNoX5).  This path does not touch x5 either way.
             if (op == SistaV1::ArithBase + 9 && nArgs == 1
                     && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_DIV)
                     && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)) {
@@ -12363,10 +12365,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.cmp(x10, x11);
                     a.b_ne(notPerform);
                     emitSyncSpToState(a);
-                    // x2 = the ip after the send, for a performed primitive
-                    // run in place (as the primitive path below stores it).
-                    a.ldr(x2, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                    a.add(x2, x2, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                    const bool perfInPlace = !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM);
+                    if (perfInPlace) {
+                        // x2 = the ip after the send, for a performed primitive
+                        // run in place (as the primitive path below stores it).
+                        a.ldr(x2, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                        a.add(x2, x2, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                    }
                     a.sub(sp, sp, asmjit::Imm(32));
                     a.stp(x0, x30, ptr(sp, 0));
                     a.str(x5, ptr(sp, 16));
@@ -12382,8 +12387,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // 1: a primitive or constant answered in place; 2: the
                     // primitive switched process or pushed a frame.
                     asmjit::Label performInPlace = a.new_label();
-                    a.cmp(x7, asmjit::Imm(2));
-                    a.b_ls(performInPlace);
+                    if (perfInPlace) {
+                        a.cmp(x7, asmjit::Imm(2));
+                        a.b_ls(performInPlace);
+                    }
                     a.ldp(x6, x9, ptr(x7));
                     a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
                     a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
@@ -12392,9 +12399,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(w12, asmjit::Imm(callerArgCount | ((nArgs - 1) << 8)));
                     a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
                     a.br(x16);
-                    a.bind(performInPlace);                  // flags of cmp x7, #2
-                    a.b_lo(mcfPrimDone);
-                    a.b(mcfDeopt);
+                    if (perfInPlace) {
+                        a.bind(performInPlace);              // flags of cmp x7, #2
+                        a.b_lo(mcfPrimDone);
+                        a.b(mcfDeopt);
+                    }
                     a.bind(notPerform);
                 }
                 if (!GET_DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)) {

@@ -9890,8 +9890,8 @@ PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
 // receiver that loses set bits -- so an odd negative LargeInteger shifted
 // right came out one too small (`((2 raisedTo: 100) + 1) negated bitShift: -1`).
 PrimitiveResult Interpreter::primDigitBitShiftMagnitude(int argCount) {
-    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimShift(*this, false);
     if (argCount != 1) return PrimitiveResult::Failure;
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimShift(*this, false);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
     if (!arg.isSmallInteger()) return PrimitiveResult::Failure;
@@ -10937,8 +10937,8 @@ PrimitiveResult Interpreter::primitiveHashMultiply(int argCount) {
     // hashMultiply is: (value * 1664525) bitAnd: 16rFFFFFFF
     Oop rcvr = stackTop();
 
-    const int64_t HashMultiplier = 1664525;
-    const int64_t HashMask = 0x0FFFFFFF;  // 28 bits
+    const int64_t HashMultiplier = kHashMultiplyConstant;
+    const int64_t HashMask = kHashMultiplyMask;
     uint32_t value;
 
     if (rcvr.isSmallInteger()) {

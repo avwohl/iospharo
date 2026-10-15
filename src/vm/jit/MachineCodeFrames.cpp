@@ -1122,7 +1122,7 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
         e = jit::mcfCallFind(target.rawBits());
         if (!e) return nullptr;
     }
-    if (e->prim == jit::kMcfReturnsValue) {
+    if (e->prim == jit::kMcfReturnsValue && !GET_DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)) {
         // A method answering one constant: it replaces the receiver; the
         // selector and the arguments go.
         sp[-(nArgs + 1)] = Oop::fromRawBits(e->bcEndOff);
@@ -1279,8 +1279,9 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     ObjectHeader* mo = method.asObjectPtr();
     Oop selector;
     if (special) {
-        // A special send is 1 byte, not 2: ip after it is ip + 1.
-        st->ip -= 1;
+        // A special send is 1 byte: mcfPastSend already answered ip + 1.
+        // (This decremented it, so a primitive run here saw the send's own
+        // ip and an exit after it resumed the interpreter AT the send.)
         Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
         if (!ss.isObject() || (size_t)(litIdx * 2) >= ss.asObjectPtr()->slotCount())
             return nullptr;
