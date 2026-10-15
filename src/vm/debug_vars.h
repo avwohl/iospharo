@@ -250,6 +250,7 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_W0_BRANCH)             // MCF send sites: an unlinked
 DEBUG_BOOL_RT(PHARO_MAT_RAW_FRESH_ONLY)          // materializeFrameStack: raw slot stores only into fresh contexts (synced stubs go through ctxStore)
 DEBUG_BOOL_RT(PHARO_NO_NLR_SEGMENT)               // NLR through ensure: materialize every frame (the old way) instead of freezing the frames below the home's sender (docs/native-nlr-plan.md design 3)
 DEBUG_BOOL_RT(PHARO_MCF_NO_LEAF_PRIM)             // machine code calls every primitive through the register sync and executePrimitive (no leaf-primitive fast path)
+DEBUG_BOOL_RT(PHARO_NO_PIN_TENURE)                // pinning a young object only sets the bit (a later scavenge still moves it)
 DEBUG_BOOL(PHARO_NLR_SEG_EAGER)                   // frozen NLR segment: deopt right after the freeze (tests the stash and deopt, no laziness)
 DEBUG_BOOL(PHARO_NLR_SEG_CENSUS)                  // frozen NLR segment: count freezes, pops and deopts
 DEBUG_BOOL(PHARO_NLR_SEG_VERIFY)                  // frozen NLR segment oracle: stop the VM if a deopt leaves the boundary marked

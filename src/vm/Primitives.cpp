@@ -12711,6 +12711,24 @@ PrimitiveResult Interpreter::primitivePin(int argCount) {
     bool wasPinned = header->isPinned();
     header->setPinned(shouldPin);
 
+    // A pinned object must not move, and a scavenge moves every young
+    // survivor: C code holding a pinned eden buffer across a callback
+    // (qsort with a Smalltalk compare block) then wrote to the stale copy
+    // when a callback scavenged (FFICallbackTest>>testCqsortWithByteArray,
+    // a nearly sorted result).  Spur moves a young object to old space
+    // when it is pinned; a scavenge here does that and updates every
+    // reference (the receiver on the stack included).
+    if (shouldPin && memory_.isYoung(rcvr) && !GET_DEBUG_BOOL(PHARO_NO_PIN_TENURE)) {
+        memory_.scavenge();
+        rcvr = memory_.followForwarded(stackValue(1));
+        header = rcvr.asObjectPtr();
+        header->setPinned(true);
+        if (__builtin_expect(memory_.isYoung(rcvr), 0)) {
+            static int ny = 0;
+            if (++ny <= 5) fprintf(stderr, "[PIN] a pinned object is still young after a scavenge\n");
+        }
+    }
+
     // How often is this called?  It decides whether the fragmentation fix in
     // docs/gc-oldspace-fragmentation-2026-08-22.md is viable as specified:
     // relocating on pin needs a forwarder, and becomeForward walks the whole
