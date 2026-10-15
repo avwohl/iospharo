@@ -5939,7 +5939,7 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.cmp(w10, asmjit::Imm(111));
         a.b_ne(p175);
         {
-            asmjit::Label heap = a.new_label(), haveIdx = a.new_label();
+            asmjit::Label heap = a.new_label();
             a.ands(x4, x1, asmjit::Imm(7));
             a.b_eq(heap);
             a.add(x4, x4, asmjit::Imm(1));

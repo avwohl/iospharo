@@ -269,3 +269,42 @@ PMAdditionalTest 3->0, SP_DEPTH 15->~0, battery_golden clean, full SUnit report-
 0 new regressions, PolyMath full (the 51), then flip ADMIT_BAILMID default-on for +26%
 select. NOT shipped: delicate emit surgery on the BV-saga arith-overflow/J2J-save path;
 rushing it risks new corruption.
+
+## Machine-code frames update (2026-10-15)
+
+Since 2026-10-14 every native call goes through MCF (docs/mc-frames-design.md),
+not inline J2J or dispatchCached.  Measured on lexicon: ~986M native calls per
+run, none to leaf methods (leaves are answered inline by the IC
+specializations), and ~116 instructions of send + return overhead per call:
+~38% of the run.  Cog's linked send is ~20.
+
+Where the 116 go (single-step, arm64):
+
+    caller   ~34  IC entry address (2), receiver + tag + class index (6),
+                  key compare (3), extras test (5), call-cache probe (9),
+                  primitive check (2), x13/x14/x15/w12 setup + stub load (7)
+    stub     ~49  countdown (4), depth/limit (5), record address (5),
+                  SavedFrame stores (~16), context swap (5), state mirrors
+                  (receiver/tempBase/closure, 6), callee view (4), temps (2),
+                  TOS reload + jump (3)
+    return   ~33  depth, record, 6 validity checks, restores, br
+
+Measured dead ends: branch prediction (the stub's shared indirect branch and
+the br returns) is not the cost -- lexicon's IPC is 4.3 and the stub runs
+above average IPC.  A compact record that leaves the derivable fields to C++
+saves only ~3 instructions once the GC-visible ones are still written.
+
+**Linked MCF sends** (the Cog shape) are the remaining structural lever:
+- A per-method MCF prologue: the call stub's work specialized to the callee
+  (temp count, method, JM, bytecode info as immediates; no shared indirect
+  branch), placed before the code start.
+- Monomorphic sites linked through the existing PMS patching (W0/W1 class
+  key, W2 direct branch to a site tail; linkSendSite/unlink and their
+  recompile/eviction hooks): the tail sets x13/x14/x15/w12 and branches to
+  the callee's prologue.  No extras decode, no call-cache probe.
+- Primitive callees keep the current path (the prologue would have to run
+  the primitive first, as Cog's does).
+Estimate: caller ~34 -> ~21, stub ~49 -> ~40, so ~19% of send overhead,
+~7% of lexicon, more on fib-shaped code.  Risks: linking under MCF must
+refuse every callee shape the stub refuses (countdown, depth, block home,
+receiver shape), and unlink on recompile, eviction and become.
