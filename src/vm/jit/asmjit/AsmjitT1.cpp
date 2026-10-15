@@ -7188,9 +7188,20 @@ static void simLoad(asmjit::a64::Assembler& a, const SimItem& it, const asmjit::
         break;
     }
 }
+static uint64_t g_simNilBits = 0;   // nil's raw bits for this compile
+static bool mcfPinnedRegs();
 static asmjit::a64::Gp simSrc(asmjit::a64::Assembler& a, const SimItem& it,
                               const asmjit::a64::Gp& scratch) {
     if (it.k == SimK::Reg) return asmjit::a64::x(it.reg);
+    // The receiver is in x21 and, with pinned registers, nil in x27: no
+    // copy (docs/t1-body-plan.md step 2).
+    static const bool fixedSrc = !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_FIXED_SRC);
+    if (fixedSrc) {
+        if (it.k == SimK::Rcvr) return asmjit::a64::x21;
+        if (it.k == SimK::Const && (uint64_t)it.v == g_simNilBits && g_simNilBits
+                && mcfPinnedRegs())
+            return asmjit::a64::x27;
+    }
     simLoad(a, it, scratch);
     return scratch;
 }
@@ -8407,10 +8418,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
         }
         a.lsl(x1, result, asmjit::Imm(3));
-        // Verify retag didn't overflow SmI (61 bits signed).
-        a.asr(x5, x1, asmjit::Imm(3));
-        a.cmp(x5, result);
-        a.b_ne(bail);
+        // Verify retag didn't overflow SmI (61 bits signed).  A remainder
+        // is smaller than the divisor, so \\ cannot overflow.
+        if (op != SistaV1::ArithModulo || GET_DEBUG_BOOL(PHARO_T1_NO_MOD_DEAD_CHECK)) {
+            a.asr(x5, x1, asmjit::Imm(3));
+            a.cmp(x5, result);
+            a.b_ne(bail);
+        }
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
@@ -13746,6 +13760,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         int siteIdx = 0;
         g_sim.items.clear();
         g_sim.regBusy = 0;
+        g_simNilBits = nilBits;
         g_sim.enabled = t1TbReg() && !g_useTos && !GET_DEBUG_BOOL(PHARO_T1_NO_SIMSTACK)
             && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS) && !g_emitGetterTrace;
         g_simDeferredAt.assign(bcLen + 1, false);

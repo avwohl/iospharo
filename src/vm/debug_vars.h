@@ -243,6 +243,8 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_LAZY_RT)               // MCF native calls/returns st
 DEBUG_BOOL(PHARO_MCF_POISON_STATE)                // MCF lazy receiver/tempBase oracle: poison the state copies at each native call and return
 DEBUG_BOOL_RT(PHARO_MCF_NO_LAZY_CLOSURE)          // MCF native calls/returns save and restore the closure and active context (before trim steps 7-8)
 DEBUG_INT(PHARO_CALLBACK_TIMEOUT_STEPS, 0)        // abandon an FFI callback whose handler has not returned after N nested steps (0 = never, as on Cog)
+DEBUG_BOOL_RT(PHARO_T1_NO_SIM_FIXED_SRC)          // simStack: copy the receiver / nil into a scratch register before storing it (before docs/t1-body-plan.md step 2)
+DEBUG_BOOL(PHARO_T1_NO_MOD_DEAD_CHECK)            // T1 \\\\: keep the SmallInteger range check on the remainder (it cannot overflow)
 DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)             // native weak-association drain for every dictionary with the unscaled header hash (pre-2026-10-15; loses live keys)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
 DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)

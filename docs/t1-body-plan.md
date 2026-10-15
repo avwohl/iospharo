@@ -1,6 +1,6 @@
 # T1 method bodies: cutting operand-stack and dispatch overhead
 
-Status (2026-10-15): plan from a design panel (a measurement of three
+Status (2026-10-15): step 2 done (lexicon 245.3 -> 243.4).  Plan from a design panel (a measurement of three
 lexicon traces, three designs, a judge).  No step is done.  The
 measurement found about 1050 of 2991 traced body instructions
 removable: about 590 in send dispatch, about 430 in operand-stack
