@@ -1976,6 +1976,7 @@ public:
     void* mcfPerformInPlace(jit::JITState* st, int nArgs, uint8_t* ipAfter, Oop target,
                             Oop rcv, jit::McfCallEntry*& e);
     Oop mcfThisContext(jit::JITState* st);
+    void* mcfNonLocalReturn(jit::JITState* st);
     // A slot store into a context being materialized: a raw store when the
     // context is young (no barrier needed), else storePointer.  Most
     // contexts a frame sync writes are young; storePointer's checks were

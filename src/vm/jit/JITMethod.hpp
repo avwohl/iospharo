@@ -375,6 +375,10 @@ constexpr uint64_t kMcfReturnsValue = 0x80000;
 //   bits 32-47 field a, bits 48-63 field b
 constexpr uint64_t kMcfTinyShape = 0x100000;
 inline uint64_t g_mcfTinyStub = 0;
+// The shared stub for a non-local return (^ in a block) in machine code:
+// pharo_mcf_nlr returns from the home and continues the home's caller
+// (docs/native-nlr-plan.md, case (a)).  0 until mcfBuildStubs builds it.
+inline uint64_t g_mcfNlrStub = 0;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
 // PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and

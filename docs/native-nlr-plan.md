@@ -1,8 +1,12 @@
 # Non-local return in machine code: plan
 
 Status (2026-10-15): from a design panel of three designs and a judge
-that checked each claim against the code.  Step 1 is done (`19a730c0`,
-lexicon -0.5%).  The other steps are open.
+that checked each claim against the code.  Steps 1-5 are done
+(lexicon 272.6 -> 270.3 billion instructions).  As built, the stub
+address is a 64-bit immediate at each site: JITState offset 488 is not
+free (machine code reads interpreter fields at x0 + 488 and up, because
+the state is embedded in the Interpreter object).  The other steps are
+open.
 
 The problem: a `^` in a block exits machine code to the interpreter.
 Lexicon does this about 1.3M times per run: about 892K with no ensure:
@@ -107,7 +111,7 @@ Every knob goes in `src/vm/debug_vars.h`. Opt-outs are `DEBUG_BOOL_RT`, so relea
   - `PHARO_MCF_COUNT_CALLS` shows memo hits above zero, where today the count is about 0;
   - build-x86 smoke run.
 
-**Step 2: skeleton helper and stub for case (a), refusing only**
+**Step 2: skeleton helper and stub for case (a), refusing only -- DONE**
 - Files:
   - `JITState.hpp`: `mcfNlrStubAddr` at offset 488, with a static_assert;
   - `AsmjitT1.cpp`: `OFF_MCF_NLR_STUB`, `emitMcfNlrStub` in `buildMcfStubPage` / `mcfBuildStubs` (`~16448`), and the 4-instruction site at `:7406`;
@@ -118,7 +122,7 @@ Every knob goes in `src/vm/debug_vars.h`. Opt-outs are `DEBUG_BOOL_RT`, so relea
 - Expected L: about 0.
 - Proof: on lexicon the census shows about 892K "ok" and about 408K "prim198", and the reason=6 exit count is unchanged.
 
-**Step 3: commit, then deopt**
+**Step 3: commit, then deopt -- DONE**
 - Phase B: `mcfSyncRegisters`, pop the value, read the memo of `savedFrames_[h-1]` BEFORE the pops, run the `widowUnwoundContext` + `popFrame` loop, then the `returnValue` frame tail. The helper then answers 1 (ExitDeopt).
 - Knobs: `PHARO_MCF_NLR_NO_CONT` and the oracle `PHARO_MCF_NLR_VERIFY`.
 - The oracle checks:
@@ -137,7 +141,7 @@ Every knob goes in `src/vm/debug_vars.h`. Opt-outs are `DEBUG_BOOL_RT`, so relea
   - `[^7] ensure: [2]`, which must still send aboutToReturn: once.
 - Run ExceptionTest, ContextTest, BlockClosureTest, StepOverTest, StepIntoTest, ProcessTest, MutexTest and SemaphoreTest twice each.
 
-**Step 4: native continuation**
+**Step 4: native continuation -- DONE**
 - Phase C publishes the view (`sp`, `receiver`, `closure`, `tempBase`, `jitMethod`; in the non-lazy view also method, literals, argCount and `mcfBcEndOff`) and answers the memo.
 - When the memo is null, fall back to `mcfEntryFor`; when that also fails, deopt.
 - The stub reloads x19, x25, x22, x21 and x26.
@@ -148,7 +152,7 @@ Every knob goes in `src/vm/debug_vars.h`. Opt-outs are `DEBUG_BOOL_RT`, so relea
   - a class that differs is re-run 3 times.
 - Then amend INV-2 in `docs/mc-frames-design.md` and commit.
 
-**Step 5: native continuation after a collapsed restore (design 1, B1b)**
+**Step 5: native continuation after a collapsed restore (design 1, B1b) -- DONE**
 - File: `MachineCodeFrames.cpp`, the depth-0 ExitReturn branch (`~2128`).
 - Change: when `tryRestoreCollapsedFrames` succeeded (frameDepth_ > 0 afterwards) and the record of frame b had a memo, `continue` into that memo. Step 1 must land first, or the memo is already null.
 - Knob: `PHARO_MCF_NO_RESTORE_CONT`.

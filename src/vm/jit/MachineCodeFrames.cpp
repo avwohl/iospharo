@@ -106,6 +106,18 @@ extern "C" uint64_t pharo_mcf_this_context(jit::JITState* st) {
     return st->interp->mcfThisContext(st).rawBits();
 }
 
+// A ^ in a block from machine code (the shared NLR stub).  Answers 0 when
+// it refuses (nothing changed: the stub takes the block-return exit), 1
+// when it popped the frames but cannot continue in machine code (the
+// interpreter's state is complete: ExitDeopt), else the code address that
+// continues the home's caller, with the state published as mcfRun does.
+// Mirrors returnFromMethodSlow's non-local return when no ensure: or
+// ifCurtailed: frame is between the block and its home
+// (docs/native-nlr-plan.md, case (a)).
+extern "C" void* pharo_mcf_nlr(jit::JITState* st) {
+    return st->interp->mcfNonLocalReturn(st);
+}
+
 Oop Interpreter::mcfThisContext(jit::JITState* st) {
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);
@@ -1704,6 +1716,126 @@ void Interpreter::mcfInit() {
     }
 }
 
+void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
+    enum { kOk, kInactive, kShallow, kNoHome, kNoCM, kValidate, kEnsure, kRetSlot, kDiag, kN };
+    auto refuse = [&](int why) -> void* {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_NLR_CENSUS), 0)) {
+            static uint64_t counts[kN] = {};
+            static uint64_t n = 0;
+            counts[why]++;
+            if ((++n & 0xFFFF) == 0)
+                fprintf(stderr, "[MCF-NLR] n=%llu ok=%llu inactive=%llu shallow=%llu "
+                        "nohome=%llu nocm=%llu validate=%llu ensure=%llu retslot=%llu diag=%llu\n",
+                        (unsigned long long)n, (unsigned long long)counts[kOk],
+                        (unsigned long long)counts[kInactive], (unsigned long long)counts[kShallow],
+                        (unsigned long long)counts[kNoHome], (unsigned long long)counts[kNoCM],
+                        (unsigned long long)counts[kValidate], (unsigned long long)counts[kEnsure],
+                        (unsigned long long)counts[kRetSlot], (unsigned long long)counts[kDiag]);
+        }
+        return nullptr;
+    };
+    if (!mcfActive_ || !running_) return refuse(kInactive);
+    static const bool diag = GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)
+        || GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK) || GET_DEBUG_BOOL(PHARO_NLR_CENSUS)
+        || GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK) || GET_DEBUG_BOOL(PHARO_RETMETH_TRACE)
+        || GET_DEBUG_BOOL(PHARO_T1_TRACE_HIT) || GET_DEBUG_BOOL(PHARO_TRACE_CULL_RETURN)
+        || GET_DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND);
+    if (diag) return refuse(kDiag);
+    const size_t d = frameDepth_;
+    if (d < 2) return refuse(kShallow);
+    const size_t h = savedFrames_[d - 1].homeFrameDepth;
+    if (h == SIZE_MAX || h == 0 || h >= d) return refuse(kNoHome);
+    // The interpreter's registers, as the exit would leave them.  Nothing
+    // below changes state until every check has passed.
+    mcfDeriveView(*st);
+    stackPointer_ = st->sp;
+    mcfSyncRegisters(*st);
+    instructionPointer_ = st->ip;
+    Oop expected = nlrHomeCMOf(method_);
+    if (expected.isNil()) return refuse(kNoCM);
+    if (validateNLRHomeFrame(h, expected) != h) return refuse(kValidate);
+    for (size_t i = h; i < d; i++) {
+        Oop m = savedFrames_[i].savedMethod;
+        if (m.isObject() && !m.isNil() && primitiveIndexOf(m) == 198) return refuse(kEnsure);
+    }
+    if (savedFrames_[h - 1].materializedRetSlot) return refuse(kRetSlot);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_NLR_VERIFY), 0)) {
+        Oop hm = expected;
+        Oop outer = closure_.isObject() && !closure_.isNil()
+            ? closure_.asObjectPtr()->slotAt(0) : Oop::nil();
+        size_t slow = findBlockHomeFrame(hm, outer, method_);
+        static int nv = 0;
+        if (slow != h && ++nv <= 10)
+            fprintf(stderr, "[MCF-NLR-VERIFY] home: marker=%zu search=%zu depth=%zu\n", h, slow, d);
+    }
+    refuse(kOk);   // census only
+    // Commit: the return bytecode's value, then returnFromMethodSlow's pops.
+    Oop value;
+    switch (*instructionPointer_) {
+        case jit::SistaV1::ReturnReceiver: value = receiver_; break;
+        case jit::SistaV1::ReturnTrue:     value = memory_.trueObject(); break;
+        case jit::SistaV1::ReturnFalse:    value = memory_.falseObject(); break;
+        case jit::SistaV1::ReturnNil:      value = memory_.nil(); break;
+        default:                           value = pop(); break;   // ReturnTop
+    }
+    Oop* homeFP = savedFrames_[h].savedFP;
+    while (frameDepth_ > h) {
+        widowUnwoundContext();
+        if (!popFrame()) return reinterpret_cast<void*>(1);
+    }
+    nlrHomeMethod_ = Oop::nil();
+    nlrValue_ = Oop::nil();
+    returnValue(value);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_NLR_VERIFY), 0)) {
+        static int nv = 0;
+        if ((frameDepth_ != h - 1 || stackPointer_ != homeFP + 1
+                || stackPointer_[-1].rawBits() != value.rawBits()) && ++nv <= 10)
+            fprintf(stderr, "[MCF-NLR-VERIFY] after: depth=%zu want=%zu sp-fp=%td top-ok=%d\n",
+                    frameDepth_, h - 1, stackPointer_ - homeFP,
+                    (int)(stackPointer_[-1].rawBits() == value.rawBits()));
+    }
+    (void)homeFP;
+    if (!running_ || frameDepth_ != h - 1 || checkCountdown_ <= 0
+            || GET_DEBUG_BOOL(PHARO_MCF_NLR_NO_CONT))
+        return reinterpret_cast<void*>(1);
+    void* pjm = nullptr;
+    void* entry = mcfPoppedMemo(&savedFrames_[frameDepth_], &pjm);
+    jit::JITMethod* jm = static_cast<jit::JITMethod*>(pjm);
+    if (entry) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)) {
+            SavedFrame f = savedFrames_[frameDepth_];
+            f.mcReturn = entry; f.mcJM = pjm;
+            mcfVerifyMemo(f, "mcf-nlr");
+        }
+    } else {
+        if (!method_.isObject() || method_.rawBits() < 0x10000) return reinterpret_cast<void*>(1);
+        jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+        if (!jm || !jm->isExecutable()) return reinterpret_cast<void*>(1);
+        if (!(mcfIsMethodFrame() || mcfIsBlockFrame()) || !mcfReceiverOk(jm, receiver_))
+            return reinterpret_cast<void*>(1);
+        entry = mcfEntryFor(jm, instructionPointer_);
+        if (!entry) return reinterpret_cast<void*>(1);
+    }
+    // Publish the caller's frame as mcfRun does before entering code.
+    Oop m = method_;
+    ObjectHeader* mo = m.asObjectPtr();
+    st->sp = stackPointer_;
+    st->receiver = receiver_;
+    st->closure = closure_;
+    st->literals = mo->slots() + 1;
+    st->tempBase = framePointer_ + 1;
+    st->ip = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(jm->bcStart()));
+    st->jitMethod = jm;
+    st->method = m;
+    st->argCount = argCount_;
+    st->exitReason = jit::ExitNone;
+    st->returnValue = Oop::fromRawBits(0);
+    st->cachedTarget = Oop::fromRawBits(0);
+    st->mcfBcEndOff = static_cast<uint64_t>(
+        bytecodeEnd_ - reinterpret_cast<uint8_t*>(m.rawBits()));
+    return entry;
+}
+
 void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
     if (mcfActive_ || !running_) return;
     jit::JITMethod* jm;
@@ -2142,6 +2274,36 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                                 || savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX)) {
                 mcfReturnedIntoContext_ = false;
                 returnFromMethodSlow(value);
+                // A collapsed non-local return's frames came back
+                // (tryRestoreCollapsedFrames) and the return popped into
+                // one: continue it natively.  mcfResumeAfterReturn did
+                // nothing (mcfActive_), so the frame ran interpreted up to
+                // its next send before (1.7M times per lexicon run).
+                if (depth == 0 && running_ && frameDepth_ > 0 && checkCountdown_ > 0
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_RESTORE_CONT)) {
+                    void* pjm = nullptr;
+                    if (void* pmemo = mcfPoppedMemo(&savedFrames_[frameDepth_], &pjm)) {
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)) {
+                            SavedFrame f = savedFrames_[frameDepth_];
+                            f.mcReturn = pmemo; f.mcJM = pjm;
+                            mcfVerifyMemo(f, "mcfRun-restore");
+                        }
+                        jm = static_cast<jit::JITMethod*>(pjm);
+                        entry = pmemo;
+                        continue;
+                    }
+                    if (method_.isObject() && method_.rawBits() >= 0x10000) {
+                        jit::JITMethod* rj = jitRuntime_.methodMap().lookup(method_.rawBits());
+                        if (rj && rj->isExecutable() && (mcfIsMethodFrame() || mcfIsBlockFrame())
+                                && mcfReceiverOk(rj, receiver_)) {
+                            if (void* re = mcfEntryFor(rj, instructionPointer_)) {
+                                jm = rj;
+                                entry = re;
+                                continue;
+                            }
+                        }
+                    }
+                }
                 // Returned into a context (depth 0): continue it here when its
                 // method has machine code, as mcfResumeAfterReturn does.
                 if (mcfReturnedIntoContext_ && running_ && frameDepth_ == 0
@@ -2225,6 +2387,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
 bool Interpreter::mcfIsMethodFrame() const { return false; }
 bool Interpreter::mcfActivate(Oop) { return false; }
 void Interpreter::mcfResumeAfterReturn(const SavedFrame*) {}
+void* Interpreter::mcfNonLocalReturn(jit::JITState*) { return nullptr; }
 void Interpreter::mcfRun(jit::JITMethod*, void*) {}
 void Interpreter::mcfCensus(const jit::JITState&) {}
 void Interpreter::mcfInit() {}

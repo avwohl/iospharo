@@ -54,6 +54,7 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep);
 extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
 extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
+extern "C" void* pharo_mcf_nlr(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
 extern "C" void* pharo_mcf_perform(pharo::jit::JITState* st, uint32_t nArgs, uint8_t* ipAfter);
@@ -7438,6 +7439,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
+        if (::pharo::mcfEnabled() && g_mcfNlrStub) {
+            // Machine-code frames: the shared stub returns from the home
+            // when it can, else takes this same exit (x5 = the bytecode).
+            a.mov(x16, asmjit::Imm(g_mcfNlrStub));
+            a.br(x16);
+            return true;
         }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -16469,6 +16477,47 @@ size_t asmjitT1Failed()   { return g_failed;   }
 
 #endif  // PHARO_JIT_ENABLED
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+namespace pharo { namespace jit {
+// Non-local return (^ in a block) from machine code.  Entered by `br` from
+// the return bytecode with x5 = that bytecode's address and the operand
+// stack in memory (x25).  pharo_mcf_nlr answers 0 (refused, nothing
+// changed: the block-return exit, as before), 1 (the frames were popped and
+// the interpreter's state is complete: ExitDeopt) or the code address that
+// continues the home's caller, whose registers are then loaded from the
+// state as JIT_CALL loads them.  x24/x27/x20 are unchanged.
+static void emitMcfNlrStub(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    asmjit::Label out = a.new_label(), refused = a.new_label();
+    a.str(x5, ptr(x0, OFF_IP));
+    emitSyncSpToState(a);
+    a.stp(x0, x30, ptr_pre(sp, -16));
+    a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_nlr));
+    a.blr(x16);
+    a.mov(x9, x0);
+    a.ldp(x0, x30, ptr_post(sp, 16));
+    a.cmp(x9, asmjit::Imm(1));
+    a.b_ls(out);
+    a.ldr(x19, ptr(x0, OFF_JITMETHOD));
+    a.ldr(x25, ptr(x0, OFF_SP));
+    a.ldr(x22, ptr(x0, OFF_TEMPBASE));
+    a.ldr(x21, ptr(x0, OFF_RECEIVER));
+    a.ldr(x23, ptr(x0, OFF_J2J_SAVE_CURSOR));
+    a.ldur(x26, ptr(x25, -8));
+    a.br(x9);
+    a.bind(out);
+    a.cbz(x9, refused);
+    a.mov(w3, asmjit::Imm((int)ExitDeopt));
+    a.str(w3, ptr(x0, OFF_EXIT));
+    a.ret(x30);
+    a.bind(refused);
+    a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+    a.str(w3, ptr(x0, OFF_EXIT));
+    a.ret(x30);
+}
+}}  // namespace pharo::jit
+#endif
+
 // Machine-code frames: called by Interpreter::mcfInit after g_mcfLayout is
 // set (the stubs bake its offsets in).
 void pharo::jit::mcfBuildStubs() {
@@ -16481,6 +16530,8 @@ void pharo::jit::mcfBuildStubs() {
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
     if (!g_mcfTinyStub) g_mcfTinyStub = buildMcfStubPage(emitMcfTinyShapes);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
+    if (!g_mcfNlrStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_NATIVE_NLR))
+        g_mcfNlrStub = buildMcfStubPage(emitMcfNlrStub);
     if (!g_mcfBlockCreateStub && g_jitEdenFreeCell && g_jitSurvivorStartCell
             && g_lazyCtxPendingAddr && g_mcfFbcClassIndex
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_BLOCK_CREATE)
@@ -16493,6 +16544,8 @@ void pharo::jit::mcfBuildStubs() {
             if (FILE* f = std::fopen((std::string(GET_DEBUG_STR(PHARO_JIT_PERF_MAP)) + ".stubs").c_str(), "w")) {
                 std::fprintf(f, "%llx 1000 <mcf call stub>\n%llx 1000 <mcf block stub>\n",
                              (unsigned long long)g_mcfCallStub, (unsigned long long)g_mcfBlockStub);
+                if (g_mcfNlrStub)
+                    std::fprintf(f, "%llx 1000 <mcf nlr stub>\n", (unsigned long long)g_mcfNlrStub);
                 if (g_sharedRetPreludeStub)
                     std::fprintf(f, "%llx 1000 <shared return prelude>\n",
                                  (unsigned long long)g_sharedRetPreludeStub);

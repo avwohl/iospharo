@@ -228,6 +228,11 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_PINNED_REGS)          // MCF: frame push/return load 
 DEBUG_BOOL(PHARO_MCF_NO_AT_FIRST)                // MCF one-argument primitive stub: test at:/String>>at: in the old order (after / == value: objectAt:)
 DEBUG_BOOL(PHARO_MCF_NO_CTX_TAIL_FILL)           // MCF block-create stub: nil-fill the whole new context two slots per store (old fill)
 DEBUG_BOOL_RT(PHARO_MCF_NO_POP_MEMO_KEEP)        // MCF: a return through C++ ignores the popped record's memo and looks the caller's code up (the behaviour before 2026-10-15)
+DEBUG_BOOL_RT(PHARO_MCF_NO_RESTORE_CONT)         // MCF: after a collapsed non-local return's frames are restored, the frame returned into runs interpreted to its next send
+DEBUG_BOOL_RT(PHARO_MCF_NO_NATIVE_NLR)            // MCF: a ^ in a block always exits to the interpreter (no pharo_mcf_nlr stub)
+DEBUG_BOOL_RT(PHARO_MCF_NLR_NO_CONT)             // MCF native NLR: pop the frames, then always let the interpreter continue (deopt)
+DEBUG_BOOL(PHARO_MCF_NLR_CENSUS)                 // MCF native NLR: count refusals by reason (printed every 64K)
+DEBUG_BOOL(PHARO_MCF_NLR_VERIFY)                 // MCF native NLR oracle: the home agrees with findBlockHomeFrame; the state after the pops is checked
 DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)             // native weak-association drain for every dictionary with the unscaled header hash (pre-2026-10-15; loses live keys)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
 DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)
