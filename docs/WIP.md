@@ -50,8 +50,25 @@ the SavedFrame record (11 stores), the state mirrors, the IC extras
 decode and the call-cache probe.  Non-local return through ensure: is
 ~15,500 instructions (Cog ~420 ns under Rosetta).
 
-Open: FreeTypeCacheTest>>testGlyphAccessIsThreadSafeWhenAskingWidth
-failed in L26 (never in L1-L25) and 1 of 4 alone on HEAD; A/B running.
+FreeTypeCacheTest>>testGlyphAccessIsThreadSafeWhenAskingWidth (L26):
+a flake on both binaries (HEAD 6/6 pass alone, the L25 binary timed out
+once); the test's own comment says it "breaks 95% of times".
+
+Pushed `93cf45e5` (sweep L27: 27804 / 7 / 2, the best so far; its one
+new entry, SpCodePresenterTest>>testDoBrowseHierarchy, is a fake-GUI
+alarm race that passes 4/4 alone).  The runner no longer shadows
+variables (af649a8 in the submodule); ReleaseTest still lists
+FastStepThroughController, which is base-image code.
+
+Since then (sweep L28 on `443b5b44`): thisContext and terminateTo: run
+from machine code (055e7e8a, 443b5b44), so resume:through: no longer
+falls into the interpreter; young contexts are synced with raw stores;
+the context tail clear and allocateSlots' nil fill vectorize
+(f952c81e).  lexicon ~300.0 billion instructions.
+
+Measuring under load: instruction counts move with machine load (a
+slower wall clock means more heartbeat checkpoints), so A/B only with
+interleaved runs while a sweep is going.
 
 ## Earlier (2026-10-15, early) -- stalls and stubs; pushed `eebd43a3`, sweep L25 on `253d78f3`
 
