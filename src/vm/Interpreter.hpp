@@ -1935,7 +1935,7 @@ public:
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
     uint64_t mcfBlockCreate(jit::JITState* st, uint64_t packed);
-    void* mcfPerformTarget(jit::JITState* st, int nArgs);
+    void* mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAfter);
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
     void mcfCallCensusDump();
     void mcfClearMemos();
@@ -1950,6 +1950,9 @@ public:
     bool mcfConstantReturn(Oop method, Oop& value);
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
     bool mcfFastReplace(jit::JITState* st);
+    bool mcfFastClone(jit::JITState* st);
+    void* mcfPerformInPlace(jit::JITState* st, int nArgs, uint8_t* ipAfter, Oop target,
+                            Oop rcv, jit::McfCallEntry*& e);
     Oop mcfThisContext(jit::JITState* st);
     // A slot store into a context being materialized: a raw store when the
     // context is young (no barrier needed), else storePointer.  Most

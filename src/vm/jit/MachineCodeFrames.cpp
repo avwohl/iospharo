@@ -125,10 +125,12 @@ Oop Interpreter::mcfThisContext(jit::JITState* st) {
 // Allocation cannot GC here, so the machine code's registers stay valid.
 // perform: and its with: forms from T1 code (kMcfPerformMethod): the call
 // entry of the performed method when T1 code can call it natively, with
-// the selector removed from the stack; else nullptr, stack untouched (the
+// the selector removed from the stack; kMcfExtDone / kMcfExtDeopt when a
+// primitive or constant target was answered in place (as pharo_mcf_extsend;
+// ipAfter = the ip past the perform); else nullptr, stack untouched (the
 // send then exits and primitive 83 runs in the interpreter).
-extern "C" void* pharo_mcf_perform(jit::JITState* st, uint32_t nArgs) {
-    return st->interp->mcfPerformTarget(st, (int)nArgs);
+extern "C" void* pharo_mcf_perform(jit::JITState* st, uint32_t nArgs, uint8_t* ipAfter) {
+    return st->interp->mcfPerformTarget(st, (int)nArgs, ipAfter);
 }
 
 // An inline-cache hit's primitive failed (pharo_mcf_prim answered 0, stack
@@ -220,8 +222,36 @@ extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_FAST_REPLACE)
             && st->interp->mcfFastReplace(st))
         return 1;
+    if (primAndArgs == 148 && !GET_DEBUG_BOOL(PHARO_MCF_NO_FAST_CLONE)
+            && st->interp->mcfFastClone(st))
+        return 1;
     return st->interp->mcfCallPrimitive(st, (int)(primAndArgs & 0xFFFF),
                                         (int)(primAndArgs >> 16));
+}
+
+// Primitive 148 (shallowCopy) of an ordinary heap object, with none of the
+// interpreter state sync of a primitive call (~490 instructions a copy;
+// Object>>copy runs it 3.6M times per PMPermutationTest>>testGenerator).
+// ObjectMemory::shallowCopy is what primitiveClone runs: it allocates
+// (eden, else old space) without ever collecting -- a scavenge waits for
+// the next safe point -- so the machine code's registers stay valid, and
+// it gives the copy a fresh hash and clears the mark, remembered,
+// immutable and pinned bits.  Refused, for the full primitive: a Context
+// (a lazy stub's fields are synced by that path), a forwarder (it follows
+// it), compiled code, and an object with an overflow slot count.
+bool Interpreter::mcfFastClone(jit::JITState* st) {
+    const Oop rcv = st->sp[-1];
+    if (!rcv.isObject()) return false;
+    ObjectHeader* const h = rcv.asObjectPtr();
+    const uint32_t ci = h->classIndex();
+    if (ci == ObjectHeader::ForwardedClassIndex || ci == contextClassIndex_
+            || contextClassIndex_ == 0)
+        return false;
+    if (h->format() >= ObjectFormat::CompiledMethod || h->hasOverflowSlots()) return false;
+    const Oop copy = memory_.shallowCopy(rcv);
+    if (!copy.isObject() || copy.isNil()) return false;
+    st->sp[-1] = copy;
+    return true;
 }
 
 // Primitive 105 (replaceFrom:to:with:startingAt:) for its two common
@@ -341,6 +371,8 @@ bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
 // detected after the call and handed to the interpreter.
 static bool mcfPrimCallable(int p) {
     if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
+    if (p >= 20 && p <= 37)                      // LargeInteger arithmetic: they only allocate
+        return !GET_DEBUG_BOOL(PHARO_MCF_NO_LARGEINT_PRIMS);
     if (p >= 40 && p <= 59) return true;         // Float
     if (p >= 541 && p <= 559) return true;       // SmallFloat64 (sqrt alone was ~360 instructions a call)
     switch (p) {
@@ -370,7 +402,10 @@ static bool mcfPrimCallable(int p) {
 // May T1 code run this primitive method's primitive without leaving machine
 // code?  mcfPrimCallable, plus named primitive 117 for the pure string
 // functions of MiscPrimitivePlugin (no Smalltalk, no allocation; lexicon
-// sent indexOfAscii:inString:startingAt: and friends 5M times).
+// sent indexOfAscii:inString:startingAt: and friends 5M times), and the
+// digit arithmetic of LargeIntegers (no Smalltalk; they allocate, which never
+// collects: Random's 64-bit PCG left machine code ~3 times per Random next
+// for bitShiftMagnitude: and bitXor:).
 bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
     if (mcfPrimCallable(p)) return true;
     if (p != 117) return false;
@@ -388,6 +423,19 @@ bool Interpreter::mcfPrimMethodCallable(Oop method, int p) {
             || memory_.symbolEquals(fn, "primitiveFileSize")
             || memory_.symbolEquals(fn, "primitiveFileRead")
             || memory_.symbolEquals(fn, "primitiveFileAtEnd");
+    if (memory_.symbolEquals(module, "LargeIntegers"))
+        return !GET_DEBUG_BOOL(PHARO_MCF_NO_LARGEINT_PRIMS)
+            && (memory_.symbolEquals(fn, "primDigitBitShiftMagnitude")
+                || memory_.symbolEquals(fn, "primDigitBitAnd")
+                || memory_.symbolEquals(fn, "primDigitBitOr")
+                || memory_.symbolEquals(fn, "primDigitBitXor")
+                || memory_.symbolEquals(fn, "primDigitAdd")
+                || memory_.symbolEquals(fn, "primDigitSubtract")
+                || memory_.symbolEquals(fn, "primDigitMultiplyNegative")
+                || memory_.symbolEquals(fn, "primDigitCompare")
+                || memory_.symbolEquals(fn, "primNormalizePositive")
+                || memory_.symbolEquals(fn, "primNormalizeNegative")
+                || memory_.symbolEquals(fn, "primDigitDivNegative"));
     if (!memory_.symbolEquals(module, "MiscPrimitivePlugin")) return false;
     return memory_.symbolEquals(fn, "primitiveStringHash")
         || memory_.symbolEquals(fn, "primitiveIndexOfAsciiInString")
@@ -1021,7 +1069,7 @@ bool Interpreter::mcfActivate(Oop method) {
     return true;
 }
 
-void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs) {
+void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAfter) {
     Oop* sp = st->sp;
     Oop rcv = sp[-(nArgs + 1)];
     Oop selector = sp[-nArgs];
@@ -1038,6 +1086,10 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs) {
     if (!th.isSmallInteger() || (int)((th.asSmallInteger() >> 24) & 0xF) != nArgs - 1)
         return nullptr;                              // the primitive fails it
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
+    if ((!e || !e->jm || e->prim == jit::kMcfReturnsValue)
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM)) {
+        if (void* done = mcfPerformInPlace(st, nArgs, ipAfter, target, rcv, e)) return done;
+    }
     if (!e || !e->jm || (e->prim && (e->prim & 0xFFFFFF) != jit::kMcfTinyShape)
             || !mcfReceiverOk(e->jm, rcv))
         return nullptr;
@@ -1050,6 +1102,51 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs) {
     for (int i = nArgs - 1; i >= 1; i--) sp[-(i + 1)] = sp[-i];   // drop the selector
     st->sp = sp - 1;
     return e;
+}
+
+// mcfPerformTarget's target has no native-call entry: answer it in place
+// when it is a primitive or a constant, else nullptr (stack untouched; `e`
+// is the entry found or made, for the native-call test that follows).  Out
+// of line: inlined, its spills cost every native perform ~25 instructions.
+[[gnu::noinline]] void* Interpreter::mcfPerformInPlace(jit::JITState* st, int nArgs, uint8_t* ipAfter,
+                                                       Oop target, Oop rcv, jit::McfCallEntry*& e) {
+    Oop* const sp = st->sp;
+    if (!e) {
+        // A target only ever performed is never sent from an inline cache,
+        // so nothing records it (2.5 perform: #+ with: 1.5 runs primitive
+        // 541 every time and never activates the method).
+        mcfNotePrimitiveTarget(target, rcv);
+        e = jit::mcfCallFind(target.rawBits());
+        if (!e) return nullptr;
+    }
+    if (e->prim == jit::kMcfReturnsValue) {
+        // A method answering one constant: it replaces the receiver; the
+        // selector and the arguments go.
+        sp[-(nArgs + 1)] = Oop::fromRawBits(e->bcEndOff);
+        st->sp = sp - nArgs;
+        return kMcfExtDone;
+    }
+    if (e->jm || !e->prim || e->prim >= 1024) return nullptr;
+    // A primitive entry (mcfNotePrimitiveTarget): run the primitive with the
+    // selector removed, as primitivePerform does, the way an inline-cache hit
+    // runs it (with the ip after the perform).  Each was an exit to the
+    // interpreter (~45 ns against Cog's 4).  A failure puts the selector back
+    // and exits as before; the interpreter's perform then runs the primitive
+    // and the method body.
+    const Oop selector = sp[-nArgs];
+    for (int i = nArgs - 1; i >= 1; i--) sp[-(i + 1)] = sp[-i];
+    st->sp = sp - 1;
+    st->cachedTarget = target;
+    st->ip = ipAfter;
+    switch (mcfCallPrimitive(st, (int)e->prim, nArgs - 1)) {
+    case 1: return kMcfExtDone;
+    case 2: return kMcfExtDeopt;
+    default:
+        for (int i = 1; i <= nArgs - 1; i++) sp[-i] = sp[-(i + 1)];
+        sp[-nArgs] = selector;
+        st->sp = sp;
+        return nullptr;
+    }
 }
 
 uint64_t Interpreter::mcfBlockCreate(jit::JITState* st, uint64_t packed) {

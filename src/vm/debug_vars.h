@@ -232,6 +232,11 @@ DEBUG_BOOL(PHARO_MCF_NO_TERMINATE_TO)           // MCF: terminateTo: (primitive 
 DEBUG_BOOL(PHARO_MCF_NO_THIS_CONTEXT)           // MCF: PushThisContext exits to the interpreter (which runs the rest of the method) instead of a helper call
 DEBUG_BOOL(PHARO_MCF_NO_PRIM_FIRST)             // MCF: an IC hit on a primitive entry tests the special entry kinds first (old order)
 DEBUG_BOOL(PHARO_MCF_NO_FAST_REPLACE)           // MCF: primitive 105 from machine code takes the full primitive call (no bytes/Array fast path)
+DEBUG_BOOL(PHARO_MCF_NO_FAST_CLONE)             // MCF: primitive 148 (shallowCopy) from machine code takes the full primitive call (no register-sync-free copy)
+DEBUG_BOOL(PHARO_MCF_NO_STUB_HASH_MULTIPLY)     // MCF: the primitive stub does not answer SmallInteger>>hashMultiply (159); the C primitive does
+DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM)           // MCF: perform: of a primitive or constant-answer method exits to the interpreter instead of running it from machine code
+DEBUG_BOOL(PHARO_MCF_NO_BITOP_SEND)             // MCF: bitAnd: bitOr: bitShift: \\ // whose inline SmallInteger path fails take the generic bytecode exit instead of a helper send
+DEBUG_BOOL(PHARO_MCF_NO_LARGEINT_PRIMS)         // MCF: LargeIntegers plugin primitives and LargeInteger arithmetic primitives are not run from machine code
 DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_PRIM_CACHE)     // MCF: an ExtSend site does not cache a primitive target (every call looks it up in C)
 DEBUG_BOOL(PHARO_MCF_NO_PREFIXED_SEND)          // MCF: ExtendA + ExtSend (a send to literal 32-255) exits to the interpreter instead of a helper send
 DEBUG_BOOL(PHARO_MCF_NO_IC_PRIM_FAIL_BODY)      // MCF: a primitive that fails at an inline-cache hit exits to the interpreter instead of running the method body natively
