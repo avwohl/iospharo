@@ -1173,7 +1173,10 @@ PrimitiveResult Interpreter::primitiveFloatArrayAtPut(int argCount) {
     Oop indexOop = stackValue(1);
     Oop receiver = stackValue(2);
 
-    if (!indexOop.isSmallInteger() || !receiver.isObject())
+    // A read-only receiver fails, so the image raises ModificationForbidden
+    // (Cog's plugin stores into it).
+    if (!indexOop.isSmallInteger() || !receiver.isObject()
+        || receiver.asObjectPtr()->isImmutable())
         return PrimitiveResult::Failure;
 
     intptr_t index = indexOop.asSmallInteger();
@@ -7027,6 +7030,134 @@ static Oop makeFloat(ObjectMemory& memory, double value) {
         memory.storeWord64(0, floatObj, bits);
     }
     return floatObj;
+}
+
+// ===== FloatArrayPlugin (Float32Array, MatrixTransform2x3) =====
+//
+// Every named primitive the VM does not implement runs the image's
+// Smalltalk fallback, after a full literal search in primitiveExternalCall.
+// Float32Array>>sum, dot:, =, hash and the in-place arithmetic of +, -, *,
+// / were all such; polymath's KD-tree tests ran 60-100x slower than Cog.
+// Semantics as Cog's plugin: 32-bit word objects only, the arithmetic is
+// done in double and stored as float, a zero divisor element fails (the
+// fallback then raises ZeroDivide), and = compares any two word objects
+// element by element as floats (no class check).
+
+static bool floatArrayWords(ObjectMemory& memory, Oop oop, float*& p, size_t& n) {
+    if (!oop.isObject() || !memory.isValidPointer(oop)) return false;
+    ObjectHeader* h = oop.asObjectPtr();
+    if (h->format() != ObjectFormat::Indexable32
+        && h->format() != ObjectFormat::Indexable32Odd) return false;   // odd: an odd word count
+    p = reinterpret_cast<float*>(h->bytes());
+    n = h->byteSize() / 4;
+    return true;
+}
+
+// Receiver op argument, in place; answers the receiver.
+template <typename Op>
+static PrimitiveResult floatArrayInPlace(Interpreter& in, ObjectMemory& memory,
+                                         int argCount, bool arrayArg, bool failOnZero, Op op) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop arg = in.stackValue(0);
+    Oop rcvr = in.stackValue(1);
+    float* r; size_t n;
+    if (!floatArrayWords(memory, rcvr, r, n) || rcvr.asObjectPtr()->isImmutable())
+        return PrimitiveResult::Failure;
+    if (arrayArg) {
+        float* a; size_t m;
+        if (!floatArrayWords(memory, arg, a, m) || m != n) return PrimitiveResult::Failure;
+        if (failOnZero)
+            for (size_t i = 0; i < n; i++)
+                if (a[i] == 0.0f) return PrimitiveResult::Failure;
+        for (size_t i = 0; i < n; i++)
+            r[i] = static_cast<float>(op(static_cast<double>(r[i]), static_cast<double>(a[i])));
+    } else {
+        double v;
+        if (!extractFloat(memory, arg, v)) return PrimitiveResult::Failure;
+        for (size_t i = 0; i < n; i++)
+            r[i] = static_cast<float>(op(static_cast<double>(r[i]), v));
+    }
+    in.popN(1);    // leave the receiver
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatArrayAddArray(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, true, false, [](double x, double y) { return x + y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArraySubArray(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, true, false, [](double x, double y) { return x - y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArrayMulArray(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, true, false, [](double x, double y) { return x * y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArrayDivArray(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, true, true, [](double x, double y) { return x / y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArrayAddScalar(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, false, false, [](double x, double y) { return x + y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArraySubScalar(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, false, false, [](double x, double y) { return x - y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArrayMulScalar(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, false, false, [](double x, double y) { return x * y; });
+}
+PrimitiveResult Interpreter::primitiveFloatArrayDivScalar(int argCount) {
+    return floatArrayInPlace(*this, memory_, argCount, false, false, [](double x, double y) { return x / y; });
+}
+
+PrimitiveResult Interpreter::primitiveFloatArraySum(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    float* r; size_t n;
+    if (!floatArrayWords(memory_, stackTop(), r, n)) return PrimitiveResult::Failure;
+    double sum = 0.0;
+    for (size_t i = 0; i < n; i++) sum += r[i];
+    Oop result = makeFloat(memory_, sum);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    popN(1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatArrayDotProduct(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    float* r; size_t n; float* a; size_t m;
+    if (!floatArrayWords(memory_, stackValue(1), r, n)
+        || !floatArrayWords(memory_, stackValue(0), a, m) || m != n)
+        return PrimitiveResult::Failure;
+    double sum = 0.0;
+    for (size_t i = 0; i < n; i++)
+        sum += static_cast<double>(r[i]) * static_cast<double>(a[i]);
+    Oop result = makeFloat(memory_, sum);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    popN(2);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatArrayEqual(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    float* r; size_t n; float* a; size_t m;
+    if (!floatArrayWords(memory_, stackValue(1), r, n)
+        || !floatArrayWords(memory_, stackValue(0), a, m))
+        return PrimitiveResult::Failure;
+    bool equal = m == n;
+    for (size_t i = 0; equal && i < n; i++) equal = r[i] == a[i];
+    popN(2);
+    push(equal ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveFloatArrayHash(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    float* r; size_t n;
+    if (!floatArrayWords(memory_, stackTop(), r, n)) return PrimitiveResult::Failure;
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(r);
+    uint32_t h = 0;
+    for (size_t i = 0; i < n; i++) h += w[i];
+    popN(1);
+    push(Oop::fromSmallInteger(static_cast<int64_t>(h & 0x1FFFFFFF)));
+    return PrimitiveResult::Success;
 }
 
 // Primitive 40: Convert integer to Float
@@ -16588,6 +16719,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     const uint64_t extKey = method.rawBits();
     ExtCallCacheEntry& extEntry = extCallCache_[(extKey >> 3) & (kExtCallCacheSize - 1)];
     if (extEntry.method == extKey && extEntry.gcEpoch == memory_.fullGCCount()) {
+        if (extEntry.missing) return PrimitiveResult::Failure;
         return extEntry.named ? (this->*(extEntry.named))(argCount)
                               : callExternalPrimitive(extEntry.ext);
     }
@@ -16597,6 +16729,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         extEntry.gcEpoch = memory_.fullGCCount();
         extEntry.named = named;
         extEntry.ext = ext;
+        extEntry.missing = false;
     };
 
     // The primitive spec is typically in the method's literal frame
@@ -16904,6 +17037,25 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
+    // A named primitive (#(module name flags index)) the VM does not have.
+    // Every primitive registers at startup, so the answer never changes:
+    // fail at once next time, as Cog does, instead of repeating the literal
+    // search above (which cost polymath's KD-tree tests ~80% of their time
+    // when Float32Array>>sum had no primitive).
+    if (numLiterals >= 1 && !GET_DEBUG_BOOL(PHARO_NO_EXTCALL_MISS_CACHE)) {
+        Oop lit0 = memory_.fetchPointer(1, method);
+        if (lit0.isObject() && memory_.isValidPointer(lit0)
+            && memory_.classOf(lit0).rawBits()
+                   == memory_.specialObject(SpecialObjectIndex::ClassArray).rawBits()
+            && lit0.asObjectPtr()->slotCount() == 4) {
+            Oop nameOop = memory_.fetchPointer(1, lit0);
+            if (nameOop.isObject() && memory_.isValidPointer(nameOop)
+                && nameOop.asObjectPtr()->isBytesObject()) {
+                cacheExtCall(nullptr, nullptr);
+                if (extEntry.method == extKey) extEntry.missing = true;
+            }
+        }
+    }
     return PrimitiveResult::Failure;
 }
 

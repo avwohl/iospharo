@@ -4059,6 +4059,8 @@ void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
 
     // Simple linear probe (the inline noteMethodEntry gate probes the same
     // kCountProbes slots).
+    bool evicted = false;
+probe_again:
     for (size_t probe = 0; probe < (size_t)kCountProbes; probe++) {
         size_t i = (idx + probe) % CountMapSize;
         if (countMap_[i].key == key) {
@@ -4398,7 +4400,25 @@ void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
             return;
         }
     }
-    // Count map full for this bucket — just skip
+    // Count map full for this bucket.  Entries leave the map only at a full
+    // GC, and only for compiled methods, so every method a long run ever
+    // activates holds a slot, and a method whose 8 probe slots were taken was
+    // never counted and never compiled (rare: ~40 times in polymath's whole
+    // test suite, as full GCs empty the map).  Take the slot of the coldest entry:
+    // a method seen once, or one already decided (the compile queue skips
+    // methods that are already compiled or failed).
+    if (evicted || GET_DEBUG_BOOL(PHARO_NO_COUNT_EVICT)) return;
+    {
+        size_t victim = idx % CountMapSize;
+        for (size_t probe = 1; probe < (size_t)kCountProbes; probe++) {
+            size_t i = (idx + probe) % CountMapSize;
+            if (countMap_[i].count < countMap_[victim].count) victim = i;
+        }
+        countMap_[victim].key = 0;
+        countMap_[victim].count = 0;
+        evicted = true;
+        goto probe_again;     // takes the freed slot like a new method
+    }
 }
 
 bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {

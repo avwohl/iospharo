@@ -1601,6 +1601,7 @@ private:
         size_t gcEpoch = 0;
         PrimitiveFunc named = nullptr;
         ExternalPrimFunc ext = nullptr;
+        bool missing = false;    // no implementation: fail at once
     };
     static constexpr size_t kExtCallCacheSize = 256;
     std::array<ExtCallCacheEntry, kExtCallCacheSize> extCallCache_{};
@@ -2771,6 +2772,18 @@ private:
     PrimitiveResult primitiveExecuteMethod(int argCount);
     PrimitiveResult primitiveFloatArrayAt(int argCount);
     PrimitiveResult primitiveFloatArrayAtPut(int argCount);
+    PrimitiveResult primitiveFloatArrayAddArray(int argCount);
+    PrimitiveResult primitiveFloatArraySubArray(int argCount);
+    PrimitiveResult primitiveFloatArrayMulArray(int argCount);
+    PrimitiveResult primitiveFloatArrayDivArray(int argCount);
+    PrimitiveResult primitiveFloatArrayAddScalar(int argCount);
+    PrimitiveResult primitiveFloatArraySubScalar(int argCount);
+    PrimitiveResult primitiveFloatArrayMulScalar(int argCount);
+    PrimitiveResult primitiveFloatArrayDivScalar(int argCount);
+    PrimitiveResult primitiveFloatArraySum(int argCount);
+    PrimitiveResult primitiveFloatArrayDotProduct(int argCount);
+    PrimitiveResult primitiveFloatArrayEqual(int argCount);
+    PrimitiveResult primitiveFloatArrayHash(int argCount);
 
     // Arithmetic
     PrimitiveResult primitiveAdd(int argCount);

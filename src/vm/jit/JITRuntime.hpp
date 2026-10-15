@@ -222,9 +222,9 @@ public:
                 }
                 if (ce.key == 0) break;
             }
-            // Bucket full of other methods: the slow path would record
-            // nothing either ("Count map full for this bucket -- skip").
-            if (probe == kCountProbes) return;
+            // Bucket full of other methods: the slow path evicts the
+            // coldest one (PHARO_NO_COUNT_EVICT: record nothing).
+            if (probe == kCountProbes && GET_DEBUG_BOOL(PHARO_NO_COUNT_EVICT)) return;
         }
         noteMethodEntrySlow(compiledMethod);
     }

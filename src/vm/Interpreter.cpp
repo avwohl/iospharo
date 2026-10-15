@@ -24510,6 +24510,18 @@ void Interpreter::initializeNamedPrimitives() {
     // FloatArrayPlugin
     registerNamedPrimitive("FloatArrayPlugin", "primitiveAt", &Interpreter::primitiveFloatArrayAt);
     registerNamedPrimitive("FloatArrayPlugin", "primitiveAtPut", &Interpreter::primitiveFloatArrayAtPut);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveAddFloatArray", &Interpreter::primitiveFloatArrayAddArray);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveSubFloatArray", &Interpreter::primitiveFloatArraySubArray);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveMulFloatArray", &Interpreter::primitiveFloatArrayMulArray);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveDivFloatArray", &Interpreter::primitiveFloatArrayDivArray);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveAddScalar", &Interpreter::primitiveFloatArrayAddScalar);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveSubScalar", &Interpreter::primitiveFloatArraySubScalar);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveMulScalar", &Interpreter::primitiveFloatArrayMulScalar);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveDivScalar", &Interpreter::primitiveFloatArrayDivScalar);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveSum", &Interpreter::primitiveFloatArraySum);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveDotProduct", &Interpreter::primitiveFloatArrayDotProduct);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveEqual", &Interpreter::primitiveFloatArrayEqual);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveHashArray", &Interpreter::primitiveFloatArrayHash);
 
     // MiscPrimitivePlugin
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);
