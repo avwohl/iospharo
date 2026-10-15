@@ -15,7 +15,37 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, 21:00) -- frozen NLR segment (opt-in); L48 clean, pushed `804f11d1`
+## Right now (2026-10-16, 01:00) -- pin fix, image test fixes, call-record design panel
+
+- Pushed through `9d3489bc`.  Sweeps: L49 (segment on by default) clean;
+  L50 (leaf primitives) clean apart from FFICallbackTest, which found a
+  real VM bug: `primitivePin` left a pinned young object in eden, so a
+  scavenge inside a qsort callback moved the buffer under C (`4a4fd340`:
+  pin now scavenges first; repro 16 of 20 wrong before, 0 after; memory
+  pinned-young-objects-must-tenure).  L51 clean apart from load flakes.
+- `a56aab58`: leaf primitives called from machine code skip the register
+  sync and executePrimitive; primitive 158 (String/Symbol compare) runs
+  in place.  Symbol `<` 30 -> 14 ms (Cog 9).
+- `0c70c9d4`: binary bytecodes load operands with one ldp and push the
+  result through x25 (body plan step 3 part 2).
+- `9d3489bc`: `scripts/pharo13-image-fixes.st` fixes six tests that fail
+  identically on stock Cog (renamed trait, stale allowlist, a shadowed
+  instance variable, a racy debugger provider, two swapped-index layout
+  tests).  docs/image_issues.md lists them; CLAUDE.md prep files it in.
+  Sweep L52 runs on the new image `sunit7` (scratchpad prep7.sh).
+- Speed against Cog (Cog under Rosetta): tinyBenchmarks bytecodes 4.7G
+  vs 5.0G per second, sends 280M vs 405M.  Lexicon 226 billion
+  instructions.  Microbenchmarks: we are faster on loops, String =,
+  copies; slower on exceptions (2.3x), perform: (now 4x), isLetter
+  (1.6x, shared primitive stubs), Dictionary at: (1.25x).
+- The send gap is the native call record: ~58 instructions per call pair
+  against Cog's ~25.  A design panel (workflow mcf-record-trim-2) is
+  mapping the C++ readers of each record field for a staged trim.
+- Tried and reverted (no gain): Context-primitive sync skipped for
+  non-running contexts; eden-full early checkpoint; inline basicNew: in
+  the 1-argument primitive stub (the IC path already allocates inline).
+
+## Earlier (2026-10-15, 21:00) -- frozen NLR segment (opt-in); L48 clean, pushed `804f11d1`
 
 - Sweep L48 on `804f11d1` clean (2042 classes, 27805 pass, nothing new);
   origin/jit is at `804f11d1`.  It covers T1 body plan steps 2-3 part 1,
