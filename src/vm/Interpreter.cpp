@@ -26034,6 +26034,35 @@ void Interpreter::drainMournQueueNatively() {
         //   slot 0 = key, slot 1 = value, slot 2 = container.
         Oop container = mournerHdr->slotAt(2);
         if (!container.isObject() || container.rawBits() == nilOop.rawBits()) continue;
+        // Re-placing the entries after the hole needs the container's own
+        // hash.  An identity dictionary (IdentityDictionary>>scanFor:)
+        // probes from identityHash = basicIdentityHash << 8, which C++ can
+        // compute; any other dictionary may hash by content, so its
+        // association mourns in the image (WeakKeyAssociation>>mourn ->
+        // removeKey:, as on Cog).  The drain used the unscaled header hash
+        // for every container, so the entries it moved landed where lookup
+        // never probes (a live key no longer found: EventManager action
+        // maps lost their sessions in StDebuggerActionModelTest).
+        if (!GET_DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)) {
+            static Oop scanForSel = Oop::fromRawBits(0);
+            static uint64_t scanForEpoch = ~0ull;
+            if (scanForEpoch != memory_.fullGCCount()) {
+                scanForSel = memory_.lookupSymbol("scanFor:");
+                scanForEpoch = memory_.fullGCCount();
+            }
+            Oop idDict = memory_.findGlobal("IdentityDictionary");
+            bool identityContainer = false;
+            if (scanForSel.isObject() && !scanForSel.isNil() && idDict.isObject() && !idDict.isNil()) {
+                Oop m1 = lookupMethod(scanForSel, memory_.classOf(container));
+                Oop m2 = lookupMethod(scanForSel, idDict);
+                identityContainer = m1.isObject() && !m1.isNil() && m1.rawBits() == m2.rawBits();
+            }
+            if (!identityContainer) {
+                keepers.push_back(mourner);
+                nonWkaKept++;
+                continue;
+            }
+        }
         ObjectHeader* dictHdr = container.asObjectPtr();
         // Dictionary layout: slot 0 = tally, slot 1 = array.
         if (dictHdr->slotCount() < 2) continue;
@@ -26052,6 +26081,35 @@ void Interpreter::drainMournQueueNatively() {
             }
         }
         if (foundIdx == SIZE_MAX) continue;
+        // The image's identityHash: ProtoObject's basicIdentityHash << 8; a
+        // SmallInteger and a Character answer their value.
+        auto identityHashOf = [&](Oop key, uint64_t& hash) -> bool {
+            if (key.isSmallInteger()) { hash = static_cast<uint64_t>(key.asSmallInteger()); return key.asSmallInteger() >= 0; }
+            if (key.isCharacter()) { hash = key.asCharacter(); return true; }
+            if (!key.isObject() || key.rawBits() < 0x10000) return false;
+            hash = static_cast<uint64_t>(key.asObjectPtr()->identityHash())
+                   << (GET_DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT) ? 0 : 8);
+            return true;
+        };
+        if (!GET_DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)) {
+            // Every key the re-placement will hash must be hashable here;
+            // else the image removes the association.
+            bool hashable = true;
+            for (size_t steps = 0, j = foundIdx; steps < arrSize && hashable; ++steps) {
+                j = (j + 1) % arrSize;
+                Oop e = arrHdr->slotAt(j);
+                if (e.rawBits() == nilOop.rawBits()) break;
+                uint64_t h;
+                if (!e.isObject() || e.rawBits() < 0x10000 || e.asObjectPtr()->slotCount() < 1
+                        || !identityHashOf(e.asObjectPtr()->slotAt(0), h))
+                    hashable = false;
+            }
+            if (!hashable) {
+                keepers.push_back(mourner);
+                nonWkaKept++;
+                continue;
+            }
+        }
 
         // Nil the slot.  The array is old-space and nil is perm —
         // no write-barrier needed.
@@ -26074,8 +26132,8 @@ void Interpreter::drainMournQueueNatively() {
         // since testClearing doesn't exercise includesKey: after
         // mourn.
         auto findElementOrNilIdx = [&](Oop key) -> size_t {
-            if (!key.isObject()) return SIZE_MAX;
-            uint32_t hash = key.asObjectPtr()->identityHash();
+            uint64_t hash;
+            if (!identityHashOf(key, hash)) return SIZE_MAX;
             size_t start = hash % arrSize;
             for (size_t probe = 0; probe < arrSize; ++probe) {
                 size_t i = (start + probe) % arrSize;
