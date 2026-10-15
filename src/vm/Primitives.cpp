@@ -649,8 +649,16 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
         }
     }
 
-    memory_.incrementalGC();
-    flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+    // Cog's primitive 131 is a scavenge (with weak processing), not a full
+    // collection: a debugger resume or terminate calls it once each, and a
+    // mark-compact of a 70 MB heap there cost 110-150 ms per call
+    // (StDebuggerActionModelTest).  Old behaviour: PHARO_PRIM131_FULLGC.
+    if (GET_DEBUG_BOOL(PHARO_PRIM131_FULLGC)) {
+        memory_.incrementalGC();
+        flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+    } else {
+        memory_.scavengeWeak();
+    }
 
     size_t freeBytes = memory_.freeOldSpaceBytes();
 

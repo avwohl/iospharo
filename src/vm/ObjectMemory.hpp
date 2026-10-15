@@ -756,6 +756,10 @@ public:
 
     /// Run a scavenge (minor GC of new space)
     GCResult scavenge();
+    // A scavenge whose weak objects' weak slots do not keep young referents
+    // alive: they end up pointing at the tenured copy, or nil (and the weak
+    // object mourns), as Cog's scavenger does.  Primitive 131.
+    GCResult scavengeWeak();
 
     /// Run an incremental GC step
     GCResult incrementalGC();
@@ -1203,6 +1207,7 @@ private:
     // follows become forwarders in eden to their targets.
     bool becomeForwardersPending_ = false;
     size_t lazyPairsSinceUnforward_ = 0;
+    bool scavengeWeakAware_ = false;
     uint8_t* oldFreeAtLastScavenge_ = nullptr;  // old-space top when the last scavenge finished (PHARO_SCAV_BIT_AUDIT: "recent" holders)
 
     // Segregated free lists for old space (Spur-style)

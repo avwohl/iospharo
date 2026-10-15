@@ -2649,6 +2649,13 @@ private:
 ScavForwardMap g_scavForward;
 }  // namespace
 
+GCResult ObjectMemory::scavengeWeak() {
+    scavengeWeakAware_ = true;
+    GCResult r = scavenge();
+    scavengeWeakAware_ = false;
+    return r;
+}
+
 GCResult ObjectMemory::scavenge() {
     // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young
     // exists anymore (allocation falls back to old space) — later scavenge
@@ -2851,6 +2858,14 @@ GCResult ObjectMemory::scavenge() {
     // reference more young objects).
     std::vector<ObjectHeader*> scanQueue;
     scanQueue.reserve(1024);
+    // scavengeWeak: the weak slots of a Weak-format object (past its fixed
+    // fields) hold their young referents only if something else does.
+    const bool weakAware = scavengeWeakAware_;
+    std::vector<std::pair<ObjectHeader*, size_t>> weakYoungSlots;
+    auto weakStart = [&](ObjectHeader* obj) -> size_t {
+        if (!weakAware || obj->format() != ObjectFormat::Weak) return SIZE_MAX;
+        return fixedFieldCountOf(obj);
+    };
 
     auto visitRoot = [&](Oop& oopRef) {
         Oop newOop = tenureIfYoung(oopRef);
@@ -2957,6 +2972,7 @@ GCResult ObjectMemory::scavenge() {
             size_t cnt = obj->slotCount();
             bool foundYoungRef = false;
             int firstYoungSlot = -1;
+            const size_t ws = weakStart(obj);
             for (size_t i = 0; i < np && i < cnt; ++i) {
                 Oop s = slots[i];
                 if (!s.isObject()) continue;
@@ -2964,6 +2980,10 @@ GCResult ObjectMemory::scavenge() {
                 if (hp >= edenAllocBase_ && hp < edenFree_) {
                     if (bitAudit && !foundYoungRef) firstYoungSlot = (int)i;
                     if (bitAudit) foundYoungRef = true;
+                    if (i >= ws && !forward.to(s.asObjectPtr())) {
+                        weakYoungSlots.emplace_back(obj, i);
+                        continue;
+                    }
                     Oop newS = tenureIfYoung(s);
                     slots[i] = newS;
                     if (newS.rawBits() != s.rawBits()) {
@@ -3060,11 +3080,16 @@ GCResult ObjectMemory::scavenge() {
             size_t np = pointerSlotsOf(obj);
             Oop* slots = obj->slots();
             size_t cnt = obj->slotCount();
+            const size_t ws = weakStart(obj);
             for (size_t i = 0; i < np && i < cnt; ++i) {
                 Oop sv = slots[i];
                 if (!sv.isObject()) continue;
                 uint8_t* hp = reinterpret_cast<uint8_t*>(sv.asObjectPtr());
                 if (hp >= edenAllocBase_ && hp < edenFree_) {
+                    if (i >= ws && !forward.to(sv.asObjectPtr())) {
+                        weakYoungSlots.emplace_back(obj, i);
+                        continue;
+                    }
                     Oop newS = tenureIfYoung(sv);
                     slots[i] = newS;
                     if (newS.rawBits() != sv.rawBits()) scanQueue.push_back(newS.asObjectPtr());
@@ -3114,11 +3139,16 @@ GCResult ObjectMemory::scavenge() {
             scanQueue.pop_back();
             size_t np = pointerSlotsOf(obj);
             Oop* slots = obj->slots();
+            const size_t ws = weakStart(obj);
             for (size_t i = 0; i < np && i < obj->slotCount(); ++i) {
                 Oop s = slots[i];
                 if (!s.isObject()) continue;
                 uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
                 if (hp >= edenAllocBase_ && hp < edenFree_) {
+                    if (i >= ws && !forward.to(s.asObjectPtr())) {
+                        weakYoungSlots.emplace_back(obj, i);
+                        continue;
+                    }
                     Oop newS = tenureIfYoung(s);
                     if (newS.rawBits() != s.rawBits()) {
                         slots[i] = newS;
@@ -3165,6 +3195,30 @@ GCResult ObjectMemory::scavenge() {
         drainScanQueue();
         if (missed) fprintf(stderr, "[SCAV-TRUST-VERIFY] scavenge %llu: %zu missed old->young pointers\n",
                             (unsigned long long)g_scavengeCount, missed);
+    }
+
+    // scavengeWeak: each recorded weak slot now points at its referent's
+    // tenured copy, or the referent died: nil, and the weak object mourns.
+    if (!weakYoungSlots.empty()) {
+        std::vector<ObjectHeader*> mourned;
+        for (auto& [obj, i] : weakYoungSlots) {
+            Oop v = obj->slots()[i];
+            if (!v.isObject()) continue;
+            uint8_t* hp = reinterpret_cast<uint8_t*>(v.asObjectPtr());
+            if (hp < edenAllocBase_ || hp >= edenFree_) continue;   // updated since
+            if (ObjectHeader* to = forward.to(v.asObjectPtr())) {
+                obj->slots()[i] = Oop::fromObject(to);
+            } else {
+                obj->slots()[i] = nilObject_;
+                if (mourned.empty() || mourned.back() != obj) mourned.push_back(obj);
+            }
+        }
+        std::sort(mourned.begin(), mourned.end());
+        mourned.erase(std::unique(mourned.begin(), mourned.end()), mourned.end());
+        for (ObjectHeader* obj : mourned) {
+            mournQueue_.push_back(Oop::fromObject(obj));
+            pendingFinalizationSignals_++;
+        }
     }
 
     if (scavStats) scavT3 = ScavClock::now();
