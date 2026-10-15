@@ -4192,6 +4192,22 @@ static inline void emitStoreSp(asmjit::a64::Assembler& a,
     a.str(src, asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
 #endif
 }
+// Pop the operand stack's top into dst.  With sp in x25 one pre-indexed
+// load (docs/t1-body-plan.md step 3) instead of copy, sub, write back,
+// load.  x2 is not left as an sp copy.
+static inline void emitPopTo(asmjit::a64::Assembler& a, const asmjit::a64::Gp& dst) {
+#if PHARO_T1_SP_IN_X25
+    static const bool direct = !GET_DEBUG_BOOL(PHARO_T1_NO_SP_DIRECT);
+    if (direct) {
+        a.ldr(dst, asmjit::a64::ptr_pre(asmjit::a64::x25, -8));
+        return;
+    }
+#endif
+    emitLoadSp(a, asmjit::a64::x2);
+    a.sub(asmjit::a64::x2, asmjit::a64::x2, asmjit::Imm(8));
+    emitStoreSp(a, asmjit::a64::x2);
+    a.ldr(dst, asmjit::a64::ptr(asmjit::a64::x2));
+}
 static bool mcfLazyRT();
 // At exits (ret to C++) and before sp-reading helper BLRs, sp must be
 // visible in memory regardless of mode.
@@ -7448,10 +7464,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         if (g_emitIsBlock && ::pharo::mcfEnabled()
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_RETURN)) {
             if (op == SistaV1::BlockReturnTop) {
-                emitLoadSp(a, x2);
-                a.sub(x2, x2, asmjit::Imm(8));
-                emitStoreSp(a, x2);
-                a.ldr(x1, ptr(x2));
+                emitPopTo(a, x1);
             } else {
                 a.mov(x1, asmjit::Imm(nilBits));
             }
@@ -7500,10 +7513,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x26, ptr(tbBase(a, x4), n * 8));
             return true;
         }
-        emitLoadSp(a, x2);
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
-        a.ldr(x1, ptr(x2));
+        emitPopTo(a, x1);
         a.str(x1, ptr(tbBase(a, x4), n * 8));
         return true;
     }
@@ -7538,10 +7548,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 #endif
             a.mov(x1, x26);
         } else {
-            emitLoadSp(a, x2);
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
-            a.ldr(x1, ptr(x2));
+            emitPopTo(a, x1);
         }
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
         emitStoreRingLog(a, n);
@@ -8477,8 +8484,31 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label takeBranch   = a.new_label();
         asmjit::Label fallThrough  = a.new_label();
 
-        emitLoadSp(a, x2);
         const bool tosCondJ = tosFam(kTosFamCondJump) && g_tosIn.valid;
+#if PHARO_T1_SP_IN_X25
+        static const bool condDirect = !GET_DEBUG_BOOL(PHARO_T1_NO_SP_DIRECT);
+        if (condDirect && !tosCondJ) {
+            // Pop first, branch straight to the two successors; only the
+            // must-be-boolean bail puts the value back (the image expects
+            // it on the stack there).  docs/t1-body-plan.md step 3.
+            asmjit::Label bailPop = a.new_label();
+            const asmjit::Label& onTrue = jumpOnTrue ? bcLabels[targetIdx] : bcLabels[globalIdx + 1];
+            const asmjit::Label& onFalse = jumpOnTrue ? bcLabels[globalIdx + 1] : bcLabels[targetIdx];
+            a.ldr(x1, ptr_pre(x25, -8));
+            a.ldp(x4, x5, ptr(x0, OFF_TRUEOOP));
+            a.cmp(x1, x4);
+            a.b_eq(onTrue);
+            a.cmp(x1, x5);
+            a.b_eq(onFalse);
+            a.bind(bailPop);
+            a.add(x25, x25, asmjit::Imm(8));
+            a.b(mustBoolBail);
+            a.bind(takeBranch);
+            a.bind(fallThrough);
+        } else
+#endif
+        {
+        emitLoadSp(a, x2);
         asmjit::a64::Gp boolReg = tosCondJ ? x26 : x1;
         if (tosCondJ) {
             emitTosVerify(a);   // simStack: bool already in x26
@@ -8507,6 +8537,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);
         a.b(bcLabels[globalIdx + 1]);
+        }
 
         a.bind(mustBoolBail);
         if (g_fsrLazy) {
