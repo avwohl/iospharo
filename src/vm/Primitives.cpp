@@ -3416,6 +3416,10 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     if (indexableSize < 0) {
         return PrimitiveResult::Failure;
     }
+    auto allocBytesNew = [&](uint32_t ci, size_t bytes) {
+        return GET_DEBUG_BOOL(PHARO_NO_EDEN_BYTES_NEW) ? memory_.allocateBytes(ci, bytes)
+                                                       : memory_.allocateBytesYoung(ci, bytes);
+    };
 
     // Get class format to determine if bytes or pointers
     Oop formatObj = memory_.fetchPointer(2, rcvr);
@@ -3526,13 +3530,17 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
             memory_.storePointer(0, newObj, headerOop);
         }
     } else if (isBytes) {
-        newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
+        // Byte, word and double-word objects in eden like pointer objects
+        // (old space past 254 slots): a String made here was old garbage
+        // only a full GC reclaims, and a become of it scanned the heap.
+        // Opt-out PHARO_NO_EDEN_BYTES_NEW.
+        newObj = allocBytesNew(classIndex, static_cast<size_t>(indexableSize));
     } else if (isWords32) {
         // 32-bit word objects (WideString, WordArray) - instSpec 10-11
         size_t numElements = static_cast<size_t>(indexableSize);
         size_t byteCount = numElements * 4;
         // Allocate as bytes then fix the format
-        newObj = memory_.allocateBytes(classIndex, byteCount);
+        newObj = allocBytesNew(classIndex, byteCount);
         if (!newObj.isNil()) {
             ObjectHeader* hdr = newObj.asObjectPtr();
             // Set correct 32-bit format: 10 (even count) or 11 (odd count)
@@ -3545,7 +3553,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         // 16-bit word objects (DoubleByteArray) - instSpec 12-15
         size_t numElements = static_cast<size_t>(indexableSize);
         size_t byteCount = numElements * 2;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
+        newObj = allocBytesNew(classIndex, byteCount);
         if (!newObj.isNil()) {
             ObjectHeader* hdr = newObj.asObjectPtr();
             size_t padding16 = (hdr->slotCount() * 4) - numElements;
@@ -3557,7 +3565,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         // 64-bit word objects - instSpec 9
         size_t numElements = static_cast<size_t>(indexableSize);
         size_t byteCount = numElements * 8;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
+        newObj = allocBytesNew(classIndex, byteCount);
         if (!newObj.isNil()) {
             ObjectHeader* hdr = newObj.asObjectPtr();
             hdr->setFormat(ObjectFormat::Indexable64);
