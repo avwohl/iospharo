@@ -15,7 +15,35 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, 01:00) -- pin fix, image test fixes, call-record design panel
+## Right now (2026-10-16, 06:00) -- read-only countdown, perform fixes; sweep L58
+
+- Pushed through `42440da8` (sweep L56 clean; its one new entry,
+  StPlaygroundPageTest, passes 3 of 3 alone).  Since L55: MCF record trim
+  stages 1-4 (docs/mcf-record-trim-plan.md; stage 1, the paired depth and
+  context, is opt-in `PHARO_MCF_PAIRED_DEPTH`: the ldp/stp pair caused
+  store-forwarding stalls, benchFib 38 -> 53 ms), body plan step 5
+  (binary operations pop memory operands into registers), a pending
+  method result goes to x1 for ReturnTop.
+- `e04ed3b2`: native calls only read the checkpoint countdown; the
+  heartbeat, external signals and a full eden set it to 0.  fibA 33 ->
+  25 ms, benchFib 38 -> 35 ms.  Sweep L57 clean.  It opened a race:
+  `f48b7172` gives perform: a call stub without the second countdown
+  test (a perform loop failed after ~1.5 s with "selector argument must
+  be a Symbol").
+- `be44a84b`: perform: of a quick-primitive method answers in place
+  (52 -> 27 ms for 3M; Cog 10).  perform: #+ with: is still 53 ms (Cog
+  10): lookup, call-entry hash and primitive call, no single hot spot.
+- Tried, no gain, reverted: predicted returns (bl/ret), frameDepth_ in a
+  register (docs/deferred.md).  Memory note
+  per-call-memory-chains-cost-wall-not-instructions.
+- NLR through ensure: is 2.3x Cog (exA micro 260 vs 115 ms): two full
+  frame materializations per return, the second for thisContext in
+  resume:through:.  Plain ensure: and on:do: are 2-3x faster than Cog.
+- Running: sweep L58 on `be44a84b`; a fresh per-class timing run of our
+  VM over the 93 package images (scratchpad pc2/, Cog side reused from
+  pc/) to find the current outliers.
+
+## Earlier (2026-10-16, 01:00) -- pin fix, image test fixes, call-record design panel
 
 - Pushed through `9d3489bc`.  Sweeps: L49 (segment on by default) clean;
   L50 (leaf primitives) clean apart from FFICallbackTest, which found a
