@@ -11542,8 +11542,12 @@ void Interpreter::arithmeticSend(int which) {
                         int64_t result;
                         if ((a ^ b) >= 0 || a == 0) {
                             result = a / b;  // Same sign or zero: C division is correct
-                        } else {
+                        } else if (a < 0) {
                             result = ((a + 1) / b) - 1;  // Different signs: floor
+                        } else {
+                            // a > 0, b < 0.  (a + 1) / b - 1 is only right for a
+                            // negative dividend: it gave 1 // -1 = -3, 7 // -2 = -5.
+                            result = ((a - 1) / b) - 1;
                         }
                         if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
                             popN(2);
