@@ -33,6 +33,8 @@
 
 namespace pharo {
 
+bool g_lazyForwarders = false;
+
 extern uint64_t g_stepNum;
 
 // Eden bump-cell addresses for the JIT inline-alloc emit (PHARO_T1_INLINE_NEW_ASM);
@@ -449,7 +451,7 @@ Oop ObjectMemory::allocateCompiledMethod(uint32_t classIndex, size_t numSlots, s
     return oopFromPointer(obj);
 }
 
-Oop ObjectMemory::shallowCopy(Oop original) {
+Oop ObjectMemory::shallowCopy(Oop original, bool forceOld) {
     if (!original.isObject()) {
         return original;  // Immediates are their own copies
     }
@@ -468,7 +470,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     // Overflow (>=255 slots) and young-gen-off fall to old, matching
     // allocateSlots' caveat (scavenge copy untested vs the overflow-word
     // layout).  Opt-out PHARO_NO_GEN_CLONE.
-    bool cloneToEden = !hasOverflow && enableYoungGen_
+    bool cloneToEden = !forceOld && !hasOverflow && enableYoungGen_
         && !GET_DEBUG_BOOL(PHARO_NO_GEN_CLONE);
     ObjectHeader* copy = allocateRaw(size,
         cloneToEden ? Space::New : Space::Old);
@@ -2018,6 +2020,77 @@ bool ObjectMemory::becomeTwoWayYoung(const std::vector<std::pair<Oop, Oop>>& pai
     return true;
 }
 
+bool ObjectMemory::becomeTwoWayLazy(const std::vector<std::pair<Oop, Oop>>& pairs) {
+    if (pairs.empty() || !pendingClassIndexRemap_.empty()) return false;
+    auto ok = [&](Oop o) {
+        ObjectHeader* h = o.asObjectPtr();
+        return h->slotCount() >= 1 && !h->hasOverflowSlots() && !h->isForwarded()
+            && !h->isPinned() && !h->isImmutable();
+    };
+    for (const auto& pr : pairs)
+        if (!ok(pr.first) || !ok(pr.second) || pr.first.rawBits() == pr.second.rawBits()) return false;
+    // Copies in old space, so no forwarder holds an old-to-young pointer.
+    // A copy keeps its original's header hash (the caller already moved
+    // the hashes with the references).
+    std::vector<std::pair<Oop, Oop>> copies;
+    copies.reserve(pairs.size());
+    for (const auto& pr : pairs) {
+        Oop c1 = shallowCopy(pr.first, true);
+        Oop c2 = shallowCopy(pr.second, true);
+        if (!c1.isObject() || c1.isNil() || !c2.isObject() || c2.isNil()
+                || !isOld(c1) || !isOld(c2)) return false;
+        c1.asObjectPtr()->setIdentityHash(pr.first.asObjectPtr()->identityHash());
+        c2.asObjectPtr()->setIdentityHash(pr.second.asObjectPtr()->identityHash());
+        copies.emplace_back(c1, c2);
+    }
+    g_objectMotionEpoch++;
+    for (size_t k = 0; k < pairs.size(); k++) {
+        ObjectHeader* h1 = pairs[k].first.asObjectPtr();
+        ObjectHeader* h2 = pairs[k].second.asObjectPtr();
+        // References to first reach the other's contents, and vice versa.
+        // Format 7 (Spur's forwarder format): every format-checking fast
+        // path rejects a forwarder instead of reading its slots.
+        h1->slots()[0] = copies[k].second;
+        h1->setClassIndex(ObjectHeader::ForwardedClassIndex);
+        h1->setFormat(ObjectFormat::Reserved7);
+        h2->slots()[0] = copies[k].first;
+        h2->setClassIndex(ObjectHeader::ForwardedClassIndex);
+        h2->setFormat(ObjectFormat::Reserved7);
+    }
+    g_lazyForwarders = true;
+    lazyPairsSinceUnforward_ += pairs.size();
+    return true;
+}
+
+void ObjectMemory::unforwardAll() {
+    if (!g_lazyForwarders) return;
+    auto fix = [&](Oop& o) {
+        // A root may hold an object-tagged value outside the heap.
+        if (!o.isObject() || !isValidPointer(o)) return;
+        ObjectHeader* h = o.asObjectPtr();
+        if (h->isForwarded()) o = followForwarded(o);
+    };
+    auto noPos = [](uint8_t*) {};
+    auto each = [&](ObjectHeader* header) {
+        if (header->classIndex() == 0 || header->isForwarded()) return;
+        if (!header->isPointersObject()) return;
+        size_t n = pointerSlotsOf(header);
+        Oop* s = header->slots();
+        for (size_t i = 0; i < n; ++i) {
+            Oop v = s[i];
+            if (!v.isObject() || v.rawBits() < 0x10000 || !v.asObjectPtr()->isForwarded()) continue;
+            slotAtPutBarriered(header, i, followForwarded(v));
+        }
+    };
+    walkObjects(oldSpaceStart_, oldSpaceFree_, oldSpaceFree_, noPos, each);
+    walkObjects(permSpaceStart_, permSpaceEnd_, permSpaceEnd_, noPos, each);
+    walkObjects(edenAllocBase_, edenFree_, edenFree_, noPos, each);
+    for (size_t i = 0; i < classTable_.size(); i++) fix(classTable_[i]);
+    if (interpreter_) interpreter_->forEachRoot(fix, Interpreter::RootScope::All);
+    g_lazyForwarders = false;
+    lazyPairsSinceUnforward_ = 0;
+}
+
 bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge,
                                     bool twoWay) {
     // twoWay: the map holds both directions of each swapped pair (two-way
@@ -2625,7 +2698,7 @@ GCResult ObjectMemory::scavenge() {
         uint8_t* p = reinterpret_cast<uint8_t*>(obj);
         if (p < edenAllocBase_ || p >= edenFree_) return oop;
         if (ObjectHeader* to = forward.to(obj)) return Oop::fromObject(to);
-        if (__builtin_expect(becomeForwardersPending_, 0) && obj->isForwarded()) {
+        if (__builtin_expect(becomeForwardersPending_ || g_lazyForwarders, 0) && obj->isForwarded()) {
             // A become forwarder (becomeForwardAll viaScavenge): the
             // reference goes to the target, which is copied if young.
             do {
@@ -5656,6 +5729,10 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     ephemeronEncounterCount_ = 0;
     ephemeronInactiveCount_ = 0;
     ephemeronActiveCount_ = 0;
+
+    // Lazy become's forwarders: replace every reference first, so the mark
+    // never reaches one and the sweep frees them all.
+    if (g_lazyForwarders) unforwardAll();
 
     // Build valid object start set for interior pointer detection.
     // This prevents markAndTrace from calling setMarked() on interior pointers

@@ -1079,6 +1079,11 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
     if (!selector.isObject() || selector.rawBits() < 0x10000
             || !selector.asObjectPtr()->isBytesObject())
         return nullptr;
+    // A forwarded receiver (lazy become) would run the method with the
+    // forwarder as self: the interpreter's perform follows it.
+    if (__builtin_expect(g_lazyForwarders, 0) && rcv.isObject() && rcv.rawBits() >= 0x10000
+            && rcv.asObjectPtr()->isForwarded())
+        return nullptr;
     Oop cls = memory_.classOf(rcv);
     if (!cls.isObject() || cls.isNil()) return nullptr;
     Oop target = lookupMethodForSend(selector, cls);
@@ -1293,6 +1298,10 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         selector = mo->slotAt(1 + litIdx);
     }
     Oop rcv = st->sp[-(nArgs + 1)];
+    // A forwarded receiver (lazy become): the interpreter's send follows it.
+    if (__builtin_expect(g_lazyForwarders, 0) && rcv.isObject() && rcv.rawBits() >= 0x10000
+            && rcv.asObjectPtr()->isForwarded())
+        return nullptr;
     // An = site's slot takes a method or primitive too (its machine code
     // tells the value 1, Object>>='s inline answer, from a method).
     const bool eqSite = special && litIdx == 6 && nArgs == 1
@@ -1333,7 +1342,10 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
                                           : (0x80000000ull | (rcv.rawBits() & 7));
             siteCache[1] = 1;
         }
-        st->sp[-2] = rcv.rawBits() == arg.rawBits() ? memory_.trueObject() : memory_.falseObject();
+        const bool same = rcv.rawBits() == arg.rawBits()
+            || (g_lazyForwarders && memory_.followForwarded(rcv).rawBits()
+                                    == memory_.followForwarded(arg).rawBits());
+        st->sp[-2] = same ? memory_.trueObject() : memory_.falseObject();
         st->sp -= 1;
         return kMcfExtDone;
     }

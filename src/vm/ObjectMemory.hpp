@@ -51,6 +51,11 @@
 
 namespace pharo {
 
+// Lazy two-way become (docs/lazy-become-design.md): forwarders that heap
+// references still point to exist.  Sends, primitives and == follow a
+// forwarder while it is set; the full GC's unforward pass clears it.
+extern bool g_lazyForwarders;
+
 
 // Forward declaration
 class Interpreter;
@@ -288,7 +293,7 @@ public:
     Oop allocateCompiledMethod(uint32_t classIndex, size_t numSlots, size_t bytecodeSize);
 
     /// Clone an existing object
-    Oop shallowCopy(Oop original);
+    Oop shallowCopy(Oop original, bool forceOld = false);
 
     // ===== CLASS TABLE =====
 
@@ -322,7 +327,9 @@ public:
         if (!oop.isObject()) return oop;
         ObjectHeader* hdr = oop.asObjectPtr();
         // Follow chain of forwarding pointers (usually just one level)
-        int limit = 10;  // Prevent infinite loops on corrupt heap
+        // Prevent infinite loops on a corrupt heap.  Lazy become chains
+        // stay under 256 hops (an unforward pass every 256 pairs).
+        int limit = 512;
         while (hdr->isForwarded() && limit-- > 0) {
             oop = hdr->slotAt(0);  // Forwarding target is in first slot
             if (!oop.isObject()) return oop;
@@ -336,7 +343,7 @@ public:
             static int fwdCapLog = 0;
             if (fwdCapLog++ < 20) {
                 fprintf(stderr, "[FWD-CHAIN-CAP] followForwarded stopped at "
-                        "10 hops still forwarded — oop=0x%llx\n",
+                        "512 hops still forwarded — oop=0x%llx\n",
                         (unsigned long long)oop.rawBits());
             }
         }
@@ -714,6 +721,15 @@ public:
     // ~ the live young objects) moves every reference.  False, with
     // nothing changed, when a pair does not qualify.
     bool becomeTwoWayYoung(const std::vector<std::pair<Oop, Oop>>& pairs);
+    // Lazy two-way become: old-space copies, the originals turned into
+    // forwarders (reserved format 7), no heap scan.  The caller replaces
+    // forwarders in the VM roots.  False (nothing changed) when a pair
+    // does not qualify or a copy cannot be allocated.
+    bool becomeTwoWayLazy(const std::vector<std::pair<Oop, Oop>>& pairs);
+    // Replace every reference to a forwarder (heap, class table, VM roots)
+    // with its target; clears g_lazyForwarders.  Run by markPhase.
+    void unforwardAll();
+    size_t lazyPairsSinceUnforward() const { return lazyPairsSinceUnforward_; }
 
     // Hash-copying become onto a CLASS (Spur prim 72/249, copyHash: true).
     // A class's identity hash IS its class-table index, so copying obj1's
@@ -1183,6 +1199,7 @@ private:
     // Set while becomeForwardAll forwards through a scavenge: tenureIfYoung
     // follows become forwarders in eden to their targets.
     bool becomeForwardersPending_ = false;
+    size_t lazyPairsSinceUnforward_ = 0;
     uint8_t* oldFreeAtLastScavenge_ = nullptr;  // old-space top when the last scavenge finished (PHARO_SCAV_BIT_AUDIT: "recent" holders)
 
     // Segregated free lists for old space (Spur-style)

@@ -7880,6 +7880,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(haveKey);
                 a.cmp(x9, x8);
                 a.b_ne(miss);                           // a method entry's key has bit 40
+                {
+                    // Identity, unless the argument is a forwarder (lazy
+                    // become): then the helper send follows it.
+                    asmjit::Label idOk = a.new_label();
+                    a.cmp(x1, x4);
+                    a.b_eq(idOk);
+                    a.tst(x4, asmjit::Imm(0x7));
+                    a.b_ne(idOk);
+                    a.ldr(w9, ptr(x4));
+                    a.and_(w9, w9, asmjit::Imm(0x3FFFFF));
+                    a.cmp(w9, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+                    a.b_eq(miss);
+                    a.bind(idOk);
+                }
                 a.cmp(x1, x4);
                 a.ldp(x6, x7, ptr(x0, OFF_TRUEOOP));
                 a.csel(x6, x6, x7, CondCode::kEQ);
@@ -13569,8 +13583,30 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             }
             // == never looks anything up: compare the oops.  It still owns
             // an inline-cache site, which the sites after it count on.
-            if (op == SistaV1::SpecialSendBase + 6 && S.items.size() >= 2) {
+            if (op == SistaV1::SpecialSendBase + 6 && S.items.size() >= 2
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_EQ)) {
                 siteIdx++;
+                // Different oops can still be one object: a forwarder (lazy
+                // become) and its target.  On a mismatch, an operand that
+                // may be a forwarder is checked (Cog's
+                // genEnsureOopInRegNotForwarded); a forwarder exits at this
+                // bytecode, whose interpreter == follows it.  Constants and
+                // self never are.
+                const bool fwdChecks = !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK);
+                auto mayForward = [](const SimItem& it) {
+                    return it.k != SimK::Const && it.k != SimK::Rcvr;
+                };
+                auto fwdCheck = [&](const SimItem& it, asmjit::a64::Gp r, const asmjit::Label& slowL) {
+                    if (!mayForward(it)) return;
+                    asmjit::Label skip = a.new_label();
+                    a.tst(r, asmjit::Imm(0x7));
+                    a.b_ne(skip);
+                    a.ldr(w16, ptr(r));
+                    a.and_(w16, w16, asmjit::Imm(0x3FFFFF));
+                    a.cmp(w16, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+                    a.b_eq(slowL);
+                    a.bind(skip);
+                };
                 const int nextIdx = globalIdx + 1;
                 if (i + 1 < bcRealLen && !isJumpTarget(nextIdx)) {
                     const uint8_t nop = bcReal[i + 1];
@@ -13590,8 +13626,21 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             asmjit::a64::Gp rA = simSrc(a, A, x1);
                             asmjit::a64::Gp rB = simSrc(a, B, x4);
                             a.cmp(rA, rB);
-                            if (jt) a.b_eq(bcLabels[targetIdx]); else a.b_ne(bcLabels[targetIdx]);
-                            a.b(bcLabels[postIdx]);
+                            if (fwdChecks && (mayForward(A) || mayForward(B))) {
+                                asmjit::Label slowL = a.new_label();
+                                const asmjit::Label& eqTo = jt ? bcLabels[targetIdx] : bcLabels[postIdx];
+                                const asmjit::Label& neTo = jt ? bcLabels[postIdx] : bcLabels[targetIdx];
+                                a.b_eq(eqTo);
+                                fwdCheck(A, rA, slowL);
+                                fwdCheck(B, rB, slowL);
+                                a.b(neTo);
+                                a.bind(slowL);
+                                simEmitStores(a, 0, S.items.size());
+                                simGenericExit(a, globalIdx);
+                            } else {
+                                if (jt) a.b_eq(bcLabels[targetIdx]); else a.b_ne(bcLabels[targetIdx]);
+                                a.b(bcLabels[postIdx]);
+                            }
                             S.pop(); S.pop();
                             // The jump bytecode's own code still follows (it
                             // is unreachable from here; its label must exist).
@@ -13606,6 +13655,22 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 SimItem A = S.items.back(); S.items.pop_back();
                 asmjit::a64::Gp rA = simSrc(a, A, x1);
                 asmjit::a64::Gp rB = simSrc(a, B, x4);
+                if (fwdChecks && (mayForward(A) || mayForward(B))) {
+                    asmjit::Label same = a.new_label(), slowL = a.new_label();
+                    a.cmp(rA, rB);
+                    a.b_eq(same);
+                    fwdCheck(A, rA, slowL);
+                    fwdCheck(B, rB, slowL);
+                    a.b(same);
+                    a.bind(slowL);
+                    S.items.push_back(A);
+                    S.items.push_back(B);
+                    simEmitStores(a, 0, S.items.size());
+                    simGenericExit(a, globalIdx);
+                    S.items.pop_back();
+                    S.items.pop_back();
+                    a.bind(same);
+                }
                 if (A.k == SimK::Reg) S.freeReg(A.reg);
                 if (B.k == SimK::Reg) S.freeReg(B.reg);
                 const int r = S.allocReg();

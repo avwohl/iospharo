@@ -435,6 +435,17 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             return PrimitiveResult::Failure;
         }
     }
+    if (__builtin_expect(g_lazyForwarders, 0)) {
+        // An element may be a lazy forwarder: become its target.
+        for (size_t i = 0; i < fromSize; i++) {
+            Oop o1 = memory_.fetchPointer(i, fromArrayOop);
+            Oop o2 = memory_.fetchPointer(i, toArrayOop);
+            if (o1.asObjectPtr()->isForwarded())
+                memory_.storePointer(i, fromArrayOop, memory_.followForwarded(o1));
+            if (o2.asObjectPtr()->isForwarded())
+                memory_.storePointer(i, toArrayOop, memory_.followForwarded(o2));
+        }
+    }
 
     // Try in-place swap for same-sized pairs; fall back to heap scan for different-sized pairs.
     // Collect pairs that need heap scanning.
@@ -527,7 +538,19 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
     // object is in eden (ReStore's proxy swaps: a full serial heap walk per
     // become made writing 1000 objects take 13.5 s, Cog 63 ms), else its
     // parallel scan.  Opt-out PHARO_BECOME_TWOWAY_SERIAL.
-    if (!heapScanPairs.empty() && !GET_DEBUG_BOOL(PHARO_BECOME_TWOWAY_SERIAL)
+    auto allLazyEligible = [&]() {
+        for (auto& [a, b] : heapScanPairs)
+            if (!lazyBecomeEligible(a) || !lazyBecomeEligible(b)) return false;
+        return true;
+    };
+    if (!heapScanPairs.empty() && !cachesAffected && GET_DEBUG_BOOL(PHARO_LAZY_BECOME)
+            && allLazyEligible() && memory_.becomeTwoWayLazy(heapScanPairs)) {
+        // Lazy: forwarders stand for the pairs (docs/lazy-become-design.md).
+        // No frame or register may hold one.  Bound forwarding chains
+        // (repeated swaps of the same objects) with an unforward pass.
+        followForwardersInRoots();
+        if (memory_.lazyPairsSinceUnforward() >= 256) memory_.unforwardAll();
+    } else if (!heapScanPairs.empty() && !GET_DEBUG_BOOL(PHARO_BECOME_TWOWAY_SERIAL)
             && !cachesAffected && memory_.becomeTwoWayYoung(heapScanPairs)) {
         // Young pairs (ReStore: a fresh proxy and its new object): copies
         // and forwarders, then a scavenge moves every reference -- roots
@@ -541,7 +564,13 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             swap[to.rawBits()] = from;
         }
         memory_.becomeForwardAll(swap, /* viaScavenge */ false, /* twoWay */ true);
-        for (auto& [from, to] : heapScanPairs) scanStackSwap(from, to);
+        // One root pass for every pair; when no cache can hold the objects,
+        // without the JIT cache roots (17% of a ReStore swap).
+        forEachRoot([&](Oop& slot) {
+            auto it = swap.find(slot.rawBits());
+            if (it != swap.end()) slot = it->second;
+        }, (cachesAffected || GET_DEBUG_BOOL(PHARO_BECOME_ROOTS_ALL)) ? RootScope::All
+                                                                     : RootScope::StrongOnly);
     } else if (!heapScanPairs.empty()) {
         memory_.allObjectsDo([&](Oop obj) {
             if (!obj.isObject()) return;
@@ -11702,6 +11731,50 @@ void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
 // pointing at ITSELF, infinite instVarAt: recursion until heap
 // exhaustion; sweep family SSWReStoreAggregateQueryTest x11).  Same
 // forEachRoot delegation as scanStackReplace so coverage can't drift.
+// Lazy two-way become: only plain objects (docs/lazy-become-design.md).  The
+// excluded classes are matched by identity hash, which is stable across GCs
+// (a collision only sends a pair down the scanning path).
+bool Interpreter::lazyBecomeEligible(Oop o) {
+    if (!o.isObject() || o.isNil()) return false;
+    ObjectHeader* h = o.asObjectPtr();
+    const uint8_t fmt = static_cast<uint8_t>(h->format());
+    if (fmt == 0 || fmt == 4 || fmt == 5 || (fmt >= 6 && fmt <= 8) || fmt >= 24) return false;
+    if (h->isForwarded() || h->isPinned() || h->isImmutable() || h->hasOverflowSlots()) return false;
+    static std::vector<uint32_t> excluded;
+    static bool ready = false;
+    if (!ready) {
+        ready = true;
+        for (const char* n : {"LookupKey", "Behavior", "Context", "Process", "LinkedList",
+                              "Mutex", "Monitor", "MethodDictionary", "CompiledCode", "Symbol",
+                              "BlockClosure", "ProcessorScheduler", "Delay", "WeakFinalizationList",
+                              "Ephemeron", "ExternalAddress", "ExternalObject"}) {
+            Oop c = memory_.findGlobal(n);
+            if (c.isObject() && !c.isNil()) excluded.push_back(c.asObjectPtr()->identityHash());
+        }
+    }
+    Oop c = memory_.classOf(o);
+    for (int d = 0; d < 64 && c.isObject() && !c.isNil(); d++) {
+        const uint32_t ch = c.asObjectPtr()->identityHash();
+        for (uint32_t e : excluded) if (e == ch) return false;
+        c = superclassOf(c);
+    }
+    Oop sp = memory_.specialObjectsArray();
+    if (sp.isObject() && !sp.isNil()) {
+        ObjectHeader* sh = sp.asObjectPtr();
+        for (size_t i = 0; i < sh->slotCount(); i++)
+            if (sh->slotAt(i).rawBits() == o.rawBits()) return false;
+    }
+    return true;
+}
+
+void Interpreter::followForwardersInRoots() {
+    forEachRoot([&](Oop& slot) {
+        // A root may hold an object-tagged value outside the heap.
+        if (slot.isObject() && memory_.isValidPointer(slot) && slot.asObjectPtr()->isForwarded())
+            slot = memory_.followForwarded(slot);
+    }, RootScope::StrongOnly);
+}
+
 void Interpreter::scanStackSwap(Oop a, Oop b) {
     uint64_t aBits = a.rawBits();
     uint64_t bBits = b.rawBits();

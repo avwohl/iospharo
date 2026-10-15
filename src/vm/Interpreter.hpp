@@ -3540,6 +3540,9 @@ private:
     // Become primitives
     void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for becomeForward (one-way)
     void scanStackSwap(Oop a, Oop b);                       // Helper for two-way become (one pass)
+    // Lazy two-way become (docs/lazy-become-design.md).
+    bool lazyBecomeEligible(Oop o);
+    void followForwardersInRoots();
 
     // Bit operation primitives
     PrimitiveResult primitiveHighBit(int argCount);          // 575

@@ -219,6 +219,10 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_LE)                   // MCF: no per-method call entr
 DEBUG_BOOL_RT(PHARO_MCF_NO_LINK)                 // MCF: send sites are not linked to their callee's call entry (no patchable head)
 DEBUG_BOOL(PHARO_MCF_NO_FAST_BLOCK_HOME)         // MCF block with ^: always find the home frame with findBlockHomeFrame
 DEBUG_BOOL_RT(PHARO_MCF_NO_EQ_SITE_METHODS)      // MCF = site cache: Object>>= identity answers only, no cached = methods
+DEBUG_BOOL_RT(PHARO_LAZY_BECOME)                 // two-way become of plain objects of different sizes leaves forwarders (docs/lazy-become-design.md); opt-in until validated
+DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
+DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)
+DEBUG_BOOL(PHARO_BECOME_ROOTS_ALL)               // two-way become root pass visits the JIT cache roots even when no cache can hold the objects
 DEBUG_BOOL(PHARO_SCAV_FULL_AFTERGC)             // a checkpoint scavenge runs the full-GC afterGC tail (method cache + JIT cache flush), as before 2026-10-15
 DEBUG_BOOL(PHARO_LOOKUP_CENSUS)                 // count full method lookups (method-cache misses) by selector and class
 DEBUG_BOOL(PHARO_FLUSH_CENSUS)                  // count method-cache flushes (print every 256 with a caller address)

@@ -4996,6 +4996,9 @@ void Interpreter::interpret() {
         Oop rcvr = stackValue(1);
         Oop arg = stackValue(0);
         bool eq = rcvr.rawBits() == arg.rawBits();
+        // A lazy-become forwarder is the same object as its target.
+        if (__builtin_expect(!eq && g_lazyForwarders, 0))
+            eq = memory_.followForwarded(rcvr).rawBits() == memory_.followForwarded(arg).rawBits();
         // Fuse with following conditional jump
         uint8_t nextBC = *instructionPointer_;
         if (nextBC >= 0xC0 && nextBC <= 0xC7) {
@@ -11794,6 +11797,12 @@ void Interpreter::refillMegaCache(MethodCacheEntry* cached, Oop rcvr, Oop select
 #endif
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Lazy become: the receiver of a send is never a forwarder.
+    if (__builtin_expect(g_lazyForwarders, 0)) {
+        Oop r = stackValue(argCount);
+        if (r.isObject() && r.rawBits() >= 0x10000 && r.asObjectPtr()->isForwarded())
+            stackValuePut(argCount, memory_.followForwarded(r));
+    }
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0))
         checkIpCoherence("sendSelector");
 #if PHARO_JIT_ENABLED
@@ -24758,6 +24767,15 @@ extern "C" void pharo_dumpPrimSeq() {
     fclose(f);
 }
 PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCount) {
+    // Lazy become: a primitive sees no forwarder as its receiver or an
+    // argument (docs/lazy-become-design.md).
+    if (__builtin_expect(g_lazyForwarders, 0)) {
+        for (int i = 0; i <= argCount; i++) {
+            Oop v = stackValue(i);
+            if (v.isObject() && v.rawBits() >= 0x10000 && v.asObjectPtr()->isForwarded())
+                stackValuePut(i, memory_.followForwarded(v));
+        }
+    }
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SEQ), 0))
         g_primSeqRing[(g_primSeqPos++) & 65535] = (uint16_t)primitiveIndex;
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT) && (primitiveIndex == 113 || primitiveIndex == 114)) {
@@ -29192,6 +29210,13 @@ Oop Interpreter::validateICTarget(const char* tag, Oop cached, Oop* sp,
 }
 
 void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop selector) {
+    // A forwarded receiver (lazy become) would key the entry with the
+    // forwarder's class index and the target's method: every later send of
+    // a forwarder at this site would run that method with the forwarder as
+    // self.  The receiver's own class keys it.
+    if (__builtin_expect(g_lazyForwarders, 0) && receiver.isObject()
+            && memory_.isValidPointer(receiver) && receiver.asObjectPtr()->isForwarded())
+        receiver = memory_.followForwarded(receiver);
     // PHARO_T1_INLINE_J2J=1 debug: log first 30 patches (any selector)
     {
         if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
