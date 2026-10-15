@@ -103,7 +103,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Non-pinned paths keep the old forms.
 - Test: the gate above plus VERIFY.
 
-**Step 2: dead TOS mirror, -2 (-> 59).** Knob PHARO_MCF_KEEP_TOS_MIRROR.
+**Step 2: dead TOS mirror, -2 (-> 59). -- DONE (lexicon -0.7%; also the helper-send result reloads).** Knob PHARO_MCF_KEEP_TOS_MIRROR.
 - Drop the entry and stub `ldur x26` always.
 - Drop the return's `mov x26,x1` when the global PHARO_T1_TOS_REG is off. Key on the global knob, not on g_useTos, because the caller's compile decides whether x26 is trusted.
 - Test: a PHARO_T1_TOS_REG + TOS_VERIFY + TOS_POISON run on build-dbg must stay clean, because the mov is kept there. Sabotage: poison at endOfSend must crash.

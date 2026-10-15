@@ -248,6 +248,15 @@ static size_t g_tosBcLen = 0;
 // once by JITRuntime::initialize; session-stable singleton address).
 extern "C" uint8_t* g_t1ForceYieldAddr;
 uint8_t* g_t1ForceYieldAddr = nullptr;
+// The x26 TOS mirror is read only by simStack TOS code (tosFam), which
+// needs PHARO_T1_TOS_REG; without it the mirror writes at entries,
+// returns and helper-send results are dead (docs/mcf-call-trim-plan.md
+// step 2).
+static inline bool tosMirrorLive() {
+    static const bool on = GET_DEBUG_BOOL(PHARO_T1_TOS_REG)
+        || GET_DEBUG_BOOL(PHARO_MCF_KEEP_TOS_MIRROR);
+    return on;
+}
 static inline bool tosFam(uint32_t bit) {
     return g_useTos
         && ((uint32_t)GET_DEBUG_INT(PHARO_T1_TOS_MASK) & bit) != 0;
@@ -5342,7 +5351,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.ldr(x8, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
         a.str(x8, ptr(x0, OFF_IP));
     }
-    a.mov(x26, x1);                           // TOS mirror = the result
+    if (tosMirrorLive()) a.mov(x26, x1);                           // TOS mirror = the result
     // No exitReason store: every exit sets its own reason.
     if (GET_DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)) {
         a.mov(x16, asmjit::Imm((uint64_t)&g_mcfCountRets));
@@ -5831,7 +5840,7 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     a.b_gt(tInit);
     a.bind(tDone);
     emitMcfVerifyPushCall(a);
-    a.ldur(x26, ptr(x25, -8));                     // TOS mirror
+    if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));                     // TOS mirror
     a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
     a.br(x17);
     a.bind(fail);
@@ -5897,7 +5906,7 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
         a.bind(noNLR);
     }
     emitMcfVerifyPushCall(a);
-    a.ldur(x26, ptr(x25, -8));                     // TOS mirror
+    if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));                     // TOS mirror
     a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
     a.br(x17);
     a.bind(fail);
@@ -5944,7 +5953,7 @@ static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
         if (n) a.str(nilR, ptr_post(x25, 8));
     }
     emitMcfVerifyPushCall(a);
-    a.ldur(x26, ptr(x25, -8));                              // TOS mirror
+    if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));                              // TOS mirror
     a.b(codeStart);
     a.bind(fail);
     a.br(x15);
@@ -6956,7 +6965,7 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
     a.br(x16);
     a.bind(extDone);                         // result on the stack
     emitReloadSpFromState(a);
-    a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+    if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
     a.b(cont);
     if (siteSlot) {
         // A site-cache hit on a primitive method (the 4-argument
@@ -6986,7 +6995,7 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
         a.cbz(w9, primFailed);
         a.cmp(w9, asmjit::Imm(2));
         a.b_eq(extDeopt);
-        a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+        if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
         a.b(cont);
         a.bind(primFailed);
         a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
@@ -12555,7 +12564,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.stur(x1, ptr(x2, -8 * (nArgs + 1)));
                     if (nArgs > 0) a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                     emitStoreSp(a, x2);
-                    a.mov(x26, x1);                          // TOS mirror
+                    if (tosMirrorLive()) a.mov(x26, x1);                          // TOS mirror
                     a.b(mcfCont);
                     a.bind(notConst);
                 }
@@ -12602,7 +12611,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.cmp(w9, asmjit::Imm(2));
                     a.b_eq(mcfDeopt);
                     a.bind(mcfPrimDone);
-                    a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
+                    if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));               // TOS mirror = result
                     a.b(mcfCont);
                     a.bind(mcfDeopt);                        // interpreter owns the state
                     a.mov(w3, asmjit::Imm((int)ExitDeopt));
@@ -12768,7 +12777,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Unreachable by fall-through (the prior path branched
                 // to endOfSend/Lrearm); spec arrivals land here.
                 a.bind(tosLrearm);
-                a.ldur(x26, ptr(x25, -8));
+                if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));
                 a.b(endOfSend);
             }
             a.bind(resumeAfterCall);
@@ -16549,7 +16558,7 @@ static void emitMcfNlrStub(asmjit::a64::Assembler& a) {
     a.ldr(x22, ptr(x0, OFF_TEMPBASE));
     a.ldr(x21, ptr(x0, OFF_RECEIVER));
     a.ldr(x23, ptr(x0, OFF_J2J_SAVE_CURSOR));
-    a.ldur(x26, ptr(x25, -8));
+    if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));
     a.br(x9);
     a.bind(out);
     a.cbz(x9, refused);

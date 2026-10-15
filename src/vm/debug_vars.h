@@ -236,6 +236,7 @@ DEBUG_BOOL(PHARO_MCF_NLR_VERIFY)                 // MCF native NLR oracle: the h
 DEBUG_BOOL_RT(PHARO_MCF_NO_SUPER_SITE_CACHE)      // MCF: naked super sends do not fill their site cache (every call looks up in pharo_mcf_extsend)
 DEBUG_BOOL_RT(PHARO_EFC_FP0_RECEIVER)             // executeFromContext puts the receiver in a resumed block frame's fp[0] (the old layout) instead of the closure
 DEBUG_BOOL_RT(PHARO_MCF_NO_ENTRY_SHORTCUTS)       // MCF push/entries/return copy nil, receiver and tempBase through x4/x6/x16/x1 (before docs/mcf-call-trim-plan.md step 1)
+DEBUG_BOOL_RT(PHARO_MCF_KEEP_TOS_MIRROR)          // keep the x26 TOS-mirror writes at MCF entries, returns and helper-send results even without PHARO_T1_TOS_REG
 DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)             // native weak-association drain for every dictionary with the unscaled header hash (pre-2026-10-15; loses live keys)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
 DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)
