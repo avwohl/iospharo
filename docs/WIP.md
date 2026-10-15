@@ -15,7 +15,7 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, early) -- defects from per-class Cog timing; pushed `3885344e`, sweep L38 (lazy become on)
+## Right now (2026-10-15, 08:00) -- defects from per-class Cog timing; pushed `3885344e`, sweep L38 (lazy become on)
 
 Pushed `cbc0635b` (L36) and `3885344e` (L37; new entries LinkInstallerTest
 and TrueTest are known flakes).
