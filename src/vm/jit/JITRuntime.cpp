@@ -3414,6 +3414,7 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     SendSitePatch* map = jm->patchMap();
     if (!map) { patchStats_.refusedNoMap++; return false; }
     SendSitePatch& rec = map[siteIdx];
+    if (rec.flags & 2) return linkSendSiteMcf(jm, siteIdx, rec);
     if (rec.keyMovzOffset == 0 || rec.tailOffset == 0) {
         patchStats_.refusedNoMap++;
         return false;
@@ -3590,6 +3591,88 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     return true;
 }
 
+// Machine-code frames: link a monomorphic site straight to its callee's own
+// call entry (docs/linked-mcf-sends-plan.md, step 6).  The callee must be
+// one the site's generic path calls natively right now: its call-cache
+// entry is a plain compiled call (prim 0, this JM), so the entry runs
+// exactly what the generic path would.  Everything else stays unlinked
+// and takes the generic path.  Unlinking is the shared W1 store.
+bool JITRuntime::linkSendSiteMcf(JITMethod* jm, uint32_t siteIdx, SendSitePatch& rec) {
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_LINK) || GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS_NOLINK))
+        return false;
+    if (rec.keyMovzOffset == 0 || rec.tailBranchOffset == 0) {
+        patchStats_.refusedNoMap++;
+        return false;
+    }
+    uint64_t* slots = reinterpret_cast<uint64_t*>(jm->icSiteAt(siteIdx));
+    const uint64_t key = slots[0], methodBits = slots[1], extras = slots[2];
+    const bool wasLinked = (rec.flags & 1) != 0;
+    auto refuse = [&]() { unlinkSendSite(jm, siteIdx); patchStats_.refusedGate++; return false; };
+    if (key == 0 || methodBits == 0) return refuse();
+    // First link only at a monomorphic site; later polymorphism keeps slot
+    // 0's link (the other classes miss the key and take the generic path).
+    if (!wasLinked)
+        for (int e = 1; e < 6; e++)
+            if (slots[e * 3] != 0) { patchStats_.refusedGate++; return false; }
+    // Slot 0 must be a plain send: no inline specialization in its extras
+    // (0, or the J2J bit with bit 56 and the entry address).
+    constexpr uint64_t kJ2J = 1ULL << 60, kB56 = 1ULL << 56, kAddr = (1ULL << 48) - 1;
+    if ((extras & ~(kJ2J | kB56 | kAddr)) != 0) return refuse();
+    if ((key >> 32) != 0 || (uint16_t)(key >> 16) == kImpossibleKeyHi16) return refuse();
+    JITMethod* callee = methodMap_.lookup(methodBits);
+    if (!callee || callee->state != MethodState::Compiled || callee->mcfEntryOffset == 0
+            || callee->isSpliceTarget || callee->isStubOnEntry)
+        return refuse();
+    if (callee->argCount != ((rec.flags >> 8) & 0xF)) return refuse();
+    if (const uint64_t* sba = jm->selBitsArray())
+        if (sba[siteIdx] != 0 && callee->selectorOop != 0 && sba[siteIdx] != callee->selectorOop)
+            return refuse();
+    const McfCallEntry* e = mcfCallFind(methodBits);
+    if (!e || e->jm != callee || e->prim != 0) return refuse();
+    // An immediate receiver never reaches a method that reads fields.
+    if ((key & 0x80000000u) && callee->hasRecvFieldAccess) return refuse();
+    uint8_t* code = jm->codeStart();
+    uint8_t* target = reinterpret_cast<uint8_t*>(callee) + callee->mcfEntryOffset;
+    const int64_t w2Delta = (int64_t)(target - (code + rec.tailBranchOffset));
+    if (!branchInRange(w2Delta)) {
+        unlinkSendSite(jm, siteIdx);
+        patchStats_.refusedReach++;
+        return false;
+    }
+    uint32_t w0 = 0, w1 = 0, w2 = 0;
+    std::memcpy(&w0, code + rec.keyMovzOffset, 4);
+    std::memcpy(&w1, code + rec.keyMovzOffset + 4, 4);
+    std::memcpy(&w2, code + rec.tailBranchOffset, 4);
+    if (!isMovzW6(w0) || !isMovkW6Hi(w1) || !isB(w2)) {
+        fprintf(stderr, "[PMS] FATAL: MCF patch-site opcode mismatch jm=%p site=%u "
+                "w0=%08X w1=%08X w2=%08X\n", (void*)jm, siteIdx, w0, w1, w2);
+        std::abort();
+    }
+    if (wasLinked && decodeMovImm16(w0) == (uint16_t)(key & 0xFFFF)
+            && decodeMovImm16(w1) == (uint16_t)(key >> 16) && decodeBDelta(w2) == w2Delta)
+        return true;
+    {
+        // Order contract: W1 (the key-hi word) is the last word that can
+        // make the link reachable; a relink kills it first.
+        ScopedPatchWriteAccess w(code + rec.keyMovzOffset, 0);
+        auto put = [&](uint32_t off, uint32_t insn) { std::memcpy(code + off, &insn, 4); };
+        if (wasLinked) put(rec.keyMovzOffset + 4, encodeMovkW6Hi(kImpossibleKeyHi16));
+        put(rec.tailBranchOffset, encodeB(w2Delta));
+        put(rec.keyMovzOffset, encodeMovzW6((uint16_t)(key & 0xFFFF)));
+        put(rec.keyMovzOffset + 4, encodeMovkW6Hi((uint16_t)(key >> 16)));   // COMMIT
+        flushICache(code + rec.keyMovzOffset, 8);
+        flushICache(code + rec.tailBranchOffset, 4);
+        if (!wasLinked) rec.flags |= 1u;   // the map is in MAP_JIT: in-window
+    }
+    if (!wasLinked) {
+        numPatchedSites_++;
+        patchStats_.links++;
+    } else {
+        patchStats_.relinks++;
+    }
+    return true;
+}
+
 void JITRuntime::rederiveSiteForICData(uint64_t callerMethodBits,
                                        uint64_t* icData) {
     if (!icData || callerMethodBits <= 0x10000) return;
@@ -3613,6 +3696,27 @@ size_t JITRuntime::verifyAllPatchedSites(bool failHard) {
                 SendSitePatch& rec = map[i];
                 if (!(rec.flags & 1)) continue;
                 uint8_t* code = m->codeStart();
+                if (rec.flags & 2) {
+                    // MCF shape: W2 must branch to slot 0's callee's entry.
+                    uint32_t w0 = 0, w1 = 0, w2 = 0;
+                    std::memcpy(&w0, code + rec.keyMovzOffset, 4);
+                    std::memcpy(&w1, code + rec.keyMovzOffset + 4, 4);
+                    std::memcpy(&w2, code + rec.tailBranchOffset, 4);
+                    uint64_t pk = (uint64_t)decodeMovImm16(w0) | ((uint64_t)decodeMovImm16(w1) << 16);
+                    uint64_t* sl = reinterpret_cast<uint64_t*>(m->icSiteAt(i));
+                    JITMethod* ce = sl[1] ? methodMap_.lookup(sl[1]) : nullptr;
+                    uint8_t* t = code + rec.tailBranchOffset + decodeBDelta(w2);
+                    if (!(pk == sl[0] && ce && ce->mcfEntryOffset
+                          && t == reinterpret_cast<uint8_t*>(ce) + ce->mcfEntryOffset)) {
+                        bad++;
+                        fprintf(stderr, "[PMS-VERIFY] MCF MIRROR DRIFT jm=%p site=%u key=0x%llx "
+                                "slotKey=0x%llx method=0x%llx callee=%p target=%p\n", (void*)m, i,
+                                (unsigned long long)pk, (unsigned long long)sl[0],
+                                (unsigned long long)sl[1], (void*)ce, (void*)t);
+                        if (failHard) std::abort();
+                    }
+                    continue;
+                }
                 uint32_t w0 = 0, w1 = 0, w6 = 0;
                 std::memcpy(&w0, code + rec.keyMovzOffset, 4);
                 std::memcpy(&w1, code + rec.keyMovzOffset + 4, 4);

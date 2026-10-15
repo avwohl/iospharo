@@ -1932,8 +1932,16 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             [[fallthrough]];
         case jit::ExitSendCached: {
             instructionPointer_ = st.ip;
-            if (st.exitReason == jit::ExitSendCached)
+            if (st.exitReason == jit::ExitSendCached) {
                 mcfNotePrimitiveTarget(st.cachedTarget, st.sp[-(st.sendArgCount + 1)]);
+                // A site the generic path calls natively (a refusal brought
+                // it here, ~1 in 1024 calls): link it to the callee's entry.
+                // Sites unlinked by eviction or a purge relink this way.
+                const jit::McfCallEntry* ce = jit::mcfCallFind(st.cachedTarget.rawBits());
+                if (ce && ce->jm && ce->prim == 0 && st.icDataPtr
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_LINK))
+                    jitRuntime_.rederiveSiteForICData(jm->compiledMethodOop, st.icDataPtr);
+            }
 
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_CENSUS), 0))
                 mcfCensus(st);

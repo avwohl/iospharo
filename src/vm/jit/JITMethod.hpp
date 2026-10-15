@@ -202,7 +202,11 @@ struct SendSitePatch {
     uint32_t tailBranchOffset; // W6: the terminal direct `b` (varies with
                                // the nil-fill shape)
     uint32_t flags;            // bit 0 = linked (link truth readable
-                               // without disassembly); rest telemetry
+                               // without disassembly); bit 1 = machine-
+                               // code-frames shape (W2 at tailBranchOffset
+                               // -> callee's call entry; no tail); bits 8-11
+                               // = the site's nArgs (MCF shape); bits 16-19
+                               // = link attempts from exits (MCF shape)
 };
 static_assert(sizeof(SendSitePatch) == 16, "SendSitePatch layout");
 

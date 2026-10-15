@@ -174,6 +174,9 @@ static asmjit::Label g_codeStartLabel;
 // machine-code frames); g_mcfEntryOff receives its code offset (0 = none).
 static bool g_emitMcfEntry = false;
 static uint32_t g_mcfEntryOff = 0;
+// Call entries exist in this process (step 4), so send sites get the
+// patchable MCF head (step 6), in methods and blocks alike.
+static bool g_mcfLinkSites = false;
 static std::vector<std::pair<uint32_t, asmjit::Label>>* g_resumeOverridesPtr
     = nullptr;
 // PMS B1 (docs/patched-ic-design.md §9): per-site patch-word labels,
@@ -183,8 +186,10 @@ struct PatchSiteLabels {
     uint32_t siteIdx;
     asmjit::Label keyMovz;    // W0 (W1=+4, cmp=+8, b.ne=+12, W2=+16)
     asmjit::Label tail;       // T  (W3=+0, W4=+4, W5=+8); valid iff hasTail
-    asmjit::Label tailBranch; // W6 (terminal direct b)
+    asmjit::Label tailBranch; // W6 (terminal direct b); W2 for the MCF shape
     bool hasTail = false;
+    bool mcf = false;         // machine-code-frames shape (no tail)
+    uint8_t nArgs = 0;
 };
 static std::vector<PatchSiteLabels>* g_patchLabelsPtr = nullptr;
 // simStack B0 (docs/simstack-design.md §3): write-through TOS cache —
@@ -8220,7 +8225,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
             }
         };
-        if (!patchedShape) emitMaterializeX5();
+        // Machine-code frames: a patchable head links a monomorphic site
+        // straight to its callee's own call entry (linkSendSiteMcf).
+        const bool mcfLinkShape = !patchedShape && ::pharo::mcfEnabled() && probeThis
+            && nArgs <= 15 && g_mcfCallStub != 0 && g_patchLabelsPtr != nullptr
+            && g_mcfLinkSites && !GET_DEBUG_BOOL(PHARO_MCF_NO_CALL);
+        if (!patchedShape && !mcfLinkShape) emitMaterializeX5();
 
         // Deferred state setup: inline-spec paths skip the state
         // store entirely.  dispatchCached / miss / non-probe paths
@@ -8372,7 +8382,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (::pharo::mcfEnabled() ? GET_DEBUG_BOOL(PHARO_T1_LEAK_GUARD)
                                       : !GET_DEBUG_BOOL(PHARO_T1_LEAK_GUARD_OFF)) {
                 a.lsr(x4, x1, asmjit::Imm(48));
-                a.cbnz(x4, patchedShape ? LmissNoX5 : miss);
+                a.cbnz(x4, (patchedShape || mcfLinkShape) ? LmissNoX5 : miss);
             }
             a.ldr(w4, ptr(x1));               // low 32 bits of header
             a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
@@ -8388,6 +8398,39 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.bind(haveKey);
 
+            if (mcfLinkShape) {
+                // W0/W1 hold the impossible key until linkSendSiteMcf patches
+                // them; W2 says `b Lprobe` until linked, then `b <callee's call
+                // entry>`.  Between the compare and W2: the native call's
+                // registers, exactly as the generic path sets them; a refusal
+                // in the entry (br x15) re-runs the generic path at Lprobe,
+                // whose contract (x0 x1 x2 x4 x25) the head leaves intact.
+                asmjit::Label keyMovz = a.new_label(), w2L = a.new_label();
+                a.bind(keyMovz);
+                a.movz(w6, 0);                              // W0: key lo16
+                a.movk(w6, kImpossibleKeyHi16, 16);         // W1: key hi16 (commit/unlink word)
+                a.cmp(w4, w6);
+                a.b_ne(Lprobe);
+                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                a.adr(x14, mcfCont);
+                a.adr(x15, Lprobe);
+                a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                a.bind(w2L);
+                a.b(Lprobe);                                // W2: -> b <callee entry> when linked
+                a.bind(LmissNoX5);
+                emitMaterializeX5();
+                a.b(miss);
+                a.bind(Lprobe);
+                emitMaterializeX5();
+                PatchSiteLabels pl;
+                pl.siteIdx = (uint32_t)siteIdx;
+                pl.keyMovz = keyMovz;
+                pl.tailBranch = w2L;
+                pl.mcf = true;
+                pl.nArgs = (uint8_t)nArgs;
+                g_patchLabelsPtr->push_back(pl);
+            }
             if (patchedShape) {
                 // PMS head (design §2.1): patched key compare + patched
                 // direct branch.  W0/W1 carry kImpossibleKeyHi16 until
@@ -14489,6 +14532,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (pl.siteIdx >= patchRecordCount) continue;
             patchRecords[pl.siteIdx].keyMovzOffset =
                 (uint32_t)code.label_offset_from_base(pl.keyMovz);
+            if (pl.mcf) {
+                patchRecords[pl.siteIdx].tailBranchOffset =
+                    (uint32_t)code.label_offset_from_base(pl.tailBranch);
+                patchRecords[pl.siteIdx].flags = 2u | ((uint32_t)pl.nArgs << 8);
+                continue;
+            }
             if (pl.hasTail) {
                 patchRecords[pl.siteIdx].tailOffset =
                     (uint32_t)code.label_offset_from_base(pl.tail);
@@ -15092,11 +15141,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     if (GET_DEBUG_BOOL(PHARO_T1_REGSTACK_CENSUS))
         jit::regStackCensus(bc, bcLen, &memory);
     std::vector<std::pair<uint32_t,uint32_t>> resumeOvPairs;
-    g_emitMcfEntry = ::pharo::mcfEnabled() && mcfLazyView()
-        && methObj->classIndex() != interp.compiledBlockClassIndex()
+    g_mcfLinkSites = ::pharo::mcfEnabled() && mcfLazyView()
         && !GET_DEBUG_BOOL(PHARO_MCF_NO_LE)
         && !GET_DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)
         && !GET_DEBUG_BOOL(PHARO_MCF_KEEP_IP_STORE);
+    g_emitMcfEntry = g_mcfLinkSites
+        && methObj->classIndex() != interp.compiledBlockClassIndex();
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_LINK)) g_mcfLinkSites = false;
     g_mcfEntryOff = 0;
     bool emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
@@ -15773,7 +15824,8 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             if (rec.keyMovzOffset) {
                 patchOffs[n++] = rec.keyMovzOffset;          // W0
                 patchOffs[n++] = rec.keyMovzOffset + 4;      // W1
-                patchOffs[n++] = rec.keyMovzOffset + 16;     // W2
+                patchOffs[n++] = (rec.flags & 2) ? rec.tailBranchOffset   // MCF W2
+                                                 : rec.keyMovzOffset + 16;
             }
             if (rec.tailOffset) {
                 patchOffs[n++] = rec.tailOffset;             // W3

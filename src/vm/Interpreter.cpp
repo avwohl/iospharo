@@ -25762,6 +25762,10 @@ void Interpreter::purgeDeadCacheRoots() {
             }
             m = m->nextInZone;
         }
+        // A patched (linked) site mirrors its IC slot 0 and branches into its
+        // callee's code: one whose slot or callee just died must not stay
+        // linked (this sweep has no recoverAfterGC tail to unlink them).
+        if (jmPurged || icPurged) jitRuntime_.unlinkEverything();
 
         // Count map / failed-compile map / tier-2 map: keys are
         // CompiledMethod oop bits.  A dead key left in place would be

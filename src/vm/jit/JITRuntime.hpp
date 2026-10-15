@@ -299,6 +299,9 @@ public:
     // patch/unlink accordingly.  Returns true if the site is linked on
     // exit.  B0: skeleton (gates only, no patching) — no callers yet.
     bool linkSendSite(JITMethod* jm, uint32_t siteIdx);
+    // Machine-code frames shape (SendSitePatch flags bit 1): the site's W2
+    // branches to the callee's own call entry (JITMethod::mcfEntryOffset).
+    bool linkSendSiteMcf(JITMethod* jm, uint32_t siteIdx, SendSitePatch& rec);
     // One W1 store + ranged icache flush; always safe.
     void unlinkSendSite(JITMethod* jm, uint32_t siteIdx);
     // §6 trigger entry point: resolve the owner JM from the caller's
