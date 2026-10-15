@@ -14807,19 +14807,16 @@ past_sista_block:
     // for the common case.
     // scanFor: activation diagnosis (PHARO_JIT_FAIL_REASONS).
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)) {
-        static uint64_t sfActs = 0, sfCan = 0, sfJit = 0;
+        // Counts only: the activation itself takes the normal path below
+        // (calling tryJITActivation here bypassed machine-code frames and
+        // ran their code with no call cache -- a crash at once).
+        static uint64_t sfActs = 0, sfCan = 0;
         if (memory_.selectorOf(method) == "scanFor:") {
             sfActs++;
-            bool can = canJITActivate(method);
-            if (can) sfCan++;
-            bool jitted = can && tryJITActivation(method, argCount);
-            if (jitted) sfJit++;
+            if (canJITActivate(method)) sfCan++;
             if ((sfActs & 0x3FFFF) == 1)
-                fprintf(stderr, "[SF-ACT] acts=%llu canJIT=%llu jitOk=%llu\n",
-                    (unsigned long long)sfActs, (unsigned long long)sfCan,
-                    (unsigned long long)sfJit);
-            if (jitted) return;
-            goto sfActFallthrough;
+                fprintf(stderr, "[SF-ACT] acts=%llu canJIT=%llu\n",
+                    (unsigned long long)sfActs, (unsigned long long)sfCan);
         }
     }
     {
@@ -14863,7 +14860,6 @@ past_sista_block:
         return;  // JIT handled it
     }
     }
-    sfActFallthrough:;
     // Otherwise fall through to interpreter execution via the dispatch loop
 #endif
 
