@@ -209,6 +209,7 @@ DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)            // MCF: unary field-reading meth
 DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)        // the interpreter's periodic check (process switch, timers, signals) runs at whatever bytecode it falls on, not only at interrupt points (sends, back jumps, frame entry)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)             // MCF: basicNew (primKind 17) is not allocated inline at the call site
 DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW)               // MCF: the primitive stub does not allocate for basicNew (70); the C primitive does
+DEBUG_BOOL(PHARO_MCF_NO_PREFIXED_CONDJUMP)      // MCF: ExtendB + conditional long jump exits to the interpreter (the old prefix bail)
 DEBUG_BOOL(PHARO_T1_EMIT_SIZE_CENSUS)          // T1: print emitted code bytes per opcode (every 1024 compiles)
 DEBUG_BOOL(PHARO_MCF_NO_PK_FIRST)               // MCF: an IC hit whose extras are exactly the at:/at:put:/size kind still walks the whole specialization chain
 DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)    // the interpreter's deferred checkpoint may also run at sends (the pre-2026-10-15 rule); default: only at method/block entry and back jumps, as Cog

@@ -13724,6 +13724,55 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         continue;
                     }
                 }
+                // ExtendB + ExtJumpTrue/ExtJumpFalse: a conditional jump of
+                // more than 255 bytes forward (big methods: basicNextChunk,
+                // scanName).  The bail ran the rest of the activation in the
+                // interpreter.  Same code as the unprefixed long conditional
+                // jump; a non-Boolean exits at the prefix, where the
+                // interpreter sends mustBeBoolean.
+                if (op == SistaV1::ExtendB && g_fsrLazy
+                        && (nextOp == SistaV1::ExtJumpTrue || nextOp == SistaV1::ExtJumpFalse)
+                        && ::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_PREFIXED_CONDJUMP)
+                        && i + 3 < bcRealLen && bcReal[i + 1] <= 127) {
+                    const int64_t extB = (int64_t)bcReal[i + 1];
+                    const int jumpIdx = globalIdx + 2;
+                    const int64_t target = (int64_t)jumpIdx + 2 + (int64_t)bcReal[i + 3] + (extB << 8);
+                    if (target > (int64_t)globalIdx && (size_t)target < bcLabels.size()
+                            && (size_t)(globalIdx + 4) < bcLabels.size()) {
+                        if (g_sim.enabled) simFlush(a);
+                        const bool jumpOnTrue = nextOp == SistaV1::ExtJumpTrue;
+                        asmjit::Label mustBoolBail = a.new_label();
+                        asmjit::Label takeBranch = a.new_label();
+                        asmjit::Label fallThrough = a.new_label();
+                        emitLoadSp(a, a64::x2);
+                        a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
+                        a.ldp(a64::x4, a64::x5, a64::ptr(a64::x0, OFF_TRUEOOP));
+                        a.cmp(a64::x1, a64::x4);
+                        a.b_eq(jumpOnTrue ? takeBranch : fallThrough);
+                        a.cmp(a64::x1, a64::x5);
+                        a.b_ne(mustBoolBail);
+                        a.b(jumpOnTrue ? fallThrough : takeBranch);
+                        a.bind(takeBranch);
+                        a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                        emitStoreSp(a, a64::x2);
+                        a.b(bcLabels[target]);
+                        a.bind(fallThrough);
+                        a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                        emitStoreSp(a, a64::x2);
+                        a.b(bcLabels[globalIdx + 4]);
+                        a.bind(mustBoolBail);
+                        a.ldr(a64::x5, a64::ptr(a64::x19, (int)offsetof(JITMethod, bcStartCache)));
+                        a.add(a64::x5, a64::x5, asmjit::Imm(globalIdx));   // the prefix
+                        a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                        a.mov(a64::w3, Imm(EXIT_MUST_BOOL));
+                        a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                        emitSyncSpToState(a);
+                        a.ret(a64::x30);
+                        for (int k = 1; k <= 3; k++) a.bind(bcLabels[globalIdx + k]);
+                        i += 3;
+                        continue;
+                    }
+                }
                 if (g_fsrLazy) {
                     // M4: method mirror may be stale (per-call store
                     // deleted) — derive the exit ip from x19's
