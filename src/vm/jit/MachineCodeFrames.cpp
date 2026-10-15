@@ -687,7 +687,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
                       != f.savedMethod.rawBits())
         bad("mcJM is not the caller's code");
     if (f.savedActiveContext.rawBits() != activeContext_.rawBits()) bad("INV-AC");
-    if (st->closure.isNil() && f.homeFrameDepth != SIZE_MAX) bad("home marker on a method call");
+    if (st->closure.isNil() && f.homeFrameDepth() != SIZE_MAX) bad("home marker on a method call");
     if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
                                                          : st->closure).rawBits())
         bad("callee fp[0]");
@@ -767,7 +767,7 @@ void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
     if (frameDepth_ > 0) {
         const SavedFrame& f = savedFrames_[frameDepth_ - 1];
         const char* bad = f.materializedRetSlot ? "retSlot"
-            : (f.homeFrameDepth != SIZE_MAX && st->closure.isNil()) ? "home-of-method-frame"
+            : (f.homeFrameDepth() != SIZE_MAX && st->closure.isNil()) ? "home-of-method-frame"
             : nullptr;
         static int nb = 0;
         if (bad && ++nb <= 10)
@@ -1290,7 +1290,7 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
             && outerContext.isObject() && !outerContext.isNil()
             && savedFrames_[nlrMemoFrame_].materializedContext.rawBits() == outerContext.rawBits()
             && savedFrames_[nlrMemoFrame_].savedMethod.rawBits() == nlrMemoHome_.rawBits()) {
-        savedFrames_[frameDepth_ - 1].homeFrameDepth = nlrMemoFrame_;
+        savedFrames_[frameDepth_ - 1].setHomeFrameDepth(nlrMemoFrame_);
         return;
     }
     Oop home = blockHomeMethodForNLR(compiledBlock);
@@ -1321,7 +1321,7 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
                     nlrMemoBlock_ = compiledBlock;
                     nlrMemoHome_ = home;
                     nlrMemoFrame_ = i - 1;
-                    savedFrames_[frameDepth_ - 1].homeFrameDepth = i - 1;
+                    savedFrames_[frameDepth_ - 1].setHomeFrameDepth(i - 1);
                     return;
                 }
             }
@@ -1338,7 +1338,7 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
             nlrMemoFrame_ = homeFrame;
         }
     }
-    savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+    savedFrames_[frameDepth_ - 1].setHomeFrameDepth(homeFrame);
 }
 
 void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
@@ -1725,7 +1725,6 @@ void Interpreter::mcfInit() {
     L.savedIP = offsetof(SavedFrame, savedIP);
     L.savedBytecodeEnd = offsetof(SavedFrame, savedBytecodeEnd);
     L.savedMethod = offsetof(SavedFrame, savedMethod);
-    L.savedHomeMethod = offsetof(SavedFrame, savedHomeMethod);
     L.savedReceiver = offsetof(SavedFrame, savedReceiver);
     L.savedClosure = offsetof(SavedFrame, savedClosure);
     L.savedActiveContext = offsetof(SavedFrame, savedActiveContext);
@@ -1734,7 +1733,7 @@ void Interpreter::mcfInit() {
     L.savedFP = offsetof(SavedFrame, savedFP);
     L.materializedRetSlot = offsetof(SavedFrame, materializedRetSlot);
     L.savedArgCount = offsetof(SavedFrame, savedArgCount);
-    L.homeFrameDepth = offsetof(SavedFrame, homeFrameDepth);
+    L.homeFramePlus1 = offsetof(SavedFrame, homeFramePlus1);
     L.mcReturn = offsetof(SavedFrame, mcReturn);
     L.guardOk = reinterpret_cast<char*>(&savedFrames_[0]) - reinterpret_cast<char*>(&mcfGuardFrame_)
                     == (ptrdiff_t)sizeof(SavedFrame)
@@ -1802,7 +1801,7 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
     if (diag) return refuse(kDiag);
     const size_t d = frameDepth_;
     if (d < 2) return refuse(kShallow);
-    const size_t h = savedFrames_[d - 1].homeFrameDepth;
+    const size_t h = savedFrames_[d - 1].homeFrameDepth();
     if (h == SIZE_MAX || h == 0 || h >= d) return refuse(kNoHome);
     // The interpreter's registers, as the exit would leave them.  Nothing
     // below changes state until every check has passed.
@@ -2246,7 +2245,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                 if (d == 0) k += " why=depth0";
                 else {
                     const SavedFrame& f = savedFrames_[d - 1];
-                    k += f.homeFrameDepth != SIZE_MAX ? (blockFrame ? " home(blk)" : " why=home") : "";
+                    k += f.homeFrameDepth() != SIZE_MAX ? (blockFrame ? " home(blk)" : " why=home") : "";
                     k += f.materializedRetSlot ? " why=retslot" : "";
                     k += !f.mcReturn ? " why=nomemo" : "";
                     k += blockFrame ? " blk" : " meth";
@@ -2334,7 +2333,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             // A block frame's ExitReturn is its local return (BlockReturnTop),
             // returnValue at any depth, as the interpreter does.
             if (!blockFrame && (depth == 0
-                                || savedFrames_[depth - 1].homeFrameDepth != SIZE_MAX)) {
+                                || savedFrames_[depth - 1].homeFrameDepth() != SIZE_MAX)) {
                 mcfReturnedIntoContext_ = false;
                 returnFromMethodSlow(value);
                 // A collapsed non-local return's frames came back

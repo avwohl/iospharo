@@ -9900,7 +9900,7 @@ void Interpreter::returnFromMethod() {
         return;
     }
     if (__builtin_expect(frameDepth_ > 0
-            && savedFrames_[frameDepth_ - 1].homeFrameDepth == SIZE_MAX
+            && savedFrames_[frameDepth_ - 1].homeFrameDepth() == SIZE_MAX
             && method_.isObject()
             && method_.asObjectPtr()->classIndex() == compiledMethodClassIndex_, 1)) {
         returnValue(pop());
@@ -9923,7 +9923,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                == compiledBlockClassIndex_) {
         g_fpushN++;
         size_t hfd = frameDepth_ > 0
-            ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
+            ? savedFrames_[frameDepth_ - 1].homeFrameDepth() : SIZE_MAX;
         fprintf(stderr, "[BLKRET] fd=%zu hfd=%zd value=0x%llx below=#%s\n",
                 frameDepth_, hfd == SIZE_MAX ? -1 : (ssize_t)hfd,
                 (unsigned long long)value.rawBits(),
@@ -9994,7 +9994,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
     // compiledBlock IS method_, which a CompiledMethod never is -- so skip
     // them; they were ~4% of a send-bound run.
     if (__builtin_expect(frameDepth_ > 0
-            && savedFrames_[frameDepth_ - 1].homeFrameDepth == SIZE_MAX
+            && savedFrames_[frameDepth_ - 1].homeFrameDepth() == SIZE_MAX
             && method_.isObject()
             && method_.asObjectPtr()->classIndex() == compiledMethodClassIndex_, 1)) {
         returnValue(value);
@@ -10006,7 +10006,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
     // not just from this block.
 
     if (frameDepth_ > 0) {
-        size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+        size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth();
         if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
             // Validate: for a block's ^, the expected home derives from
             // the executing CompiledBlock; for an ensure-continuation
@@ -10058,7 +10058,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 frameDepth_ - 1, homeFrame,
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
-        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].setHomeFrameDepth(homeFrame);
         savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                         }
                         return;
@@ -10252,7 +10252,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 frameDepth_ - 1, homeFrame,
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
-        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].setHomeFrameDepth(homeFrame);
         savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                                     }
                                     return;
@@ -10471,7 +10471,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 frameDepth_ - 1, homeFrame,
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
-        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].setHomeFrameDepth(homeFrame);
         savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                                     }
                                     return;
@@ -10615,7 +10615,7 @@ void Interpreter::returnFromBlock() {
     // Get the home frame depth from the current frame
     size_t homeFrame = SIZE_MAX;
     if (frameDepth_ > 0) {
-        homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+        homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth();
         if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
             Oop expected = nlrHomeCMOf(method_);
             if (expected.isNil()) expected = nlrHomeMethod_;
@@ -10660,7 +10660,7 @@ void Interpreter::returnFromBlock() {
                 frameDepth_ - 1, homeFrame,
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
-        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].setHomeFrameDepth(homeFrame);
         savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                                 }
                                 return;
@@ -16408,7 +16408,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     if (frameDepth_ >= 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
         Oop homeMethodOop = homeMethodForNLR;
         size_t homeFrame = findBlockHomeFrame(homeMethodOop, outerContext, methodToExecute);
-        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].setHomeFrameDepth(homeFrame);
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
                 && homeFrame != SIZE_MAX
                 && (memory_.selectorOf(homeMethodOop).find("atFont:") == 0
@@ -16839,14 +16839,13 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
     frame.savedMethod = method_;
-    frame.savedHomeMethod = homeMethod_;
     frame.savedReceiver = receiver_;
     frame.savedActiveContext = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
     frame.materializedRetSlot = nullptr;  // Step 7: normal pushFrame, not materialize-bail
     frame.savedArgCount = argCount_;
     frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
-    frame.homeFrameDepth = SIZE_MAX;  // Default: not a block (will be set by activateBlock if needed)
+    frame.setHomeFrameDepth(SIZE_MAX);  // Default: not a block (will be set by activateBlock if needed)
     frame.materializedContext = cachedCtx;  // Preserve cached context from current frame
     frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
@@ -17333,7 +17332,7 @@ bool Interpreter::popFrame() {
     // degraded to a normal send-return, the method tail returned self,
     // and the receiver propagated up as the send result).  The popped
     // frame's marker is dead once popped — nothing below restores it.
-    frame.homeFrameDepth = SIZE_MAX;
+    frame.setHomeFrameDepth(SIZE_MAX);
 
     // jit-may24 Step 2: track materialize-bail frame count.  Decrement
     // here (not in returnValue's matRetSlot path) because popFrame is
@@ -17386,7 +17385,7 @@ bool Interpreter::popFrame() {
     instructionPointer_ = frame.savedIP;
     bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
-    homeMethod_ = frame.savedHomeMethod;
+    homeMethod_ = homeMethodFor(frame.savedMethod, frame.savedClosure);   // derived, not stored (trim step 5)
     receiver_ = frame.savedReceiver;
     closure_ = frame.savedClosure;  // Restore caller's closure (nil for methods, block for block activations)
     activeContext_ = frame.savedActiveContext;  // Restore active context for proper return chain
@@ -17549,7 +17548,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     instructionPointer_ = frame.savedIP;
     bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
-    homeMethod_ = frame.savedHomeMethod;
+    homeMethod_ = homeMethodFor(frame.savedMethod, frame.savedClosure);   // derived, not stored (trim step 5)
     receiver_ = frame.savedReceiver;
     closure_ = frame.savedClosure;
     activeContext_ = frame.savedActiveContext;
@@ -20158,14 +20157,13 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
     frame.savedMethod = method_;
-    frame.savedHomeMethod = homeMethod_;
     frame.savedReceiver = receiver_;
     frame.savedActiveContext = activeContext_;
     frame.savedFP = framePointer_;
     frame.materializedRetSlot = nullptr;
     frame.savedArgCount = argCount_;
     frame.savedClosure = closure_;
-    frame.homeFrameDepth = SIZE_MAX;
+    frame.setHomeFrameDepth(SIZE_MAX);
     frame.materializedContext = currentFrameMaterializedCtx_;
     frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();
@@ -30898,7 +30896,6 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
         ? methObj->bytes() + methObj->byteSize()
         : saveJM->bcStart() + saveJM->numBytecodes;
     frame.savedMethod = saveMethod;
-    frame.savedHomeMethod = saveMethod;
     frame.savedReceiver = save.receiver;
     // Block frames need their FullBlockClosure (option A, 2026-06-13):
     // a closureless block frame converts to a METHOD context (Context
@@ -31019,7 +31016,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     }
     frame.materializedRetSlot = save.sp - (saveNArgs + 1);
     frame.savedArgCount = saveJM->argCount;
-    frame.homeFrameDepth = SIZE_MAX;
+    frame.setHomeFrameDepth(SIZE_MAX);
     materializedFrameCount_++;
     // MAT-SP trace: dump the reconstructed caller sp for a save, filtered by
     // PHARO_J2J_MAT_SEL.  depth=(sp-tempBase)/8 is the operand-stack depth at the
@@ -34695,7 +34692,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.savedIP = instructionPointer_;  // past-send
                             frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
                             frame.savedMethod = savedMethod;
-                            frame.savedHomeMethod = savedMethod;
                             frame.savedReceiver = savedRecv;
                             frame.savedClosure = memory_.nil();
                             frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
@@ -34721,7 +34717,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.materializedRetSlot =
                                 savedSP - (nArgs + 1);
                             frame.savedArgCount = savedArgCount;
-                            frame.homeFrameDepth = SIZE_MAX;
+                            frame.setHomeFrameDepth(SIZE_MAX);
                             materializedFrameCount_++;
                         }
 

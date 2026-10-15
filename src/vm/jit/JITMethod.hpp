@@ -319,10 +319,10 @@ inline void mcfCodeChanged() {
 // SavedFrame layout for T1's native call and return, filled by the
 // interpreter at JIT initialization (SavedFrame is private to Interpreter).
 struct McfFrameLayout {
-    uint32_t size, savedIP, savedBytecodeEnd, savedMethod, savedHomeMethod,
+    uint32_t size, savedIP, savedBytecodeEnd, savedMethod,
              savedReceiver, savedClosure, savedActiveContext,
              materializedContext, ctxSynced, savedFP, materializedRetSlot,
-             savedArgCount, homeFrameDepth, mcReturn, mcJM;
+             savedArgCount, homeFramePlus1, mcReturn, mcJM;
     // Interpreter fields as byte offsets from the JITState (x0), or
     // kMcfNoDirect: reach them through the state's pointers instead.
     int32_t dirDepth, dirMatCtx, dirActCtx, dirCtdn;

@@ -117,7 +117,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Set mcfDepthLimit (MachineCodeFrames.cpp:2088) to 32768 when the knob is off, and keep it at 55936 when the knob is on. Add a static_assert that MaxFrameDepth <= 65536.
 - Tests: recursion probes at 30000, 40000 and 60000 deep compared with NO_JIT (same overflow signal), and a depth-0-after-yield probe that shows native calls still happen at depth 0.
 
-**Step 5: SavedFrame layout, -5 (-> 51).** Separate struct commit; knob PHARO_MCF_NO_PAIRED_PUSH for the emitter part.
+**Step 5: SavedFrame layout, -5 (-> 51). -- DONE (lexicon 257.1 -> 254.2).** Separate struct commit; knob PHARO_MCF_NO_PAIRED_PUSH for the emitter part.
 - 5a: factor homeMethodFor() out of mcfSyncRegisters (MachineCodeFrames.cpp:978-990) and use it at popFrame 17389 and 17552. Sabotage: if homeMethodFor returns nil, nothing may change. Then delete savedHomeMethod.
 - 5b: pack an info word: savedArgCount u8, siteNArgs u8, ctxSynced u8, pad u8, homeFramePlus1 u32. homeFrameDepth()/setHomeFrameDepth() accessors at about 30 sites; the compiler flags the ones not yet converted.
 - 5c: choose the FINAL pair order now, so later steps drop whole pairs: (mcReturn,savedFP) (mcJM,materializedContext) (savedIP,savedMethod) (savedReceiver,info) (savedClosure,savedActiveContext) (bcEnd,retSlot), then pushSite. Push = 6 stp. Return = ldp mcReturn,savedFP; ldp x19,matCtx; ldr x21; ldp clo,act.

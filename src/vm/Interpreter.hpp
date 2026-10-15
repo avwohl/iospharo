@@ -658,21 +658,42 @@ private:
     // ===== EXECUTION STATE =====
 
     // Saved frame info for returns
+    // Layout (docs/mcf-call-trim-plan.md step 5): the fields machine code
+    // writes on a native push come in adjacent pairs, so the push is six
+    // stp: (mcReturn, savedFP) (mcJM, materializedContext) (savedIP,
+    // savedMethod) (savedReceiver, info word) (savedClosure,
+    // savedActiveContext) (savedBytecodeEnd, materializedRetSlot).
     struct SavedFrame {
-        uint8_t* savedIP;
-        uint8_t* savedBytecodeEnd;
-        Oop savedMethod;
-        Oop savedHomeMethod;  // Home method for literal access
-        Oop savedReceiver;
-        Oop savedClosure;     // FullBlockClosure for block frames, nil for method frames
-        Oop savedActiveContext;  // Active context at time of call (for proper return chain)
+        // Machine-code frames (docs/mc-frames-design.md, INV-3): the address
+        // in the caller's compiled code that continues the caller after this
+        // frame returns.  A memo of "code entry for (savedMethod, savedIP)":
+        // every push sets or clears it at savedIP, every change of savedIP
+        // clears it, and mcfCodeChanged clears them all, so a non-null memo
+        // is current.
+        void* mcReturn;
+        Oop* savedFP;
+        void* mcJM;            // jit::JITMethod* that mcReturn points into
         Oop materializedContext;  // Cached context from materializeFrameStack (nil if not yet materialized)
+        uint8_t* savedIP;
+        Oop savedMethod;
+        Oop savedReceiver;
+        // The info word.  A native push stores the call site's w12
+        // (callerArgCount | nArgs << 8, zero-extended): savedArgCount, a
+        // siteNArgs nobody reads, ctxSynced false and no home marker.
+        uint8_t savedArgCount;
+        uint8_t siteNArgs;
         // True only if materializedContext's pc/temps/expr snapshot was
         // synced AFTER this frame last executed — gates the incremental
         // skip in materializeFrameStack.  Cleared whenever the frame's
         // logical state may have advanced (push, suspend-with-identity).
         bool ctxSynced = false;
-        Oop* savedFP;
+        uint8_t infoPad;
+        // For non-local block returns: the frame to return to, plus 1
+        // (0 = none).  Use homeFrameDepth() / setHomeFrameDepth().
+        uint32_t homeFramePlus1;
+        Oop savedClosure;     // FullBlockClosure for block frames, nil for method frames
+        Oop savedActiveContext;  // Active context at time of call (for proper return chain)
+        uint8_t* savedBytecodeEnd;
         // jit-may20b Step 7 (recursive-safe materialize): when this SavedFrame
         // was pushed from a J2JSave by the chain-loop materialize-bail
         // fallback, materializedRetSlot points at the caller's "receiver slot"
@@ -683,19 +704,16 @@ private:
         // push.  Deferred A6 iter N+30i root cause; bug presented as fib(N)
         // returning fib(N-2) for ~20% of runs with the inline-J2J gate off.
         Oop* materializedRetSlot;
-        int savedArgCount;
-        size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
         const char* pushSite;
-        // Machine-code frames (docs/mc-frames-design.md, INV-3): the address
-        // in the caller's compiled code that continues the caller after this
-        // frame returns.  A memo of "code entry for (savedMethod, savedIP)":
-        // every push sets or clears it at savedIP, every change of savedIP
-        // clears it, and mcfCodeChanged clears them all, so a non-null memo
-        // is current.
-        void* mcReturn;
-        void* mcJM;            // jit::JITMethod* that mcReturn points into
+        uint64_t spare[3];
+        size_t homeFrameDepth() const {
+            return homeFramePlus1 ? (size_t)homeFramePlus1 - 1 : SIZE_MAX;
+        }
+        void setHomeFrameDepth(size_t d) {
+            homeFramePlus1 = d == SIZE_MAX ? 0u : (uint32_t)(d + 1);
+        }
     };
     // 128 bytes: T1 indexes savedFrames_ with a shift.  The GC-time ip
     // offsets live in frameGCSide_.
@@ -708,6 +726,19 @@ private:
     };
     std::vector<FrameGCSide> frameGCSide_;
     static_assert(sizeof(SavedFrame) == 128, "T1 indexes savedFrames_ with lsl #7");
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+    static_assert(offsetof(SavedFrame, savedFP) == offsetof(SavedFrame, mcReturn) + 8
+                  && offsetof(SavedFrame, materializedContext) == offsetof(SavedFrame, mcJM) + 8
+                  && offsetof(SavedFrame, savedMethod) == offsetof(SavedFrame, savedIP) + 8
+                  && offsetof(SavedFrame, savedArgCount) == offsetof(SavedFrame, savedReceiver) + 8
+                  && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCount) + 2
+                  && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCount) + 4
+                  && offsetof(SavedFrame, savedActiveContext) == offsetof(SavedFrame, savedClosure) + 8
+                  && offsetof(SavedFrame, materializedRetSlot) == offsetof(SavedFrame, savedBytecodeEnd) + 8
+                  && offsetof(SavedFrame, mcReturn) % 16 == 0,
+                  "native push pairs (docs/mcf-call-trim-plan.md step 5)");
+#pragma GCC diagnostic pop
     static constexpr size_t MaxFrameDepth = 65536;
     // The MCF fused depth test (bit 15 of depth-1) needs depths below 2^16.
     static_assert(MaxFrameDepth <= 65536, "fused native depth test");
@@ -1979,6 +2010,18 @@ public:
                             Oop rcv, jit::McfCallEntry*& e);
     Oop mcfThisContext(jit::JITState* st);
     void* mcfNonLocalReturn(jit::JITState* st);
+    // The home method of a frame running `method` with `closure` (nil for a
+    // method frame): activateBlock's choice, as mcfSyncRegisters derives it.
+    // homeMethod_ is only read by diagnostics; records no longer save it.
+    Oop homeMethodFor(Oop method, Oop closure) {
+        if (closure.isNil() || !closure.isObject()) return method;
+        ObjectHeader* clo = closure.asObjectPtr();
+        Oop cb = clo->slotAt(1);
+        Oop home = cb.isObject() ? memory_.fetchPointer(2, cb) : Oop::nil();
+        if (home.isObject()) return home;
+        Oop outer = clo->slotAt(0);
+        return outer.isObject() && !outer.isNil() ? memory_.fetchPointer(3, outer) : method;
+    }
     // A slot store into a context being materialized: a raw store when the
     // context is young (no barrier needed), else storePointer.  Most
     // contexts a frame sync writes are young; storePointer's checks were
@@ -2228,7 +2271,6 @@ public:
         frame.savedIP = instructionPointer_;
         frame.savedBytecodeEnd = bytecodeEnd_;
         frame.savedMethod = method_;
-        frame.savedHomeMethod = homeMethod_;
         frame.savedReceiver = receiver_;
         // closure_, activeContext_, materializedContext_ are always nil during J2J
         frame.savedClosure = nil;
@@ -2241,7 +2283,7 @@ public:
         // this slot can leak into returnValue and corrupt fib results.
         frame.materializedRetSlot = nullptr;
         frame.savedArgCount = argCount_;
-        frame.homeFrameDepth = SIZE_MAX;
+        frame.setHomeFrameDepth(SIZE_MAX);
 
         // Set up callee state in interpreter
         method_ = targetMethod;
@@ -2382,7 +2424,6 @@ public:
         frame.savedIP = ip;
         frame.savedBytecodeEnd = methObj->bytes() + methObj->byteSize();
         frame.savedMethod = method;
-        frame.savedHomeMethod = method;
         frame.savedReceiver = recv;
         frame.savedClosure = nil;
         frame.savedActiveContext = nil;
@@ -2391,7 +2432,7 @@ public:
         frame.savedFP = tempBase - 1;
         frame.materializedRetSlot = nullptr;  // Step 7: no callers — clear for safety
         frame.savedArgCount = argCount;
-        frame.homeFrameDepth = SIZE_MAX;
+        frame.setHomeFrameDepth(SIZE_MAX);
     }
 
     uint32_t compiledMethodClassIdx() const { return compiledMethodClassIndex_; }
@@ -4367,7 +4408,6 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     for (size_t i = 0; i < frameDepth_; ++i) {
         SavedFrame& frame = savedFrames_[i];
         visitor(frame.savedMethod);
-        visitor(frame.savedHomeMethod);
         visitor(frame.savedReceiver);
         visitor(frame.savedClosure);
         visitor(frame.savedActiveContext);

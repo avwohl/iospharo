@@ -5240,9 +5240,8 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     // frame's own local return is an ordinary pop, whatever its index.
     if (!fold) {
         asmjit::Label noHome = a.new_label();
-        a.ldr(x8, ptr(x7, L.homeFrameDepth));
-        a.cmn(x8, asmjit::Imm(1));
-        a.b_eq(noHome);
+        a.ldr(w8, ptr(x7, L.homeFramePlus1));
+        a.cbz(w8, noHome);
         a.ldr(x8, ptr(x0, OFF_CLOSURE));
         a.cmp(x8, nil6);                      // nil: a method frame
         a.b_eq(fall);
@@ -5254,9 +5253,8 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         else { a.ldr(r1, ptr(x7, o1)); a.ldr(r2, ptr(x7, o2)); }
     };
     if (fold) {
-        a.ldr(x9, ptr(x7, L.mcReturn));
+        ldp2(x9, L.mcReturn, x11, L.savedFP);  // adjacent (step 5): one ldp
         a.cbz(x9, fall);
-        a.ldr(x11, ptr(x7, L.savedFP));
         if (!::pharo::mcfLazyView()) ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
     } else {
         ldp2(x11, L.savedFP, x8, L.materializedRetSlot);
@@ -5343,7 +5341,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.str(x10, ptr(x0, OFF_MCF_BCEND_OFF));
         a.add(x8, x8, asmjit::Imm(16));
         a.str(x8, ptr(x0, OFF_LITERALS));
-        a.ldr(w8, ptr(x7, L.savedArgCount));
+        a.ldrb(w8, ptr(x7, L.savedArgCount));
         a.str(w8, ptr(x0, OFF_ARGCOUNT));
         a.ldr(x19, ptr(x7, L.mcJM));
         a.str(x19, ptr(x0, OFF_JITMETHOD));
@@ -5703,44 +5701,43 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.stp(r1, r2, ptr(x8, o1));
         else { a.str(r1, ptr(x8, o1)); a.str(r2, ptr(x8, o2)); }
     };
+    // Six pairs (SavedFrame's layout, docs/mcf-call-trim-plan.md step 5).
     if (::pharo::mcfLazyView()) {
         // savedBytecodeEnd null: C++ derives it from the method when it
         // pops the frame (no per-call view to read it from).
         a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
-        put2(x13, L.savedIP, xzr, L.savedBytecodeEnd);
+        put2(x13, L.savedIP, x16, L.savedMethod);
+        put2(xzr, L.savedBytecodeEnd, xzr, L.materializedRetSlot);
     } else {
         a.ldr(x16, ptr(x0, OFF_METHOD));
         a.ldr(x17, ptr(x0, OFF_MCF_BCEND_OFF));
         a.add(x17, x16, x17);
-        put2(x13, L.savedIP, x17, L.savedBytecodeEnd);
+        put2(x13, L.savedIP, x16, L.savedMethod);
+        put2(x17, L.savedBytecodeEnd, xzr, L.materializedRetSlot);
     }
-    put2(x16, L.savedMethod, x16, L.savedHomeMethod);
     const bool sc = mcfShortcuts();
+    // The info word: the call site's w12 (callerArgCount | nArgs << 8, a
+    // 32-bit mov, so zero-extended) is savedArgCount, siteNArgs, ctxSynced
+    // false and no home marker.
     if (sc) {
-        a.ldr(x17, ptr(x0, OFF_CLOSURE));
-        put2(x21, L.savedReceiver, x17, L.savedClosure);
+        put2(x21, L.savedReceiver, x12, L.savedArgCount);
     } else {
         if (t1TbReg()) a.mov(x16, x21);
         else a.ldr(x16, ptr(x0, OFF_RECEIVER));
-        a.ldr(x17, ptr(x0, OFF_CLOSURE));
-        put2(x16, L.savedReceiver, x17, L.savedClosure);
+        put2(x16, L.savedReceiver, x12, L.savedArgCount);
         if (pinned) a.mov(x4, x27);                // x4 = nil from here on
         else a.ldr(x4, ptr(x0, OFF_MCF_NIL));
     }
     const asmjit::a64::Gp nilR = mcfNilReg();
+    a.ldr(x17, ptr(x0, OFF_CLOSURE));
+    mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
+    put2(x17, L.savedClosure, x16, L.savedActiveContext);
     mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
     mcfFieldStr(a, nilR, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
-    mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
-    put2(x16, L.savedActiveContext, x17, L.materializedContext);
-    a.strb(wzr, ptr(x8, L.ctxSynced));
+    put2(x19, L.mcJM, x17, L.materializedContext);
     if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
     else { emitLoadTempBase(a, x16); a.sub(x16, x16, asmjit::Imm(8)); }
-    put2(x16, L.savedFP, xzr, L.materializedRetSlot);
-    // savedArgCount < 256 and its upper bytes are always 0: one byte store.
-    a.strb(w12, ptr(x8, L.savedArgCount));
-    a.movn(x16, asmjit::Imm(0));                   // SIZE_MAX: no non-local return
-    a.str(x16, ptr(x8, L.homeFrameDepth));
-    put2(x14, L.mcReturn, x19, L.mcJM);
+    put2(x14, L.mcReturn, x16, L.savedFP);
     // No code epoch: mcfCodeChanged clears the memos of the live frames.
 }
 
