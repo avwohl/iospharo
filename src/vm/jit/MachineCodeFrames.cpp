@@ -345,7 +345,8 @@ static inline bool mcfReceiverOk(jit::JITMethod* jm, Oop receiver) {
 // primitive's error code (<primitive: N error: ec>) is refused: activateMethod
 // stores the error object, a native call could not.
 bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
-    switch (primitiveIndexOf(method)) {
+    const int prim = primitiveIndexOf(method);
+    switch (prim) {
     case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
     case 14: case 15: case 16:
     case 60: case 61: case 62:
@@ -361,6 +362,18 @@ bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
     ObjectHeader* mo = method.asObjectPtr();
     Oop hdr = mo->slotAt(0);
     if (!hdr.isSmallInteger()) return false;
+    // The prologue implements the primitive's ordinary form, on the
+    // receiver: size of self, self at: i, self at: i put: v, self op arg.
+    // A mirror method (MirrorPrimitives class>>indexableSizeOf: anObject)
+    // uses the same primitive on its first argument: its prologue fails on
+    // the class receiver and the native call ran the body instead of the
+    // primitive (indexableSizeOf: answered 0 for an Array;
+    // MirrorPrimitivesTest).  Only the interpreter's primitive handles both.
+    if (!GET_DEBUG_BOOL(PHARO_MCF_PROLOGUE_ANY_ARITY)) {
+        const int nArgs = (int)((hdr.asSmallInteger() >> 24) & 0xF);
+        const int want = prim == 62 ? 0 : prim == 61 ? 2 : 1;
+        if (nArgs != want) return false;
+    }
     const uint8_t* bc = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
     const uint8_t op = bc[3];   // first bytecode after CallPrimitive
     return !(op == jit::SistaV1::ExtStoreTemp || op == jit::SistaV1::ExtPopStoreTemp

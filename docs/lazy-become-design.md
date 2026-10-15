@@ -1,7 +1,7 @@
 # Lazy two-way become: design
 
-Status: design, 2026-10-15.  Knob: `PHARO_LAZY_BECOME` (opt-in until a
-sweep validates it).
+Status: implemented 2026-10-15 (cb5cb04a two-way, 0d328f09 one-way).
+Knob: `PHARO_LAZY_BECOME` (opt-in until a sweep validates it).
 
 ## Problem
 
@@ -66,3 +66,24 @@ an object with an overflow header.
 4. Audit for other places that read an object without a send (interpreter
    fast paths, T1 inline paths, C++ helpers); probes for each.
 5. Sweep with the knob on; then make it the default.
+
+## As built (2026-10-15)
+
+- One-way become (`becomeForward:`) uses the same scheme without copies:
+  each source becomes a forwarder to its target.  Slot 0 is stored with
+  the write barrier, so an old forwarder to a young target is remembered;
+  pointerSlotsOf answers one pointer slot (the target) for a forwarder, so
+  the scavenge updates it when the target moves.
+- Repeated swaps of the same objects build forwarding chains in heap
+  references that nobody followed.  An unforward pass runs after every 256
+  lazy pairs, and followForwarded's cap is 512 hops.
+- IC fills key by the followed receiver: an entry keyed with the
+  forwarder's class index and the target's method ran that method with a
+  forwarder as self (found with the JIT on, ReStore).
+- Without the knob, both become primitives fix the roots in one pass for
+  all pairs, without the JIT cache roots when no cache can hold the
+  objects.
+
+Measured with the knob: ReStore package 282 s (Cog x86 346 s), NewTools
+77 s (Cog 372 s).  Probes lazybecome.st / lazyfwd.st in the session
+scratchpad match Cog with the knob, without it and without the JIT.

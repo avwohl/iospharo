@@ -223,6 +223,7 @@ DEBUG_BOOL_RT(PHARO_LAZY_BECOME)                 // two-way become of plain obje
 DEBUG_BOOL_RT(PHARO_MCF_NO_SPECIAL_SITE_CACHE)   // MCF: special-selector helper sends (+ < bitAnd: ... on non-SmallIntegers) look up at every send (no site cache)
 DEBUG_BOOL(PHARO_NO_EDEN_BYTES_NEW)              // primitive 71: byte/word objects in old space (pre-2026-10-15)
 DEBUG_BOOL_RT(PHARO_PRIM131_FULLGC)              // primitive 131 (garbageCollectMost) runs a full mark-compact GC (pre-2026-10-15) instead of a weak-aware scavenge
+DEBUG_BOOL(PHARO_MCF_PROLOGUE_ANY_ARITY)          // MCF: call a prologue primitive natively whatever its argument count (wrong for mirror-form methods)
 DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)             // native weak-association drain for every dictionary with the unscaled header hash (pre-2026-10-15; loses live keys)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
 DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)
