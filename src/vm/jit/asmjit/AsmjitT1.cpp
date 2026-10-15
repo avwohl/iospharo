@@ -14015,7 +14015,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             // x17 (x9-x15 are the pool).  Any failure stores the operands
             // and emits the bytecode as before.
             if ((op == SistaV1::ArithMultiply || op == SistaV1::ArithBitAnd
-                    || op == SistaV1::ArithBitOr)
+                    || op == SistaV1::ArithBitOr || op == SistaV1::ArithFloorDiv
+                    || op == SistaV1::ArithModulo)
                     && S.items.size() >= 2 && !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_WIDE_ARITH)) {
                 simFlushBelow(a, 2);
                 SimItem A = S.items[0], B = S.items[1];
@@ -14044,6 +14045,33 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.cmp(x17, x7);
                     a.b_ne(slow);                      // outside the 61-bit range
                     a.orr(R, x16, asmjit::Imm(1));
+                } else if (op == SistaV1::ArithFloorDiv || op == SistaV1::ArithModulo) {
+                    // Floored, as primitives 12 and 11: truncate, then step
+                    // toward minus infinity when the remainder's sign
+                    // differs from the divisor's.  A zero divisor and
+                    // minVal // -1 (out of range) take the send.
+                    asmjit::Label exact = a.new_label();
+                    a.asr(x5, rA, asmjit::Imm(3));
+                    a.asr(x6, rB, asmjit::Imm(3));
+                    a.cbz(x6, slow);
+                    a.sdiv(x7, x5, x6);
+                    a.msub(x8, x7, x6, x5);            // remainder, sign of the dividend
+                    a.cbz(x8, exact);
+                    a.eor(x16, x8, x6);
+                    a.tbz(x16, asmjit::Imm(63), exact);
+                    if (op == SistaV1::ArithFloorDiv) a.sub(x7, x7, asmjit::Imm(1));
+                    else a.add(x8, x8, x6);
+                    a.bind(exact);
+                    if (op == SistaV1::ArithFloorDiv) {
+                        a.lsl(x16, x7, asmjit::Imm(3));
+                        a.asr(x17, x16, asmjit::Imm(3));
+                        a.cmp(x17, x7);
+                        a.b_ne(slow);                  // outside the 61-bit range
+                        a.orr(R, x16, asmjit::Imm(1));
+                    } else {
+                        a.lsl(x16, x8, asmjit::Imm(3));
+                        a.orr(R, x16, asmjit::Imm(1));
+                    }
                 } else if (op == SistaV1::ArithBitAnd) {
                     a.and_(R, rA, rB);                 // tag 1 & tag 1 = tag 1
                 } else {

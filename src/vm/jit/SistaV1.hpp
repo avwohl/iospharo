@@ -50,6 +50,7 @@ constexpr uint8_t BlockReturnTop        = 0x5E;
 constexpr uint8_t ArithBase             = 0x60; // 0x60-0x6F  arithmetic selector 0..15
 constexpr uint8_t ArithMultiply         = ArithBase + 8;  // * (special selector 8)
 constexpr uint8_t ArithModulo           = ArithBase + 10; // modulo (special selector 10)
+constexpr uint8_t ArithFloorDiv         = ArithBase + 13; // // (special selector 13)
 constexpr uint8_t ArithBitAnd           = ArithBase + 14; // bitAnd: (special selector 14)
 constexpr uint8_t ArithBitOr            = ArithBase + 15; // bitOr: (special selector 15)
 constexpr uint8_t ArithLast             = 0x6F;
