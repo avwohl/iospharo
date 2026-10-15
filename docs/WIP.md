@@ -15,7 +15,27 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, 08:00) -- defects from per-class Cog timing; pushed `3885344e`, sweep L38 (lazy become on)
+## Right now (2026-10-15, 10:00) -- lazy become is the default; sweep L40 on `10b62450`
+
+- Sweep L39 (`cdc18e1a`, lazy become on): 27805 / 8 / 1, no new entry.
+  Pushed.  `10b62450` makes lazy become the default (opt-out
+  PHARO_NO_LAZY_BECOME); sweep L40 runs on it.
+- `82456d2f` plan step 7: x24 = savedFrames_ base, x27 = nil while T1
+  code runs (opt-out PHARO_MCF_NO_PINNED_REGS).  Lexicon 276.9 -> 274.1
+  billion instructions, fib -1.7%.  All steps of
+  docs/linked-mcf-sends-plan.md are in.
+- `63f281e9`: the one-argument primitive stub tests at: first.  Lexicon
+  272.6 billion.
+- `0447009b` primitive 131 is a weak-aware scavenge; `972d8064` byte
+  objects from primitive 71 in eden; `7265c31f` site caches for every
+  special-selector helper send.
+- Next: non-local return in machine code.  Lexicon exits to C++ 1.3M
+  times per run for `^` in a block (892K errorNotices, no ensure:; 408K
+  Symbol class>>intern: through critical:, which materializes the whole
+  frame stack).  A design panel is running.  pread (4%) is the image's
+  own 64 KB source refills, the same on Cog.
+
+## Earlier (2026-10-15, 08:00) -- defects from per-class Cog timing; pushed `3885344e`, sweep L38 (lazy become on)
 
 Pushed `cbc0635b` (L36) and `3885344e` (L37; new entries LinkInstallerTest
 and TrueTest are known flakes).
