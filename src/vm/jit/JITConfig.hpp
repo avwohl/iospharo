@@ -81,7 +81,12 @@ enum class OS : uint8_t {
 // -> 103ms JIT+inline-J2J). PROPER fix (follow-up): compact the per-send emit
 // (out-of-line dispatch like Cog) and/or hot-method-aware eviction so 16 MB
 // suffices. See docs/jit-retrospective.md "Cog-speed".
-static constexpr size_t DefaultCodeZoneSize = 64 * 1024 * 1024;
+// 192 MB since 2026-10-15: 64 MB filled in package suites too (ReStore:
+// 10K methods, the zone full and late-hot code interpreted), as it had in
+// the SUnit sweeps, which have run with PHARO_CODE_ZONE_MB=192 for months.
+// The JIT is off on iOS devices, so only macOS, Catalyst and Linux reserve
+// it.
+static constexpr size_t DefaultCodeZoneSize = 192 * 1024 * 1024;
 
 // Minimum code zone (1 MB)
 static constexpr size_t MinCodeZoneSize = 1 * 1024 * 1024;
