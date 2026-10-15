@@ -15,7 +15,28 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15) -- exits per call; pushed `253d78f3`, sweep L26 on `35ad5971`
+## Right now (2026-10-15, evening) -- Cog interrupt points, two-way become; pushed `59d6af46`, sweep L30 on `57646eb6`
+
+Pushed `443b5b44` (L28: 27802 / 8 / 3) and `59d6af46` (L29: 27803 / 6 /
+3; block frames enter and resume in machine code by default).
+
+- 57646eb6: process switches only at Cog's interrupt points (method or
+  block activation, back jump), not at sends a primitive answers.  The
+  Morphic alarm Heap held nil / lost an alarm in L27 and L29
+  (WorldState>>removeAlarm:for:): a switch landed inside
+  Heap>>removeAt:.  Companions so machine code does not stall on a
+  pending checkpoint: MC entry declines at countdown <= 1, MC back edges
+  exit on a spent countdown, a yield suppressed at an ensure: entry
+  retries at the next interrupt point.
+- 9f0d91f9: two-way become (prim 128) of objects of different sizes:
+  copies + forwarders + one scavenge for young pairs, else one scan
+  (young-only or parallel) through becomeForwardAll's two-way mode; no
+  cache flush unless a method, class, symbol or MethodDictionary moved.
+  ReStore writes 1000 objects in 2.4 s (was 13.5 s; Cog 63 ms).  Still
+  O(heap) once the pair is old (ReStore swaps the same objects again):
+  Cog forwards lazily.  ReStore's speed tests assert on these times.
+
+## Earlier (2026-10-15) -- exits per call; pushed `253d78f3`, sweep L26 on `35ad5971`
 
 Pushed: origin/jit at `253d78f3` (sweep L25 27801 / 9 / 3; its new
 entries are known flakes: LinkInstallerTest, a fake-GUI keyboard-focus
