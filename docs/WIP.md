@@ -15,7 +15,32 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, evening) -- Cog interrupt points, two-way become; pushed `59d6af46`, sweep L30 on `57646eb6`
+## Right now (2026-10-16) -- missing plugin primitives; pushed `49d3ca96`, sweep L34 on `475c32c2`
+
+Pushed `7c70461a` (L32: 27803 / 8 / 1) and `49d3ca96` (L33: 27803 / 7 /
+3; its two new entries, StCritiqueRuleSelectorPresenterTest and
+TKTBasicTaskTest, pass alone 3 of 3).
+
+- 4c6ad5e0: a heap receiver falls through to the IC key compare (the
+  immediate key is out of line).  Lexicon 301.5 -> 299.8 billion
+  instructions.
+- 475c32c2: Float32Array>>sum, dot:, =, hash and the in-place arithmetic
+  named FloatArrayPlugin primitives the VM did not have.  Each call ran
+  primitiveExternalCall's whole literal search and then the Smalltalk
+  fallback: PMKDTreeTest>>testKDTree2Dimensions timed out at 10 s (Cog
+  98 ms).  Now: the 12 primitives with Cog's semantics, a failed lookup
+  of a #(module name flags index) spec is cached (all primitives register
+  at startup), at:put: refuses a read-only receiver (Cog stores into it).
+  Polymath Math-Tests 74.4 -> 52.4 s (Cog 23.4 s).
+- Named primitives the image uses that ours lacks and Cog has: only
+  LocalePlugin now (ours answers the image fallbacks: DST false, US date
+  formats).  Cog has no Zip, MD5, Matrix2x3, Font or BMP plugin.
+- Polymath outliers still open (ours vs Cog): PMGeneralFunctionFitTest
+  8.3 / 2.5 s, PMPermutationTest 6.0 / 1.2, PMArbitraryPrecisionFloatTest
+  18.5 / 15.2 (LargeInteger primitives go through std::vector + malloc),
+  PMTSNETest 2.4 / 0.5, PMClusterFinderTest 0.6 / 0.08.
+
+## Earlier (2026-10-15, evening) -- Cog interrupt points, two-way become; pushed `59d6af46`, sweep L30 on `57646eb6`
 
 Pushed `443b5b44` (L28: 27802 / 8 / 3) and `59d6af46` (L29: 27803 / 6 /
 3; block frames enter and resume in machine code by default).
