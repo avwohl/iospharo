@@ -1197,7 +1197,17 @@ private:
     // (WeakAnnouncerTest>>testWeakObject warm flake, 2026-07-03).
     std::unordered_set<ObjectHeader*> ephemeronRescuedKeys_;
 
-    std::unordered_set<uintptr_t> validObjectStarts_; // Valid object boundaries for mark validation
+    // Valid old-space object starts for the mark's interior-pointer check,
+    // rebuilt by every markPhase.  One bit per 8-byte word of
+    // [oldSpaceStart_, objectStartBitsEnd_); the scan only ever stops on
+    // 8-byte steps from oldSpaceStart_, so that is every possible start.
+    // Was a std::unordered_set of every old object (live or dead): one hash
+    // insert per object per full GC, about half of the whole GC's time.
+    std::vector<uint64_t> objectStartBits_;
+    uint8_t* objectStartBitsEnd_ = nullptr;
+    size_t objectStartCount_ = 0;              // 0 = check disabled (as an empty set was)
+    bool objectStartUseSet_ = false;           // PHARO_GC_OLD_START_SET for this markPhase
+    std::unordered_set<uintptr_t> validObjectStarts_; // the old set, under PHARO_GC_OLD_START_SET only
 
     // Finalization / mourning
     std::vector<Oop> mournQueue_;              // Objects needing finalization (ephemerons + weak)

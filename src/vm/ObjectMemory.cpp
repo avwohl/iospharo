@@ -4885,12 +4885,22 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // Definitive interior pointer check: verify this address is at a real object
     // start. The classIndex check above can pass for interior pointers if the
     // slot data happens to have bits 0-21 matching a valid class table entry.
-    // Eden objects aren't in validObjectStarts_ (built from old-space scan),
+    // Eden objects aren't in the start map (built from old-space scan),
     // so skip the check for eden — its range is always valid live objects.
-    if (inOld && !validObjectStarts_.empty()) {
-        uintptr_t addr = reinterpret_cast<uintptr_t>(obj);
-        if (validObjectStarts_.find(addr) == validObjectStarts_.end()) {
-            return;
+    // An address past objectStartBitsEnd_ (old space grown during the mark)
+    // or off the 8-byte grid was never a scanned start, so it is rejected,
+    // exactly as the set's miss rejected it.
+    if (inOld && objectStartCount_ != 0) {
+        if (__builtin_expect(objectStartUseSet_, 0)) {
+            uintptr_t addr = reinterpret_cast<uintptr_t>(obj);
+            if (validObjectStarts_.find(addr) == validObjectStarts_.end()) {
+                return;
+            }
+        } else {
+            size_t off = static_cast<size_t>(p - oldSpaceStart_);
+            if ((off & 7) != 0 || p >= objectStartBitsEnd_) return;
+            size_t w = off >> 3;
+            if (((objectStartBits_[w >> 6] >> (w & 63)) & 1) == 0) return;
         }
     }
 
@@ -5223,7 +5233,8 @@ void ObjectMemory::processWeaklings() {
                 // rescued it for the mourn queue (not strongly reachable —
                 // stock Spur nils weaklings before retracing fired keys).
                 if (!ref.asObjectPtr()->isMarked()
-                        || ephemeronRescuedKeys_.count(ref.asObjectPtr())) {
+                        || (!ephemeronRescuedKeys_.empty()
+                            && ephemeronRescuedKeys_.count(ref.asObjectPtr()))) {
                     slotPtr[i] = nilObject_;
                     anyNilled = true;
                     nilledCount++;
@@ -5627,13 +5638,36 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // This prevents markAndTrace from calling setMarked() on interior pointers
     // whose random data happens to have a valid classIndex, which would corrupt
     // slot values by ORing the MarkedBit (0x40000000) into them.
-    validObjectStarts_.clear();
-    validObjectStarts_.reserve(800000);
+    // A bitmap over old space, not a hash set: same accepted addresses, but
+    // a bit store per object instead of a hash insert.  The set cost 42 ms
+    // of an 85 ms full GC on a stock Pharo 13 image, and 1.15 s of a 1.29 s
+    // mark after a LargeInteger-heavy polymath run filled old space.
+    // PHARO_GC_OLD_START_SET restores the set for a bisect.
+    objectStartUseSet_ = GET_DEBUG_BOOL(PHARO_GC_OLD_START_SET);
+    objectStartCount_ = 0;
+    objectStartBitsEnd_ = oldSpaceFree_;
+    if (objectStartUseSet_) {
+        validObjectStarts_.clear();
+        validObjectStarts_.reserve(800000);
+    } else {
+        size_t words = static_cast<size_t>(oldSpaceFree_ - oldSpaceStart_) / 8;
+        size_t bitWords = (words + 63) / 64;
+        if (objectStartBits_.size() < bitWords) objectStartBits_.resize(bitWords);
+        if (bitWords)
+            std::memset(objectStartBits_.data(), 0, bitWords * sizeof(uint64_t));
+    }
     size_t preEphCount = 0;
     {
         ObjectScanner buildScan(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = buildScan.next()) {
-            validObjectStarts_.insert(reinterpret_cast<uintptr_t>(obj));
+            if (objectStartUseSet_) {
+                validObjectStarts_.insert(reinterpret_cast<uintptr_t>(obj));
+            } else {
+                size_t w = static_cast<size_t>(
+                    reinterpret_cast<uint8_t*>(obj) - oldSpaceStart_) >> 3;
+                objectStartBits_[w >> 6] |= uint64_t(1) << (w & 63);
+            }
+            objectStartCount_++;
             if (obj->format() == ObjectFormat::WeakWithFixed) preEphCount++;
         }
     }
