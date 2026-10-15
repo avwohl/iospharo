@@ -14077,6 +14077,30 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (extRecvStore) a.bind(bcLabels[globalIdx + 1]);
                 return used;
             }
+            // ReturnTop with the result pending: it goes to x1 directly.  The
+            // native return reads only x1, and the fall-through exit needs
+            // no pop (the value never reached the stack).
+            // (Inside a block, ReturnTop is a non-local return: not here.)
+            if (op == SistaV1::ReturnTop && !g_emitIsBlock && !S.items.empty() && ::pharo::mcfEnabled()
+                    && !g_sharedRetPreludeStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_RET_POP)
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_RETURN)) {
+                simFlushBelow(a, 1);
+                SimItem T = S.items[0];
+                asmjit::a64::Gp rT = simSrc(a, T, x1);
+                if (rT.id() != x1.id()) a.mov(x1, rT);
+                if (T.k == SimK::Reg) S.freeReg(T.reg);
+                S.items.clear();
+                emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);
+                // The interpreter's return reads the popped slot too: leave
+                // the value there, as the memory path does (sp unchanged).
+                a.str(x1, ptr(x25));
+                a.str(x1, ptr(x0, OFF_RETVAL));
+                a.mov(w3, asmjit::Imm(EXIT_RETURN));
+                a.str(w3, ptr(x0, OFF_EXIT));
+                emitSyncSpToState(a);
+                a.ret(x30);
+                return 1;
+            }
             // SmallInteger *, bitAnd: and bitOr: with both operands pending:
             // result in a pool register, as + above.  Scratch x5-x8, x16,
             // x17 (x9-x15 are the pool).  Any failure stores the operands

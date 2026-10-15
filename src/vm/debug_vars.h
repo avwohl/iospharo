@@ -251,6 +251,7 @@ DEBUG_BOOL_RT(PHARO_MAT_RAW_FRESH_ONLY)          // materializeFrameStack: raw s
 DEBUG_BOOL_RT(PHARO_NO_NLR_SEGMENT)               // NLR through ensure: materialize every frame (the old way) instead of freezing the frames below the home's sender (docs/native-nlr-plan.md design 3)
 DEBUG_BOOL_RT(PHARO_MCF_NO_LEAF_PRIM)             // machine code calls every primitive through the register sync and executePrimitive (no leaf-primitive fast path)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_WIDE_ARITH)         // T1 simStack: SmallInteger * bitAnd: bitOr: go through the memory operand stack
+DEBUG_BOOL_RT(PHARO_T1_NO_SIM_RETURN)             // T1 simStack: a pending result is stored to the stack and reloaded for ReturnTop
 DEBUG_BOOL_RT(PHARO_T1_NO_DIRECT_YIELD)           // T1 back jumps load forceYield_ through an absolute address (three more instructions)
 DEBUG_BOOL_RT(PHARO_MCF_NO_PAIRED_DEPTH)           // native call/return move frameDepth_ and currentFrameMaterializedCtx_ separately (docs/mcf-record-trim-plan.md stage 1)
 DEBUG_BOOL(PHARO_MCF_PAIR_SABOTAGE)                // stage-1 oracle proof: the native push leaves the caller's context current (PHARO_MATCTX_OWNER_CHECK must fire)
