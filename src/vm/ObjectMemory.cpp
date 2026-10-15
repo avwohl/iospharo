@@ -1949,7 +1949,59 @@ HeapScanPool& heapScanPool() {
 }
 }  // namespace
 
-bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge) {
+bool ObjectMemory::becomeTwoWayYoung(const std::vector<std::pair<Oop, Oop>>& pairs) {
+    if (pairs.empty() || !enableYoungGen_ || GET_DEBUG_BOOL(PHARO_BECOME_NO_SCAVENGE)
+            || GET_DEBUG_BOOL(PHARO_BECOME_TWOWAY_NO_SCAVENGE)
+            || !pendingClassIndexRemap_.empty()
+            || !rememberedBitsExact_ || !emittedStoresBarriered()
+            || g_jitRememberBuf.overflow != 0
+            || GET_DEBUG_BOOL(PHARO_SCAV_FULL_SCAN) || GET_DEBUG_BOOL(PHARO_SCAV_BIT_AUDIT)
+            || GET_DEBUG_BOOL(PHARO_BECOME_FULL_SCAN))
+        return false;
+    auto ok = [&](Oop o) {
+        uint8_t* p = reinterpret_cast<uint8_t*>(o.asObjectPtr());
+        if (!(p >= edenAllocBase_ && p < edenFree_)) return false;
+        ObjectHeader* h = o.asObjectPtr();
+        return h->slotCount() >= 1 && !h->hasOverflowSlots() && !h->isForwarded()
+            && !h->isPinned() && !h->isImmutable();
+    };
+    for (const auto& pr : pairs)
+        if (!ok(pr.first) || !ok(pr.second) || pr.first.rawBits() == pr.second.rawBits()) return false;
+    // The copies first, while every original is intact.  A copy keeps the
+    // original's header hash (the caller already moved the hashes with the
+    // references) and its immutable/pinned bits are clear, as ok() needs.
+    std::vector<std::pair<Oop, Oop>> copies;   // (copy of first, copy of second)
+    copies.reserve(pairs.size());
+    for (const auto& pr : pairs) {
+        Oop c1 = shallowCopy(pr.first);
+        Oop c2 = shallowCopy(pr.second);
+        if (!c1.isObject() || c1.isNil() || !c2.isObject() || c2.isNil()) return false;
+        c1.asObjectPtr()->setIdentityHash(pr.first.asObjectPtr()->identityHash());
+        c2.asObjectPtr()->setIdentityHash(pr.second.asObjectPtr()->identityHash());
+        copies.emplace_back(c1, c2);
+    }
+    g_objectMotionEpoch++;
+    for (size_t k = 0; k < pairs.size(); k++) {
+        ObjectHeader* h1 = pairs[k].first.asObjectPtr();
+        ObjectHeader* h2 = pairs[k].second.asObjectPtr();
+        h1->slots()[0] = copies[k].second;    // references to first -> the other's contents
+        h1->setClassIndex(ObjectHeader::ForwardedClassIndex);
+        h2->slots()[0] = copies[k].first;
+        h2->setClassIndex(ObjectHeader::ForwardedClassIndex);
+    }
+    becomeForwardersPending_ = true;
+    scavenge();
+    becomeForwardersPending_ = false;
+    return true;
+}
+
+bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge,
+                                    bool twoWay) {
+    // twoWay: the map holds both directions of each swapped pair (two-way
+    // become of objects of different sizes).  The scan then exchanges the
+    // references in one pass; no key may become a forwarder (each would
+    // forward to the other).
+    if (twoWay) viaScavenge = false;
     struct BecomeCensus {
         std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
         size_t n;
@@ -2257,7 +2309,7 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
     // sees the pre-become heap. Doing it as becomeForward does, interleaved
     // per pair, would let pair k's forwarder overwrite slot 0 of an object
     // that pair k+1 still has to scan.
-    if (!GET_DEBUG_BOOL(PHARO_NO_BECOME_FORWARDER)) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_BECOME_FORWARDER) && !twoWay) {
         for (const auto& entry : map) {
             Oop obj1 = Oop::fromRawBits(entry.first);
             Oop obj2 = entry.second;

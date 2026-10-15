@@ -700,7 +700,13 @@ public:
     // viaScavenge: when every key is young, forward through a scavenge
     // instead of walking eden (the caller must tolerate young objects moving:
     // primitive 72 from the interpreter).
-    bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge = false);
+    bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map, bool viaScavenge = false,
+                          bool twoWay = false);
+    // Two-way become of young pairs of different sizes through a scavenge:
+    // each object forwards to a copy of the other, and the scavenge (cost
+    // ~ the live young objects) moves every reference.  False, with
+    // nothing changed, when a pair does not qualify.
+    bool becomeTwoWayYoung(const std::vector<std::pair<Oop, Oop>>& pairs);
 
     // Hash-copying become onto a CLASS (Spur prim 72/249, copyHash: true).
     // A class's identity hash IS its class-table index, so copying obj1's

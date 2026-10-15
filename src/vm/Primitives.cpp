@@ -432,6 +432,7 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
     // Try in-place swap for same-sized pairs; fall back to heap scan for different-sized pairs.
     // Collect pairs that need heap scanning.
     std::vector<std::pair<Oop, Oop>> heapScanPairs;
+    bool cachesAffected = false;
 
     for (size_t i = 0; i < fromSize; i++) {
         Oop obj1 = memory_.fetchPointer(i, fromArrayOop);
@@ -445,6 +446,13 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
         ObjectHeader* hdr2 = obj2.asObjectPtr();
         size_t size1 = hdr1->slotCount();
         size_t size2 = hdr2->slotCount();
+        cachesAffected = cachesAffected || becomeAffectsCaches(obj1) || becomeAffectsCaches(obj2);
+        // A swapped MethodDictionary changes lookups the method cache holds.
+        auto isMethodDict = [&](ObjectHeader* h, Oop o) {
+            return h->format() == ObjectFormat::IndexableWithFixed
+                && memory_.classNameOf(memory_.classOf(o)) == "MethodDictionary";
+        };
+        cachesAffected = cachesAffected || isMethodDict(hdr1, obj1) || isMethodDict(hdr2, obj2);
 
         const uint32_t hash1 = hdr1->identityHash();
         const uint32_t hash2 = hdr2->identityHash();
@@ -487,6 +495,16 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             rememberIfNeeded(obj1);
             rememberIfNeeded(obj2);
         } else {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BECOME_CENSUS), 0)) {
+                static std::map<std::string, uint64_t> kinds;
+                static uint64_t nk = 0;
+                std::string k = std::string(memory_.isYoung(obj1) ? "Y" : "O") + (memory_.isYoung(obj2) ? "Y" : "O")
+                    + (size1 < size2 ? " 1<2 " : " 1>2 ") + memory_.classNameOf(memory_.classOf(obj1))
+                    + "/" + memory_.classNameOf(memory_.classOf(obj2));
+                kinds[k]++;
+                if ((++nk & 127) == 0)
+                    for (auto& kv : kinds) fprintf(stderr, "[BECOME2] %llu %s\n", (unsigned long long)kv.second, kv.first.c_str());
+            }
             // Different sizes — need heap scan to swap all references.
             // The references move, so the hashes go with them.
             if (keepHashWithRefs) {
@@ -497,8 +515,27 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
         }
     }
 
-    // For different-sized pairs, scan entire heap to swap references
-    if (!heapScanPairs.empty()) {
+    // Different-sized pairs: one scan exchanges the references, through
+    // becomeForwardAll's two-way mode -- its young-only scan when every
+    // object is in eden (ReStore's proxy swaps: a full serial heap walk per
+    // become made writing 1000 objects take 13.5 s, Cog 63 ms), else its
+    // parallel scan.  Opt-out PHARO_BECOME_TWOWAY_SERIAL.
+    if (!heapScanPairs.empty() && !GET_DEBUG_BOOL(PHARO_BECOME_TWOWAY_SERIAL)
+            && !cachesAffected && memory_.becomeTwoWayYoung(heapScanPairs)) {
+        // Young pairs (ReStore: a fresh proxy and its new object): copies
+        // and forwarders, then a scavenge moves every reference -- roots
+        // and the stack included -- for the cost of the live young objects
+        // (an eden scan per become was 2.4 ms).  Opt-out
+        // PHARO_BECOME_TWOWAY_NO_SCAVENGE.
+    } else if (!heapScanPairs.empty() && !GET_DEBUG_BOOL(PHARO_BECOME_TWOWAY_SERIAL)) {
+        std::unordered_map<uint64_t, Oop> swap;
+        for (auto& [from, to] : heapScanPairs) {
+            swap[from.rawBits()] = to;
+            swap[to.rawBits()] = from;
+        }
+        memory_.becomeForwardAll(swap, /* viaScavenge */ false, /* twoWay */ true);
+        for (auto& [from, to] : heapScanPairs) scanStackSwap(from, to);
+    } else if (!heapScanPairs.empty()) {
         memory_.allObjectsDo([&](Oop obj) {
             if (!obj.isObject()) return;
             ObjectHeader* header = obj.asObjectPtr();
@@ -546,9 +583,14 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
         }
     }
 
-    // Flush method cache (critical after become that may affect classes)
-    flushMethodCache();
-    flushJITCaches();
+    // The method cache and the JIT caches hold methods, classes and
+    // selectors: flush them only when one of those was swapped, as
+    // primitive 72 does (the flush after every ReStore proxy swap emptied
+    // every inline cache, and the code was recompiled).
+    if (cachesAffected || GET_DEBUG_BOOL(PHARO_BECOME_ALWAYS_FLUSH)) {
+        flushMethodCache();
+        flushJITCaches();
+    }
 
     popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;
