@@ -1274,6 +1274,38 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
         return kMcfExtDone;
     }
     if (e->jm || !e->prim || e->prim >= 1024) return nullptr;
+    // A quick primitive (256-519: self, a constant, an instance variable)
+    // here, as executePrimitive does it.  Through mcfCallPrimitive each one
+    // synced the frame registers and ran the generic dispatcher: perform:
+    // of an ^1 method was 18 ns against Cog's 3.  A Context receiver takes
+    // the full path (a lazy context's fields may need a sync first).
+    const int qp = (int)e->prim;
+    if (qp >= 256 && qp <= 519 && nArgs == 1 && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_QUICK)) {
+        Oop v;
+        bool ok = true;
+        if (qp >= 264) {
+            ok = rcv.isObject() && contextClassIndex_ != 0;
+            if (ok) {
+                ObjectHeader* h = rcv.asObjectPtr();
+                ok = h->classIndex() != contextClassIndex_ && h->isPointersObject()
+                    && (size_t)(qp - 264) < h->slotCount();
+                if (ok) v = h->slotAt((size_t)(qp - 264));
+            }
+        } else {
+            switch (qp) {
+            case 256: v = rcv; break;
+            case 257: v = memory_.trueObject(); break;
+            case 258: v = memory_.falseObject(); break;
+            case 259: v = memory_.nil(); break;
+            default:  v = Oop::fromSmallInteger(qp - 261); break;   // 260-263: -1..2
+            }
+        }
+        if (ok) {
+            sp[-2] = v;
+            st->sp = sp - 1;
+            return kMcfExtDone;
+        }
+    }
     // A primitive entry (mcfNotePrimitiveTarget): run the primitive with the
     // selector removed, as primitivePerform does, the way an inline-cache hit
     // runs it (with the ip after the perform).  Each was an exit to the
