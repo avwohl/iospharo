@@ -125,7 +125,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Add static_asserts for every pair and for 128 bytes.
 - Tests: the extended push oracle (info bytes 2-7 == 0); MAT_FULL_RESYNC A/B; MCF_NLR_VERIFY plus the exception, ensure and NLR classes; build-x86 under Rosetta; the ASan tree. Sabotage: a w12 with bit 16 set must be reported.
 
-**Step 6: lazy receiver/tempBase, -4 (-> 47), +1 store per executed sync.** Knob PHARO_MCF_NO_LAZY_RT.
+**Step 6: lazy receiver/tempBase, -4 (-> 47), +1 store per executed sync. -- DONE (lexicon 254.3 -> 250.4; poison oracle proved by dropping one sync: 35 probes differ).** Knob PHARO_MCF_NO_LAZY_RT.
 - Before the flip: convert 4383, 4407, 7337, 14562 and 14628 to x21, plus a grep gate that counts `ptr(x0, OFF_RECEIVER)` reads in MCF-reachable arm64 emitters and must find 0.
 - emitSyncSpToState becomes `stp x25,x21,[x0]` + `str x22,[x0,#24]`. Drop the state stores in the entry, the stubs and the return (5289, 5301).
 - Oracles: Step 0's (c) while the stores still run; then PHARO_MCF_POISON_STATE (plain DEBUG_BOOL: every native call and return writes poison into st.receiver and st.tempBase). Sabotage: drop one sync.

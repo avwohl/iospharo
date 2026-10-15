@@ -239,6 +239,8 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_ENTRY_SHORTCUTS)       // MCF push/entries/return cop
 DEBUG_BOOL_RT(PHARO_MCF_KEEP_TOS_MIRROR)          // keep the x26 TOS-mirror writes at MCF entries, returns and helper-send results even without PHARO_T1_TOS_REG
 DEBUG_BOOL_RT(PHARO_MCF_NO_ADR_JM)                // MCF method entry: adr to the code start then sub, instead of one raw adr to the JITMethod
 DEBUG_BOOL_RT(PHARO_MCF_NO_FUSED_DEPTH)           // MCF push: separate depth-0 and depth-limit tests (native calls up to depth 55936) instead of one bit test (up to 32768)
+DEBUG_BOOL_RT(PHARO_MCF_NO_LAZY_RT)               // MCF native calls/returns store the receiver and tempBase into the state (before trim step 6)
+DEBUG_BOOL(PHARO_MCF_POISON_STATE)                // MCF lazy receiver/tempBase oracle: poison the state copies at each native call and return
 DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)             // native weak-association drain for every dictionary with the unscaled header hash (pre-2026-10-15; loses live keys)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
 DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)

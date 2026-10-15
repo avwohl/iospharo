@@ -4192,12 +4192,20 @@ static inline void emitStoreSp(asmjit::a64::Assembler& a,
     a.str(src, asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
 #endif
 }
+static bool mcfLazyRT();
 // At exits (ret to C++) and before sp-reading helper BLRs, sp must be
 // visible in memory regardless of mode.
 static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
 #if PHARO_T1_SP_IN_X25
-    a.str(asmjit::a64::x25,
-          asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+    if (mcfLazyRT()) {
+        // Trim step 6: x21/x22 are the truth; the state copies are
+        // written here, at the JIT -> C++ edges (OFF_SP 0, OFF_RECEIVER 8).
+        a.stp(asmjit::a64::x25, asmjit::a64::x21, asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+        a.str(asmjit::a64::x22, asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
+    } else {
+        a.str(asmjit::a64::x25,
+              asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+    }
 #endif
     // FSR M4: publish the active-method identity at every exit (the
     // 62 emitSyncSpToState callers cover all JIT->C++ edges).  One
@@ -4390,7 +4398,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
 
     if (primIndex == 110) {
         // #== : compare raw oop bits.
-        a.ldr(x1, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x1, x21); else a.ldr(x1, ptr(x0, OFF_RECEIVER));
         emitLoadTempBase(a, x2);
         a.ldr(x2, ptr(x2));
         // ldp loads two adjacent 8-byte slots in one instruction; TRUEOOP
@@ -4414,7 +4422,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
 
     asmjit::Label fail = a.new_label();
 
-    a.ldr(x1, ptr(x0, OFF_RECEIVER));
+    if (t1TbReg()) a.mov(x1, x21); else a.ldr(x1, ptr(x0, OFF_RECEIVER));
 
     // === Heap-receiver primitives (no SmI check) — at: / at:put: / size ===
     if (primIndex == 60 || primIndex == 61 || primIndex == 62) {
@@ -5160,6 +5168,24 @@ static bool mcfShortcuts() {
 static asmjit::a64::Gp mcfNilReg() {
     return mcfShortcuts() ? asmjit::a64::x27 : asmjit::a64::x4;
 }
+// Trim step 6: under machine-code frames x21 (receiver) and x22 (tempBase)
+// are the truth; native calls and returns no longer store them into the
+// state, emitSyncSpToState does at every JIT -> C++ edge.
+static bool mcfLazyRT() {
+    static const bool on = mcfShortcuts() && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_RT);
+    return on;
+}
+// PHARO_MCF_POISON_STATE (diag): garbage in the state's receiver and
+// tempBase after each native call and return, so a C++ read that no sync
+// preceded fails at once.
+static void emitMcfPoisonRT(asmjit::a64::Assembler& a,
+                            const asmjit::a64::Gp& scratch = asmjit::a64::x16) {
+    using namespace asmjit::a64;
+    if (!mcfLazyRT() || !GET_DEBUG_BOOL(PHARO_MCF_POISON_STATE)) return;
+    a.mov(scratch, asmjit::Imm(0xBADBAD0000000003ull));
+    a.str(scratch, ptr(x0, OFF_RECEIVER));
+    a.str(scratch, ptr(x0, OFF_TEMPBASE));
+}
 
 static_assert(OFF_MCF_EPOCH_PTR == offsetof(JITState, mcfEpochPtr), "OFF_MCF_EPOCH_PTR");
 static_assert(OFF_MCF_CALL_CACHE == offsetof(JITState, mcfCallCache), "OFF_MCF_CALL_CACHE");
@@ -5312,7 +5338,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.mov(x25, x22);
         // Caller's view.
         a.add(x22, x11, asmjit::Imm(8));      // savedFP + 8
-        a.str(x22, ptr(x0, OFF_TEMPBASE));
+        if (!mcfLazyRT()) a.str(x22, ptr(x0, OFF_TEMPBASE));
     } else
 #endif
     {
@@ -5325,7 +5351,8 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     }
     if (sc) {
         ldp2(x21, L.savedReceiver, x14, L.savedClosure);
-        a.str(x21, ptr(x0, OFF_RECEIVER));
+        if (!mcfLazyRT()) a.str(x21, ptr(x0, OFF_RECEIVER));
+        emitMcfPoisonRT(a);
     } else {
         ldp2(x13, L.savedReceiver, x14, L.savedClosure);
         a.str(x13, ptr(x0, OFF_RECEIVER));
@@ -5856,8 +5883,11 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     if (mcfShortcuts()) {
         a.sub(x22, x25, x11, asmjit::a64::lsl(3)); // callee tempBase (first arg)
         a.ldur(x21, ptr(x22, -8));                 // receiver
-        a.str(x22, ptr(x0, OFF_TEMPBASE));
-        a.str(x21, ptr(x0, OFF_RECEIVER));
+        if (!mcfLazyRT()) {
+            a.str(x22, ptr(x0, OFF_TEMPBASE));
+            a.str(x21, ptr(x0, OFF_RECEIVER));
+        }
+        emitMcfPoisonRT(a);
     } else {
         a.sub(x16, x25, x11, asmjit::a64::lsl(3)); // callee tempBase (first arg)
         a.ldur(x1, ptr(x16, -8));                  // receiver
@@ -5901,10 +5931,16 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     emitMcfPushRecord(a, fail);
     emitMcfCalleeView(a);
     a.sub(x16, x25, x11, asmjit::a64::lsl(3));    // block tempBase (first arg)
-    emitStoreTempBase(a, x16);
-    a.ldr(x17, ptr(x1, 32));                       // slot 3: outer receiver
-    a.str(x17, ptr(x0, OFF_RECEIVER));
-    if (t1TbReg()) a.mov(x21, x17);
+    if (mcfLazyRT()) {
+        a.mov(x22, x16);
+        a.ldr(x21, ptr(x1, 32));                   // slot 3: outer receiver
+        emitMcfPoisonRT(a, x17);                   // x16 = tempBase, still needed
+    } else {
+        emitStoreTempBase(a, x16);
+        a.ldr(x17, ptr(x1, 32));                   // slot 3: outer receiver
+        a.str(x17, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x21, x17);
+    }
     a.str(x1, ptr(x0, OFF_CLOSURE));
     // Copied values (closure slots 4..) after the arguments, then nil.
     a.ldrb(w10, ptr(x1, 7));
@@ -5977,8 +6013,11 @@ static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
     if (mcfShortcuts()) {
         a.sub(x22, x25, asmjit::Imm(nArgs * 8));            // tempBase (first arg)
         a.ldur(x21, ptr(x22, -8));                          // receiver
-        a.str(x22, ptr(x0, OFF_TEMPBASE));
-        a.str(x21, ptr(x0, OFF_RECEIVER));
+        if (!mcfLazyRT()) {
+            a.str(x22, ptr(x0, OFF_TEMPBASE));
+            a.str(x21, ptr(x0, OFF_RECEIVER));
+        }
+        emitMcfPoisonRT(a);
     } else {
         a.sub(x16, x25, asmjit::Imm(nArgs * 8));            // tempBase (first arg)
         a.ldur(x1, ptr(x16, -8));                           // receiver
@@ -7437,7 +7476,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
         asmjit::Label barrierSkip = a.new_label();
-        a.ldr(x4, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x4, x21); else a.ldr(x4, ptr(x0, OFF_RECEIVER));
         a.ldr(w5, ptr(x4));                 // low 32 bits of header
         a.tst(w5, asmjit::Imm(0x800000));   // bit 23 = ImmutableBit
         a.b_ne(bail);
@@ -8470,6 +8509,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Oracle: recompute == in C++ (following forwarders).
             a.stp(x0, x30, ptr_pre(sp, -32));
             a.stp(x1, x2, ptr(sp, 16));
+            emitSyncSpToState(a);                    // the oracle reads the state view
             a.ldur(x2, ptr(x2, -8));                 // arg
             a.mov(x3, x1);                           // our answer
             a.ldr(x1, ptr(sp, 24));
@@ -8912,7 +8952,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // V2 packed save push (record layout bit-identical
                         // to the generic push above).
                         emitLoadSp(a, x15);
-                        a.ldr(x4, ptr(x0, OFF_RECEIVER));
+                        if (t1TbReg()) a.mov(x4, x21); else a.ldr(x4, ptr(x0, OFF_RECEIVER));
                         a.stp(x15, x4, ptr_post(x6, JSV_SIZE));
                         emitLoadTempBase(a, x15);
                         // size-40 layout: tempBase@-24, packedResume@-16,
@@ -10444,7 +10484,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.movk(x14, packed16, 48);
                 }
                 emitLoadSp(a, x15);
-                a.ldr(x4, ptr(x0, OFF_RECEIVER));
+                if (t1TbReg()) a.mov(x4, x21); else a.ldr(x4, ptr(x0, OFF_RECEIVER));
                 a.stp(x15, x4, ptr_post(x6, JSV_SIZE)); // sp+recv; cursor += 32
                 emitLoadTempBase(a, x15);
                 // size-40: tempBase@-24, packedResume@-16, closure@-8.
@@ -14662,7 +14702,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.bind(noSync);
                 }
                 if (op == SistaV1::ExtPushRecvVar) {
-                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
+                    if (t1TbReg()) a.mov(a64::x1, a64::x21);
+                    else a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
                     a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + idx * 8));
                     emitShadowReadVerify(a, idx);
                     emitLoadSp(a, a64::x2);
@@ -14728,7 +14769,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     // receiver's header bit 23 is set, bail to interp.
                     asmjit::Label bail = a.new_label();
                     asmjit::Label end  = a.new_label();
-                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_RECEIVER));
+                    if (t1TbReg()) a.mov(a64::x4, a64::x21);
+                    else a.ldr(a64::x4, a64::ptr(a64::x0, OFF_RECEIVER));
                     a.ldr(a64::w5, a64::ptr(a64::x4));
                     a.tst(a64::w5, asmjit::Imm(0x800000));
                     a.b_ne(bail);
