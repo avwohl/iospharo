@@ -1365,7 +1365,8 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         // for it).  Not for a young method (a scavenge moves it) or a
         // receiver whose slot count may differ between instances when the
         // method reads receiver fields.
-        if (siteCache && (!special || eqSite) && !super && !memory_.isYoung(target)
+        if (siteCache && (!special || eqSite || !GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_SITE_CACHE))
+                && !super && !memory_.isYoung(target)
                 && (!e->jm->hasRecvFieldAccess
                     || (rcv.isObject() && rcv.asObjectPtr()->format() == ObjectFormat::FixedSize))) {
             siteCache[0] = (rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
@@ -1398,7 +1399,8 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     if (e && !e->jm && e->prim && e->prim < 1024) {
         // A primitive entry (mcfNotePrimitiveTarget): run it, and let the
         // site's cache run it from now on with no lookup.
-        if (siteCache && (!special || eqSite) && !super && !memory_.isYoung(target)
+        if (siteCache && (!special || eqSite || !GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_SITE_CACHE))
+                && !super && !memory_.isYoung(target)
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_PRIM_CACHE)) {
             siteCache[0] = (rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
                                            : (0x80000000ull | (rcv.rawBits() & 7)))

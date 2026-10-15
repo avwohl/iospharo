@@ -7907,8 +7907,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     eqSlot = nullptr;
                 }
             }
+            // Every other special send gets a plain monomorphic slot: a
+            // LargeInteger, Fraction or Point operand did a C lookup at
+            // every send.
+            uint64_t* helperSlot = eqSlot ? eqSlot
+                : (GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_SITE_CACHE) ? nullptr : mcfAllocSiteCache());
             emitMcfHelperSend(a, (uint32_t)(op - 0x60) | (1u << 8) | (1u << 17),
-                              1, 1, globalIdx, callerArgCount, end, eqSlot, eqSlot != nullptr);
+                              1, 1, globalIdx, callerArgCount, end, helperSlot, eqSlot != nullptr);
         } else {
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -7931,7 +7936,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         if (::pharo::mcfEnabled() && g_mcfCallStub != 0
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_BITOP_SEND)) {
             emitMcfHelperSend(a, (uint32_t)(op - SistaV1::ArithBase) | (1u << 8) | (1u << 17),
-                              1, 1, globalIdx, callerArgCount, end);
+                              1, 1, globalIdx, callerArgCount, end,
+                              GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_SITE_CACHE) ? nullptr
+                                                                              : mcfAllocSiteCache());
             return;
         }
         a.str(x5, ptr(x0, OFF_IP));
