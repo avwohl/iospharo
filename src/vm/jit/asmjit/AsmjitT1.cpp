@@ -13435,9 +13435,35 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             }
             return 0;
         };
+        // PHARO_T1_EMIT_SIZE_CENSUS: code bytes per opcode, every compile.
+        static uint64_t s_emitBytes[257];
+        static uint64_t s_emitCount[257];
+        static uint64_t s_emitCompiles = 0;
+        int censusPrevOp = 256;
+        size_t censusPrevOff = a.offset();
+        const bool emitSizeCensus = GET_DEBUG_BOOL(PHARO_T1_EMIT_SIZE_CENSUS);
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
             uint8_t op = bcReal[i];
+            if (__builtin_expect(emitSizeCensus, 0)) {
+                s_emitBytes[censusPrevOp] += a.offset() - censusPrevOff;
+                s_emitCount[op]++;
+                censusPrevOp = op;
+                censusPrevOff = a.offset();
+                if (i + 1 == bcRealLen && (++s_emitCompiles & 1023) == 0) {
+                    std::vector<std::pair<uint64_t, int>> v;
+                    uint64_t tot = 0;
+                    for (int k = 0; k < 257; k++) { v.push_back({s_emitBytes[k], k}); tot += s_emitBytes[k]; }
+                    std::sort(v.rbegin(), v.rend());
+                    fprintf(stderr, "[EMIT-SIZE] compiles=%llu bytes=%llu\n",
+                            (unsigned long long)s_emitCompiles, (unsigned long long)tot);
+                    for (int k = 0; k < 16; k++)
+                        fprintf(stderr, "[EMIT-SIZE]   op 0x%02x: %llu bytes (%.1f%%), %llu sites, %llu B/site\n",
+                                v[k].second, (unsigned long long)v[k].first, 100.0 * v[k].first / (tot ? tot : 1),
+                                (unsigned long long)s_emitCount[v[k].second],
+                                (unsigned long long)(s_emitCount[v[k].second] ? v[k].first / s_emitCount[v[k].second] : 0));
+                }
+            }
             // simStack: other paths arrive at a jump target with nothing pending.
             if (g_sim.enabled && !g_sim.items.empty() && isJumpTarget(globalIdx))
                 simFlush(a);

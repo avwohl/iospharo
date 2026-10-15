@@ -150,6 +150,33 @@ The history lives in `docs/history/`; nothing was deleted.
 
 ## Known structural costs, not yet measured
 
+- **T1 send sites are 2.3-2.9 KB each (measured 2026-10-15).**
+  `PHARO_T1_EMIT_SIZE_CENSUS=1` on lexicon: a 0-argument send site emits
+  ~2270 bytes, a 1-argument site ~2880 (570-720 instructions), and sends
+  are ~90% of all machine code (34.7 MB for 5120 methods).  Cog emits tens
+  of bytes per site.  With every inline specialization off (getter,
+  setter, at:/at:put:/size, bit operations, returns-literal/self,
+  basicNew:) a site is still 1.7-1.85 KB: the bulk is the base machinery
+  repeated at each site (the native call path, the call-cache special
+  kinds, the primitive stub and C-call paths, the failure body call, the
+  exits).  The fix is a compact emit: the IC check and the native-call
+  setup inline, everything else in shared per-arity stubs taking the
+  site's IC entry, continuation and fallback in registers.  Payoff for
+  speed looks small (lexicon IPC is 4.3, compiles are already fast); the
+  code zone default went to 192 MB instead (c32bb05e).  Do this before
+  shrinking the zone again or targeting small-memory devices.
+- **Two-way become of OLD objects of different sizes is O(heap)
+  (2026-10-15).**  9f0d91f9 made young pairs cheap (copies, forwarders,
+  one scavenge) but the scavenge tenures the pair, and ReStore swaps the
+  same proxy/object pairs again: each later swap is a parallel full-heap
+  scan (~2.3 ms).  ReStore writes 1000 objects in 2.4 s (Cog 63 ms) and
+  its SSWReStoreSpeedTest assertions fail on time.  Cog forwards lazily:
+  the old objects become forwarders to copies, and sends, ==, primitive
+  failure and the GC follow them.  This VM follows forwarders only in a
+  few places (classOf, prim 148), so lazy forwarding needs a send-path
+  receiver fix-up, a forwarder-aware ==, primitive-failure retry and a
+  GC that removes forwarders.
+
 - **~~Every scavenge scans ALL of old space for old->young pointers~~ --
   DONE 2026-10-13 (`064e1de6`): the remembered set is trusted by default
   (every T1 store barriered; opt-out `PHARO_SCAV_FULL_SCAN`, check
