@@ -397,6 +397,26 @@ bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
 // stack, and run no Smalltalk code.  Any that allocate may GC, which is
 // safe (the JITState is a root); a process switch or a pushed frame is
 // detected after the call and handed to the interpreter.
+// Primitives that touch only the operand stack and the objects on it:
+// no frame registers, process switch, context or Smalltalk code
+// (mcfCallPrimitive's leaf path).  Allocation is fine: it never collects
+// here (a full eden falls back to old space).
+static bool mcfLeafPrim(int p) {
+    if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
+    if (p >= 40 && p <= 59) return true;         // Float
+    if (p >= 541 && p <= 559) return true;       // SmallFloat64
+    switch (p) {
+    case 60: case 61: case 62: case 63: case 64: // at: at:put: size, string at:
+    case 70: case 71:                            // basicNew basicNew:
+    case 75: case 105: case 110: case 111:       // identityHash replaceFrom: == class
+    case 158: case 159: case 165: case 166:      // compareWith: hashMultiply integerAt:(put:)
+    case 169: case 170: case 171: case 175:      // ~~ conversions, behavior hash
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool mcfPrimCallable(int p) {
     if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
     if (p >= 20 && p <= 37)                      // LargeInteger arithmetic: they only allocate
@@ -414,6 +434,7 @@ static bool mcfPrimCallable(int p) {
     case 148:                                    // shallowCopy
     case 165: case 166:                          // integerAt: integerAt:put:
     case 85: case 86:                            // signal wait (a switch -> 2)
+    case 158:                                    // compareWith:collated: (every String/Symbol <, sorting)
     case 159:                                    // hashMultiply (every Dictionary at: with an integer key)
     case 195:                                    // findNextUnwindContextUpTo:
     case 196:                                    // terminateTo: (depth 0 only: mcfCallPrimitive)
@@ -572,6 +593,39 @@ int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
     // it reports failure and the slow path sends it again.
     if (primIndex == 196 && (frameDepth_ > 0 || GET_DEBUG_BOOL(PHARO_MCF_NO_TERMINATE_TO)))
         return 0;
+    // A leaf primitive reads and writes only the operand stack (no frame,
+    // no process switch, no context, no Smalltalk): it needs sp, not the
+    // frame registers, and not the generic dispatcher.  A failure exits
+    // the send as before, and the exit syncs the registers.
+    static const bool leafOk = !GET_DEBUG_BOOL(PHARO_MCF_NO_LEAF_PRIM);
+    if (leafOk && mcfLeafPrim(primIndex) && !g_lazyForwarders
+            && (size_t)primIndex < primitiveTable_.size()) {
+        PrimitiveFunc prim = primitiveTable_[primIndex];
+        if (prim) {
+            Oop* const spBefore = st->sp;
+            stackPointer_ = spBefore;
+            argCount_ = nArgs;
+            primitiveFailed_ = false;
+            primFailCode_ = 0;
+            newMethod_ = st->cachedTarget;
+            PrimitiveResult r = (this->*prim)(nArgs);
+            if (r == PrimitiveResult::Success) {
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SP_AUDIT), 0)
+                        && stackPointer_ != spBefore - nArgs) {
+                    static int na = 0;
+                    if (++na <= 20)
+                        fprintf(stderr, "[PRIM-SP-AUDIT] leaf prim=%d argc=%d moved %td slots\n",
+                                primIndex, nArgs, spBefore - stackPointer_);
+                }
+                lastPrimitiveIndex_ = primIndex;
+                st->sp = stackPointer_;
+                return 1;
+            }
+            stackPointer_ = spBefore;
+            primFailCode_ = 0;
+            return 0;
+        }
+    }
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);           // unconditionally: see mcfRun
     // The ip after the send (both callers store it): a process switch or a
