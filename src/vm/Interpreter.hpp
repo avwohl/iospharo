@@ -1581,6 +1581,11 @@ public:
                            uint64_t idxTagged, uint64_t* out,
                            bool isPut, uint64_t valBits);
 #endif  // PHARO_JIT_ENABLED (jit::JITState-typed helpers)
+    /// SmallFloat64 + - * / (primitives 541 542 549 550) on two oops, for
+    /// T1's primitive prologue (jit_rt_float_arith): the interpreter's
+    /// primitive exactly, a BoxedFloat64 result included.  false = the
+    /// primitive fails (then the method body is the right fallback).
+    bool jitFloatArith(uint64_t rcvBits, uint64_t argBits, int prim, uint64_t* out);
     /// Blocker #4 test: sync C++ interpreter globals from a live JITState (def
     /// in Interpreter.cpp where jit::JITState is fully visible).
 #if PHARO_JIT_ENABLED

@@ -352,6 +352,9 @@ bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
     case 110:
     case 541: case 542: case 549:
         break;
+    case 550:   // its prologue exists only in the full form (emitPrimProlog_arm64)
+        if (GET_DEBUG_BOOL(PHARO_T1_NO_FLOAT_PROLOG_FULL)) return false;
+        break;
     default:
         return false;
     }

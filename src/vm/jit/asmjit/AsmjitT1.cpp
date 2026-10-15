@@ -322,6 +322,8 @@ extern "C" int jit_rt_primat_ptr(void* state, uint64_t rcvBits,
                                   uint64_t i, uint64_t* out);
 extern "C" int jit_rt_primatput_ptr(void* state, uint64_t rcvBits,
                                      uint64_t i, uint64_t valBits);
+extern "C" int jit_rt_float_arith(void* state, uint64_t rcvBits, uint64_t argBits,
+                                  uint64_t prim);
 extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
@@ -1903,6 +1905,8 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 541: return primIndex;  // SmallFloat>>+
     case 542: return primIndex;  // SmallFloat>>-
     case 549: return primIndex;  // SmallFloat>>*
+    case 550:                    // SmallFloat>>/ (the full prologue only)
+        return GET_DEBUG_BOOL(PHARO_T1_NO_FLOAT_PROLOG_FULL) ? -1 : primIndex;
     case 110: return primIndex;  // ProtoObject>>==
     // NOTE (2026-06-11): compiling quick prims 256-519 (body-only, no
     // prologue) was TRIED and is a measured ~2x REGRESSION on the
@@ -2243,70 +2247,129 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         return;  // never falls through (always succeeds)
     }
 
-    // prim 541/542/549 (SmallFloat + - *) — ported from emitPrimProlog_arm64:3221-3289
-    if (primIndex == 541 || primIndex == 542 || primIndex == 549) {
+    // prim 541/542/549/550 (SmallFloat + - * /) — the x86 twin of the
+    // emitPrimProlog_arm64 block (see the comment there): +/-0 decoded and
+    // encoded as Cog does, a SmallInteger argument converted, and anything
+    // else run through the interpreter's primitive (jit_rt_float_arith)
+    // before the body.  PHARO_T1_NO_FLOAT_PROLOG_FULL: the old partial
+    // prologue.
+    if (primIndex == 541 || primIndex == 542 || primIndex == 549 || primIndex == 550) {
+        const bool full = !GET_DEBUG_BOOL(PHARO_T1_NO_FLOAT_PROLOG_FULL);
         asmjit::Label fail = a.new_label();
+        asmjit::Label viaC = full ? a.new_label() : fail;
+        asmjit::Label argInt = a.new_label(), argDone = a.new_label();
 
         a.mov(rcx, ptr(rdi, OFF_RECEIVER));      // rcx = receiver oop
         a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
         a.mov(rdx, ptr(rdx));                    // rdx = tempBase[0] = arg oop
+        // rcx/rdx stay intact: the C path below passes the original oops.
 
-        // Tag-check both operands == 5 (SmallFloatTag).
+        // Receiver tag == 5 (SmallFloatTag).
         a.mov(r8, rcx);
         a.and_(r8, asmjit::Imm(0x7));
         a.cmp(r8, asmjit::Imm(5));
-        a.jne(fail);
-        a.mov(r8, rdx);
-        a.and_(r8, asmjit::Imm(0x7));
-        a.cmp(r8, asmjit::Imm(5));
-        a.jne(fail);
+        a.jne(viaC);
 
         // r10 = exponent offset constant 0x7000000000000000 (reused for
         // decode-add AND encode-subtract, exactly like arm64's x5).
         a.mov(r10, asmjit::Imm(0x7000000000000000ULL));
 
-        // Decode receiver: shifted = oop >> 3 (logical); if <=1 -> +-0 -> bail.
-        a.mov(r8, rcx);
-        a.shr(r8, asmjit::Imm(3));               // logical shift (matches arm64 lsr)
-        a.cmp(r8, asmjit::Imm(1));
-        a.jbe(fail);                             // shifted <= 1  (b_ls)
-        a.add(r8, r10);                          // + exponent offset
-        a.ror(r8, asmjit::Imm(1));               // rotate right 1 -> doubleBits
-        a.movq(xmm0, r8);                        // d0 = receiver
+        // Decode oop `src` -> xmm `dst`: shifted = oop >> 3; 0/1 is +/-0
+        // and takes no offset (Cog's smallFloatBitsOf:).
+        auto decode = [&](asmjit::x86::Gp src, asmjit::x86::Vec dst) {
+            a.mov(r8, src);
+            a.shr(r8, asmjit::Imm(3));
+            if (full) {
+                a.lea(r9, ptr(r8, r10));
+                a.cmp(r8, asmjit::Imm(1));
+                a.cmova(r8, r9);
+            } else {
+                a.cmp(r8, asmjit::Imm(1));
+                a.jbe(fail);                     // +/-0 -> bail (old shape)
+                a.add(r8, r10);
+            }
+            a.ror(r8, asmjit::Imm(1));           // rotate right 1 -> doubleBits
+            a.movq(dst, r8);
+        };
+        decode(rcx, xmm0);
 
-        // Decode arg (r10 still holds offset).
-        a.mov(r9, rdx);
-        a.shr(r9, asmjit::Imm(3));
-        a.cmp(r9, asmjit::Imm(1));
-        a.jbe(fail);
-        a.add(r9, r10);
-        a.ror(r9, asmjit::Imm(1));
-        a.movq(xmm1, r9);                        // d1 = arg
+        // Argument: SmallFloat64, or (full) a SmallInteger.
+        a.mov(r8, rdx);
+        a.and_(r8, asmjit::Imm(0x7));
+        if (full) {
+            a.cmp(r8, asmjit::Imm(1));
+            a.je(argInt);
+        }
+        a.cmp(r8, asmjit::Imm(5));
+        a.jne(viaC);
+        decode(rdx, xmm1);
+        if (full) {
+            a.jmp(argDone);
+            a.bind(argInt);
+            a.mov(r8, rdx);
+            a.sar(r8, asmjit::Imm(3));
+            a.cvtsi2sd(xmm1, r8);                // nearest double, as the primitive
+            a.bind(argDone);
+        }
 
         switch (primIndex) {
             case 541: a.addsd(xmm0, xmm1); break;   // #+
             case 542: a.subsd(xmm0, xmm1); break;   // #-
             case 549: a.mulsd(xmm0, xmm1); break;   // #*
+            case 550:                               // #/ (a zero divisor fails)
+                a.xorps(xmm2, xmm2);
+                a.ucomisd(xmm1, xmm2);
+                a.je(fail);
+                a.divsd(xmm0, xmm1);
+                break;
         }
 
-        // Encode result.  r8 = result bits.
-        a.movq(r8, xmm0);
-        // ROL by 1 (sign bit -> LSB) == arm64 ror #63.  NaN/Inf have an
-        // all-ones exponent, which makes the rotated form exceed the
-        // overflow ceiling, so the range checks below catch them.
-        a.rol(r8, asmjit::Imm(1));
-        a.cmp(r8, r10);
-        a.jb(fail);                              // rotated < offset -> exp underflow (b_lo)
-        a.sub(r8, r10);                          // adjusted = rotated - offset
-        a.mov(r9, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
-        a.cmp(r8, r9);
-        a.ja(fail);                              // adjusted > 0x1FFF... -> exp overflow (b_hi)
-        a.shl(r8, asmjit::Imm(3));               // make room for tag (low 3 bits now 0)
-        a.or_(r8, asmjit::Imm(5));               // SmallFloatTag (or fine on x86; == add 5 here)
+        // Encode result.  r8 = result bits.  ROL by 1 (sign bit -> LSB)
+        // == arm64 ror #63; +/-0 is rotated 0/1 and keeps it; otherwise
+        // subtract the offset and require [2, 2^61) (see
+        // emitSmallFloatEncode_arm64: NaN/Inf/out-of-range/+/-2^-127 fail).
+        {
+            asmjit::Label tag = a.new_label();
+            a.movq(r8, xmm0);
+            a.rol(r8, asmjit::Imm(1));
+            if (full) {
+                a.cmp(r8, asmjit::Imm(1));
+                a.jbe(tag);
+            }
+            a.sub(r8, r10);
+            a.mov(r9, r8);
+            a.shr(r9, asmjit::Imm(61));
+            a.jnz(viaC);
+            a.cmp(r8, asmjit::Imm(2));
+            a.jb(viaC);
+            a.bind(tag);
+            a.shl(r8, asmjit::Imm(3));           // make room for tag (low 3 bits now 0)
+            a.or_(r8, asmjit::Imm(5));           // SmallFloatTag (or fine on x86)
+        }
 
         a.mov(ptr(rdi, OFF_RETVAL), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        emitSyncSpToState_x86(a); a.ret();                                 // plain ret (no sp-sync, no J2J shim on x86)
+        emitSyncSpToState_x86(a); a.ret();       // plain ret (no sp-sync, no J2J shim on x86)
+
+        if (full) {
+            // int jit_rt_float_arith(state, rcvBits, argBits, prim): the
+            // result is in state.returnValue.  Marshal arg2 first: on Win64
+            // arg1 is rdx, which still holds the argument oop.
+            a.bind(viaC);
+            emitSyncSpToState_x86(a);
+            a.push(rdi);                         // save state (1 push => rsp 16-aligned at call)
+            a.mov(kCArg2, rdx);                  // arg2 = argBits
+            a.mov(kCArg1, rcx);                  // arg1 = rcvBits
+            a.mov(kCArg3, asmjit::Imm(primIndex));  // arg3 = prim (after rcx is read)
+            emitCArg0State_x86(a);               // arg0 = state (Win64 only)
+            emitCallCHelper_x86(a, (const void*)&jit_rt_float_arith);
+            a.mov(r11d, eax);
+            a.pop(rdi);
+            a.test(r11d, r11d);
+            a.je(fail);                          // the primitive fails: the body
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+            emitSyncSpToState_x86(a); a.ret();
+        }
 
         a.bind(fail);
         return;
@@ -4253,6 +4316,61 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
 #endif
 }
 
+// SmallFloat64 oop `src` (tag 5 already checked) -> double `dst`, as Cog's
+// smallFloatBitsOf: does it: oop >> 3 of 0 or 1 is +0.0 or -0.0 and takes
+// no exponent offset; any other value adds it (`off` = 0x7000000000000000)
+// and rotates the sign back to bit 63.  zeroOk false: +/-0 branches to
+// `zeroFail` instead (the shape before 2026-10-15).  Clobbers t1, t2.
+static void emitSmallFloatDecode_arm64(asmjit::a64::Assembler& a, asmjit::a64::Vec dst,
+                                       asmjit::a64::Gp src, asmjit::a64::Gp off,
+                                       asmjit::a64::Gp t1, asmjit::a64::Gp t2,
+                                       bool zeroOk, asmjit::Label zeroFail) {
+    using namespace asmjit::a64;
+    a.lsr(t1, src, asmjit::Imm(3));
+    if (zeroOk) {
+        a.add(t2, t1, off);
+        a.cmp(t1, asmjit::Imm(1));
+        a.csel(t1, t2, t1, CondCode::kHI);   // +/-0 keeps its 0/1
+    } else {
+        a.cmp(t1, asmjit::Imm(1));
+        a.b_ls(zeroFail);
+        a.add(t1, t1, off);
+    }
+    a.ror(t1, t1, asmjit::Imm(1));
+    a.fmov(dst, t1);
+}
+
+// double `src` -> SmallFloat64 oop `dst`, as Cog's smallFloatObjectOf: and
+// Oop::tryFromSmallFloat: rotate the sign to bit 0; +/-0 (rotated 0/1)
+// is the oop 5/13; anything else subtracts the exponent offset and must
+// land in [2, 2^61): below is an exponent too small (or exactly +/-2^-127,
+// which would read back as +/-0), above too large, inf or NaN -- those
+// branch to `fail` (the value needs a BoxedFloat64).  zeroOk false: a zero
+// result branches to `fail` too.  Clobbers t1.
+static void emitSmallFloatEncode_arm64(asmjit::a64::Assembler& a, asmjit::a64::Gp dst,
+                                       asmjit::a64::Vec src, asmjit::a64::Gp off,
+                                       asmjit::a64::Gp t1, bool zeroOk,
+                                       asmjit::Label fail) {
+    using namespace asmjit::a64;
+    asmjit::Label tag = a.new_label();
+    a.fmov(dst, src);
+    a.ror(dst, dst, asmjit::Imm(63));        // ROL 1: sign bit -> bit 0
+    if (zeroOk) {
+        a.cmp(dst, asmjit::Imm(1));
+        a.b_ls(tag);
+    }
+    a.sub(dst, dst, off);
+    a.lsr(t1, dst, asmjit::Imm(61));
+    a.cbnz(t1, fail);                         // exponent out of range (or wrapped)
+    a.cmp(dst, asmjit::Imm(2));
+    a.b_lo(fail);                             // +/-2^-127: no SmallFloat64
+    a.bind(tag);
+    a.lsl(dst, dst, asmjit::Imm(3));
+    // SmallFloatTag (5).  `orr #5` is no AArch64 bitmask immediate (asmjit
+    // drops it: tag 0 corruption); after `lsl #3` the low bits are 0, so add.
+    a.add(dst, dst, asmjit::Imm(5));
+}
+
 // ARM64 mirror of emitPrimProlog_x86.  See that function for context.
 void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
                           asmjit::Label prologRet) {
@@ -4748,62 +4866,59 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
     emitLoadTempBase(a, x2);
     a.ldr(x2, ptr(x2));
 
-    // === SmallFloat binary arith (prim 541/542/549) ===
-    // Both operands must be SmallFloat (tag = 5).  Decode, op, encode.
-    // Bail on ±0 receiver/arg (uncommon, complex encoding) and on
-    // exponent under/overflow of the result.
-    if (primIndex == 541 || primIndex == 542 || primIndex == 549) {
-        // Tag-check both operands == 5.
+    // === SmallFloat binary arith (prim 541/542/549/550) ===
+    // The receiver is a SmallFloat64 (tag 5); the argument a SmallFloat64
+    // or a SmallInteger (converted exactly as the primitive does: the
+    // nearest double).  Decode, op, encode, +/-0 included.  Anything the
+    // inline path cannot answer -- a BoxedFloat64 argument or result, an
+    // argument that is no number -- runs the interpreter's primitive
+    // (jit_rt_float_arith); only its failure falls into the method body.
+    // Falling into the body directly was wrong for a body that retries:
+    // `^ aNumber adaptToFloat: self andSend: #*` performs #* again, and a
+    // native perform landed back in this prologue (PMClusterFinderTest
+    // ran 15x slower than Cog, ~250 frames deep per +/-0 operand).
+    // PHARO_T1_NO_FLOAT_PROLOG_FULL: the old partial prologue (no 550).
+    if (primIndex == 541 || primIndex == 542 || primIndex == 549 || primIndex == 550) {
+        const bool full = !GET_DEBUG_BOOL(PHARO_T1_NO_FLOAT_PROLOG_FULL);
+        asmjit::Label viaC = full ? a.new_label() : fail;
+        asmjit::Label argInt = a.new_label(), argDone = a.new_label();
+        // Receiver tag == 5.
         a.and_(x4, x1, asmjit::Imm(0x7));
         a.cmp(x4, asmjit::Imm(5));
-        a.b_ne(fail);
-        a.and_(x4, x2, asmjit::Imm(0x7));
-        a.cmp(x4, asmjit::Imm(5));
-        a.b_ne(fail);
-
-        // Decode receiver.
-        a.lsr(x4, x1, asmjit::Imm(3));
-        a.cmp(x4, asmjit::Imm(1));
-        a.b_ls(fail);                        // ±0 → bail
+        a.b_ne(viaC);
         a.mov(x5, asmjit::Imm(0x7000000000000000ULL));
-        a.add(x4, x4, x5);
-        a.ror(x4, x4, asmjit::Imm(1));       // doubleBits
-        a.fmov(d0, x4);
-
-        // Decode arg (x5 still holds offset).
-        a.lsr(x4, x2, asmjit::Imm(3));
-        a.cmp(x4, asmjit::Imm(1));
-        a.b_ls(fail);
-        a.add(x4, x4, x5);
-        a.ror(x4, x4, asmjit::Imm(1));
-        a.fmov(d1, x4);
+        emitSmallFloatDecode_arm64(a, d0, x1, x5, x4, x6, full, fail);
+        // Argument: SmallFloat64, or (full) a SmallInteger.
+        a.and_(x4, x2, asmjit::Imm(0x7));
+        if (full) {
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_eq(argInt);
+        }
+        a.cmp(x4, asmjit::Imm(5));
+        a.b_ne(viaC);
+        emitSmallFloatDecode_arm64(a, d1, x2, x5, x4, x6, full, fail);
+        if (full) {
+            a.b(argDone);
+            a.bind(argInt);
+            a.asr(x4, x2, asmjit::Imm(3));
+            a.scvtf(d1, x4);
+            a.bind(argDone);
+        }
 
         switch (primIndex) {
             case 541: a.fadd(d0, d0, d1); break;
             case 542: a.fsub(d0, d0, d1); break;
             case 549: a.fmul(d0, d0, d1); break;
+            case 550:
+                // A zero divisor fails the primitive for sure: the body
+                // signals ZeroDivide.
+                a.fcmp(d1, 0.0);
+                a.b_eq(fail);
+                a.fdiv(d0, d0, d1);
+                break;
         }
 
-        // Encode result.
-        a.fmov(x4, d0);
-        // Special NaN/inf: exponent bits all 1 → high 11 bits after sign-LSB
-        // rotation form a value ≥ 0xFFE0_0000_0000_0000 in the rotated form.
-        // Range check after subtract catches these.
-        a.ror(x4, x4, asmjit::Imm(63));      // ROL by 1 (sign bit → LSB)
-        a.cmp(x4, x5);
-        a.b_lo(fail);                         // exp underflow
-        a.sub(x4, x4, x5);
-        a.mov(x6, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
-        a.cmp(x4, x6);
-        a.b_hi(fail);                         // exp overflow
-        a.lsl(x4, x4, asmjit::Imm(3));
-        // SmallFloatTag (5).  NOTE: `orr xN, xN, #5` is NOT a valid AArch64
-        // bitmask immediate (5=0b101 is two non-contiguous 1-bits), so asmjit
-        // silently emits nothing and the result keeps tag 0 — a corrupt
-        // SmallFloat that the VM later mis-reads as a heap pointer.  After
-        // `lsl #3` the low 3 bits are 0, so `add #5` (a valid ADD-immediate)
-        // sets the tag identically.
-        a.add(x4, x4, asmjit::Imm(5));        // SmallFloatTag
+        emitSmallFloatEncode_arm64(a, x4, d0, x5, x6, full, viaC);
         a.str(x4, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -4814,6 +4929,30 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
         // callees were admitted through the xmethod gates.
         a.ldr(x1, ptr(x0, OFF_RETVAL));
         a.b(prologRet);  // V2 J2J-return via the shared prelude shim
+        if (full) {
+            // The interpreter's primitive on the original operands.
+            // int jit_rt_float_arith(state, rcvBits, argBits, prim): the
+            // result is in state.returnValue.
+            a.bind(viaC);
+            a.sub(sp, sp, asmjit::Imm(16));
+            a.str(x0,  ptr(sp, 0));
+            a.str(x30, ptr(sp, 8));
+            a.mov(x3, asmjit::Imm(primIndex));
+            emitSyncSpToState(a);  // sp-residency: helper may read state.sp
+            a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_float_arith));
+            a.blr(x9);
+            a.mov(x9, x0);
+            a.ldr(x0,  ptr(sp, 0));
+            emitReloadSpFromState(a);
+            a.ldr(x30, ptr(sp, 8));
+            a.add(sp, sp, asmjit::Imm(16));
+            a.cbz(x9, fail);
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);
+        }
         a.bind(fail);
         return;
     }
@@ -7495,7 +7634,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // the other may be a SmallInteger, converted as the image does
         // (Number>>adaptToInteger:andSend: is `rcvr asFloat perform: ...`).
         // A mixed comparison is exact only while the integer converts
-        // exactly, so it needs |n| <= 2^53.  +/-0 operands and results
+        // exactly, so it needs |n| <= 2^53.  +/-0 operands and results are
+        // handled (PHARO_T1_NO_BC_FLOAT_ZERO: they take the send); results
         // that are no SmallFloat64 take the send.  x1 is reloaded: the `*`
         // path above overwrote it before bailing.
         {
@@ -7505,6 +7645,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             const bool isArith = k == 0 || k == 1 || k == 8;
             if ((isCmp || isArith) && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)) {
                 using namespace asmjit::a64;
+                const bool zeroOk = !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_ZERO);
                 asmjit::Label notFloat = a.new_label();
                 asmjit::Label rcvInt = a.new_label(), rcvDone = a.new_label();
                 asmjit::Label argInt = a.new_label(), argDone = a.new_label();
@@ -7522,12 +7663,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_eq(rcvInt);
                 a.cmp(x5, asmjit::Imm(5));
                 a.b_ne(notFloat);
-                a.lsr(x5, x1, asmjit::Imm(3));
-                a.cmp(x5, asmjit::Imm(1));
-                a.b_ls(notFloat);                 // +/-0
-                a.add(x5, x5, x6);
-                a.ror(x5, x5, asmjit::Imm(1));
-                a.fmov(d0, x5);
+                emitSmallFloatDecode_arm64(a, d0, x1, x6, x5, x9, zeroOk, notFloat);
                 a.b(rcvDone);
                 a.bind(rcvInt);
                 a.asr(x5, x1, asmjit::Imm(3));
@@ -7543,12 +7679,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_eq(argInt);
                 a.cmp(x7, asmjit::Imm(5));
                 a.b_ne(notFloat);
-                a.lsr(x5, x4, asmjit::Imm(3));
-                a.cmp(x5, asmjit::Imm(1));
-                a.b_ls(notFloat);
-                a.add(x5, x5, x6);
-                a.ror(x5, x5, asmjit::Imm(1));
-                a.fmov(d1, x5);
+                emitSmallFloatDecode_arm64(a, d1, x4, x6, x5, x9, zeroOk, notFloat);
                 a.b(argDone);
                 a.bind(argInt);
                 a.asr(x5, x4, asmjit::Imm(3));
@@ -7564,18 +7695,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     else if (k == 1) a.fsub(d0, d0, d1);
                     else a.fmul(d0, d0, d1);
                     // Encode as SmallFloat64, or take the send.
-                    a.fmov(x5, d0);
-                    a.ror(x5, x5, asmjit::Imm(63));
-                    a.cmp(x5, x6);
-                    a.b_lo(notFloat);
-                    a.sub(x5, x5, x6);
-                    a.mov(x7, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
-                    a.cmp(x5, x7);
-                    a.b_hi(notFloat);
-                    a.lsl(x5, x5, asmjit::Imm(3));
-                    // SmallFloatTag (5): after `lsl #3` the low bits are 0;
-                    // `orr #5` is no AArch64 bitmask immediate, so add.
-                    a.add(x5, x5, asmjit::Imm(5));
+                    emitSmallFloatEncode_arm64(a, x5, d0, x6, x7, zeroOk, notFloat);
                 } else {
                     // IEEE: every comparison with a NaN is false except ~=.
                     a.fcmp(d0, d1);
@@ -8408,6 +8528,62 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(x1, x26);
             } else {
                 a.ldur(x1, ptr(x2, rcvrOffsetBytes));   // x1 = receiver
+            }
+            // Inline SmallFloat64 `/` (special selector 9), as the + - *
+            // inline float path: one operand a SmallFloat64, the other a
+            // SmallFloat64 or a SmallInteger (SmallInteger>>/ fails its
+            // primitive on a Float and the image ends in `rcvr asFloat
+            // perform: #/ with: self`, the nearest-double conversion scvtf
+            // makes; SmallFloat64>>/ converts its argument the same way).
+            // A zero divisor and a result that is no SmallFloat64 take the
+            // send, so ZeroDivide and boxing stay the image's; SmallInteger
+            // / SmallInteger (a Fraction) never gets here.  Each i / f
+            // was an 8-send coercion chain with a perform exit.  Registers:
+            // x1 receiver, x2 sp, x5 this site's IC pointer -- x5 is live
+            // for the send below and is not touched.
+            if (op == SistaV1::ArithBase + 9 && nArgs == 1
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_DIV)
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)) {
+                const bool zeroOk = !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_ZERO);
+                asmjit::Label notDiv = a.new_label();
+                asmjit::Label rcvInt = a.new_label(), rcvDone = a.new_label();
+                asmjit::Label argInt = a.new_label(), argDone = a.new_label();
+                a.ldur(x4, ptr(x2, -8));                     // the argument
+                a.and_(x6, x1, asmjit::Imm(0x7));
+                a.and_(x7, x4, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(5));
+                a.ccmp(x7, asmjit::Imm(5), asmjit::Imm(4), CondCode::kNE);  // Z = either is 5
+                a.b_ne(notDiv);
+                a.mov(x8, asmjit::Imm(0x7000000000000000ULL));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_eq(rcvInt);
+                a.cmp(x6, asmjit::Imm(5));
+                a.b_ne(notDiv);
+                emitSmallFloatDecode_arm64(a, d0, x1, x8, x9, x10, zeroOk, notDiv);
+                a.b(rcvDone);
+                a.bind(rcvInt);
+                a.asr(x9, x1, asmjit::Imm(3));
+                a.scvtf(d0, x9);
+                a.bind(rcvDone);
+                a.cmp(x7, asmjit::Imm(1));
+                a.b_eq(argInt);
+                a.cmp(x7, asmjit::Imm(5));
+                a.b_ne(notDiv);
+                emitSmallFloatDecode_arm64(a, d1, x4, x8, x9, x10, zeroOk, notDiv);
+                a.b(argDone);
+                a.bind(argInt);
+                a.asr(x9, x4, asmjit::Imm(3));
+                a.scvtf(d1, x9);
+                a.bind(argDone);
+                a.fcmp(d1, 0.0);
+                a.b_eq(notDiv);                              // zero divisor: the send signals
+                a.fdiv(d0, d0, d1);
+                emitSmallFloatEncode_arm64(a, x9, d0, x8, x10, zeroOk, notDiv);
+                a.stur(x9, ptr(x2, -16));
+                a.sub(x2, x2, asmjit::Imm(8));
+                emitStoreSp(a, x2);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
+                a.bind(notDiv);
             }
             a.and_(x4, x1, asmjit::Imm(0x7));
             a.cbnz(x4, imm);
@@ -11998,8 +12174,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === Inline SmallFloat +/-/* at send site (primKind 21/22/23) ===
             // Receiver is SmallFloat (tag=5), arg is also SmallFloat.
-            // Decode, op, encode.  Bails on ±0 or exponent over/underflow.
+            // Decode, op, encode (+/-0 included unless
+            // PHARO_T1_NO_BC_FLOAT_ZERO).  Bails on a result that is no
+            // SmallFloat64; the method's full prologue then answers it.
             if (nArgs == 1) {
+                const bool zeroOk = !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_ZERO);
                 a.bind(tryPrimSmallFloatOp);
                 emitIncPrimCounter((uint64_t)&g_primFloatOp_hits);
                 // Stash icDataPtr — about to clobber x5.
@@ -12009,21 +12188,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.and_(x4, x3, asmjit::Imm(0x7));
                 a.cmp(x4, asmjit::Imm(5));
                 a.b_ne(dispatchCachedRestoreX5);
-                // Decode rcv.
-                a.lsr(x4, x1, asmjit::Imm(3));
-                a.cmp(x4, asmjit::Imm(1));
-                a.b_ls(dispatchCachedRestoreX5);     // ±0 → bail
                 a.mov(x5, asmjit::Imm(0x7000000000000000ULL));
-                a.add(x4, x4, x5);
-                a.ror(x4, x4, asmjit::Imm(1));
-                a.fmov(d0, x4);
-                // Decode arg.
-                a.lsr(x4, x3, asmjit::Imm(3));
-                a.cmp(x4, asmjit::Imm(1));
-                a.b_ls(dispatchCachedRestoreX5);
-                a.add(x4, x4, x5);
-                a.ror(x4, x4, asmjit::Imm(1));
-                a.fmov(d1, x4);
+                emitSmallFloatDecode_arm64(a, d0, x1, x5, x4, x7, zeroOk, dispatchCachedRestoreX5);
+                emitSmallFloatDecode_arm64(a, d1, x3, x5, x4, x7, zeroOk, dispatchCachedRestoreX5);
                 // primKind already in x6 in lower bits 0..2 form (x6 = pk-21)
                 // when we branched here (we did `sub x6, x6, #21`).
                 // pk-21 = 0 → add, 1 → sub, 2 → mul.
@@ -12042,20 +12209,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(opMul);
                 a.fmul(d0, d0, d1);
                 a.bind(opDone);
-                // Encode result.
-                a.fmov(x4, d0);
-                a.ror(x4, x4, asmjit::Imm(63));      // ROL 1
-                a.cmp(x4, x5);
-                a.b_lo(dispatchCachedRestoreX5);     // underflow
-                a.sub(x4, x4, x5);
-                a.mov(x6, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
-                a.cmp(x4, x6);
-                a.b_hi(dispatchCachedRestoreX5);     // overflow
-                a.lsl(x4, x4, asmjit::Imm(3));
-                // SmallFloatTag (5).  `orr #5` is not a valid AArch64 bitmask
-                // immediate (asmjit drops it → tag 0 corruption); after `lsl #3`
-                // the low 3 bits are 0 so `add #5` sets the tag identically.
-                a.add(x4, x4, asmjit::Imm(5));        // SmallFloatTag
+                emitSmallFloatEncode_arm64(a, x4, d0, x5, x6, zeroOk, dispatchCachedRestoreX5);
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);

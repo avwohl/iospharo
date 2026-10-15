@@ -1290,6 +1290,23 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     return 1;
 }
 
+// SmallFloat64 + - * / (prims 541 542 549 550) for T1's primitive prologue
+// when its inline path cannot answer: a BoxedFloat64 argument or result,
+// or an argument that is no Float.  The interpreter's primitive exactly;
+// 1 = state.returnValue holds the result oop (four arguments: Win64 passes
+// no fifth in a register), 0 = the primitive fails, so the method body
+// runs as its failure code.  Before this the prologue fell into the
+// body for any of these, and the body (`^ aNumber adaptToFloat: self
+// andSend: #*`) performed the same selector natively again: a recursion
+// ~250 deep per seed that only the countdown stopped.
+extern "C" int jit_rt_float_arith(JITState* s, uint64_t rcvBits, uint64_t argBits,
+                                  uint64_t prim) {
+    uint64_t result;
+    if (!s->interp->jitFloatArith(rcvBits, argBits, (int)prim, &result)) return 0;
+    s->returnValue = pharo::Oop::fromRawBits(result);
+    return 1;
+}
+
 // Pointer-object basicSize helper for fmt 3/4/5/9.  Returns 1 on
 // success with `*out` = untagged indexable size, 0 on bad receiver.
 extern "C" int jit_rt_primsize_ptr(JITState* s, uint64_t rcvBits,

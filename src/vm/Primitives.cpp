@@ -7323,6 +7323,29 @@ PrimitiveResult Interpreter::primitiveFloatDivide(int argCount) {
     return PrimitiveResult::Success;
 }
 
+bool Interpreter::jitFloatArith(uint64_t rcvBits, uint64_t argBits, int prim, uint64_t* out) {
+    double a, b;
+    if (!extractFloat(memory_, Oop::fromRawBits(rcvBits), a)
+            || !extractFloat(memory_, Oop::fromRawBits(argBits), b))
+        return false;
+    double result;
+    switch (prim) {
+    case 541: result = a + b; break;
+    case 542: result = a - b; break;
+    case 549: result = a * b; break;
+    case 550:
+        if (b == 0.0) return false;          // as primitiveFloatDivide
+        result = a / b;
+        break;
+    default: return false;
+    }
+    // Allocation does not GC here (a full eden falls back to old space).
+    Oop resultOop = makeFloat(memory_, result);
+    if (resultOop.isNil()) return false;
+    *out = resultOop.rawBits();
+    return true;
+}
+
 PrimitiveResult Interpreter::primitiveFloatLessThan(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);

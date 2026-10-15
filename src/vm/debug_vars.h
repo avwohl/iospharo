@@ -318,6 +318,9 @@ DEBUG_BOOL(PHARO_BV_TRACE_HITS)          // TEMP: log the first 120 BV-inline hi
 DEBUG_BOOL(PHARO_BV_DBGTRAP)            // TEMP: __builtin_debugtrap at the cmpat block codeStart capture (for lldb single-step)
 DEBUG_INT(PHARO_BV_MAX_CAP, 1)           // FIX 2026-06-20: bail BV inline if numCopied (captures) > this. Default 1: cap>=2 blocks corrupt under BV inline (foreign-frame EXECUTION bug; the C++ capture-copy was verified correct vs activateBlock, so the defect is in the JIT block's multi-copied-value access). Bisected: MAX_CAP<=1 stops the BV-on startup runaway. -1 disables the cap (to reproduce/investigate the cap>=2 bug).
 DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)         // bisect G* SmallFloat bug: disable bytecode-level inline SmallFloat +/- fast-path (0x60/0x61)
+DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_ZERO)    // bytecode-level inline SmallFloat + - * / and compares: +/-0 operands and zero results take the send (as before 2026-10-15)
+DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT_DIV)     // no inline SmallFloat / at the special send `/` (it is a plain send again)
+DEBUG_BOOL(PHARO_T1_NO_FLOAT_PROLOG_FULL) // SmallFloat64 + - * prologue as before 2026-10-15: no +/-0, no SmallInteger argument, no C primitive before the body; and no / (550) prologue
 DEBUG_BOOL_RT(PHARO_HEADLESS)               // force headless: skip Metal test surface + GUI click injection so SUnit batches aren't poisoned by render-loop contention (no image args needed)
 DEBUG_INT(PHARO_WATCH_HEAP_CLASSIDX, 0)  // Spur classIndex (== the class's identityHash) to trace during the GC MARK: reports the PARENT object+slot that reaches each instance, i.e. what is keeping it alive transitively. Companion to PHARO_WATCH_ROOT_CLASS, which only covers direct roots
 DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)       // selector substring: dump the C++ frame temp slots materializeFrameStack copies, to tell a stale CONTEXT from a stale FRAME
