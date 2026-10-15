@@ -691,8 +691,12 @@ private:
         // For non-local block returns: the frame to return to, plus 1
         // (0 = none).  Use homeFrameDepth() / setHomeFrameDepth().
         uint32_t homeFramePlus1;
-        Oop savedClosure;     // FullBlockClosure for block frames, nil for method frames
-        Oop savedActiveContext;  // Active context at time of call (for proper return chain)
+        // Raw fields: under the lazy scheme (trim steps 7-8, jit::g_mcfLazyCloAct)
+        // native pushes do not write them; read recClosure(f) /
+        // recActiveCtx(f), which derive them (fp[0] of a block frame;
+        // activeContext_, INV-AC).
+        Oop savedClosureRaw;     // FullBlockClosure for block frames, nil for method frames
+        Oop savedActiveContextRaw;  // Active context at time of call (for proper return chain)
         uint8_t* savedBytecodeEnd;
         // jit-may20b Step 7 (recursive-safe materialize): when this SavedFrame
         // was pushed from a J2JSave by the chain-loop materialize-bail
@@ -734,7 +738,7 @@ private:
                   && offsetof(SavedFrame, savedArgCount) == offsetof(SavedFrame, savedReceiver) + 8
                   && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCount) + 2
                   && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCount) + 4
-                  && offsetof(SavedFrame, savedActiveContext) == offsetof(SavedFrame, savedClosure) + 8
+                  && offsetof(SavedFrame, savedActiveContextRaw) == offsetof(SavedFrame, savedClosureRaw) + 8
                   && offsetof(SavedFrame, materializedRetSlot) == offsetof(SavedFrame, savedBytecodeEnd) + 8
                   && offsetof(SavedFrame, mcReturn) % 16 == 0,
                   "native push pairs (docs/mcf-call-trim-plan.md step 5)");
@@ -1077,6 +1081,7 @@ private:
         Oop baseSender;
     } collapsed_;
     void captureCollapsedFrames(size_t homeFrame, Oop homeCtx);
+    Oop collapsedActiveCtx_ = Oop::fromRawBits(0);   // activeContext_ before the NLR collapse (raw: used at once)
     bool tryRestoreCollapsedFrames();
     // mcfSetBlockHome's memo (raw oops: cleared by afterGC).
     Oop nlrMemoBlock_ = Oop::fromRawBits(0);
@@ -2010,6 +2015,25 @@ public:
                             Oop rcv, jit::McfCallEntry*& e);
     Oop mcfThisContext(jit::JITState* st);
     void* mcfNonLocalReturn(jit::JITState* st);
+    // Trim steps 7-8 (docs/mcf-call-trim-plan.md): a record's closure is
+    // fp[0] of a block frame (INV-FP0), nil for a method frame; its active
+    // context is activeContext_ (INV-AC).  Native pushes no longer write
+    // the raw fields.
+    Oop recClosure(const SavedFrame& f) const {
+        if (!jit::g_mcfLazyCloAct || !f.savedFP || !f.savedMethod.isObject())
+            return f.savedClosureRaw;
+        return f.savedMethod.asObjectPtr()->classIndex() == compiledBlockClassIndex_
+            ? f.savedFP[0] : memory_.nil();
+    }
+    Oop recActiveCtx(const SavedFrame& f) const {
+        return jit::g_mcfLazyCloAct ? activeContext_ : f.savedActiveContextRaw;
+    }
+    // The state's closure under the lazy scheme: fp[0] of block code, else
+    // nil (tempBase is current at every JIT -> C++ edge).
+    void mcfDeriveClosure(jit::JITState& st) const {
+        if (!jit::g_mcfLazyCloAct || !st.jitMethod || !st.tempBase) return;
+        st.closure = st.jitMethod->isBlock ? st.tempBase[-1] : memory_.nil();
+    }
     // The home method of a frame running `method` with `closure` (nil for a
     // method frame): activateBlock's choice, as mcfSyncRegisters derives it.
     // homeMethod_ is only read by diagnostics; records no longer save it.
@@ -2273,8 +2297,8 @@ public:
         frame.savedMethod = method_;
         frame.savedReceiver = receiver_;
         // closure_, activeContext_, materializedContext_ are always nil during J2J
-        frame.savedClosure = nil;
-        frame.savedActiveContext = nil;
+        frame.savedClosureRaw = nil;
+        frame.savedActiveContextRaw = nil;
         frame.materializedContext = nil;
         frame.ctxSynced = false;
         frame.savedFP = framePointer_;
@@ -2425,8 +2449,8 @@ public:
         frame.savedBytecodeEnd = methObj->bytes() + methObj->byteSize();
         frame.savedMethod = method;
         frame.savedReceiver = recv;
-        frame.savedClosure = nil;
-        frame.savedActiveContext = nil;
+        frame.savedClosureRaw = nil;
+        frame.savedActiveContextRaw = nil;
         frame.materializedContext = nil;
         frame.ctxSynced = false;
         frame.savedFP = tempBase - 1;
@@ -4409,8 +4433,12 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         SavedFrame& frame = savedFrames_[i];
         visitor(frame.savedMethod);
         visitor(frame.savedReceiver);
-        visitor(frame.savedClosure);
-        visitor(frame.savedActiveContext);
+        // Under the lazy scheme (trim steps 7-8) native pushes leave these
+        // stale; fp[0] (the stack scan) and activeContext_ are the truth.
+        if (!jit::g_mcfLazyCloAct) {
+            visitor(frame.savedClosureRaw);
+            visitor(frame.savedActiveContextRaw);
+        }
         visitor(frame.materializedContext);
     }
 
@@ -4635,6 +4663,7 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         visitor(jitSt->method);
         visitor(jitSt->returnValue);
         visitor(jitSt->cachedTarget);
+        mcfDeriveClosure(*jitSt);   // trim step 8: the field is derived
         visitor(jitSt->closure);
         // trueOop/falseOop are visited via specialObjects_ already.
 

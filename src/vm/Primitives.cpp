@@ -3998,7 +3998,7 @@ int64_t Interpreter::contextStackp(Oop ctx, Oop** frameBase) {
     for (size_t i = 0; i < frameDepth_; i++) {
         const SavedFrame& f = savedFrames_[i];
         bool carries = (f.materializedContext.isObject() && f.materializedContext.rawBits() == ctx.rawBits())
-                    || (f.savedActiveContext.isObject() && f.savedActiveContext.rawBits() == ctx.rawBits());
+                    || (recActiveCtx(f).isObject() && recActiveCtx(f).rawBits() == ctx.rawBits());
         if (!carries || f.savedMethod.rawBits() != ctxMethod.rawBits()) continue;
         if (!f.savedFP) break;
         Oop* calleeFP = (i + 1 < frameDepth_) ? savedFrames_[i + 1].savedFP : framePointer_;
@@ -10603,7 +10603,7 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
                 // retained there keeps pre-nil temp snapshots alive.
                 for (size_t fi = 0; fi < frameDepth_; fi++) {
                     SavedFrame& sf = savedFrames_[fi];
-                    if (sf.savedActiveContext.rawBits() == ctx.rawBits() ||
+                    if (recActiveCtx(sf).rawBits() == ctx.rawBits() ||
                         sf.materializedContext.rawBits() == ctx.rawBits()) {
                         fprintf(stderr,
                             "[PIN-DIAG]     ctx 0x%llx in frame[%zu] #%s: "
@@ -10611,7 +10611,7 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
                             "(matCtx=0x%llx)\n",
                             (unsigned long long)ctx.rawBits(), fi,
                             memory_.selectorOf(sf.savedMethod).c_str(),
-                            sf.savedActiveContext.rawBits() == ctx.rawBits(),
+                            recActiveCtx(sf).rawBits() == ctx.rawBits(),
                             sf.materializedContext.rawBits() == ctx.rawBits(),
                             (unsigned long long)sf.materializedContext.rawBits());
                     }
@@ -13673,8 +13673,8 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
         for (size_t i = 0; i < frameDepth_; ++i) {
             if ((savedFrames_[i].materializedContext.isObject() &&
                  savedFrames_[i].materializedContext == context) ||
-                (savedFrames_[i].savedActiveContext.isObject() &&
-                 savedFrames_[i].savedActiveContext == context)) {
+                (recActiveCtx(savedFrames_[i]).isObject() &&
+                 recActiveCtx(savedFrames_[i]) == context)) {
                 *(savedFrames_[i].savedFP + 1 + zeroIndex) = value;
                 break;
             }

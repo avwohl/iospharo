@@ -659,21 +659,21 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     // The lazy view leaves savedBytecodeEnd null (derived when read).
     if (f.savedBytecodeEnd != end && !(f.savedBytecodeEnd == nullptr && ::pharo::mcfLazyView()))
         bad("savedBytecodeEnd");
-    if (f.savedFP[0].rawBits() != (f.savedClosure.isNil() ? f.savedReceiver
-                                                         : f.savedClosure).rawBits())
+    if (f.savedFP[0].rawBits() != (recClosure(f).isNil() ? f.savedReceiver
+                                                         : recClosure(f)).rawBits())
         bad("fp[0] is neither the receiver nor the closure");
     // INV-FP0: a block frame's closure is fp[0]; a method frame has none.
     {
         const bool callerIsBlock = mo->classIndex() == compiledBlockClassIndex_;
-        if (callerIsBlock ? f.savedClosure.rawBits() != f.savedFP[0].rawBits()
-                          : !f.savedClosure.isNil()) {
+        if (callerIsBlock ? recClosure(f).rawBits() != f.savedFP[0].rawBits()
+                          : !recClosure(f).isNil()) {
             bad("INV-FP0 closure");
             static int nd = 0;
             if (++nd <= 6) {
                 auto cls = [&](Oop o) { return o.isObject() && o.rawBits() > 0x10000
                     ? memory_.classNameOf(o) : std::string(o.isNil() ? "nil" : "imm"); };
                 fprintf(stderr, "[MCF-VERIFY-PUSH]   fp0=%s closure=%s rcv=%s home=#%s mcJM=%p "
-                        "pushSite=%s depth=%zu\n", cls(f.savedFP[0]).c_str(), cls(f.savedClosure).c_str(),
+                        "pushSite=%s depth=%zu\n", cls(f.savedFP[0]).c_str(), cls(recClosure(f)).c_str(),
                         cls(f.savedReceiver).c_str(),
                         memory_.selectorOf(blockHomeMethodForNLR(f.savedMethod)).c_str(), f.mcJM,
                         f.pushSite ? f.pushSite : "-", frameDepth_);
@@ -686,7 +686,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     if (f.mcJM && static_cast<const jit::JITMethod*>(f.mcJM)->compiledMethodOop
                       != f.savedMethod.rawBits())
         bad("mcJM is not the caller's code");
-    if (f.savedActiveContext.rawBits() != activeContext_.rawBits()) bad("INV-AC");
+    if (recActiveCtx(f).rawBits() != activeContext_.rawBits()) bad("INV-AC");
     if (st->closure.isNil() && f.homeFrameDepth() != SIZE_MAX) bad("home marker on a method call");
     if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
                                                          : st->closure).rawBits())
@@ -761,6 +761,7 @@ void Interpreter::mcfWatchStore(const char* site, int primIndex, int nArgs) {
 // the top record, from a method frame whose receiver is fp[0].
 void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
     (void)value;
+    mcfDeriveClosure(*st);
     mcfVerifyReceiver(st, "native-return");
     // Every condition the folded return no longer tests must imply a null
     // memo, so a native return never gets here with one of them true.
@@ -775,12 +776,12 @@ void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
                     frameDepth_, memory_.selectorOf(f.savedMethod).c_str());
         // INV-AC (docs/mcf-call-trim-plan.md step 0): every live record a
         // native return pops saved the current activeContext_.
-        if (f.savedActiveContext.rawBits() != activeContext_.rawBits()) {
+        if (recActiveCtx(f).rawBits() != activeContext_.rawBits()) {
             static int na = 0;
             if (++na <= 10)
                 fprintf(stderr, "[MCF-VERIFY-RET] INV-AC: record activeContext 0x%llx, "
                         "activeContext_ 0x%llx (fd=%zu #%s)\n",
-                        (unsigned long long)f.savedActiveContext.rawBits(),
+                        (unsigned long long)recActiveCtx(f).rawBits(),
                         (unsigned long long)activeContext_.rawBits(), frameDepth_,
                         memory_.selectorOf(f.savedMethod).c_str());
         }
@@ -827,6 +828,7 @@ void Interpreter::mcfVerifyCall(jit::JITState* st, Oop method, uint64_t where) {
 
 // PHARO_MCF_VERIFY: in a method frame the receiver is fp[0].
 void Interpreter::mcfVerifyReceiver(jit::JITState* st, const char* site) {
+    mcfDeriveClosure(*st);   // trim step 8: the state closure is derived
     if (!st->closure.isNil()) return;   // block frame: fp[0] is the closure
     if (st->tempBase[-1].rawBits() == st->receiver.rawBits()) return;
     static int n = 0;
@@ -1019,6 +1021,7 @@ void Interpreter::mcfDeriveView(jit::JITState& st) {
             (mo->bytes() + mo->compiledCodeByteSize()) - reinterpret_cast<uint8_t*>(st.method.rawBits()));
     }
     st.mcfBcEndOff = e.off;
+    mcfDeriveClosure(st);   // trim step 8
 }
 
 void Interpreter::mcfSyncRegisters(const jit::JITState& stIn) {
@@ -1726,8 +1729,8 @@ void Interpreter::mcfInit() {
     L.savedBytecodeEnd = offsetof(SavedFrame, savedBytecodeEnd);
     L.savedMethod = offsetof(SavedFrame, savedMethod);
     L.savedReceiver = offsetof(SavedFrame, savedReceiver);
-    L.savedClosure = offsetof(SavedFrame, savedClosure);
-    L.savedActiveContext = offsetof(SavedFrame, savedActiveContext);
+    L.savedClosure = offsetof(SavedFrame, savedClosureRaw);
+    L.savedActiveContext = offsetof(SavedFrame, savedActiveContextRaw);
     L.materializedContext = offsetof(SavedFrame, materializedContext);
     L.ctxSynced = offsetof(SavedFrame, ctxSynced);
     L.savedFP = offsetof(SavedFrame, savedFP);
@@ -2259,7 +2262,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                              + " entry=" + std::to_string(cjm ? mcfEntryFor(cjm, f.savedIP) != nullptr : 0)
                              + " ipoff=" + std::to_string(f.savedIP - mb)
                              + " nextop=" + std::to_string(*f.savedIP)
-                             + " blk=" + std::to_string(!f.savedClosure.isNil());
+                             + " blk=" + std::to_string(!recClosure(f).isNil());
                     }
                 }
             }

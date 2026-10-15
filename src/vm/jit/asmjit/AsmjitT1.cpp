@@ -5175,6 +5175,15 @@ static bool mcfLazyRT() {
     static const bool on = mcfShortcuts() && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_RT);
     return on;
 }
+// Trim steps 7-8: native pushes and returns no longer save/restore the
+// closure and the active context; C++ derives them (recClosure,
+// recActiveCtx, mcfDeriveClosure).
+static bool mcfLazyCloAct() {
+    static const bool on = mcfLazyRT() && ::pharo::mcfLazyView()
+        && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_CLOSURE)
+        && !GET_DEBUG_BOOL(PHARO_MCF_NO_RET_FOLD);
+    return on;
+}
 // PHARO_MCF_POISON_STATE (diag): garbage in the state's receiver and
 // tempBase after each native call and return, so a C++ read that no sync
 // preceded fails at once.
@@ -5185,6 +5194,7 @@ static void emitMcfPoisonRT(asmjit::a64::Assembler& a,
     a.mov(scratch, asmjit::Imm(0xBADBAD0000000003ull));
     a.str(scratch, ptr(x0, OFF_RECEIVER));
     a.str(scratch, ptr(x0, OFF_TEMPBASE));
+    if (mcfLazyCloAct()) a.str(scratch, ptr(x0, OFF_CLOSURE));
 }
 
 static_assert(OFF_MCF_EPOCH_PTR == offsetof(JITState, mcfEpochPtr), "OFF_MCF_EPOCH_PTR");
@@ -5328,9 +5338,17 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.bind(noCtx);
     }
     mcfFieldStr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2, true);
-    ldp2(x13, L.savedActiveContext, x14, L.materializedContext);
-    mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
-    mcfFieldStr(a, x13, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10, false);
+    const bool lazyCA = mcfLazyCloAct();
+    if (lazyCA) {
+        // Trim steps 7-8: the caller's JM and context in one ldp; the
+        // closure and active context are C++'s to derive.
+        ldp2(x19, L.mcJM, x14, L.materializedContext);
+        mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
+    } else {
+        ldp2(x13, L.savedActiveContext, x14, L.materializedContext);
+        mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
+        mcfFieldStr(a, x13, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10, false);
+    }
     // Result into the callee's receiver slot; sp just above it.
 #if PHARO_T1_SP_IN_X25 && !PHARO_T1_TB_IN_X26
     if (t1TbReg()) {
@@ -5349,7 +5367,10 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.add(x8, x11, asmjit::Imm(8));       // savedFP + 8
         emitStoreTempBase(a, x8);
     }
-    if (sc) {
+    if (lazyCA) {
+        a.ldr(x21, ptr(x7, L.savedReceiver));
+        emitMcfPoisonRT(a);
+    } else if (sc) {
         ldp2(x21, L.savedReceiver, x14, L.savedClosure);
         if (!mcfLazyRT()) a.str(x21, ptr(x0, OFF_RECEIVER));
         emitMcfPoisonRT(a);
@@ -5358,8 +5379,10 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.str(x13, ptr(x0, OFF_RECEIVER));
         if (t1TbReg()) a.mov(x21, x13);
     }
-    a.str(x14, ptr(x0, OFF_CLOSURE));         // the caller's closure (nil: method)
-    if (::pharo::mcfLazyView()) {
+    if (!lazyCA) a.str(x14, ptr(x0, OFF_CLOSURE));   // the caller's closure (nil: method)
+    if (lazyCA) {
+        // x19 loaded above.
+    } else if (::pharo::mcfLazyView()) {
         a.ldr(x19, ptr(x7, L.mcJM));          // the view is C++'s to derive
     } else {
         a.ldr(x8, ptr(x7, L.savedMethod));
@@ -5756,9 +5779,11 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         else a.ldr(x4, ptr(x0, OFF_MCF_NIL));
     }
     const asmjit::a64::Gp nilR = mcfNilReg();
-    a.ldr(x17, ptr(x0, OFF_CLOSURE));
-    mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
-    put2(x17, L.savedClosure, x16, L.savedActiveContext);
+    if (!mcfLazyCloAct()) {
+        a.ldr(x17, ptr(x0, OFF_CLOSURE));
+        mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
+        put2(x17, L.savedClosure, x16, L.savedActiveContext);
+    }
     mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
     mcfFieldStr(a, nilR, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
     put2(x19, L.mcJM, x17, L.materializedContext);
@@ -5895,7 +5920,7 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
         a.str(x1, ptr(x0, OFF_RECEIVER));
         if (t1TbReg()) a.mov(x21, x1);
     }
-    a.str(nilR, ptr(x0, OFF_CLOSURE));             // a method frame
+    if (!mcfLazyCloAct()) a.str(nilR, ptr(x0, OFF_CLOSURE));   // a method frame
     // Temporaries beyond the arguments start as nil (x17 = temp count,
     // from emitMcfCalleeView).
     a.subs(w17, w17, w11);
@@ -5941,7 +5966,7 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
         a.str(x17, ptr(x0, OFF_RECEIVER));
         if (t1TbReg()) a.mov(x21, x17);
     }
-    a.str(x1, ptr(x0, OFF_CLOSURE));
+    if (!mcfLazyCloAct()) a.str(x1, ptr(x0, OFF_CLOSURE));
     // Copied values (closure slots 4..) after the arguments, then nil.
     a.ldrb(w10, ptr(x1, 7));
     a.sub(w10, w10, asmjit::Imm(4));
@@ -6025,7 +6050,7 @@ static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
         a.str(x1, ptr(x0, OFF_RECEIVER));
         if (t1TbReg()) a.mov(x21, x1);
     }
-    a.str(nilR, ptr(x0, OFF_CLOSURE));                      // a method frame
+    if (!mcfLazyCloAct()) a.str(nilR, ptr(x0, OFF_CLOSURE));   // a method frame
     int n = nTemps - nArgs;
     if (n > 16) {
         asmjit::Label loop = a.new_label();
@@ -6750,7 +6775,15 @@ static void emitMcfBlockCreateStub(asmjit::a64::Assembler& a) {
     a.cbz(w9, fail);
     a.ldr(x14, ptr(x0, OFF_MCF_NIL));               // x14 = nil throughout
     a.ldr(x15, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));   // this code's method
-    a.ldr(x13, ptr(x0, OFF_CLOSURE));               // this frame's closure
+    if (mcfLazyCloAct()) {
+        // Trim step 8: the closure is fp[0] of block code, else nil.
+        a.ldrb(w16, ptr(x19, (int)offsetof(JITMethod, isBlock)));
+        a.ldur(x13, ptr(x22, -8));
+        a.cmp(w16, asmjit::Imm(0));
+        a.csel(x13, x13, x27, asmjit::a64::CondCode::kNE);
+    } else {
+        a.ldr(x13, ptr(x0, OFF_CLOSURE));           // this frame's closure
+    }
     mcfFieldLdr(a, x8, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x16);
     a.cmp(x8, x14);
     a.b_ne(haveCtx);
@@ -16675,6 +16708,7 @@ void pharo::jit::mcfBuildStubs() {
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
     if (!g_mcfTinyStub) g_mcfTinyStub = buildMcfStubPage(emitMcfTinyShapes);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
+    g_mcfLazyCloAct = mcfLazyCloAct();
     if (!g_mcfNlrStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_NATIVE_NLR))
         g_mcfNlrStub = buildMcfStubPage(emitMcfNlrStub);
     if (!g_mcfBlockCreateStub && g_jitEdenFreeCell && g_jitSurvivorStartCell

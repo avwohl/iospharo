@@ -379,6 +379,9 @@ inline uint64_t g_mcfTinyStub = 0;
 // pharo_mcf_nlr returns from the home and continues the home's caller
 // (docs/native-nlr-plan.md, case (a)).  0 until mcfBuildStubs builds it.
 inline uint64_t g_mcfNlrStub = 0;
+// Trim steps 7-8: native pushes/returns do not save or restore the closure
+// and active context (C++ derives them).  Set by mcfBuildStubs.
+inline bool g_mcfLazyCloAct = false;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
 // PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and

@@ -3264,9 +3264,9 @@ void Interpreter::dumpSendChain(const char* why, size_t maxFrames) {
     size_t lo = (frameDepth_ > maxFrames) ? (frameDepth_ - maxFrames) : 0;
     for (size_t i = frameDepth_; i > lo; i--) {
         const SavedFrame& sf = savedFrames_[i - 1];
-        bool isBlock = sf.savedClosure.isObject()
-                    && sf.savedClosure.rawBits() > 0x10000
-                    && !sf.savedClosure.isNil();
+        bool isBlock = recClosure(sf).isObject()
+                    && recClosure(sf).rawBits() > 0x10000
+                    && !recClosure(sf).isNil();
         fprintf(stderr, "[SEND-CHAIN]   [%5zu] %s#%s rcvr=0x%llx\n",
                 i - 1, isBlock ? "[] in " : "",
                 memory_.selectorOf(sf.savedMethod).c_str(),
@@ -7071,7 +7071,13 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // being unreachable by any legitimate workload.  The timeout is also loud
     // now.  Full fix (park the handler properly + signal the image) tracked in
     // docs/deferred.md.
-    static constexpr long kCallbackTimeout = 1000000000; // 1B steps
+    // 0 by default (2026-10-15): as on Cog, a callback that never returns
+    // just leaves its C frame; the nested loop keeps running every process.
+    // TFFI's "callback returns after its session was released" test leaves
+    // one on purpose, and the abandon below then restored the callout
+    // process in the middle of whatever ran, losing the SUnit runner.
+    // PHARO_CALLBACK_TIMEOUT_STEPS=N restores a step limit.
+    const long kCallbackTimeout = GET_DEBUG_INT(PHARO_CALLBACK_TIMEOUT_STEPS);
     bool cbDbg = GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG);
     long lastDbgStep = 0;
     while (running_) {
@@ -7137,7 +7143,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // Timeout: if the callback handler never calls primitiveCallbackReturn
         // (e.g., because an error killed the handler process), abandon the
         // callback to prevent infinite spinning.
-        if (nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
+        if (kCallbackTimeout > 0 && nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
             // ALWAYS loud: this path abandons the handler process (it keeps
             // any held mutexes) and returns a zeroed buffer to the C caller —
             // silent operation hid real failures (silent-cap audit 2026-07-03).
@@ -10855,6 +10861,12 @@ void Interpreter::captureCollapsedFrames(size_t homeFrame, Oop homeCtx) {
     if (!homeCtx.isObject() || homeCtx.isNil()) { restoreFail(12); return; }
     if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) { restoreFail(13); return; }
     c.recs.assign(savedFrames_.begin(), savedFrames_.begin() + homeFrame + 1);
+    // Fix the derived fields into the copies while the frames are intact
+    // (trim steps 7-8: native pushes leave the raw fields stale).
+    for (size_t k = 0; k <= homeFrame; k++) {
+        c.recs[k].savedClosureRaw = recClosure(savedFrames_[k]);
+        if (jit::g_mcfLazyCloAct) c.recs[k].savedActiveContextRaw = collapsedActiveCtx_;
+    }
     c.ctxs.assign(homeFrame + 1, Oop::nil());
     c.stackps.assign(homeFrame, 0);
     Oop ctx = homeCtx;
@@ -10863,7 +10875,7 @@ void Interpreter::captureCollapsedFrames(size_t homeFrame, Oop homeCtx) {
         const SavedFrame& r = c.recs[k];
         ObjectHeader* h = ctx.asObjectPtr();
         if (h->slotAt(3).rawBits() != r.savedMethod.rawBits()
-                || h->slotAt(4).rawBits() != r.savedClosure.rawBits()
+                || h->slotAt(4).rawBits() != r.savedClosureRaw.rawBits()
                 || h->slotAt(5).rawBits() != r.savedReceiver.rawBits()
                 || !r.savedFP || !r.savedMethod.isObject())
             { restoreFail(15); return; }
@@ -10908,7 +10920,7 @@ bool Interpreter::tryRestoreCollapsedFrames() {
         Oop pc = h->slotAt(1), sp = h->slotAt(2);
         if (h->slotAt(0).rawBits() != want.rawBits()
                 || h->slotAt(3).rawBits() != r.savedMethod.rawBits()
-                || h->slotAt(4).rawBits() != r.savedClosure.rawBits()
+                || h->slotAt(4).rawBits() != r.savedClosureRaw.rawBits()
                 || h->slotAt(5).rawBits() != r.savedReceiver.rawBits()
                 || !pc.isSmallInteger()
                 || pc.asSmallInteger() != (int64_t)(r.savedIP - mo->bytes()) + 1
@@ -10926,7 +10938,7 @@ bool Interpreter::tryRestoreCollapsedFrames() {
         SavedFrame& r = c.recs[k];
         ObjectHeader* h = c.ctxs[k].asObjectPtr();
         Oop* fp = r.savedFP;
-        fp[0] = r.savedClosure.isNil() ? r.savedReceiver : r.savedClosure;
+        fp[0] = r.savedClosureRaw.isNil() ? r.savedReceiver : r.savedClosureRaw;
         for (int64_t j = 0; j < c.stackps[k]; j++) fp[1 + j] = h->slotAt(6 + j);
         r.materializedContext = c.ctxs[k];
         r.ctxSynced = true;   // the context is this suspended frame, exactly
@@ -10936,6 +10948,10 @@ bool Interpreter::tryRestoreCollapsedFrames() {
     framePointer_ = c.recs[n].savedFP;      // the home's place
     stackPointer_ = framePointer_ + 1;
     currentFrameMaterializedCtx_ = memory_.nil();
+    // INV-AC: the restored records' active context.  popFrame used to
+    // restore it from the record; under the lazy scheme it keeps
+    // activeContext_, which is still the returning (widowed) context here.
+    if (jit::g_mcfLazyCloAct) activeContext_ = c.recs[0].savedActiveContextRaw;
     lazyCtxPending_ = true;   // EXPERIMENT-MARK
     g_framesRestored++;
     restoreFail(31);   // census: a success
@@ -10980,6 +10996,7 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
     // (frameDepth_ - homeFrame) hops.  Compute BEFORE materializing (which
     // zeroes frameDepth_).
     size_t hops = frameDepth_ - homeFrame;
+    collapsedActiveCtx_ = activeContext_;   // INV-AC: every record's, before the collapse
     Oop topCtx = materializeFrameStack();
     activeContext_ = topCtx;
     frameDepth_ = 0;
@@ -16840,18 +16857,18 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedBytecodeEnd = bytecodeEnd_;
     frame.savedMethod = method_;
     frame.savedReceiver = receiver_;
-    frame.savedActiveContext = activeContext_;  // Save active context for proper return chain
+    frame.savedActiveContextRaw = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
     frame.materializedRetSlot = nullptr;  // Step 7: normal pushFrame, not materialize-bail
     frame.savedArgCount = argCount_;
-    frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
+    frame.savedClosureRaw = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.setHomeFrameDepth(SIZE_MAX);  // Default: not a block (will be set by activateBlock if needed)
     frame.materializedContext = cachedCtx;  // Preserve cached context from current frame
     frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
     if (DIAG_FLAG(g_doOn) && frame.savedMethod.rawBits() == g_doMethod)
-        doRec("PUSH", frame.savedActiveContext.rawBits(),
+        doRec("PUSH", recActiveCtx(frame).rawBits(),
               (int)(frame.savedFP ? (stackPointer_ - frame.savedFP - 1) : -1),
               argCount, (int)(frame.savedIP - g_doBase), g_stepNum);
 
@@ -17385,10 +17402,10 @@ bool Interpreter::popFrame() {
     instructionPointer_ = frame.savedIP;
     bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
-    homeMethod_ = homeMethodFor(frame.savedMethod, frame.savedClosure);   // derived, not stored (trim step 5)
+    homeMethod_ = homeMethodFor(frame.savedMethod, recClosure(frame));   // derived, not stored (trim step 5)
     receiver_ = frame.savedReceiver;
-    closure_ = frame.savedClosure;  // Restore caller's closure (nil for methods, block for block activations)
-    activeContext_ = frame.savedActiveContext;  // Restore active context for proper return chain
+    closure_ = recClosure(frame);  // Restore caller's closure (nil for methods, block for block activations)
+    activeContext_ = recActiveCtx(frame);  // Restore active context for proper return chain
     currentFrameMaterializedCtx_ = frame.materializedContext;  // Restore cached context for this frame
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
@@ -17548,10 +17565,10 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     instructionPointer_ = frame.savedIP;
     bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
-    homeMethod_ = homeMethodFor(frame.savedMethod, frame.savedClosure);   // derived, not stored (trim step 5)
+    homeMethod_ = homeMethodFor(frame.savedMethod, recClosure(frame));   // derived, not stored (trim step 5)
     receiver_ = frame.savedReceiver;
-    closure_ = frame.savedClosure;
-    activeContext_ = frame.savedActiveContext;
+    closure_ = recClosure(frame);
+    activeContext_ = recActiveCtx(frame);
     currentFrameMaterializedCtx_ = frame.materializedContext;
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
@@ -20158,11 +20175,11 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     frame.savedBytecodeEnd = bytecodeEnd_;
     frame.savedMethod = method_;
     frame.savedReceiver = receiver_;
-    frame.savedActiveContext = activeContext_;
+    frame.savedActiveContextRaw = activeContext_;
     frame.savedFP = framePointer_;
     frame.materializedRetSlot = nullptr;
     frame.savedArgCount = argCount_;
-    frame.savedClosure = closure_;
+    frame.savedClosureRaw = closure_;
     frame.setHomeFrameDepth(SIZE_MAX);
     frame.materializedContext = currentFrameMaterializedCtx_;
     frame.ctxSynced = false;  // frame ran since that ctx was synced
@@ -21741,7 +21758,7 @@ Oop Interpreter::materializeFrameStackImpl() {
 
     // Build contexts from bottom to top (oldest to newest)
     // CRITICAL: frame[0] represents the same activation as activeContext_ when
-    // frame[0].savedActiveContext == activeContext_. In that case, we must UPDATE
+    // recActiveCtx(frame[0]) == activeContext_. In that case, we must UPDATE
     // activeContext_ with frame[0]'s data instead of creating a duplicate context.
     // Without this, the sender chain has two contexts for the same method activation,
     // causing loops to execute extra iterations after exception handling returns.
@@ -21749,7 +21766,7 @@ Oop Interpreter::materializeFrameStackImpl() {
     size_t startFrame = 0;
 
     // J2J FIX: When activeContext_ is nil (set by pushFrameForJIT), use
-    // savedFrames_[0].savedActiveContext as the sender for frame[0]. This
+    // recActiveCtx(savedFrames_[0]) as the sender for frame[0]. This
     // reconnects the context chain so exception handlers in ancestor contexts
     // can be found during exception propagation.
     //
@@ -21763,7 +21780,7 @@ Oop Interpreter::materializeFrameStackImpl() {
     // termination at the next return — the depth-≥36 benchFib bug.
     if (sender.isNil() && frameDepth_ > 0) {
         for (size_t fi = 0; fi < frameDepth_; fi++) {
-            Oop savedCtx = savedFrames_[fi].savedActiveContext;
+            Oop savedCtx = recActiveCtx(savedFrames_[fi]);
             if (savedCtx.isObject() && savedCtx.rawBits() > 0x10000
                 && !savedCtx.isNil()) {
                 sender = savedCtx;
@@ -21781,7 +21798,7 @@ Oop Interpreter::materializeFrameStackImpl() {
         if (frame0Ctx.isObject() && frame0Ctx.rawBits() == sender.rawBits()) {
             // Use savedActiveContext as the sender — it's the context that was
             // active before frame 0 was pushed, i.e. the real parent context.
-            Oop savedCtx = savedFrames_[0].savedActiveContext;
+            Oop savedCtx = recActiveCtx(savedFrames_[0]);
             if (savedCtx.isObject() && savedCtx.rawBits() != sender.rawBits()) {
                 sender = savedCtx;
             } else {
@@ -21797,7 +21814,7 @@ Oop Interpreter::materializeFrameStackImpl() {
     }
 
     if (frameDepth_ > 0 && !GET_DEBUG_BOOL(PHARO_NO_FRAME0_REUSE) &&
-        savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
+        recActiveCtx(savedFrames_[0]).rawBits() == activeContext_.rawBits() &&
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         // frame[0] IS activeContext_'s inline continuation. Update the heap context
         // with frame[0]'s saved state instead of creating a new context.
@@ -21822,7 +21839,7 @@ Oop Interpreter::materializeFrameStackImpl() {
 
             // Update method, closure, receiver
             ctxStore(3, activeContext_, frame0.savedMethod);
-            ctxStore(4, activeContext_, frame0.savedClosure);
+            ctxStore(4, activeContext_, recClosure(frame0));
             ctxStore(5, activeContext_, frame0.savedReceiver);
 
             // Update temps from inline stack
@@ -22124,7 +22141,7 @@ Oop Interpreter::materializeFrameStackImpl() {
         // (the resume-internal cannotReturn: storm).  Confirms whether the
         // gated tb[-1] recovery covered all block frames or some remain.
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE), 0)
-                && frame.savedClosure.isNil()
+                && recClosure(frame).isNil()
                 && frame.savedMethod.isObject()) {
             // last literal of a CompiledBlock is its outer code; cheap
             // heuristic: numLiterals>=1 and the method is NOT a normal
@@ -22144,7 +22161,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                             : "imm", i);
             }
         }
-        ctxPut(4, frame.savedClosure);                // closureOrNil
+        ctxPut(4, recClosure(frame));                // closureOrNil
         ctxPut(5, frame.savedReceiver);              // receiver
 
         // Copy temps AND expression stack items from the inline stack.
@@ -25130,7 +25147,7 @@ void Interpreter::prepareForGC() {
                         i, frameDepth_, (long long)frameGCSide_[i].savedIPOffset, mSize,
                         classNameOfMethod(frame.savedMethod).c_str(),
                         memory_.selectorOf(frame.savedMethod).c_str(),
-                        frame.savedClosure.isNil() ? "nil" : "BLOCK");
+                        recClosure(frame).isNil() ? "nil" : "BLOCK");
                 }
             }
         } else {
@@ -25451,7 +25468,7 @@ void Interpreter::afterGC(bool fullGC) {
         for (size_t i = 0; i < frameDepth_; i++) {
             auto& f = savedFrames_[i];
             if (isEden(f.savedReceiver)) report("frame.rcvr", (long)i, f.savedReceiver);
-            if (isEden(f.savedClosure)) report("frame.clos", (long)i, f.savedClosure);
+            if (isEden(recClosure(f))) report("frame.clos", (long)i, recClosure(f));
             if (isEden(f.materializedContext)) report("frame.mctx", (long)i, f.materializedContext);
         }
 #if PHARO_JIT_ENABLED
@@ -25506,7 +25523,7 @@ void Interpreter::afterGC(bool fullGC) {
                     (long long)frameGCSide_[i].savedIPOffset,
                     classNameOfMethod(frame.savedMethod).c_str(),
                     memory_.selectorOf(frame.savedMethod).c_str(),
-                    frame.savedClosure.isNil() ? "nil" : "BLOCK");
+                    recClosure(frame).isNil() ? "nil" : "BLOCK");
             }
         }
     }
@@ -30908,7 +30925,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     // frame's receiver — a stale/unsynced closure is rejected and we
     // fall back to nil (the prior behavior, no corruption).  Fallback
     // for the resume-internal site also still tries tb[-1].
-    frame.savedClosure = nil;
+    frame.savedClosureRaw = nil;
     // Only the resume-internal path writes save.closure (knob-gated push);
     // when the knob is off the slot is unused garbage — don't read it.
     // V1 (x86 stencil path) has no save.closure field — tb[-1] only.
@@ -30921,7 +30938,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
             && cand.asObjectPtr()->slotCount() >= 4
             && cand.asObjectPtr()->slotAt(3).rawBits() == save.receiver.rawBits();
         if (ok) {
-            frame.savedClosure = cand;
+            frame.savedClosureRaw = cand;
         } else if (save.tempBase
                    && std::strcmp(siteTag, "resume-internal") == 0) {
             // Fallback: the legacy tb[-1] heuristic (BV-inline frames).
@@ -30930,11 +30947,11 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                     && memory_.isValidPointer(tb)
                     && tb.asObjectPtr()->classIndex()
                            == fullBlockClosureClassIndex_) {
-                frame.savedClosure = tb;
+                frame.savedClosureRaw = tb;
             }
         }
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE), 0)
-                && frame.savedClosure.isNil()) {
+                && recClosure(frame).isNil()) {
             static int bnc = 0;
             if (++bnc <= 20) {
                 bool isFBC = cand.isObject() && cand.rawBits() >= 0x10000
@@ -30956,12 +30973,12 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                     && memory_.isValidPointer(tb)
                     && tb.asObjectPtr()->classIndex()
                            == fullBlockClosureClassIndex_) {
-                frame.savedClosure = tb;
+                frame.savedClosureRaw = tb;
             }
         }
 #endif
     }
-    frame.savedActiveContext = activeContext_;
+    frame.savedActiveContextRaw = activeContext_;
     // DEFECT #23, second path.  pushFrame's rule -- "the frame being saved
     // takes the interpreter's current materialized context, and the current
     // slot is cleared for the new frame" (see ~18142) -- was skipped here, and
@@ -34693,8 +34710,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
                             frame.savedMethod = savedMethod;
                             frame.savedReceiver = savedRecv;
-                            frame.savedClosure = memory_.nil();
-                            frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
+                            frame.savedClosureRaw = memory_.nil();
+                            frame.savedActiveContextRaw = activeContext_;  // 2026-05-09 was nil; A4 fix
                             // The caller's materialized Context goes WITH the
                             // caller's frame, and the callee starts with none,
                             // as in pushFrame().  This stored nil and left the

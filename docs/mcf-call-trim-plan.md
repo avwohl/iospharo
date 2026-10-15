@@ -131,7 +131,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Oracles: Step 0's (c) while the stores still run; then PHARO_MCF_POISON_STATE (plain DEBUG_BOOL: every native call and return writes poison into st.receiver and st.tempBase). Sabotage: drop one sync.
 - First take a census of how many syncs execute on lexicon, to confirm the net gain.
 
-**Step 7: INV-AC, -2 (-> 45).** Knob PHARO_MCF_NO_LAZY_ACTCTX.
+**Step 7: INV-AC, -2 (-> 45). -- DONE (steps 7+8 together: lexicon 251.8 -> 246.1).** Knob PHARO_MCF_NO_LAZY_ACTCTX.
 - Native code stops writing and restoring savedActiveContext. Rename the field so C++ goes through recordActiveCtx(f) = (mcf && knob on) ? activeContext_ : field.
   - Readers to convert: popFrame 17392 and 17555; materializeFrameStack 21768-21802; Primitives.cpp 4001 and 13676; captureCollapsedFrames.
   - The GC visitor skips the field under the knob.
@@ -139,7 +139,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - stopVM asserts in the J2J/T2 nil writers (Interpreter.hpp:2233, 2386) under MCF.
 - Tests: Step 0's (a) stays at 0 with the knob off; sabotage via tryRestore; the DET_SCHED repro set (AIPrimTest, the weak-ref classes); the full sweep.
 
-**Step 8: derived closure, -5 (-> 40).** Knob PHARO_MCF_NO_LAZY_CLOSURE.
+**Step 8: derived closure, -5 (-> 40). -- DONE (steps 7+8 together: lexicon 251.8 -> 246.1).** Knob PHARO_MCF_NO_LAZY_CLOSURE.
 - st.closure is derived in C++: jitMethod->isBlock ? tempBase[-1] : nil, inside mcfDeriveView. Every C++ reader of st->closure goes through it: mcfSyncRegisters, mcfRun 2161, mcfVerify*, about 40 JITRuntime.cpp references.
 - Record closure: recordClosure(f) = (savedMethod is a CompiledBlock) ? savedFP[0] : nil (INV-FP0). Derive from savedMethod, never from mcJM. The GC skips the field, because the stack scan covers fp[0].
 - The push drops the closure load and store, the entry drops its closure store, and the return drops the closure load and store.
