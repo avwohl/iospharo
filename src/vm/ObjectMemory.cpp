@@ -230,9 +230,9 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     // During image load nilObject_ may not be set yet; raw 0 is fine since
     // image loading will overwrite these slots.
     Oop nilValue = (nilObject_.rawBits() != 0) ? nilObject_ : Oop::nil();
-    for (size_t i = 0; i < slotCount; ++i) {
-        slots[i] = nilValue;
-    }
+    // As raw words: a fill of uint64_t vectorizes, one of Oop did not (one
+    // store per slot; a context is 22-62 slots).
+    std::fill_n(reinterpret_cast<uint64_t*>(slots), slotCount, nilValue.rawBits());
     // Zero the min-16 pad word of a 0-slot object so it never carries
     // stale bytes (kept tenure-memcpy'd garbage out of diagnostics).
     if (slotCount == 0) {

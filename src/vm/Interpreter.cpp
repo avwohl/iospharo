@@ -24958,10 +24958,13 @@ void Interpreter::storeContextStackp(Oop context, int stackp, bool tailKnownNil)
             if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, memory_.nil());
         return;
     }
+    // Unconditional: a plain fill vectorizes (two to four slots a store);
+    // the read-and-compare per slot was the top line of exception signaling
+    // (a 56-slot context re-synced per handler search step).
     const uint64_t nilBits = memory_.nil().rawBits();
     uint64_t* slots = reinterpret_cast<uint64_t*>(ctx->slots());
-    for (size_t s = 6 + (size_t)stackp; s < cap; ++s)
-        if (slots[s] != nilBits) slots[s] = nilBits;
+    if (6 + (size_t)stackp < cap)
+        std::fill(slots + 6 + stackp, slots + cap, nilBits);
 }
 
 void Interpreter::prepareForGC() {
