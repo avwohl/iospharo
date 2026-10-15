@@ -322,6 +322,7 @@ static bool mcfPrimCallable(int p) {
     case 85: case 86:                            // signal wait (a switch -> 2)
     case 159:                                    // hashMultiply (every Dictionary at: with an integer key)
     case 195:                                    // findNextUnwindContextUpTo:
+    case 196:                                    // terminateTo: (depth 0 only: mcfCallPrimitive)
     case 210: case 211: case 212:                // Context tempAt: tempAt:put: size
     case 169: case 170: case 171:                // ~~ and immediate conversions
     case 175:                                    // behavior hash
@@ -455,6 +456,12 @@ int Interpreter::mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs) {
             fprintf(stderr, "[MCF-PRIM] total %llu\n", (unsigned long long)total);
         }
     }
+    // terminateTo: rewrites senders and pcs.  With live frames it could
+    // kill the context of a frame machine code then returns into, so only
+    // at depth 0 (resume:through: runs it right after thisContext); else
+    // it reports failure and the slow path sends it again.
+    if (primIndex == 196 && (frameDepth_ > 0 || GET_DEBUG_BOOL(PHARO_MCF_NO_TERMINATE_TO)))
+        return 0;
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);           // unconditionally: see mcfRun
     // The ip after the send (both callers store it): a process switch or a
@@ -1289,6 +1296,9 @@ jit::McfCallEntry* Interpreter::mcfPrimFailBodyEntry(Oop method, Oop rcv) {
     if (!hdr.isSmallInteger()) return nullptr;
     const uint8_t* bc = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
     if (bc[0] != jit::SistaV1::CallPrimitive) return nullptr;
+    // terminateTo: declines with live frames (mcfCallPrimitive): the
+    // interpreter runs the primitive, never the fallback body.
+    if ((bc[1] | (bc[2] << 8)) == 196) return nullptr;
     const uint8_t op = bc[3];   // first bytecode after CallPrimitive
     if (op == jit::SistaV1::ExtStoreTemp || op == jit::SistaV1::ExtPopStoreTemp
             || (op >= jit::SistaV1::PopStoreTempBase && op <= jit::SistaV1::PopStoreTempLast))
