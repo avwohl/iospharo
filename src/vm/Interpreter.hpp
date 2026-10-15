@@ -73,6 +73,7 @@
 #include <atomic>
 #include <chrono>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <csetjmp>
 #include "../platform/win_compat.h"  // sigjmp_buf/backtrace shims on Windows (no-op elsewhere)
 #include <cstdint>
@@ -1610,6 +1611,20 @@ private:
 
     /// Clear the method cache (used when methods are modified or GC runs)
     void flushMethodCache() {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+            static uint64_t nf = 0;
+            if ((++nf & 63) == 0) {
+                void* bt[6];
+                int nb = backtrace(bt, 6);
+                fprintf(stderr, "[FLUSH-CENSUS] method cache flushes=%llu:", (unsigned long long)nf);
+                for (int k = 1; k < nb; k++) {
+                    Dl_info di{};
+                    dladdr(bt[k], &di);
+                    fprintf(stderr, " <- %s", di.dli_sname ? di.dli_sname : "?");
+                }
+                fprintf(stderr, "\n");
+            }
+        }
         extCallCache_.fill(ExtCallCacheEntry{});
         for (auto& entry : methodCache_) {
             entry.selector = Oop::nil();
@@ -2593,6 +2608,19 @@ private:
     // to framePointer_; otherwise slot 2 (nil -> 0) and *frameBase is null.
     int64_t contextStackp(Oop ctx, Oop** frameBase);
 
+    // The two method-cache slots of (selector, class).  Object pointers are
+    // 8-byte aligned: indexing by the raw XOR used 1/8 of the primary slots
+    // and half of the secondary ones, so a scan over many (selector, class)
+    // pairs (SoilCleanCodeTest's refersToLiteral: over every literal kind)
+    // missed into a full lookup at every send.
+    static size_t methodCacheIndex1(uint64_t selBits, uint64_t clsBits) {
+        return static_cast<size_t>((selBits ^ clsBits) >> 3) & (MethodCacheSize - 1);
+    }
+    static size_t methodCacheIndex2(uint64_t selBits, uint64_t clsBits) {
+        const uint64_t h = ((selBits >> 3) ^ (clsBits >> 4)) * 0x9E3779B97F4A7C15ULL;
+        return static_cast<size_t>(h >> 40) & (MethodCacheSize - 1);   // high bits of the product
+    }
+
     /// Check method cache
     /// Two-way set-associative method-cache probe.  Inline: every send.
     MethodCacheEntry* probeCache(Oop selector, Oop classOop) {
@@ -2603,15 +2631,16 @@ private:
         uint64_t clsBits = classOop.rawBits();
         size_t mask = MethodCacheSize - 1;
 
+        (void)mask;
         // Primary probe
-        size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
+        size_t h1 = methodCacheIndex1(selBits, clsBits);
         MethodCacheEntry& e1 = methodCache_[h1];
         if (e1.selector == selector && e1.classOop == classOop) {
             return &e1;
         }
 
         // Secondary probe (rotated hash reduces collision aliasing)
-        size_t h2 = static_cast<size_t>((selBits >> 2) ^ (clsBits << 1) ^ clsBits) & mask;
+        size_t h2 = methodCacheIndex2(selBits, clsBits);
         MethodCacheEntry& e2 = methodCache_[h2];
         if (e2.selector == selector && e2.classOop == classOop) {
             return &e2;

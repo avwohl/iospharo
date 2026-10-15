@@ -9598,6 +9598,10 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
 
 // Primitive 89: Flush the method cache
 PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+        static uint64_t nc = 0;
+        if ((++nc & 15) == 0) fprintf(stderr, "[FLUSH-CENSUS] primitiveFlushCache calls=%llu\n", (unsigned long long)nc);
+    }
     if (GET_DEBUG_BOOL(PHARO_CTCHECK)) {
         memory_.dumpClassTableConsistency("on-flushCache");
     }
@@ -12605,6 +12609,10 @@ PrimitiveResult Interpreter::primitiveContextXray(int argCount) {
 // Primitive 214: Void all internal VM state
 // This clears method caches and any JIT state (we don't have JIT)
 PrimitiveResult Interpreter::primitiveVoidVMState(int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+        static uint64_t nc = 0;
+        if ((++nc & 15) == 0) fprintf(stderr, "[FLUSH-CENSUS] primitiveVoidVMState calls=%llu\n", (unsigned long long)nc);
+    }
     // Clear the method cache
     flushMethodCache();
     flushJITCaches();
@@ -12736,6 +12744,10 @@ PrimitiveResult Interpreter::primitiveDoNamedPrimitiveWithArgs(int argCount) {
 // Primitive 119: Flush method cache entries for a specific method
 // Called when a method is modified or replaced
 PrimitiveResult Interpreter::primitiveFlushCacheByMethod(int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+        static uint64_t nsel = 0;
+        if ((++nsel & 255) == 0) fprintf(stderr, "[FLUSH-CENSUS] primitiveFlushCacheByMethod calls=%llu\n", (unsigned long long)nsel);
+    }
     // Flush all cache entries that reference this method
     Oop method = stackTop();
     for (auto& entry : methodCache_) {
@@ -12755,6 +12767,10 @@ PrimitiveResult Interpreter::primitiveFlushCacheByMethod(int argCount) {
 // Primitive 120: Flush method cache entries for a specific selector
 // Called when any method with this selector might have changed
 PrimitiveResult Interpreter::primitiveFlushCacheBySelector(int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+        static uint64_t nsel = 0;
+        if ((++nsel & 255) == 0) fprintf(stderr, "[FLUSH-CENSUS] primitiveFlushCacheBySelector calls=%llu\n", (unsigned long long)nsel);
+    }
     // Flush all cache entries matching this selector
     Oop selector = stackTop();
     for (auto& entry : methodCache_) {
@@ -15489,6 +15505,10 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
 // receiver elementsForwardIdentityTo: toArray copyHash: bool -> receiver (2 args)
 // Like 197, but optionally copies identity hash from source to target
 PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+        static uint64_t nc = 0;
+        if ((++nc & 15) == 0) fprintf(stderr, "[FLUSH-CENSUS] primitiveArrayBecomeOneWayCopyHash calls=%llu\n", (unsigned long long)nc);
+    }
     if (argCount < 1) {
         return PrimitiveResult::Failure;
     }
@@ -15567,6 +15587,10 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
 // receiver elementsForwardIdentityTo: toArray -> receiver
 // Like primitiveArrayBecomeOneWayCopyHash but never copies identity hash
 PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
+        static uint64_t nc = 0;
+        if ((++nc & 15) == 0) fprintf(stderr, "[FLUSH-CENSUS] primitiveArrayBecomeOneWayNoCopyHash calls=%llu\n", (unsigned long long)nc);
+    }
     if (argCount != 1) {
         return PrimitiveResult::Failure;
     }

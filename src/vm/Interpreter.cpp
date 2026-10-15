@@ -5349,7 +5349,12 @@ void Interpreter::interpret() {
             } else if (!GET_DEBUG_BOOL(PHARO_YG_NO_SCAVENGE) && !skipForBisect) {
                 prepareForGC();
                 memory_.scavenge();
-                afterGC();
+                // A scavenge's tail, as scavenge() runs it when it prepares
+                // itself.  afterGC()'s default is the FULL-GC tail: it flushed
+                // the method cache and every JIT cache after each checkpoint
+                // scavenge, and a scan over ~10K classes refilled the cache
+                // with 30K full lookups each time (SoilCleanCodeTest: 5.7M).
+                afterGC(/* fullGC */ GET_DEBUG_BOOL(PHARO_SCAV_FULL_AFTERGC));
             }
         }
 
@@ -7333,7 +7338,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             memory_.clearScavengeFlag();   // as the interpret() checkpoint does
             prepareForGC();
             memory_.scavenge();
-            afterGC();
+            afterGC(/* fullGC */ GET_DEBUG_BOOL(PHARO_SCAV_FULL_AFTERGC));   // a scavenge's tail
         }
         // And the deferred quit, for the same reason and then some: the quit
         // was deferred BECAUSE a callback is outstanding, and the only loop
@@ -12931,6 +12936,21 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // === FULL LOOKUP ===
     Oop method = lookupMethod(selector, rcvrClass);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LOOKUP_CENSUS), 0)) {
+        static std::unordered_map<std::string, uint64_t> by;
+        static uint64_t n = 0;
+        by[memory_.oopToString(selector) + " " + memory_.classNameOf(rcvrClass)
+           + (method.isNil() ? " DNU" : "")]++;
+        (void)0;
+        if ((++n & 0xFFFF) == 0) {
+            std::vector<std::pair<uint64_t, std::string>> v;
+            for (auto& kv : by) v.push_back({kv.second, kv.first});
+            std::sort(v.rbegin(), v.rend());
+            fprintf(stderr, "[LOOKUP-CENSUS] %llu full lookups, %zu keys\n", (unsigned long long)n, by.size());
+            for (size_t k = 0; k < v.size() && k < 10; k++)
+                fprintf(stderr, "[LOOKUP-CENSUS]   %llu %s\n", (unsigned long long)v[k].first, v[k].second.c_str());
+        }
+    }
 
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
@@ -12969,6 +12989,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LOOKUP_CENSUS), 0)) {
+        static uint64_t stores = 0, lost = 0;
+        stores++;
+        if (!probeCache(selector, rcvrClass)) lost++;
+        if ((stores & 0xFFFF) == 0)
+            fprintf(stderr, "[LOOKUP-CENSUS] cache stores=%llu lost-at-once=%llu\n",
+                    (unsigned long long)stores, (unsigned long long)lost);
+    }
     int primIndex = primitiveIndexOf(method);
 
     if (primIndex > 0) {
@@ -13775,7 +13803,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
             || isNewSpaceBits(method.rawBits()))
         g_mcacheMayHoldYoung = true;   // the next scavenge walks the cache
     // Primary slot: use if empty or same key
-    size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
+    size_t h1 = methodCacheIndex1(selBits, clsBits);
     MethodCacheEntry& e1 = methodCache_[h1];
     if (e1.selector.isNil() || (e1.selector == selector && e1.classOop == classOop)) {
         e1.selector = selector;
@@ -13798,7 +13826,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     }
 
     // Secondary slot: evict
-    size_t h2 = static_cast<size_t>((selBits >> 2) ^ (clsBits << 1) ^ clsBits) & mask;
+    size_t h2 = methodCacheIndex2(selBits, clsBits);
     MethodCacheEntry& e2 = methodCache_[h2];
     e2.selector = selector;
     e2.classOop = classOop;
@@ -13819,8 +13847,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
-    uint64_t h = selector.rawBits() ^ classOop.rawBits();
-    return static_cast<size_t>(h) & (MethodCacheSize - 1);
+    return methodCacheIndex1(selector.rawBits(), classOop.rawBits());
 }
 
 // ===== PROCESS TERMINATION AND RECOVERY =====
