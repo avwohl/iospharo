@@ -5851,7 +5851,19 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
         if (L.savedIP == L.mcReturn + 8) {
             // Stage 3 layout: (mcReturn, savedIP) and (savedMethod, info) pairs.
-            put2(x14, L.mcReturn, x13, L.savedIP);
+            if (jit::g_mcfIpInInfo && !GET_DEBUG_BOOL(PHARO_MCF_IP_VERIFY)
+                    && !GET_DEBUG_BOOL(PHARO_MCF_PAIR_MCRETURN)) {
+                // Stage 4: savedIP only for a recFull-2 site.  A lone str:
+                // the return loads mcReturn alone, and an 8-byte load of a
+                // 16-byte pair store waits for the store (see stage 1).
+                asmjit::Label noIp = a.new_label();
+                a.str(x14, ptr(x8, L.mcReturn));
+                a.tbz(w12, asmjit::Imm(25), noIp);
+                a.str(x13, ptr(x8, L.savedIP));
+                a.bind(noIp);
+            } else {
+                put2(x14, L.mcReturn, x13, L.savedIP);
+            }
             if (mcfShortcuts()) put2(x16, L.savedMethod, x12, L.savedArgCount);
             else a.str(x16, ptr(x8, L.savedMethod));
         } else {
@@ -14102,6 +14114,36 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (extRecvStore) a.bind(bcLabels[globalIdx + 1]);
                 return used;
             }
+            // Body plan step 5: a binary operation whose operands are (partly)
+            // on the memory stack pops them into pool registers first (one
+            // pre-indexed ldr/ldp), so a send's result feeds + or < without a
+            // store-and-reload.  The slow paths store them back.
+            auto simFillOperands = [&](size_t need) -> bool {
+                if (S.items.size() >= need) return true;
+                if (GET_DEBUG_BOOL(PHARO_T1_NO_SIM_MEM_OPERANDS)) return false;
+                const size_t miss = need - S.items.size();
+                if (miss == 1) {
+                    const int r = S.allocReg();
+                    if (r < 0) return false;
+                    a.ldr(asmjit::a64::x(r), ptr_pre(x25, -8));
+                    S.items.insert(S.items.begin(), SimItem{SimK::Reg, 0, r});
+                    return true;
+                }
+                if (miss == 2) {
+                    const int r1 = S.allocReg();
+                    const int r2 = S.allocReg();
+                    if (r1 < 0 || r2 < 0) {
+                        if (r1 >= 0) S.freeReg(r1);
+                        if (r2 >= 0) S.freeReg(r2);
+                        return false;
+                    }
+                    a.ldp(asmjit::a64::x(r1), asmjit::a64::x(r2), ptr_pre(x25, -16));
+                    S.items.insert(S.items.begin(), SimItem{SimK::Reg, 0, r2});
+                    S.items.insert(S.items.begin(), SimItem{SimK::Reg, 0, r1});
+                    return true;
+                }
+                return false;
+            };
             // ReturnTop with the result pending: it goes to x1 directly.  The
             // native return reads only x1, and the fall-through exit needs
             // no pop (the value never reached the stack).
@@ -14133,7 +14175,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if ((op == SistaV1::ArithMultiply || op == SistaV1::ArithBitAnd
                     || op == SistaV1::ArithBitOr || op == SistaV1::ArithFloorDiv
                     || op == SistaV1::ArithModulo)
-                    && S.items.size() >= 2 && !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_WIDE_ARITH)) {
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_WIDE_ARITH) && simFillOperands(2)) {
                 simFlushBelow(a, 2);
                 SimItem A = S.items[0], B = S.items[1];
                 asmjit::a64::Gp rA = simSrc(a, A, x1);
@@ -14213,7 +14255,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 S.items.push_back(SimItem{SimK::Reg, 0, r});
                 return 1;
             }
-            if (op >= 0x60 && op <= 0x67 && S.items.size() >= 2) {
+            if (op >= 0x60 && op <= 0x67 && simFillOperands(2)) {
                 simFlushBelow(a, 2);
                 SimItem A = S.items[0], B = S.items[1];
                 asmjit::a64::Gp rA = simSrc(a, A, x1);

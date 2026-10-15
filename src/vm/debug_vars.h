@@ -252,6 +252,7 @@ DEBUG_BOOL_RT(PHARO_NO_NLR_SEGMENT)               // NLR through ensure: materia
 DEBUG_BOOL_RT(PHARO_MCF_NO_LEAF_PRIM)             // machine code calls every primitive through the register sync and executePrimitive (no leaf-primitive fast path)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_WIDE_ARITH)         // T1 simStack: SmallInteger * bitAnd: bitOr: go through the memory operand stack
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_RETURN)             // T1 simStack: a pending result is stored to the stack and reloaded for ReturnTop
+DEBUG_BOOL_RT(PHARO_T1_NO_SIM_MEM_OPERANDS)       // T1 simStack: binary operations need both operands pending (no pop of memory operands into registers; body plan step 5)
 DEBUG_BOOL_RT(PHARO_T1_NO_DIRECT_YIELD)           // T1 back jumps load forceYield_ through an absolute address (three more instructions)
 DEBUG_BOOL_RT(PHARO_MCF_PAIRED_DEPTH)              // opt-in: native call/return move frameDepth_ and currentFrameMaterializedCtx_ as one ldp/stp pair (4 fewer instructions, but 40% slower on benchFib: a store-forwarding stall; docs/mcf-record-trim-plan.md stage 1)
 DEBUG_BOOL(PHARO_MCF_PAIR_SABOTAGE)                // stage-1 oracle proof: the native push leaves the caller's context current (PHARO_MATCTX_OWNER_CHECK must fire)
@@ -262,6 +263,7 @@ DEBUG_BOOL(PHARO_MCF_TB_SABOTAGE)                  // stage-3 oracle proof: nati
 DEBUG_BOOL_RT(PHARO_MCF_NO_IP_IN_INFO)            // native call sites compute savedIP (ldr+add) and pass argCount in w12 (docs/mcf-record-trim-plan.md stage 4)
 DEBUG_BOOL(PHARO_MCF_IP_VERIFY)                    // stage-4 oracle: sites also pass the real ip in x13; mcfVerifyPush checks ip() against it
 DEBUG_BOOL(PHARO_MCF_IP_SABOTAGE)                  // stage-4 oracle proof: sites pass ipOff + 1
+DEBUG_BOOL_RT(PHARO_MCF_PAIR_MCRETURN)            // native push stores (mcReturn, savedIP) as one stp even when savedIP is unused (stage 4)
 DEBUG_BOOL_RT(PHARO_NO_PIN_TENURE)                // pinning a young object only sets the bit (a later scavenge still moves it)
 DEBUG_BOOL(PHARO_NLR_SEG_EAGER)                   // frozen NLR segment: deopt right after the freeze (tests the stash and deopt, no laziness)
 DEBUG_BOOL(PHARO_NLR_SEG_CENSUS)                  // frozen NLR segment: count freezes, pops and deopts

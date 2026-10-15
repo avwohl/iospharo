@@ -400,6 +400,41 @@ The history lives in `docs/history/`; nothing was deleted.
   stays 0, so the inline gate never takes its fast path.  Diagnostic mode
   only; makes no-JIT instruction counts read ~5% high.
 
+## Native returns are not predicted (measured 2026-10-16)
+
+A native call is a `b` (or `br x16` to a stub) with the continuation in
+x14, and the return is `br x9` with the record's memo.  Neither touches the
+return-address stack, so the CPU predicts each return with its indirect
+branch predictor.  A method whose callers sit at different sites (benchFib
+calls itself from two sites) returns to a target that changes from call to
+call.
+
+Evidence.  Fibonacci with two recursive call sites (`fibA:`) runs about 105
+instructions per call in 4.0 ns.  The same recursion with one call site in a
+loop (`fibB:`) runs about 144 instructions per call in 4.3 ns: about 25% more
+work per nanosecond.  Cog (bl/ret) does `fibA: 30` three times in 20 ms;
+we take 32 ms.  A single-site recursion is faster here than on Cog.
+
+The fix is call with `bl`/`blr` and return with `ret x9`, which needs x30
+free inside machine code.  Today every exit returns to the trampoline with
+`ret x30`, so the exits must take the trampoline's return address from
+another place.  Touch points:
+- The trampolines `pharo_jit_osr_resume` and `pharo_jit_j2j_trampoline`
+  (TrampolineAsm.S) and the `JIT_CALL` macro (JITState.hpp, 12 call sites;
+  its operands may sit in x28, so x28 cannot simply hold the address).
+- About 40 exit sites (`a.ret(x30)` in emitOne_arm64, emitMethodBytes,
+  simGenericExit, emitMcfHelperSend, the shared return prelude and the NLR
+  stub).  The internal stubs that return to their call site (primitive,
+  tiny-shape and block-create stubs) keep `ret x30`.
+- The linked send site's W2 word becomes `bl` (JITRuntime.cpp
+  linkSendSiteMcf writes `encodeB`; the decoders test `isB`), and the
+  memo must be the address after the call instruction.
+- Nested C -> JIT -> C -> JIT entries must save and restore whatever holds
+  the trampoline return.
+
+Expected gain: up to about 1 ns per call where returns mispredict; lexicon
+makes about 1e9 calls in about 13 s.
+
 ## The primitive surface is much larger than the primitive table
 
 Audited 2026-09-02, recorded so nobody re-derives it and reads it as breakage:
