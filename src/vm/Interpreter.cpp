@@ -10967,7 +10967,7 @@ bool Interpreter::tryRestoreCollapsedFrames() {
 
 
 bool Interpreter::nlrSegmentFreeze(size_t h, Oop value) {
-    if (!GET_DEBUG_BOOL(PHARO_NLR_SEGMENT)) return false;
+    if (GET_DEBUG_BOOL(PHARO_NO_NLR_SEGMENT)) return false;
     const size_t d = frameDepth_;
     // h >= 2: with b = 0 nothing is frozen, and frame 0 may be backed by
     // activeContext_ itself, which the window materialize would duplicate.

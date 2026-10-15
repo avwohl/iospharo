@@ -22,7 +22,7 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
   the `b Lprobe` W0 for unlinked MCF sites, and raw stores in
   materializeFrameStack.
 - Working tree: the frozen segment of docs/native-nlr-plan.md design 3,
-  in a copy-stash form, behind `PHARO_NLR_SEGMENT` (off by default).  A
+  in a copy-stash form, on by default (`PHARO_NO_NLR_SEGMENT` turns it off).  A
   non-local return through `ensure:` materializes only the frames from
   the home's sender b up.  The records and stack words of frames 0..b-1
   go to `seg_`, and ctx(b)'s sender holds a SmallInteger marker.  When
