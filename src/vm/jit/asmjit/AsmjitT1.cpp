@@ -8944,8 +8944,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // whose contract (x0 x1 x2 x4 x25) the head leaves intact.
                 asmjit::Label keyMovz = a.new_label(), w2L = a.new_label();
                 a.bind(keyMovz);
-                a.movz(w6, 0);                              // W0: key lo16
-                a.movk(w6, kImpossibleKeyHi16, 16);         // W1: key hi16 (commit/unlink word)
+                // W0: `b Lprobe` while unlinked (an unlinked send ran a
+                // dead 4-instruction compare), `movz w6, key lo16` once
+                // linked; linkSendSiteMcf writes it last (the commit).
+                if (GET_DEBUG_BOOL(PHARO_MCF_NO_W0_BRANCH)) a.movz(w6, 0);
+                else a.b(Lprobe);
+                a.movk(w6, kImpossibleKeyHi16, 16);         // W1: key hi16 (impossible until linked)
                 a.cmp(w4, w6);
                 a.b_ne(Lprobe);
                 a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));

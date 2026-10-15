@@ -3656,29 +3656,40 @@ bool JITRuntime::linkSendSiteMcf(JITMethod* jm, uint32_t siteIdx, SendSitePatch&
         patchStats_.refusedReach++;
         return false;
     }
-    uint32_t w0 = 0, w1 = 0, w2 = 0;
+    uint32_t w0 = 0, w1 = 0, w2 = 0, wbne = 0;
     std::memcpy(&w0, code + rec.keyMovzOffset, 4);
     std::memcpy(&w1, code + rec.keyMovzOffset + 4, 4);
+    std::memcpy(&wbne, code + rec.keyMovzOffset + 12, 4);
     std::memcpy(&w2, code + rec.tailBranchOffset, 4);
-    if (!isMovzW6(w0) || !isMovkW6Hi(w1) || !isB(w2)) {
+    // W0 is `b Lprobe` while unlinked (or the older movz form).
+    const bool w0Branch = isB(w0);
+    if (!(isMovzW6(w0) || w0Branch) || !isMovkW6Hi(w1) || !isB(w2) || !isBCond(wbne)) {
         fprintf(stderr, "[PMS] FATAL: MCF patch-site opcode mismatch jm=%p site=%u "
                 "w0=%08X w1=%08X w2=%08X\n", (void*)jm, siteIdx, w0, w1, w2);
         std::abort();
     }
-    if (wasLinked && decodeMovImm16(w0) == (uint16_t)(key & 0xFFFF)
+    if (wasLinked && !w0Branch && decodeMovImm16(w0) == (uint16_t)(key & 0xFFFF)
             && decodeMovImm16(w1) == (uint16_t)(key >> 16) && decodeBDelta(w2) == w2Delta)
         return true;
     {
-        // Order contract: W1 (the key-hi word) is the last word that can
-        // make the link reachable; a relink kills it first.
+        // Order contract: W0 (the key-lo word) is written last and makes the
+        // link reachable; while it is `b Lprobe`, or W1 holds the impossible
+        // key, nothing after it runs.  A relink kills both first.
         ScopedPatchWriteAccess w(code + rec.keyMovzOffset, 0);
         auto put = [&](uint32_t off, uint32_t insn) { std::memcpy(code + off, &insn, 4); };
-        if (wasLinked) put(rec.keyMovzOffset + 4, encodeMovkW6Hi(kImpossibleKeyHi16));
+        const int64_t probeDelta = 12 + decodeBCondDelta(wbne);   // W0 -> Lprobe
+        if (wasLinked) {
+            if (w0Branch || !GET_DEBUG_BOOL(PHARO_MCF_NO_W0_BRANCH))
+                put(rec.keyMovzOffset, encodeB(probeDelta));
+            put(rec.keyMovzOffset + 4, encodeMovkW6Hi(kImpossibleKeyHi16));
+            flushICache(code + rec.keyMovzOffset, 8);
+        }
         put(rec.tailBranchOffset, encodeB(w2Delta));
-        put(rec.keyMovzOffset, encodeMovzW6((uint16_t)(key & 0xFFFF)));
-        put(rec.keyMovzOffset + 4, encodeMovkW6Hi((uint16_t)(key >> 16)));   // COMMIT
-        flushICache(code + rec.keyMovzOffset, 8);
+        put(rec.keyMovzOffset + 4, encodeMovkW6Hi((uint16_t)(key >> 16)));
         flushICache(code + rec.tailBranchOffset, 4);
+        flushICache(code + rec.keyMovzOffset + 4, 4);
+        put(rec.keyMovzOffset, encodeMovzW6((uint16_t)(key & 0xFFFF)));      // COMMIT
+        flushICache(code + rec.keyMovzOffset, 4);
         if (!wasLinked) rec.flags |= 1u;   // the map is in MAP_JIT: in-window
     }
     if (!wasLinked) {
@@ -3821,7 +3832,17 @@ void JITRuntime::unlinkSendSite(JITMethod* jm, uint32_t siteIdx) {
     if (!(rec.flags & 1)) return;   // not linked
     uint8_t* code = jm->codeStart();
     {
-        ScopedPatchWriteAccess w(code + rec.keyMovzOffset + 4, 4);
+        ScopedPatchWriteAccess w(code + rec.keyMovzOffset, 8);
+        if ((rec.flags & 2) && !GET_DEBUG_BOOL(PHARO_MCF_NO_W0_BRANCH)) {
+            // MCF shape: W0 back to `b Lprobe` (the b.ne at W0 + 12 names it).
+            uint32_t wbne = 0;
+            std::memcpy(&wbne, code + rec.keyMovzOffset + 12, 4);
+            if (isBCond(wbne)) {
+                uint32_t b0 = encodeB(12 + decodeBCondDelta(wbne));
+                std::memcpy(code + rec.keyMovzOffset, &b0, 4);
+                flushICache(code + rec.keyMovzOffset, 4);
+            }
+        }
         uint32_t insn = encodeMovkW6Hi(kImpossibleKeyHi16);
         std::memcpy(code + rec.keyMovzOffset + 4, &insn, 4);
         flushICache(code + rec.keyMovzOffset + 4, 4);

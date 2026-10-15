@@ -83,6 +83,13 @@ inline bool isMovkX10Mid(uint32_t insn){ return (insn & 0xFFE0001Fu) == 0xF2A000
 inline bool isMovkX10Hi(uint32_t insn) { return (insn & 0xFFE0001Fu) == 0xF2C0000Au; }
 inline bool isB(uint32_t insn)         { return (insn & 0xFC000000u) == 0x14000000u; }
 
+// b.<cond> (imm19): the MCF site's `b.ne Lprobe` at W0 + 12.
+inline bool isBCond(uint32_t insn)     { return (insn & 0xFF000010u) == 0x54000000u; }
+inline int64_t decodeBCondDelta(uint32_t insn) {
+    int32_t imm19 = int32_t((insn >> 5) << 13) >> 13;   // sign-extend 19 bits
+    return int64_t(imm19) << 2;
+}
+
 inline uint16_t decodeMovImm16(uint32_t insn) {
     return uint16_t((insn >> 5) & 0xFFFF);
 }
