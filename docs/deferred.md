@@ -435,6 +435,15 @@ another place.  Touch points:
 Expected gain: up to about 1 ns per call where returns mispredict; lexicon
 makes about 1e9 calls in about 13 s.
 
+**Tried 2026-10-16: no gain.**  A full prototype (exits through a
+trampoline-return field in JITState set by every entry, calls with bl/blr,
+returns with `ret x9`; single-step traces confirmed bl/ret pairs) left
+benchFib, fibA and fibB at the same wall time.  The return predictor was not
+the bottleneck; reverted.  The next suspect is the per-call dependency chains
+through memory: the checkpoint countdown (load, subtract, store on every
+call), frameDepth_ and currentFrameMaterializedCtx_ (load and store on push
+and on return).  Each call waits for the previous call's store.
+
 ## The primitive surface is much larger than the primitive table
 
 Audited 2026-09-02, recorded so nobody re-derives it and reads it as breakage:
