@@ -40,10 +40,22 @@ Pushed `443b5b44` (L28: 27802 / 8 / 3) and `59d6af46` (L29: 27803 / 6 /
   SSWReStoreSpeedTest (time assertions; needs lazy forwarding, see
   docs/deferred.md).  The full-zone churn is gone too: c32bb05e made the
   code zone 192 MB by default.
-- Pushed `57646eb6` (L30: 27800 / 7 / 3; its new entries pass alone, the
-  Calypso async-cursor one also fails on the L29 binary).  Sweep L31 on
-  `0edaa3db` (prefixed conditional jumps, exact at:/at:put:/size IC
-  dispatch, 192 MB zone).
+- Pushed `57646eb6` (L30: 27800 / 7 / 3) and `0edaa3db` (L31: 27802 / 6
+  / 4; its new entries, a TaskIt timeout and TestTookTooMuchTime, pass
+  alone): prefixed conditional jumps, exact at:/at:put:/size IC dispatch,
+  192 MB zone.
+- 7c70461a: the checkpoint's scavenge took afterGC()'s default, the
+  full-GC tail, and flushed the method cache and every JIT cache after
+  each scavenge.  Fixed; SoilCleanCodeTest>>testNoUnsentMessages 14.8 ->
+  14.0 s (Cog 8.2), lexicon exits 9.6M -> 7.8M.  Sweep L32 on it.
+- Packages (P4, current binary): myprecious 109/0/0 (Cog 108/1/0),
+  famixreplication and methodproxies equal to Cog, soil equal except
+  testNoUnsentMessages, which times out at the runner's 50 s on ours (it
+  fails on both; 2x slower here).
+- Send overhead measured: lexicon makes ~986M native calls, none to leaf
+  methods (those are answered inline); at ~116 instructions of send +
+  return overhead each that is ~38% of lexicon.  This is the main gap to
+  Cog; cutting it needs a leaner frame record (docs/deferred.md).
 
 ## Earlier (2026-10-15) -- exits per call; pushed `253d78f3`, sweep L26 on `35ad5971`
 
