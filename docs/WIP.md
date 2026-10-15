@@ -15,7 +15,32 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, 10:00) -- lazy become is the default; sweep L40 on `10b62450`
+## Right now (2026-10-15, 12:30) -- native NLR in machine code; sweep L44 on `38fec5b5`
+
+Pushed through `7d93e207` (sweeps L40, L42, L43 clean apart from load
+flakes: a FreeTypeFont WeakSet race between the test and the fake-GUI
+World cycle, an env-watchdog timeout under benchmark load).
+
+- `c60c15c1`: JIT_CALL took the entry operand in x27 on five cold
+  release call sites after the step-7 change (memory
+  asm-operands-land-in-unclobbered-regs).
+- `3b1d9df7`: PHARO_JIT_FAIL_REASONS no longer crashes the diag build.
+- `19a730c0`: popFrame cleared the return memo before its readers ran;
+  every return through C++ looked the caller's code up.  -0.5%.
+- `38fec5b5`: non-local return in machine code (docs/native-nlr-plan.md
+  steps 2-5): 2.93M native NLRs per lexicon run; the frames a collapsed
+  NLR restores continue natively.  Lexicon now about 270.3 billion
+  instructions (session start 411).
+- Measured: `Symbol intern:` costs 18.9K instructions, `findInterned:`
+  2.1K.  The NLR through `critical:` (1.72M per lexicon run) is about 10%
+  of lexicon.  Ours 0.77 us per intern:, Cog 0.42 us.  Design 3 in
+  docs/native-nlr-plan.md (frozen segment) saves about 3.5K of the
+  16.8K; the rest is the image protocol running on contexts.
+- Per call, a native frame push is about 41 instructions and the
+  return about 26 (Cog: about 20 for both).  A design panel on cutting
+  that is running.
+
+## Earlier (2026-10-15, 10:00) -- lazy become is the default; sweep L40 on `10b62450`
 
 - Sweep L39 (`cdc18e1a`, lazy become on): 27805 / 8 / 1, no new entry.
   Pushed.  `10b62450` makes lazy become the default (opt-out
