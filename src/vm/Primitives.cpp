@@ -24307,6 +24307,36 @@ PrimitiveResult Interpreter::primitiveFindSubstring(int argCount) {
     // Smalltalk uses 1-based indexing
     if (startIndex < 1) startIndex = 1;
 
+    // Byte strings (the common case): scan the raw bytes.  The fetchByte
+    // loop below cost a call per byte compared (0.6% of lexicon).
+    if (stringOop.asObjectPtr()->isBytesObject() && keyOop.asObjectPtr()->isBytesObject()
+            && (!useMatchTable || matchTableOop.asObjectPtr()->isBytesObject())) {
+        const uint8_t* str = stringOop.asObjectPtr()->bytes();
+        const uint8_t* key = keyOop.asObjectPtr()->bytes();
+        const uint8_t* tab = useMatchTable ? matchTableOop.asObjectPtr()->bytes() : nullptr;
+        intptr_t found = 0;
+        if (static_cast<size_t>(startIndex - 1) + keySize <= stringSize) {
+            const size_t last = stringSize - keySize;
+            if (!tab) {
+                const void* hit = memmem(str + startIndex - 1, stringSize - (startIndex - 1),
+                                         key, keySize);
+                if (hit) found = static_cast<const uint8_t*>(hit) - str + 1;
+            } else {
+                const uint8_t k0 = tab[key[0]];
+                for (size_t i = static_cast<size_t>(startIndex - 1); i <= last; i++) {
+                    if (tab[str[i]] != k0) continue;
+                    size_t j = 1;
+                    while (j < keySize && tab[str[i + j]] == tab[key[j]]) j++;
+                    if (j == keySize) { found = static_cast<intptr_t>(i + 1); break; }
+                }
+            }
+        }
+        popN(4);
+        pop();
+        push(Oop::fromSmallInteger(found));
+        return PrimitiveResult::Success;
+    }
+
     // Simple substring search
     for (size_t i = static_cast<size_t>(startIndex - 1); i + keySize <= stringSize; i++) {
         bool match = true;
