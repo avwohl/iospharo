@@ -15,7 +15,23 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, 15:30) -- trimming the native call; sweep L46 on `c46fb074`
+## Right now (2026-10-15, 17:00) -- call trim done to step 8; sweep L47 on `118ab9ef`
+
+- Trim steps 7-8 (`118ab9ef`): closure and active context derived, not
+  saved.  A native call+return is now about 39 instructions (push 23,
+  return 16; was 67).  Lexicon 268.1 -> 246.1 billion over steps 1-8.
+  Wall under load: ours 13.8-14.1 s, Cog 11.6-12.0 s (about 1.18x).
+- Sweeps L45/L46 lost batch 1901's last 18 classes: an FFI callback that
+  never returns (TFFI's released-session test, on purpose) was abandoned
+  after 1e9 steps, which reinstated the callout process mid-run and lost
+  the SUnit runner.  Cog has no such timeout; neither do we now
+  (PHARO_CALLBACK_TIMEOUT_STEPS to restore one).  L46 otherwise clean.
+- Step 9 (countdown in w23) deferred: 25 C++ writers of checkCountdown_.
+- Running: a design panel on T1 method-body codegen (68% of lexicon time
+  is in method bodies: operand-stack traffic around sends and inline
+  primitives).
+
+## Earlier (2026-10-15, 15:30) -- trimming the native call; sweep L46 on `c46fb074`
 
 - Pushed through `bc9979ca` (L44 clean; L45 clean but batch 1901 stopped
   mid TKTServiceTest and 18 classes were not run; all 77 of their tests

@@ -147,7 +147,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Refuse the combination with PHARO_T1_INLINE_BLOCK_VALUE and NO_PINNED_REGS at mcfInit.
 - Tests: Step 0's (b) INV-FP0 oracle; a poison fill of the record's closure field in debug builds; ContextTest, BlockClosureTest, exception and debugger classes with setup_fake_gui; the full sweep.
 
-**Step 9 (optional, -2 -> 38): checkpoint countdown in w23.** Knob PHARO_MCF_NO_CTDN_REG. Under MCF, x23 is clobbered by JIT_CALL and unused.
+**Step 9 (optional, -2 -> 38): checkpoint countdown in w23. -- DEFERRED (25 C++ writers of checkCountdown_; a stale register copy is a scheduling hazard).** Knob PHARO_MCF_NO_CTDN_REG. Under MCF, x23 is clobbered by JIT_CALL and unused.
 - Machine code holds the countdown in w23. w23 is stored back at every sync point and reloaded after a helper and after mcfRun's `checkCountdown_ -= 1`.
 - The back-edge countdown (14176) uses w23 too.
 - Test: DET_SCHED determinism, meaning an identical AIPrimTest failure point and identical COUNT_CALLS counts with the knob on and off.
