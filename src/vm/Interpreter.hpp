@@ -1063,7 +1063,11 @@ private:
     Oop closure_;        // Current FullBlockClosure if executing a block, nil for methods
     // Set when lazyOuterContext() made a context stub whose sender, temps
     // and stack are not filled in; cleared by a complete materializeFrameStack.
-    bool lazyCtxPending_ = false;
+    // Bit 0: lazy context stubs may be incomplete (sync them before image
+    // code reads a Context).  Value 2: only a frozen NLR segment is armed
+    // (seg_; the mediation hooks must still run).  Machine code tests the
+    // whole byte.
+    uint8_t lazyCtxPending_ = 0;
     // The frames below a non-local return's home, kept when
     // nlrDelegateToImageProtocol collapses the frame stack into contexts
     // for the image's unwind protocol.  When the protocol returns into the
@@ -1081,6 +1085,50 @@ private:
         Oop baseSender;
     } collapsed_;
     void captureCollapsedFrames(size_t homeFrame, Oop homeCtx);
+    // Frozen segment (docs/native-nlr-plan.md, design 3, copy-stash form):
+    // a non-local return through ensure: materializes only the frames from
+    // the home's sender b up; the records and stack of frames 0..b-1 are
+    // stashed here while the image's unwind protocol runs at depth 0, and
+    // ctx(b)'s sender (and the sender of any context of a frozen frame)
+    // holds a SmallInteger marker.  When the protocol returns into ctx(b)
+    // untouched, nlrSegmentPop puts the frames back; any access past the
+    // boundary first runs nlrSegmentDeopt, which makes the frozen frames
+    // contexts (today's state).
+    struct NlrSegment {
+        bool armed = false;
+        size_t h = 0;                    // the home's record index; b = h - 1
+        std::vector<SavedFrame> recs;    // records 0..h
+        std::vector<ptrdiff_t> ipOff;    // savedIP - method bytes, per record
+        std::vector<Oop> stack;          // words [base, end)
+        Oop* base = nullptr;
+        Oop* end = nullptr;              // the home's fp
+        Oop boundaryCtx = Oop::fromRawBits(0);
+        Oop baseActiveCtx = Oop::fromRawBits(0);
+        Oop process = Oop::fromRawBits(0);
+        std::vector<Oop> marked;         // contexts of frozen frames whose sender is the marker
+        std::vector<Oop> markedSender;   // their senders before the marking
+        // While nlrSegmentDeopt materializes the frozen frames (it allocates,
+        // so a GC can run), the protocol's records, stack and registers wait
+        // here: GC roots, with IPs held as offsets.
+        bool deopting = false;
+        bool freezing = false;           // the window materialize allocates: stash already a root
+        std::vector<SavedFrame> protoRecs;
+        std::vector<ptrdiff_t> protoIpOff;
+        std::vector<Oop> protoStack;
+        Oop protoRegs[6];
+    } seg_;
+    static Oop segMarker() { return Oop::fromSmallInteger(-0x5E6D0A); }
+    bool segTagged(Oop c) const {
+        return isContextObject(c) && c.asObjectPtr()->slotCount() > 0
+            && c.asObjectPtr()->slotAt(0).rawBits() == segMarker().rawBits();
+    }
+    bool nlrSegmentFreeze(size_t homeFrame, Oop value);
+    bool nlrSegmentPop();
+    void nlrSegmentDeopt();
+    // Would a sender walk from `from` cross the frozen boundary before
+    // reaching `stop` (or nil)?  Deopt the segment if so.
+    void segGuardWalk(Oop from, Oop stop);
+    void segUnmark();
     Oop collapsedActiveCtx_ = Oop::fromRawBits(0);   // activeContext_ before the NLR collapse (raw: used at once)
     bool tryRestoreCollapsedFrames();
     // mcfSetBlockHome's memo (raw oops: cleared by afterGC).
@@ -4128,7 +4176,7 @@ private:
     /// Bring every live frame's context up to date before image code reads
     /// a Context, if lazyOuterContext left any stub unsynced.
     void syncLazyContexts() {
-        if (__builtin_expect(lazyCtxPending_, 0)) materializeFrameStack();
+        if (__builtin_expect(lazyCtxPending_ & 1, 0)) materializeFrameStack();
     }
     bool isContextObject(Oop o) const {
         return o.isObject() && !o.isNil() && contextClassIndex_ != 0 &&
@@ -4160,11 +4208,17 @@ private:
         return lazyPrimNeedsSyncSlow(p, argc);
     }
     [[gnu::noinline]] bool lazyPrimNeedsSyncSlow(int p, int argc) {
+        if (seg_.armed) lazyPrimSegment(p, argc);
+        if (!(lazyCtxPending_ & 1)) return false;
         if (p == 72 || p == 128 || p == 248 || p == 249) return true;  // become
         for (int i = 0; i <= argc; i++)
             if (isContextObject(stackValue(i))) return true;
         return false;
     }
+    // A Context primitive while a frozen segment is armed: deopt unless it
+    // stays above the boundary (195/196 walks that stop before it; reads of
+    // ctx(b)'s temps or size).
+    void lazyPrimSegment(int p, int argc);
     // A non-local return discards the current frame: mark its context dead
     // (sender and pc nil), as a normal return does.
     void widowUnwoundContext() {
@@ -4173,8 +4227,10 @@ private:
             widowReturningContext();
     }
     void syncLazyContextsIfContext(Oop o) {
-        if (__builtin_expect(lazyCtxPending_, 0) && isContextObject(o))
-            materializeFrameStack();
+        if (__builtin_expect(lazyCtxPending_, 0) && isContextObject(o)) {
+            if (seg_.armed && segTagged(o)) nlrSegmentDeopt();
+            if (lazyCtxPending_ & 1) materializeFrameStack();
+        }
     }
 
     /// Context switch to a different process
@@ -4440,6 +4496,36 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
             visitor(frame.savedActiveContextRaw);
         }
         visitor(frame.materializedContext);
+    }
+    // A frozen NLR segment: its records (raw fields fixed at the freeze)
+    // and the stack words of the frozen frames.
+    if (seg_.armed || seg_.deopting || seg_.freezing) {
+        rootTag_ = "nlr-segment";
+        for (SavedFrame& frame : seg_.recs) {
+            visitor(frame.savedMethod);
+            visitor(frame.savedReceiver);
+            visitor(frame.savedClosureRaw);
+            visitor(frame.savedActiveContextRaw);
+            visitor(frame.materializedContext);
+        }
+        for (Oop& w : seg_.stack) visitor(w);
+        for (Oop& c : seg_.marked) visitor(c);
+        for (Oop& c : seg_.markedSender) visitor(c);
+        visitor(seg_.boundaryCtx);
+        visitor(seg_.baseActiveCtx);
+        visitor(seg_.process);
+    }
+    if (seg_.deopting) {
+        rootTag_ = "nlr-segment-deopt";
+        for (SavedFrame& frame : seg_.protoRecs) {
+            visitor(frame.savedMethod);
+            visitor(frame.savedReceiver);
+            visitor(frame.savedClosureRaw);
+            visitor(frame.savedActiveContextRaw);
+            visitor(frame.materializedContext);
+        }
+        for (Oop& w : seg_.protoStack) visitor(w);
+        for (Oop& w : seg_.protoRegs) visitor(w);
     }
 
     const bool rootTimed = GET_DEBUG_BOOL(PHARO_SCAV_STATS);

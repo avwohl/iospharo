@@ -15,7 +15,32 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, 17:00) -- call trim done to step 8; sweep L47 on `118ab9ef`
+## Right now (2026-10-15, 21:00) -- frozen NLR segment (opt-in); L48 clean, pushed `804f11d1`
+
+- Sweep L48 on `804f11d1` clean (2042 classes, 27805 pass, nothing new);
+  origin/jit is at `804f11d1`.  It covers T1 body plan steps 2-3 part 1,
+  the `b Lprobe` W0 for unlinked MCF sites, and raw stores in
+  materializeFrameStack.
+- Working tree: the frozen segment of docs/native-nlr-plan.md design 3,
+  in a copy-stash form, behind `PHARO_NLR_SEGMENT` (off by default).  A
+  non-local return through `ensure:` materializes only the frames from
+  the home's sender b up.  The records and stack words of frames 0..b-1
+  go to `seg_`, and ctx(b)'s sender holds a SmallInteger marker.  When
+  the image's unwind protocol returns into ctx(b), `nlrSegmentPop` puts
+  the frames back.  Any access past the boundary (sender reads, Context
+  primitives 195-197, become, a process switch, executeFromContext of a
+  marked context, a context-chain home search) first runs
+  `nlrSegmentDeopt`, which makes the frozen frames contexts.  Knobs:
+  `PHARO_NLR_SEG_EAGER` (deopt at once), `_CENSUS`, `_VERIFY`.
+- Bugs found on the way: frame 0 can be backed by activeContext_ itself
+  (so b must be at least 1), marked contexts need their old senders kept,
+  the deopt needs its saved state as GC roots, and the stash roots had
+  landed in the wrong if-block (memory
+  new-gc-root-needs-an-after-gc-oracle).
+- In `Symbol intern:` loops a freeze keeps 8-23 frames frozen with a
+  5-frame window.
+
+## Earlier (2026-10-15, 17:00) -- call trim done to step 8; sweep L47 on `118ab9ef`
 
 - Trim steps 7-8 (`118ab9ef`): closure and active context derived, not
   saved.  A native call+return is now about 39 instructions (push 23,

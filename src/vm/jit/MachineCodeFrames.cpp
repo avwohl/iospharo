@@ -1274,7 +1274,20 @@ void Interpreter::mcfCtxSync(jit::JITState* st) {
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);
     instructionPointer_ = st->ip;
-    materializeFrameStack();
+    if (seg_.armed && segTagged(receiver_)) {
+        // A frozen segment's boundary may be read below its sender (pc,
+        // stackp, the rest are synced); its sender, a store, or any field of
+        // a frozen frame's context needs the frames.
+        const uint8_t* ip = st->ip;
+        int ext = 0;
+        while (ip && *ip == jit::SistaV1::ExtendA) { ext = (ext << 8) | ip[1]; ip += 2; }
+        int field = -1;
+        if (ip && jit::SistaV1::isPushRecvVar(*ip)) field = *ip - jit::SistaV1::PushRecvVarBase;
+        else if (ip && *ip == jit::SistaV1::ExtPushRecvVar) field = ip[1] + (ext << 8);
+        const bool okRead = receiver_.rawBits() == seg_.boundaryCtx.rawBits() && field > 0;
+        if (!okRead) nlrSegmentDeopt();
+    }
+    if (lazyCtxPending_ & 1) materializeFrameStack();
 }
 
 void Interpreter::mcfSetBlockHome(Oop closure) {
@@ -1715,6 +1728,7 @@ void Interpreter::mcfClearMemos() {
     // them back whole, memo included, and checks only object motion, so a
     // memo into code freed since would come back.
     for (SavedFrame& r : collapsed_.recs) r.mcReturn = nullptr;
+    for (SavedFrame& r : seg_.recs) r.mcReturn = nullptr;
     pendingMcReturn_ = nullptr;
     poppedMcReturn_ = nullptr;
 }

@@ -5923,6 +5923,7 @@ static std::string extractString(ObjectMemory& memory, Oop stringOop) {
 }
 
 PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
+    if (seg_.armed) nlrSegmentDeopt();
     // Primitive 97: Save the image to disk.
     // Returns true in the RESUMED image (isImageStarting), false in the LIVE VM.
 

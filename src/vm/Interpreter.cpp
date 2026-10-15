@@ -6922,6 +6922,7 @@ bool Interpreter::abandonCallback(VMCallbackContext* vmcc) {
 }
 
 void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
+    if (seg_.armed) nlrSegmentDeopt();   // the frames leave this process: no frozen segment
     // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
     //    This may trigger GC — vmcc is on C heap, so it's safe.
     //    GC SAFETY: protect activeProcess across materializeFrameStack (it allocates).
@@ -7154,7 +7155,8 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             fflush(stderr);
             // The handler process is abandoned with its frames: fill in lazy
             // context stubs first, as the normal callback return does.
-            if (lazyCtxPending_ && frameDepth_ > 0) materializeFrameStack();
+            if (seg_.armed) nlrSegmentDeopt();
+            if ((lazyCtxPending_ & 1) && frameDepth_ > 0) materializeFrameStack();
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
@@ -8966,7 +8968,8 @@ void Interpreter::returnValue(Oop value) {
         // Return into a Context (frame depth 0).  Out of line: see
         // returnValueAtDepth0.  It answers true where it returned.  A
         // collapsed non-local return's frames come back first, if they can.
-        if (!(collapsed_.armed && tryRestoreCollapsedFrames())
+        const bool segPopped = seg_.armed && nlrSegmentPop();
+        if (!segPopped && !(collapsed_.armed && tryRestoreCollapsedFrames())
                 && returnValueAtDepth0(value))
             return;
     }
@@ -10164,6 +10167,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
         retryHomeSearch:
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
+                if (seg_.armed) nlrSegmentDeopt();   // the context walk may cross a frozen boundary
                 bool nlrTrace = false;
                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
                     std::string hSel = memory_.selectorOf(homeMethodOop);
@@ -10688,6 +10692,7 @@ void Interpreter::returnFromBlock() {
     // context materialization: the home method's frame was turned into a context object
     // and is no longer in the inline frame stack. Materialize all remaining inline
     // frames to contexts, then use the context-based NLR path below.
+    if (homeFrame == SIZE_MAX && seg_.armed) nlrSegmentDeopt();   // context-chain home search
     if (frameDepth_ > 0 && homeFrame == SIZE_MAX) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
             static int nlrZ = 0;
@@ -10958,6 +10963,337 @@ bool Interpreter::tryRestoreCollapsedFrames() {
     return true;
 }
 
+// ===== Frozen NLR segment (see NlrSegment in Interpreter.hpp) =====
+
+
+bool Interpreter::nlrSegmentFreeze(size_t h, Oop value) {
+    if (!GET_DEBUG_BOOL(PHARO_NLR_SEGMENT)) return false;
+    const size_t d = frameDepth_;
+    // h >= 2: with b = 0 nothing is frozen, and frame 0 may be backed by
+    // activeContext_ itself, which the window materialize would duplicate.
+    auto refuse = [&](int why) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS), 0)) {
+            static uint64_t n[8] = {};
+            static uint64_t tot = 0;
+            n[why]++;
+            if ((++tot & 0xFFFF) == 1)
+                fprintf(stderr, "[NLR-SEG] refusals: b0=%llu armed=%llu collapsed=%llu target=%llu actctx=%llu retslot=%llu stack=%llu\n",
+                        (unsigned long long)n[0], (unsigned long long)n[1], (unsigned long long)n[2],
+                        (unsigned long long)n[3], (unsigned long long)n[4], (unsigned long long)n[5],
+                        (unsigned long long)n[6]);
+        }
+        return false;
+    };
+    if (h < 2 || h >= d) return refuse(0);
+    if (seg_.armed) return refuse(1);
+    if (collapsed_.armed) return refuse(2);
+    if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) return refuse(3);
+    if (!isContextObject(activeContext_)) return refuse(4);
+    for (size_t k = 0; k < d; k++)
+        if (savedFrames_[k].materializedRetSlot || !savedFrames_[k].savedFP
+                || !savedFrames_[k].savedMethod.isObject())
+            return refuse(5);
+    Oop* end = savedFrames_[h].savedFP;
+    if (end < stackBase_) return refuse(6);
+    const size_t b = h - 1;
+    NlrSegment& g = seg_;
+    // Stash records 0..h, with the derived fields fixed while the frames
+    // are intact, and the stack words below the home.
+    g.recs.assign(savedFrames_.begin(), savedFrames_.begin() + h + 1);
+    g.ipOff.assign(h + 1, 0);
+    for (size_t k = 0; k <= h; k++) {
+        g.recs[k].savedClosureRaw = recClosure(savedFrames_[k]);
+        g.recs[k].savedActiveContextRaw = recActiveCtx(savedFrames_[k]);
+        const SavedFrame& fk = savedFrames_[k];
+        g.ipOff[k] = (fk.savedMethod.isObject() && fk.savedIP)
+            ? fk.savedIP - fk.savedMethod.asObjectPtr()->bytes() : 0;
+    }
+    g.base = stackBase_;
+    g.end = end;
+    g.stack.assign(stackBase_, end);
+    g.baseActiveCtx = activeContext_;
+    g.process = getActiveProcess();
+    g.h = h;
+    // Materialize only frames b..top: present them as the whole stack, with
+    // the marker as the base sender.
+    std::memmove(&savedFrames_[0], &savedFrames_[b], (d - b) * sizeof(SavedFrame));
+    frameDepth_ = d - b;
+    activeContext_ = segMarker();
+    g.freezing = true;
+    Oop topCtx = materializeFrameStack();
+    g.freezing = false;
+    Oop boundary = savedFrames_[0].materializedContext;
+    if (!segTagged(boundary) || !isContextObject(topCtx)) {
+        // Cannot happen; put everything back and take today's path.
+        std::memmove(&savedFrames_[b], &savedFrames_[0], (d - b) * sizeof(SavedFrame));
+        for (size_t k = 0; k < b; k++) savedFrames_[k] = g.recs[k];
+        frameDepth_ = d;
+        activeContext_ = g.baseActiveCtx;
+        lazyCtxPending_ |= 1;
+        static int nf = 0;
+        if (++nf <= 5) fprintf(stderr, "[NLR-SEG] freeze refused after materialize\n");
+        return false;
+    }
+    g.boundaryCtx = boundary;
+    // Contexts of frozen frames would show stale contents: mark them.
+    g.marked.clear();
+    g.markedSender.clear();
+    for (size_t k = 0; k < b; k++) {
+        Oop c = g.recs[k].materializedContext;
+        if (isContextObject(c) && c.asObjectPtr()->slotCount() > 0 && !segTagged(c)) {
+            g.markedSender.push_back(c.asObjectPtr()->slotAt(0));
+            c.asObjectPtr()->slotAtPut(0, segMarker());   // a SmallInteger: no barrier
+            g.marked.push_back(c);
+        }
+    }
+    activeContext_ = topCtx;
+    frameDepth_ = 0;
+    g.armed = true;
+    lazyCtxPending_ |= 2;
+    if (GET_DEBUG_BOOL(PHARO_NLR_SEG_EAGER)) nlrSegmentDeopt();   // the mechanics, no laziness
+    Oop homeCtx = topCtx;
+    for (size_t i = 0; i < d - h; i++) {
+        if (!isContextObject(homeCtx)) break;
+        homeCtx = memory_.fetchPointer(0, homeCtx);
+    }
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS), 0)) {
+        static uint64_t n = 0;
+        if ((++n & 0xFFFF) == 1) fprintf(stderr, "[NLR-SEG] freezes=%llu frozen=%zu window=%zu\n",
+                                       (unsigned long long)n, b, d - b);
+    }
+    if (isContextObject(homeCtx) && handleContextNLRUnwind(value, topCtx, homeCtx)) return true;
+    stopVM("nlrSegmentFreeze: home context not in the window");
+    return true;
+}
+
+bool Interpreter::nlrSegmentPop() {
+    NlrSegment& g = seg_;
+    if (!g.armed) return false;
+    if (!isContextObject(activeContext_)) return false;
+    ObjectHeader* rc = activeContext_.asObjectPtr();
+    if (rc->slotAt(0).rawBits() != g.boundaryCtx.rawBits()) {
+        if (GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS) && segTagged(rc->slotAt(0))) {
+            static int nm = 0;
+            if (++nm <= 10) {
+                Oop s0 = rc->slotAt(0);
+                fprintf(stderr, "[NLR-SEG] pop miss: #%s returns into tagged #%s (boundary #%s, b=%zu)\n",
+                        memory_.selectorOf(rc->slotAt(3)).c_str(),
+                        memory_.selectorOf(s0.asObjectPtr()->slotAt(3)).c_str(),
+                        memory_.selectorOf(g.boundaryCtx.asObjectPtr()->slotAt(3)).c_str(), g.h - 1);
+                for (size_t k = 0; k <= g.h; k++)
+                    fprintf(stderr, "   rec %zu #%s ctx=0x%llx%s\n", k, memory_.selectorOf(g.recs[k].savedMethod).c_str(),
+                            (unsigned long long)g.recs[k].materializedContext.rawBits(),
+                            g.recs[k].materializedContext.rawBits() == s0.rawBits() ? "  <== returned into" : "");
+            }
+        }
+        return false;
+    }
+    // Returning into ctx(b).  Anything unexpected: make the frozen frames
+    // contexts and return the ordinary way.
+    ObjectHeader* bh = g.boundaryCtx.asObjectPtr();
+    const SavedFrame& rb = g.recs[g.h - 1];
+    const bool same = getActiveProcess().rawBits() == g.process.rawBits()
+        && bh->slotAt(0).rawBits() == segMarker().rawBits()
+        && bh->slotAt(3).rawBits() == rb.savedMethod.rawBits()
+        && bh->slotAt(5).rawBits() == rb.savedReceiver.rawBits()
+        && bh->slotAt(1).isSmallInteger()
+        && bh->slotAt(1).asSmallInteger() == (int64_t)g.ipOff[g.h - 1] + 1;
+    if (!same || (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil())) { nlrSegmentDeopt(); return false; }
+    memory_.storePointer(0, activeContext_, memory_.nil());
+    memory_.storePointer(1, activeContext_, memory_.nil());
+    traceWidow("ctx-return", activeContext_);
+    std::copy(g.stack.begin(), g.stack.end(), g.base);
+    const size_t h = g.h;
+    for (size_t k = 0; k < h; k++) {
+        SavedFrame r = g.recs[k];
+        if (r.savedMethod.isObject()) {
+            ObjectHeader* mo = r.savedMethod.asObjectPtr();
+            r.savedIP = mo->bytes() + g.ipOff[k];   // a GC may have moved the method
+            if (r.savedBytecodeEnd) r.savedBytecodeEnd = mo->bytes() + mo->compiledCodeByteSize();
+        }
+        savedFrames_[k] = r;
+    }
+    savedFrames_[h - 1].materializedContext = g.boundaryCtx;
+    savedFrames_[h - 1].ctxSynced = true;
+    if (GET_DEBUG_BOOL(PHARO_NLR_SEG_VERIFY)) {
+        for (size_t k = 0; k < h; k++) {
+            const SavedFrame& r = savedFrames_[k];
+            Oop want = recClosure(r).isNil() ? r.savedReceiver : recClosure(r);
+            if (r.savedFP[0].rawBits() != want.rawBits()) {
+                fprintf(stderr, "[NLR-SEG-VERIFY] pop: record %zu of %zu #%s fp[0]=0x%llx want 0x%llx\n",
+                        k, h, memory_.selectorOf(r.savedMethod).c_str(),
+                        (unsigned long long)r.savedFP[0].rawBits(), (unsigned long long)want.rawBits());
+                stopVM("nlrSegmentPop: a restored frame does not match its record");
+            }
+        }
+    }
+    // Unmark: stubs again, relinked at the next sync.
+    bh->slotAtPut(0, memory_.nil());
+    segUnmark();
+    frameDepth_ = h;
+    framePointer_ = g.recs[h].savedFP;
+    stackPointer_ = framePointer_ + 1;
+    currentFrameMaterializedCtx_ = memory_.nil();
+    activeContext_ = g.baseActiveCtx;
+    g.armed = false;
+    lazyCtxPending_ = 1;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS), 0)) {
+        static uint64_t n = 0;
+        if ((++n & 0xFFFF) == 1) fprintf(stderr, "[NLR-SEG] pops=%llu\n", (unsigned long long)n);
+    }
+    return true;
+}
+
+void Interpreter::nlrSegmentDeopt() {
+    NlrSegment& g = seg_;
+    if (!g.armed) return;
+    g.armed = false;   // first: the materialize below must not re-enter
+    if (GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS)) {
+        static int nd = 0;
+        if (++nd <= 30) {
+            Dl_info di{};
+            void* ra = __builtin_return_address(0);
+            dladdr(ra, &di);
+            fprintf(stderr, "[NLR-SEG] deopt from %s+0x%llx fd=%zu\n", di.dli_sname ? di.dli_sname : "?",
+                    (unsigned long long)((uintptr_t)ra - (uintptr_t)di.dli_saddr), frameDepth_);
+        }
+    }
+    const size_t h = g.h, b = h - 1;
+    segUnmark();   // the senders back before the frames are materialized over them
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS), 0)) {
+        static uint64_t n = 0;
+        if ((++n & 0xFFF) == 1) fprintf(stderr, "[NLR-SEG] deopts=%llu\n", (unsigned long long)n);
+    }
+    {
+        // Present frames 0..b-1 with frame b current and materialize them
+        // the ordinary way, then put the protocol's state back.
+        const size_t pd = frameDepth_;
+        auto ipOffOf = [](Oop m, const uint8_t* ip) -> ptrdiff_t {
+            return (m.isObject() && ip) ? ip - m.asObjectPtr()->bytes() : 0;
+        };
+        g.protoRecs.assign(savedFrames_.begin(), savedFrames_.begin() + pd);
+        g.protoIpOff.resize(pd);
+        for (size_t k = 0; k < pd; k++) {
+            // Derived fields fixed now: the frames move under the materialize.
+            g.protoRecs[k].savedClosureRaw = recClosure(savedFrames_[k]);
+            g.protoRecs[k].savedActiveContextRaw = recActiveCtx(savedFrames_[k]);
+            g.protoIpOff[k] = ipOffOf(savedFrames_[k].savedMethod, savedFrames_[k].savedIP);
+        }
+        Oop* const protoSP = stackPointer_;
+        Oop* const lo = stackBase_;
+        g.protoStack.assign(lo, protoSP > lo ? protoSP : lo);
+        g.protoRegs[0] = method_; g.protoRegs[1] = receiver_; g.protoRegs[2] = closure_;
+        g.protoRegs[3] = homeMethod_; g.protoRegs[4] = activeContext_;
+        g.protoRegs[5] = currentFrameMaterializedCtx_;
+        const ptrdiff_t sIpOff = ipOffOf(method_, instructionPointer_);
+        const bool sBcEnd = bytecodeEnd_ != nullptr;
+        Oop* const sFP = framePointer_;
+        const int sArgc = argCount_;
+        const uint8_t sLazy = lazyCtxPending_;
+        const bool sComplete = matfsComplete_;
+        g.deopting = true;
+        std::copy(g.stack.begin(), g.stack.end(), g.base);
+        for (size_t k = 0; k < b; k++) {
+            SavedFrame r = g.recs[k];
+            ObjectHeader* mo = r.savedMethod.asObjectPtr();
+            r.savedIP = mo->bytes() + g.ipOff[k];
+            if (r.savedBytecodeEnd) r.savedBytecodeEnd = mo->bytes() + mo->compiledCodeByteSize();
+            savedFrames_[k] = r;
+        }
+        const SavedFrame& rb = g.recs[b];
+        ObjectHeader* bmo = rb.savedMethod.asObjectPtr();
+        frameDepth_ = b;
+        method_ = rb.savedMethod;
+        receiver_ = rb.savedReceiver;
+        closure_ = rb.savedClosureRaw;
+        homeMethod_ = homeMethodFor(method_, closure_);
+        framePointer_ = rb.savedFP;
+        stackPointer_ = g.recs[h].savedFP;
+        instructionPointer_ = bmo->bytes() + g.ipOff[b];
+        bytecodeEnd_ = bmo->bytes() + bmo->compiledCodeByteSize();
+        argCount_ = rb.savedArgCount;
+        activeContext_ = g.baseActiveCtx;
+        currentFrameMaterializedCtx_ = g.boundaryCtx;
+        lazyCtxPending_ = 1;
+        materializeFrameStack();
+        // The protocol's frames and registers again (rebased: a GC may have
+        // moved the methods).
+        for (size_t k = 0; k < pd; k++) {
+            SavedFrame r = g.protoRecs[k];
+            if (r.savedMethod.isObject() && r.savedIP) {
+                ObjectHeader* mo = r.savedMethod.asObjectPtr();
+                r.savedIP = mo->bytes() + g.protoIpOff[k];
+                if (r.savedBytecodeEnd) r.savedBytecodeEnd = mo->bytes() + mo->compiledCodeByteSize();
+            }
+            savedFrames_[k] = r;
+        }
+        std::copy(g.protoStack.begin(), g.protoStack.end(), lo);
+        frameDepth_ = pd;
+        method_ = g.protoRegs[0]; receiver_ = g.protoRegs[1]; closure_ = g.protoRegs[2];
+        homeMethod_ = g.protoRegs[3]; activeContext_ = g.protoRegs[4];
+        currentFrameMaterializedCtx_ = g.protoRegs[5];
+        framePointer_ = sFP; stackPointer_ = protoSP; argCount_ = sArgc;
+        if (method_.isObject()) {
+            ObjectHeader* mo = method_.asObjectPtr();
+            instructionPointer_ = mo->bytes() + sIpOff;
+            bytecodeEnd_ = sBcEnd ? mo->bytes() + mo->compiledCodeByteSize() : nullptr;
+        }
+        g.deopting = false;
+        g.protoRecs.clear();
+        g.protoStack.clear();
+        for (Oop& w : g.protoRegs) w = Oop::nil();
+        lazyCtxPending_ = sLazy;
+        matfsComplete_ = sComplete;
+    }
+    if (!(lazyCtxPending_ & 1)) lazyCtxPending_ = 0;
+    else lazyCtxPending_ = 1;
+    if (GET_DEBUG_BOOL(PHARO_NLR_SEG_VERIFY) && segTagged(g.boundaryCtx))
+        stopVM("nlrSegmentDeopt: the boundary still holds the marker");
+}
+
+void Interpreter::segUnmark() {
+    NlrSegment& g = seg_;
+    for (size_t i = 0; i < g.marked.size(); i++) {
+        Oop c = g.marked[i];
+        if (segTagged(c)) memory_.storePointer(0, c, g.markedSender[i]);
+    }
+    g.marked.clear();
+    g.markedSender.clear();
+}
+
+void Interpreter::segGuardWalk(Oop from, Oop stop) {
+    if (!seg_.armed) return;
+    Oop c = from;
+    for (int i = 0; i < 100000 && isContextObject(c); i++) {
+        if (c.rawBits() == stop.rawBits()) return;
+        Oop s = c.asObjectPtr()->slotAt(0);
+        if (s.rawBits() == segMarker().rawBits()) { nlrSegmentDeopt(); return; }
+        c = s;
+    }
+}
+
+void Interpreter::lazyPrimSegment(int p, int argc) {
+    switch (p) {
+    case 195:   // findNextUnwindContextUpTo: receiver, stop
+        segGuardWalk(stackValue(1), stackValue(0)); return;
+    case 196:   // terminateTo: receiver, target
+        segGuardWalk(stackValue(1), stackValue(0)); return;
+    case 197:   // findNextHandlerContext walks to the bottom
+    case 72: case 128: case 248: case 249:   // become
+        nlrSegmentDeopt(); return;
+    default:
+        break;
+    }
+    for (int i = 0; i <= argc; i++) {
+        Oop o = stackValue(i);
+        if (!segTagged(o)) continue;
+        // Reads of the boundary's temps and size see a synced context.
+        if ((p == 210 || p == 212) && o.rawBits() == seg_.boundaryCtx.rawBits()) continue;
+        nlrSegmentDeopt();
+        return;
+    }
+}
+
 bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
     if (GET_DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND)) return false;  // bisect escape
     if (!selectors_.aboutToReturn.isObject() || selectors_.aboutToReturn.isNil())
@@ -10996,6 +11332,7 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
     // (frameDepth_ - homeFrame) hops.  Compute BEFORE materializing (which
     // zeroes frameDepth_).
     size_t hops = frameDepth_ - homeFrame;
+    if (nlrSegmentFreeze(homeFrame, value)) return true;
     collapsedActiveCtx_ = activeContext_;   // INV-AC: every record's, before the collapse
     Oop topCtx = materializeFrameStack();
     activeContext_ = topCtx;
@@ -11023,6 +11360,7 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
 }
 
 bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
+    if (seg_.armed) segGuardWalk(startCtx, homeCtx);   // a nested NLR whose home is frozen
     // PHARO_ACTIVATION_CHECK: is the home actually on startCtx's sender chain?
     // Cog's non-local return requires it (else cannotReturn:).  A home that is
     // not -- e.g. a context of ANOTHER process -- makes the walk below stop at
@@ -20920,6 +21258,7 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
+    if (seg_.armed) nlrSegmentDeopt();   // the frames leave this process: no frozen segment
     // The process's frames are about to be dropped without a process switch
     // that materializes them: fill in lazy context stubs first, so a block
     // that escaped keeps a complete outer context chain.
@@ -21470,7 +21809,7 @@ void Interpreter::putToSleep(Oop process) {
 Oop Interpreter::materializeFrameStack() {
     matfsComplete_ = false;
     Oop result = materializeFrameStackImpl();
-    if (matfsComplete_) lazyCtxPending_ = false;
+    if (matfsComplete_) lazyCtxPending_ = seg_.armed ? 2 : 0;
     return result;
 }
 
@@ -22488,6 +22827,7 @@ Oop Interpreter::materializeFrameStackImpl() {
 }
 
 void Interpreter::transferTo(Oop newProcess) {
+    if (seg_.armed) nlrSegmentDeopt();   // the frames leave this process: no frozen segment
     processSwitchCount_++;
     if (DIAG_FLAG(g_doOn) && method_.rawBits() == g_doMethod)
         doRec("XFER", activeContext_.rawBits(), (int)frameDepth_,
@@ -23747,6 +24087,20 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    if (seg_.armed && segTagged(context)) {
+        if (GET_DEBUG_BOOL(PHARO_NLR_SEG_CENSUS)) {
+            Dl_info di{};
+            void* ra = __builtin_return_address(0);
+            dladdr(ra, &di);
+            fprintf(stderr, "[NLR-SEG] executeFromContext(%s #%s) from %s+0x%llx active=#%s\n",
+                    context.rawBits() == seg_.boundaryCtx.rawBits() ? "boundary" : "frozen-frame ctx",
+                    memory_.selectorOf(memory_.fetchPointer(3, context)).c_str(),
+                    di.dli_sname ? di.dli_sname : "?",
+                    (unsigned long long)((uintptr_t)ra - (uintptr_t)di.dli_saddr),
+                    isContextObject(activeContext_) ? memory_.selectorOf(memory_.fetchPointer(3, activeContext_)).c_str() : "-");
+        }
+        nlrSegmentDeopt();   // resuming past the boundary
+    }
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_EFC_CENSUS), 0)) {
         static std::unordered_map<uintptr_t, uint64_t> byCaller;
         static uint64_t calls = 0;
@@ -25102,6 +25456,14 @@ void Interpreter::storeContextStackp(Oop context, int stackp, bool tailKnownNil)
 }
 
 void Interpreter::prepareForGC() {
+    if (seg_.armed && GET_DEBUG_BOOL(PHARO_NLR_SEG_VERIFY) && !segTagged(seg_.boundaryCtx)) {
+        static int nb = 0;
+        if (++nb <= 3) {
+            fprintf(stderr, "[NLR-SEG-VERIFY] BEFORE GC: boundary 0x%llx lost its marker (context=%d)\n",
+                    (unsigned long long)seg_.boundaryCtx.rawBits(), (int)isContextObject(seg_.boundaryCtx));
+            void* bt[24]; int nbt = backtrace(bt, 24); backtrace_symbols_fd(bt, nbt, 2);
+        }
+    }
     // PHARO_RESUME_EXIT_CHECK: a GC taken while (method_, ip) disagree turns
     // the ip into garbage -- the offset below is computed against the wrong
     // object and re-applied to its new address.  Same for each saved frame.
@@ -25439,6 +25801,12 @@ void Interpreter::prepareForGC() {
 }
 
 void Interpreter::afterGC(bool fullGC) {
+    if (seg_.armed && GET_DEBUG_BOOL(PHARO_NLR_SEG_VERIFY) && !segTagged(seg_.boundaryCtx)) {
+        static int nb = 0;
+        if (++nb <= 5) fprintf(stderr, "[NLR-SEG-VERIFY] after %s GC: boundary 0x%llx lost its marker (context=%d)\n",
+                fullGC ? "full" : "young", (unsigned long long)seg_.boundaryCtx.rawBits(), (int)isContextObject(seg_.boundaryCtx));
+        if (nb <= 2) { void* bt[24]; int nbt = backtrace(bt, 24); backtrace_symbols_fd(bt, nbt, 2); }
+    }
     nlrMemoBlock_ = Oop::fromRawBits(0);   // mcfSetBlockHome memo holds raw oops
     stepCountAtLastGC_ = g_stepNum;
 #if PHARO_JIT_ENABLED
