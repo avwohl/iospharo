@@ -2185,6 +2185,7 @@ public:
 
         // Save current frame — GC-critical Oop fields + IP/bytecodeEnd
         SavedFrame& frame = savedFrames_[frameDepth_++];
+        frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
         frame.savedIP = instructionPointer_;
         frame.savedBytecodeEnd = bytecodeEnd_;
         frame.savedMethod = method_;
@@ -2304,6 +2305,7 @@ public:
     inline void j2jPopFrame(Oop callerMethod, Oop callerRecv) {
         --frameDepth_;
         SavedFrame& frame = savedFrames_[frameDepth_];
+        frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
         method_ = callerMethod;
         homeMethod_ = callerMethod;
         receiver_ = callerRecv;
@@ -2337,6 +2339,7 @@ public:
         Oop nil = memory_.nil();
         ObjectHeader* methObj = method.asObjectPtr();
         SavedFrame& frame = savedFrames_[frameDepth_++];
+        frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
         frame.savedIP = ip;
         frame.savedBytecodeEnd = methObj->bytes() + methObj->byteSize();
         frame.savedMethod = method;

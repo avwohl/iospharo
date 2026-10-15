@@ -17304,6 +17304,7 @@ bool Interpreter::popFrame() {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+    frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
 
     // NLR-marker hygiene (cascade-#3 residual, 2026-06-11): scrub the
     // popped slot's homeFrameDepth so a later activation that reuses
@@ -17451,6 +17452,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+    frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
 
     // jit-may24 Step 2: decrement materialize-bail counter, same as
     // popFrame().  popFrameForJIT is used by JIT direct-call paths.
@@ -20121,6 +20123,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     if (frameDepth_ >= MaxFrameDepth) return 0;
     stackPointer_ = callerState->sp;
     SavedFrame& frame = savedFrames_[frameDepth_++];
+    frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
     frame.pushSite = "push@L18943";
     if (false) {
         g_fpushN++;
@@ -27197,6 +27200,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
             for (int rsI = 0; rsI < state.j2jDepth; rsI++) {
                 if (frameDepth_ >= effectiveStackOverflowLimit()) { rsFailed = true; break; }
                 SavedFrame& rsF = savedFrames_[frameDepth_++];
+                rsF.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                 rsF.pushSite = "push@L25518";
                 if (!materializeJ2JSaveIntoFrame(rsF, rsSaves[rsI],
                         state.jitMethod, "resume-internal")) {
@@ -27913,6 +27917,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
                     // it's the only path where state.jitMethod isn't a reliable
                     // surrogate for inline-J2J self-rec.
                     SavedFrame& frame = savedFrames_[frameDepth_++];
+                    frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                     frame.pushSite = "push@L26233";
                     if (!materializeJ2JSaveIntoFrame(frame, save, nullptr, "rj2j materialize")) {
                         // Roll back: the helper failed (both nil), but we
@@ -32248,6 +32253,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
             J2JSave& save = stateSaves[i];
             SavedFrame& frame = savedFrames_[frameDepth_++];
+            frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
             frame.pushSite = "push@L30469";
             if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "materializeJ2J lambda")) {
                 // Roll back: this iteration's increment + i prior.
@@ -32557,6 +32563,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                         J2JSave& save = _stateSaves[i];
                         SavedFrame& frame = savedFrames_[frameDepth_++];
+                        frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                         frame.pushSite = "push@L30777";
                         if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site4")) {
                             if (frameDepth_ > 0) frameDepth_--;
@@ -34446,6 +34453,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                                         J2JSave& save = _stateSaves3[i];
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
+                                        frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                                         frame.pushSite = "push@L32665";
                                         if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site6")) {
                                             if (frameDepth_ > 0) frameDepth_--;
@@ -34568,6 +34576,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             : nullptr;
                         if (sMO && frameDepth_ < effectiveStackOverflowLimit()) {
                             SavedFrame& frame = savedFrames_[frameDepth_++];
+                            frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                             frame.pushSite = "push@L32786";
                             frame.savedIP = instructionPointer_;  // past-send
                             frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
@@ -34713,6 +34722,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                                 J2JSave& save = _stateSaves4[i];
                                 SavedFrame& frame = savedFrames_[frameDepth_++];
+                                frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                                 frame.pushSite = "push@L32930";
                                 if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site7")) {
                                     if (frameDepth_ > 0) frameDepth_--;

@@ -1424,6 +1424,10 @@ static Interpreter* g_mcfInterp = nullptr;
 void Interpreter::mcfClearMemos() {
     for (size_t d = 0; d < frameDepth_ && d < savedFrames_.size(); d++)
         savedFrames_[d].mcReturn = nullptr;
+    // Records a non-local return collapsed: tryRestoreCollapsedFrames copies
+    // them back whole, memo included, and checks only object motion, so a
+    // memo into code freed since would come back.
+    for (SavedFrame& r : collapsed_.recs) r.mcReturn = nullptr;
     pendingMcReturn_ = nullptr;
 }
 
