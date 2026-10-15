@@ -6319,7 +6319,16 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
         a.b(result);
     } else if (nArgs == 1) {
         asmjit::Label p170 = a.new_label(), pAt = a.new_label(), atBytes = a.new_label();
+        asmjit::Label atBody = a.new_label();
         a.ldur(x2, ptr(x25, -8));                  // the argument
+        // at: and String>>at: first: they are most of this stub's calls
+        // (lexicon: 39M String>>at: alone), and came after four tests.
+        if (!GET_DEBUG_BOOL(PHARO_MCF_NO_AT_FIRST)) {
+            a.cmp(w10, asmjit::Imm(60));
+            a.b_eq(atBody);
+            a.cmp(w10, asmjit::Imm(63));
+            a.b_eq(atBody);
+        }
         // 10 SmallInteger / : an exact quotient, or a sure failure (2) for an
         // inexact one or a zero divisor -- the method body makes the
         // Fraction or signals, with no C call first.
@@ -6412,6 +6421,7 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             a.b_ne(slow);
             a.bind(isAt);
         }
+        a.bind(atBody);
         a.tst(x1, asmjit::Imm(7));
         a.b_ne(slow);
         a.and_(x3, x2, asmjit::Imm(7));
