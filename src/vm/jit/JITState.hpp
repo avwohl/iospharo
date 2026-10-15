@@ -439,10 +439,15 @@ typedef void (*StencilFunc)(JITState*);
         /* OFF_MCF_NIL, asserted in AsmjitT1.cpp).  Saved and        */ \
         /* restored here: clobbering them leaves the compiler too    */ \
         /* few registers for the operands.                           */ \
+        /* The operands can only be in x24, x27 or x28 (all others */ \
+        /* are clobbered): take the entry into x16 before loading   */ \
+        /* the pinned registers.  %[s] may be x24/x27 too; the      */ \
+        /* write-back after the ldp sees its value again.            */ \
+        "mov x16, %[e]\n\t" \
         "stp x24, x27, [sp, #-16]!\n\t" \
         "ldr x24, [x0, #344]\n\t" \
         "ldr x27, [x0, #392]\n\t" \
-        "blr %[e]\n\t" \
+        "blr x16\n\t" \
         "ldp x24, x27, [sp], #16\n\t" \
         /* sp-residency live-out: JIT code maintained x25; publish it */ \
         /* (=0: x25 stale, _JIT_CALL_SP_WB is empty — sp stays in mem) */ \
@@ -482,10 +487,15 @@ typedef void (*StencilFunc)(JITState*);
         /* live-out store is needed and non-FSR code can ignore it.  */ \
         "ldr x23, [x0, #144]\n\t" \
         "ldur x26, [x25, #-8]\n\t" \
+        /* The operands can only be in x24, x27 or x28 (all others */ \
+        /* are clobbered): take the entry into x16 before loading   */ \
+        /* the pinned registers.  %[s] may be x24/x27 too; the      */ \
+        /* write-back after the ldp sees its value again.            */ \
+        "mov x16, %[e]\n\t" \
         "stp x24, x27, [sp, #-16]!\n\t" \
         "ldr x24, [x0, #344]\n\t" \
         "ldr x27, [x0, #392]\n\t" \
-        "blr %[e]\n\t" \
+        "blr x16\n\t" \
         "ldp x24, x27, [sp], #16\n\t" \
         _JIT_CALL_SP_WB \
         : \
