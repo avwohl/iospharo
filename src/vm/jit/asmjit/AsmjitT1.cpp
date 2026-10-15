@@ -6619,7 +6619,8 @@ static void emitMcfInlinePrims2(asmjit::a64::Assembler& a) { emitMcfInlinePrims(
 // at `cont`.
 static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArgs,
                               int sendLen, int globalIdx, int callerArgCount,
-                              const asmjit::Label& cont, uint64_t* siteSlot = nullptr) {
+                              const asmjit::Label& cont, uint64_t* siteSlot = nullptr,
+                              bool eqSiteSlot = false) {
     using namespace asmjit::a64;
     asmjit::Label extExit = a.new_label();
     asmjit::Label extDone = a.new_label();
@@ -6644,6 +6645,9 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
         a.bind(immKey);
         a.orr(w9, w9, asmjit::Imm(0x80000000u));
         a.bind(haveKey);
+        // An = site's slot marks a method entry's key with bit 40 (its
+        // unmarked keys are Object>>='s inline answers).
+        if (eqSiteSlot) a.orr(x9, x9, asmjit::Imm(1ULL << 40));
         a.cmp(x9, x8);
         a.b_ne(miss);
         emitMcfCacheProbe(a, miss);
@@ -7702,11 +7706,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Not SmallIntegers (nor the inline Float / String cases): send
             // the special selector properly instead of the generic exit,
             // after which the rest of the method ran interpreted.
+            uint64_t* eqSlot = nullptr;
             if (op == 0x66 && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE)) {
                 // = through a per-site cache (dictionaries keyed by
                 // classes compare keys with Object>>=: 360M helper sends
                 // in a myprecious run).  Hit: identity, inline.
-                uint64_t* slot = mcfAllocSiteCache();
+                // The slot's value is 1 for Object>>= (answered here) or the
+                // receiver class's = method, called natively through the
+                // helper's site-cache path (CompiledCode>>= of a Set of
+                // methods: 79M C lookups in a deeptraverser test).
+                const bool eqMethods = !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_METHODS);
+                eqSlot = mcfAllocSiteCache();
+                uint64_t* slot = eqSlot;
                 asmjit::Label miss = a.new_label(), immKey = a.new_label(), haveKey = a.new_label();
                 a.mov(x10, asmjit::Imm((uint64_t)slot));
                 a.ldr(x8, ptr(x10));
@@ -7721,7 +7732,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.orr(w9, w9, asmjit::Imm(0x80000000u));
                 a.bind(haveKey);
                 a.cmp(x9, x8);
-                a.b_ne(miss);
+                a.b_ne(miss);                           // a method entry's key has bit 40
                 a.cmp(x1, x4);
                 a.ldp(x6, x7, ptr(x0, OFF_TRUEOOP));
                 a.csel(x6, x6, x7, CondCode::kEQ);
@@ -7730,10 +7741,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(x26, x6);
                 a.b(end);
                 a.bind(miss);
-                a.str(x10, ptr(x0, OFF_MCF_SITE_CACHE));
+                if (!eqMethods) {
+                    a.str(x10, ptr(x0, OFF_MCF_SITE_CACHE));
+                    eqSlot = nullptr;
+                }
             }
             emitMcfHelperSend(a, (uint32_t)(op - 0x60) | (1u << 8) | (1u << 17),
-                              1, 1, globalIdx, callerArgCount, end);
+                              1, 1, globalIdx, callerArgCount, end, eqSlot, eqSlot != nullptr);
         } else {
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));

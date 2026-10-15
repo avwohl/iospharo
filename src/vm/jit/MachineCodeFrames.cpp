@@ -1193,6 +1193,10 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         selector = mo->slotAt(1 + litIdx);
     }
     Oop rcv = st->sp[-(nArgs + 1)];
+    // An = site's slot takes a method or primitive too (its machine code
+    // tells the value 1, Object>>='s inline answer, from a method).
+    const bool eqSite = special && litIdx == 6 && nArgs == 1
+        && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_METHODS);
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_EXTSEND_CENSUS), 0)) {
         static std::unordered_map<std::string, uint64_t> by;
         static uint64_t n = 0;
@@ -1249,11 +1253,12 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
         // for it).  Not for a young method (a scavenge moves it) or a
         // receiver whose slot count may differ between instances when the
         // method reads receiver fields.
-        if (siteCache && !special && !super && !memory_.isYoung(target)
+        if (siteCache && (!special || eqSite) && !super && !memory_.isYoung(target)
                 && (!e->jm->hasRecvFieldAccess
                     || (rcv.isObject() && rcv.asObjectPtr()->format() == ObjectFormat::FixedSize))) {
-            siteCache[0] = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
-                                          : (0x80000000ull | (rcv.rawBits() & 7));
+            siteCache[0] = (rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                           : (0x80000000ull | (rcv.rawBits() & 7)))
+                         | (eqSite ? (1ULL << 40) : 0);
             siteCache[1] = target.rawBits();
         }
         return e;
@@ -1281,10 +1286,11 @@ void* Interpreter::mcfExtSendTarget(jit::JITState* st, uint32_t desc) {
     if (e && !e->jm && e->prim && e->prim < 1024) {
         // A primitive entry (mcfNotePrimitiveTarget): run it, and let the
         // site's cache run it from now on with no lookup.
-        if (siteCache && !special && !super && !memory_.isYoung(target)
+        if (siteCache && (!special || eqSite) && !super && !memory_.isYoung(target)
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_PRIM_CACHE)) {
-            siteCache[0] = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
-                                          : (0x80000000ull | (rcv.rawBits() & 7));
+            siteCache[0] = (rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                           : (0x80000000ull | (rcv.rawBits() & 7)))
+                         | (eqSite ? (1ULL << 40) : 0);
             siteCache[1] = target.rawBits();
         }
         st->cachedTarget = target;
