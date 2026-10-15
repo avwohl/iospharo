@@ -15,7 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, 12:30) -- native NLR in machine code; sweep L44 on `38fec5b5`
+## Right now (2026-10-15, 15:30) -- trimming the native call; sweep L46 on `c46fb074`
+
+- Pushed through `bc9979ca` (L44 clean; L45 clean but batch 1901 stopped
+  mid TKTServiceTest and 18 classes were not run; all 77 of their tests
+  pass alone twice).
+- `5d591c5f` findString: raw bytes; `bc9979ca` naked super sends fill
+  their site cache (-0.7%).
+- docs/mcf-call-trim-plan.md (design panel + judge): steps 0-6 done.
+  Step 0 made the MCF oracles see the lazy view (they checked nothing
+  before) and found executeFromContext putting the receiver in a resumed
+  block frame's fp[0].  Steps 1-6: register shortcuts, dead x26 writes,
+  one adr for the JM, one bit test for depth (native calls up to depth
+  32768), the record in six stp pairs with an info word, receiver and
+  tempBase only in x21/x22 (state written at syncs; poison oracle).
+  Lexicon 268.1 -> 250.4 billion instructions.
+- Wall, both under sweep load: lexicon ours 15.1 s, Cog (x86, Rosetta)
+  12.0 s: 1.26x (was 1.4x).
+- Next: trim steps 7 (INV-AC) and 8 (closure derived from fp[0]).
+
+## Earlier (2026-10-15, 12:30) -- native NLR in machine code; sweep L44 on `38fec5b5`
 
 Pushed through `7d93e207` (sweeps L40, L42, L43 clean apart from load
 flakes: a FreeTypeFont WeakSet race between the test and the fake-GUI
