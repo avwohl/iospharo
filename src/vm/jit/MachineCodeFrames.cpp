@@ -1827,6 +1827,11 @@ void Interpreter::mcfInit() {
         L.dirMatCtx = direct(&currentFrameMaterializedCtx_, 8);
         L.dirActCtx = direct(&activeContext_, 8);
         L.dirCtdn = direct(&checkCountdown_, 4);
+        L.dirYield = direct(forceYieldAddr(), 1);
+        if (GET_DEBUG_BOOL(PHARO_MCF_CENSUS))
+            fprintf(stderr, "[MCF-LAYOUT] depth=%d matctx=%d actctx=%d ctdn=%d yield=%d (yield at %td)\n",
+                    L.dirDepth, L.dirMatCtx, L.dirActCtx, L.dirCtdn, L.dirYield,
+                    reinterpret_cast<const char*>(forceYieldAddr()) - base);
     }
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
     g_mcfInterp = this;

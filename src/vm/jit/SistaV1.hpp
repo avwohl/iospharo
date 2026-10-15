@@ -48,7 +48,10 @@ constexpr uint8_t BlockReturnTop        = 0x5E;
 
 // --- Sends -------------------------------------------------------------------
 constexpr uint8_t ArithBase             = 0x60; // 0x60-0x6F  arithmetic selector 0..15
+constexpr uint8_t ArithMultiply         = ArithBase + 8;  // * (special selector 8)
 constexpr uint8_t ArithModulo           = ArithBase + 10; // modulo (special selector 10)
+constexpr uint8_t ArithBitAnd           = ArithBase + 14; // bitAnd: (special selector 14)
+constexpr uint8_t ArithBitOr            = ArithBase + 15; // bitOr: (special selector 15)
 constexpr uint8_t ArithLast             = 0x6F;
 constexpr uint8_t SpecialSendBase       = 0x70; // 0x70-0x7F  special selector 16..31
 constexpr uint8_t SpecialSendLast       = 0x7F;

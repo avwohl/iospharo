@@ -326,6 +326,7 @@ struct McfFrameLayout {
     // Interpreter fields as byte offsets from the JITState (x0), or
     // kMcfNoDirect: reach them through the state's pointers instead.
     int32_t dirDepth, dirMatCtx, dirActCtx, dirCtdn;
+    int32_t dirYield = INT32_MIN;   // forceYield_ (a byte), or kMcfNoDirect
     // A null-memo record precedes savedFrames_[0] (Interpreter::mcfGuardFrame_).
     bool guardOk;
 };

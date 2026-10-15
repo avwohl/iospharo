@@ -14010,6 +14010,65 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (extRecvStore) a.bind(bcLabels[globalIdx + 1]);
                 return used;
             }
+            // SmallInteger *, bitAnd: and bitOr: with both operands pending:
+            // result in a pool register, as + above.  Scratch x5-x8, x16,
+            // x17 (x9-x15 are the pool).  Any failure stores the operands
+            // and emits the bytecode as before.
+            if ((op == SistaV1::ArithMultiply || op == SistaV1::ArithBitAnd
+                    || op == SistaV1::ArithBitOr)
+                    && S.items.size() >= 2 && !GET_DEBUG_BOOL(PHARO_T1_NO_SIM_WIDE_ARITH)) {
+                simFlushBelow(a, 2);
+                SimItem A = S.items[0], B = S.items[1];
+                asmjit::a64::Gp rA = simSrc(a, A, x1);
+                asmjit::a64::Gp rB = simSrc(a, B, x4);
+                asmjit::Label slow = a.new_label(), cont = a.new_label();
+                a.eor(x5, rA, rB);
+                a.sub(x6, rA, asmjit::Imm(1));
+                a.orr(x5, x5, x6);
+                a.tst(x5, asmjit::Imm(7));
+                a.b_ne(slow);                          // not two SmallIntegers
+                if (A.k == SimK::Reg) S.freeReg(A.reg);
+                if (B.k == SimK::Reg) S.freeReg(B.reg);
+                const int r = S.allocReg();
+                if (r < 0) return -1;
+                asmjit::a64::Gp R = asmjit::a64::x(r);
+                if (op == SistaV1::ArithMultiply) {
+                    a.asr(x5, rA, asmjit::Imm(3));
+                    a.asr(x6, rB, asmjit::Imm(3));
+                    a.mul(x7, x5, x6);
+                    a.smulh(x8, x5, x6);
+                    a.cmp(x8, x7, asmjit::a64::asr(63));
+                    a.b_ne(slow);                      // 64-bit overflow
+                    a.lsl(x16, x7, asmjit::Imm(3));
+                    a.asr(x17, x16, asmjit::Imm(3));
+                    a.cmp(x17, x7);
+                    a.b_ne(slow);                      // outside the 61-bit range
+                    a.orr(R, x16, asmjit::Imm(1));
+                } else if (op == SistaV1::ArithBitAnd) {
+                    a.and_(R, rA, rB);                 // tag 1 & tag 1 = tag 1
+                } else {
+                    a.orr(R, rA, rB);
+                }
+                a.b(cont);
+                S.regBusy |= 1u << r;
+                if (A.k == SimK::Reg) S.regBusy |= 1u << A.reg;
+                if (B.k == SimK::Reg) S.regBusy |= 1u << B.reg;
+                a.bind(slow);
+                a.stp(rA, rB, ptr_post(x25, 16));
+                if (A.k == SimK::Reg) S.freeReg(A.reg);
+                if (B.k == SimK::Reg) S.freeReg(B.reg);
+                S.items.clear();
+                if (!emitOne_arm64(a, op, nilBits, bcOffsetBase + globalIdx, siteIdx,
+                                   bcLabels, globalIdx, callerArgCount, callerTempCount,
+                                   staticJ2JArgCount))
+                    return -1;
+                a.ldr(R, ptr_pre(x25, -8));            // the result, back off the stack
+                a.bind(cont);
+                S.items.clear();
+                S.regBusy = 1u << r;
+                S.items.push_back(SimItem{SimK::Reg, 0, r});
+                return 1;
+            }
             if (op >= 0x60 && op <= 0x67 && S.items.size() >= 2) {
                 simFlushBelow(a, 2);
                 SimItem A = S.items[0], B = S.items[1];
@@ -14372,9 +14431,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         if (target <= (int64_t)globalIdx) {
                             // back edge: yield poll
                             asmjit::Label yieldBail = a.new_label();
-                            a.mov(a64::x16,
-                                  Imm((uint64_t)g_t1ForceYieldAddr));
-                            a.ldrb(a64::w17, a64::ptr(a64::x16));
+                            const int32_t dirY = ::pharo::mcfEnabled() ? g_mcfLayout.dirYield
+                                                                       : kMcfNoDirect;
+                            if (dirY != kMcfNoDirect && !GET_DEBUG_BOOL(PHARO_T1_NO_DIRECT_YIELD)) {
+                                // forceYield_ at a fixed offset from the state: one load.
+                                if (dirY < 0) a.ldurb(a64::w17, a64::ptr(a64::x0, dirY));
+                                else a.ldrb(a64::w17, a64::ptr(a64::x0, dirY));
+                            } else {
+                                a.mov(a64::x16,
+                                      Imm((uint64_t)g_t1ForceYieldAddr));
+                                a.ldrb(a64::w17, a64::ptr(a64::x16));
+                            }
                             a.cbnz(a64::w17, yieldBail);
                             // Machine-code frames: a spent checkpoint
                             // countdown (native calls spend it) leaves too.

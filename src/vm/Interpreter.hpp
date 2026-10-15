@@ -951,6 +951,7 @@ private:
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
+    std::atomic<bool> forceYield_{false};  // set by the heartbeat thread; polled at back jumps
     // jit-may24 Step 2: counter of SavedFrames currently on the stack
     // with materializedRetSlot != nullptr.  Used by canJITActivate's
     // fast-skip check.  Incremented at each materialize-bail push
@@ -1399,7 +1400,8 @@ private:
     // 6=normal activation.  Read by the MUSTBOOL trap dump.
     int lastResumeKind_ = 0;
 
-    std::atomic<bool> forceYield_{false};
+    // forceYield_ is declared next to checkCountdown_: T1 back jumps load it
+    // at a fixed offset from the JIT state.
     // Diagnostic: set by the harness monitor thread when the step rate
     // collapses (e.g. the post-suite exitSuccess wedge); consumed at the
     // dispatch loop's periodic check, which prints the active process /
