@@ -4192,6 +4192,22 @@ static inline void emitStoreSp(asmjit::a64::Assembler& a,
     a.str(src, asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
 #endif
 }
+// Pop two operands and push reg (a binary bytecode's result).  With sp
+// in x25 the result goes straight through x25 (docs/t1-body-plan.md
+// step 3); x2 is then no longer an sp copy.
+static inline void emitReplaceTop2(asmjit::a64::Assembler& a, const asmjit::a64::Gp& reg) {
+#if PHARO_T1_SP_IN_X25
+    static const bool direct = !GET_DEBUG_BOOL(PHARO_T1_NO_SP_DIRECT);
+    if (direct) {
+        a.stur(reg, asmjit::a64::ptr(asmjit::a64::x25, -16));
+        a.sub(asmjit::a64::x25, asmjit::a64::x25, asmjit::Imm(8));
+        return;
+    }
+#endif
+    a.str(reg, asmjit::a64::ptr(asmjit::a64::x2, -16));
+    a.sub(asmjit::a64::x2, asmjit::a64::x2, asmjit::Imm(8));
+    emitStoreSp(a, asmjit::a64::x2);
+}
 // Pop the operand stack's top into dst.  With sp in x25 one pre-indexed
 // load (docs/t1-body-plan.md step 3) instead of copy, sub, write back,
 // load.  x2 is not left as an sp copy.
@@ -7757,18 +7773,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.b_vs(bail);
             a.sub(x1, x1, asmjit::Imm(1));
             if (tosProduceArith) a.mov(x26, x1);
-            a.str(x1, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
+            emitReplaceTop2(a, x1);
         } else if (op == 0x61) { // -
             // a_bits - b_bits = (a-b)*8 → add 1 to retag.
             a.subs(x1, x1, x4);
             a.b_vs(bail);
             a.add(x1, x1, asmjit::Imm(1));
             if (tosProduceArith) a.mov(x26, x1);
-            a.str(x1, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
+            emitReplaceTop2(a, x1);
         } else if (op == 0x68) { // *
             // Untag both: a = (a_bits >> 3), b = (b_bits >> 3) using ASR.
             // smulh + mul; overflow if hi != asr(lo, 63).
@@ -7797,9 +7809,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.lsl(x1, x1, asmjit::Imm(3));
             a.orr(x1, x1, asmjit::Imm(1));
             if (tosProduceArith) a.mov(x26, x1);
-            a.str(x1, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
+            emitReplaceTop2(a, x1);
         } else {
             // Comparisons: csel false/true on signed flags.  Compare
             // tagged bits directly — monotonic transform preserves
@@ -7874,9 +7884,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 case 0x67: a.csel(x5, x6, x5, CondCode::kNE); break;
             }
             if (tosProduceArith) a.mov(x26, x5);
-            a.str(x5, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
+            emitReplaceTop2(a, x5);
 #if PHARO_T1_SP_IN_X25
             tosFusedCmpDone: ;
 #endif
@@ -7974,9 +7982,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                 }
                 if (tosProduceArith) a.mov(x26, x5);
-                a.str(x5, ptr(x2, -16));
-                a.sub(x2, x2, asmjit::Imm(8));
-                emitStoreSp(a, x2);
+                emitReplaceTop2(a, x5);
                 a.b(end);
                 a.bind(notFloat);
                 a.ldr(x1, ptr(x2, -16));          // the paths below read x1
@@ -8088,16 +8094,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.bind(resultTrue);
             a.ldr(x6, ptr(x0, OFF_TRUEOOP));
             if (tosProduceArith) a.mov(x26, x6);
-            a.str(x6, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
+            emitReplaceTop2(a, x6);
             a.b(end);
             a.bind(resultFalse);
             a.ldr(x6, ptr(x0, OFF_FALSEOOP));
             if (tosProduceArith) a.mov(x26, x6);
-            a.str(x6, ptr(x2, -16));
-            a.sub(x2, x2, asmjit::Imm(8));
-            emitStoreSp(a, x2);
+            emitReplaceTop2(a, x6);
             a.b(end);
             a.bind(bsBail);
         }
@@ -8216,8 +8218,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
         emitLoadSp(a, x2);
-        a.ldr(x1, ptr(x2, -16));
-        a.ldr(x4, ptr(x2, -8));
+        a.ldp(x1, x4, ptr(x2, -16));
         a.eor(x5, x1, x4);
         a.sub(x6, x1, asmjit::Imm(1));
         a.orr(x5, x5, x6);
@@ -8225,9 +8226,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b_ne(bail);
         if (op == 0x6E) a.and_(x1, x1, x4);   // bitAnd:
         else            a.orr (x1, x1, x4);   // bitOr:
-        a.str(x1, ptr(x2, -16));
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
+        emitReplaceTop2(a, x1);
         a.b(end);
         a.bind(bail);
         if (g_fsrLazy) {
@@ -8249,8 +8248,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
         emitLoadSp(a, x2);
-        a.ldr(x1, ptr(x2, -16));
-        a.ldr(x4, ptr(x2, -8));
+        a.ldp(x1, x4, ptr(x2, -16));
         a.eor(x5, x1, x4);
         a.sub(x6, x1, asmjit::Imm(1));
         a.orr(x5, x5, x6);
@@ -8269,9 +8267,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b_ne(bail);
         a.lsl(x1, x6, asmjit::Imm(3));
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
-        a.str(x1, ptr(x2, -16));
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
+        emitReplaceTop2(a, x1);
         a.b(end);
         a.bind(bail);
         if (g_fsrLazy) {
@@ -8298,8 +8294,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label end  = a.new_label();
         asmjit::Label rightShift = a.new_label();
         emitLoadSp(a, x2);
-        a.ldr(x1, ptr(x2, -16));
-        a.ldr(x4, ptr(x2, -8));
+        a.ldp(x1, x4, ptr(x2, -16));
         a.eor(x5, x1, x4);
         a.sub(x6, x1, asmjit::Imm(1));
         a.orr(x5, x5, x6);
@@ -8322,9 +8317,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.cmp(x7, x6);
         a.b_ne(bail);
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
-        a.str(x1, ptr(x2, -16));
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
+        emitReplaceTop2(a, x1);
         a.b(end);
         a.bind(rightShift);
         // b in [-62, -1].  Negate.
@@ -8335,9 +8328,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // Retag — result is smaller than input, no overflow possible.
         a.lsl(x1, x1, asmjit::Imm(3));
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
-        a.str(x1, ptr(x2, -16));
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
+        emitReplaceTop2(a, x1);
         a.b(end);
         a.bind(bail);
         if (g_fsrLazy) {
@@ -8367,8 +8358,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label end  = a.new_label();
         asmjit::Label noAdjust = a.new_label();
         emitLoadSp(a, x2);
-        a.ldr(x1, ptr(x2, -16));
-        a.ldr(x4, ptr(x2, -8));
+        a.ldp(x1, x4, ptr(x2, -16));
         // SmI tag check
         a.eor(x5, x1, x4);
         a.sub(x6, x1, asmjit::Imm(1));
@@ -8433,9 +8423,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.b_ne(bail);
         }
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
-        a.str(x1, ptr(x2, -16));
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
+        emitReplaceTop2(a, x1);
         a.b(end);
         a.bind(bail);
         if (g_fsrLazy) {
@@ -8567,8 +8555,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label slow = a.new_label();
         asmjit::Label done = a.new_label();
         emitLoadSp(a, x2);
-        a.ldur(x1, ptr(x2, -16));                    // receiver
-        a.ldur(x3, ptr(x2, -8));                     // argument
+        a.ldp(x1, x3, ptr(x2, -16));                 // receiver, argument
         for (const Gp& r : {x1, x3}) {
             asmjit::Label imm = a.new_label();
             a.tst(r, asmjit::Imm(0x7));
@@ -8599,9 +8586,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldp(x1, x2, ptr(sp, 16));
             a.ldp(x0, x30, ptr_post(sp, 32));
         }
-        a.stur(x1, ptr(x2, -16));
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
+        emitReplaceTop2(a, x1);
         a.b(done);
         a.bind(slow);
         a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
