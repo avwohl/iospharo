@@ -15,7 +15,40 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, late night) -- linked MCF sends; pushed `d5636a6d`, sweep L36 on `cbc0635b`
+## Right now (2026-10-16, early) -- defects from per-class Cog timing; pushed `3885344e`, sweep L38 (lazy become on)
+
+Pushed `cbc0635b` (L36) and `3885344e` (L37; new entries LinkInstallerTest
+and TrueTest are known flakes).
+
+A per-class Cog-vs-ours timing run over all 95 package images
+(scratchpad pc/, memory per-class-cog-timing-finds-outliers) and two
+investigation workflows found real VM defects, now fixed:
+- e834f7d2: the JIT MethodMap refused inserts past 6144 methods (return
+  value ignored): every later compile ran interpreted for good.  Vienna
+  parser tests 5.3 -> 1.4 s (Cog 1.5).
+- 2d48183d: SocketPlugin re-armed the read notification before recv()
+  (lost wakeup, 30-60 s TLS stalls; pharoows and ZTimezone failures).
+- 8d669cd6: the C++ weak-association drain re-placed entries with the
+  unscaled header hash; live keys became unfindable.
+- 2ba67494 and the merged polymath batch: SmallFloat prologue (+-0,
+  recursion), LargeInteger primitives in place, full-GC object-start
+  bitmap, hashMultiply/shallowCopy/perform-of-primitive in machine code,
+  interpreter `//` sign bug, review fixes.
+- c14ffc50, e14e09b2: block home frame found by context; = site caches
+  call = methods natively (deeptraverser 16 -> 12.6 s, Cog 11.7).
+- 3885344e: 128-byte frame record (plan step 3).  Lexicon now ~275
+  billion instructions (session start 411).
+- cb5cb04a, 0d328f09: lazy two-way and one-way become (opt-in
+  PHARO_LAZY_BECOME, docs/lazy-become-design.md).  With it: ReStore 282 s
+  (Cog 346), NewTools 77 s (Cog 372, two tests pass that fail on Cog).
+  Sweep L38 runs with it on; then make it the default.
+
+Open from the workflows: primitive 131 runs a full GC (Cog scavenges;
+needs weak handling in the scavenge first), byte objects from primitive 71
+go to old space, bit-op helper sends have no site cache, SHA256 clone path,
+PHARO_JIT_FAIL_REASONS crashes the diag build.
+
+## Earlier (2026-10-15, late night) -- linked MCF sends; pushed `d5636a6d`, sweep L36 on `cbc0635b`
 
 Pushed `475c32c2` (L34: 27732 / 7 / 2; its 2 new entries pass alone) and
 `d5636a6d` (L35: 27802 / 8 / 1; BlockClosureTest>>testBenchFor timed out
