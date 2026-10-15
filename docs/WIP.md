@@ -35,6 +35,15 @@ Pushed `443b5b44` (L28: 27802 / 8 / 3) and `59d6af46` (L29: 27803 / 6 /
   ReStore writes 1000 objects in 2.4 s (was 13.5 s; Cog 63 ms).  Still
   O(heap) once the pair is old (ReStore swaps the same objects again):
   Cog forwards lazily.  ReStore's speed tests assert on these times.
+- rko281-restoreforpharo now finishes (it timed out before): ours 2350 /
+  2 / 1 / 5 timeouts, Cog 2356 / 1 / 1 / 0; every difference is in
+  SSWReStoreSpeedTest (time assertions; needs lazy forwarding, see
+  docs/deferred.md).  The full-zone churn is gone too: c32bb05e made the
+  code zone 192 MB by default.
+- Pushed `57646eb6` (L30: 27800 / 7 / 3; its new entries pass alone, the
+  Calypso async-cursor one also fails on the L29 binary).  Sweep L31 on
+  `0edaa3db` (prefixed conditional jumps, exact at:/at:put:/size IC
+  dispatch, 192 MB zone).
 
 ## Earlier (2026-10-15) -- exits per call; pushed `253d78f3`, sweep L26 on `35ad5971`
 
