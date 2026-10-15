@@ -13629,6 +13629,19 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                                   Imm((uint64_t)g_t1ForceYieldAddr));
                             a.ldrb(a64::w17, a64::ptr(a64::x16));
                             a.cbnz(a64::w17, yieldBail);
+                            // Machine-code frames: a spent checkpoint
+                            // countdown (native calls spend it) leaves too.
+                            // The back jump is an interrupt point, and with
+                            // sends no longer ones, a loop whose sends the
+                            // interpreter answers without an activation
+                            // reached none otherwise (every call refused).
+                            if (::pharo::mcfEnabled()
+                                    && !GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) {
+                                const McfFrameLayout& L = g_mcfLayout;
+                                mcfFieldLdr(a, a64::w17, L.dirCtdn, OFF_MCF_CTDN_PTR, a64::x16);
+                                a.cmp(a64::w17, Imm(0));
+                                a.b_le(yieldBail);
+                            }
                             a.b(bcLabels[target]);
                             a.bind(yieldBail);
                             // interp executes the prefix+jump (and the

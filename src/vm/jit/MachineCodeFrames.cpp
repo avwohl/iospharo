@@ -787,6 +787,7 @@ bool Interpreter::mcfIsBlockFrame() const {
 
 void Interpreter::mcfActivateBlock() {
     if (mcfActive_ || !jitInitialized_) return;
+    if (checkCountdown_ <= 1 && !GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) return;  // as mcfActivate
     if (closure_.isNil() || !method_.isObject()
             || method_.asObjectPtr()->classIndex() != compiledBlockClassIndex_) return;
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
@@ -882,6 +883,12 @@ bool Interpreter::mcfIsMethodFrame() const {
 
 bool Interpreter::mcfActivate(Oop method) {
     if (mcfActive_ || !jitInitialized_) return false;
+    // A checkpoint spent or pending (the interpreter defers one to the next
+    // interrupt point with the countdown at 1): the interpreter runs the
+    // method's first bytecode -- an interrupt point -- and takes it there.
+    // Entering machine code with it pending held the heartbeat's yield
+    // request (and timers) back until 1024 more interpreted bytecodes.
+    if (checkCountdown_ <= 1 && !GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) return false;
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
     if (__builtin_expect(GET_DEBUG_STR(PHARO_MCF_WATCH_SEL) != nullptr, 0)
             && memory_.selectorOf(method) == GET_DEBUG_STR(PHARO_MCF_WATCH_SEL)) {
@@ -1800,7 +1807,15 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             std::string k = "reason=" + std::to_string(st.exitReason);
             if (st.exitReason != jit::ExitSend && st.exitReason != jit::ExitSendCached
                     && st.ip) {
-                k += " op=" + std::to_string(*st.ip) + " in #" + memory_.selectorOf(st.method);
+                k += " op=" + std::to_string(*st.ip) + " in #" + memory_.selectorOf(st.method)
+                     + " ctdn=" + (checkCountdown_ <= 0 ? std::string("<=0") : checkCountdown_ == 1 ? std::string("1") : std::string(">1"))
+                     + " fy=" + std::to_string((int)forceYield_.load());
+                if (st.method.isObject()
+                        && st.method.asObjectPtr()->classIndex() == compiledBlockClassIndex_) {
+                    Oop home = blockHomeMethodForNLR(st.method);
+                    if (home.isObject() && !home.isNil())
+                        k += " home=" + classNameOfMethod(home) + ">>#" + memory_.selectorOf(home);
+                }
             }
             if (st.exitReason == jit::ExitReturn) {
                 size_t d = frameDepth_;

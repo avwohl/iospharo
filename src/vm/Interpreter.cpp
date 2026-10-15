@@ -934,6 +934,30 @@ bool Interpreter::atInterruptPoint() const {
     if (!ip || !method_.isObject()) return true;
     namespace S = jit::SistaV1;
     uint8_t op = *ip;
+    // Cog's interrupt points are a method or block activation (its frame
+    // build checks the stack limit) and a back jump -- not a send, which a
+    // primitive may answer with no activation.  Checking at every send let
+    // a process switch land inside image code Cog runs without one, e.g.
+    // Heap>>removeAt: between `array at: tally put: nil` and `tally :=
+    // tally - 1`: the Morphic alarm heap then held nil within its tally
+    // (sweeps L27, L29).  A send that activates a method reaches the
+    // method-entry case below; mcfActivate leaves a spent countdown to it.
+    if (!GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) {
+        if (op == S::ExtendB) {
+            bool negativeB = false;
+            while (*ip == S::ExtendA || *ip == S::ExtendB) {
+                if (*ip == S::ExtendB && ip[1] > 127) negativeB = true;
+                ip += 2;
+            }
+            if (*ip == S::ExtJump && negativeB) return true;
+        }
+        ObjectHeader* mo0 = method_.asObjectPtr();
+        Oop hdr0 = mo0->slotAt(0);
+        if (!hdr0.isSmallInteger()) return true;
+        const uint8_t* start0 = mo0->bytes() + (1 + (hdr0.asSmallInteger() & 0x7FFF)) * 8;
+        if (instructionPointer_ == start0) return true;
+        return *start0 == S::CallPrimitive && instructionPointer_ == start0 + 3;
+    }
     if (op >= S::Send0Base && op <= S::Send2Last) return true;
     if (op == S::ExtSend || op == S::ExtSuperSend) return true;
     // Special-selector sends 16-31 (at:, size, next, value:, do:, new, ...)
@@ -5355,6 +5379,11 @@ void Interpreter::interpret() {
         if (forceYield_.load(std::memory_order_acquire)) {
             if (suppressContextSwitch_ && ensureFrameAtEntry()) {
                 suppressContextSwitch_ = false;
+                // Not here (an ensure: entry runs its setup without a
+                // switch): at the next interrupt point, not 1024 bytecodes
+                // on -- machine code's back edges exit on the pending yield
+                // meanwhile, once per iteration.
+                if (!GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) checkCountdown_ = 1;
             } else {
                 suppressContextSwitch_ = false;   // stale: see ensureFrameAtEntry
                 // Don't let heartbeat preempt finalization drain.
@@ -26106,6 +26135,10 @@ void Interpreter::tryOSRAtBackwardJump() {
     if (GET_DEBUG_BOOL(PHARO_NO_OSR)) return;
     if (!jitRuntime_.isInitialized()) return;
     if (inJITResume_) return;  // Already inside JIT resume loop
+    // A checkpoint pending: stay interpreted to the next back jump, an
+    // interrupt point (see mcfActivate).
+    if (checkCountdown_ <= 1 && ::pharo::mcfEnabled()
+            && !GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) return;
 
     // Sampling: only check every 64 backward jumps to amortize overhead.
     // Counter is reset to 64 after each successful OSR entry (JIT takes over
