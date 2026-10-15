@@ -97,6 +97,28 @@ extern "C" void pharo_mcf_ctx_sync(jit::JITState* st) {
     st->interp->mcfCtxSync(st);
 }
 
+// PushThisContext from machine code (st->ip past it): as the interpreter,
+// materialize the frames and collapse to depth 0; answer the context.
+// Materialization only allocates (no GC), so the code's registers stay
+// valid, and the frame goes on at depth 0 as one resumed from a context.
+extern "C" uint64_t pharo_mcf_this_context(jit::JITState* st) {
+    return st->interp->mcfThisContext(st).rawBits();
+}
+
+Oop Interpreter::mcfThisContext(jit::JITState* st) {
+    stackPointer_ = st->sp;
+    mcfSyncRegisters(*st);
+    instructionPointer_ = st->ip;
+    Oop ctx = activeContext_;
+    if (frameDepth_ > 0) {
+        ctx = materializeFrameStack();
+        activeContext_ = ctx;
+        currentFrameMaterializedCtx_ = memory_.nil();
+        frameDepth_ = 0;
+    }
+    return ctx;
+}
+
 // PushFullBlock in machine code: create the closure without leaving.
 // st->ip is the bytecode; the interpreter would have it past the 3 bytes.
 // Allocation cannot GC here, so the machine code's registers stay valid.

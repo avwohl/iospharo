@@ -21526,7 +21526,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                 walk = memory_.fetchPointer(0, walk);
             }
         }
-        memory_.storePointer(0, ctx, sender);
+        ctxStore(0, ctx, sender);
     };
 
     if (frameDepth_ == 0) {
@@ -21558,7 +21558,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                          g_lastResumeExit, (int)inExtension_, extB_);
                 checkPcBoundary("mat-fd0", method_, instructionPointer_, why);
             }
-            memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
+            ctxStore(1, activeContext_, Oop::fromSmallInteger(pc));
 
 
             // Total items on C++ stack above receiver
@@ -21625,7 +21625,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                         && lastInstructionIsPushThisContext()) {
                     numItems -= 1;  // don't count the reified self
                     // rewind stored pc by 1 byte to the PushThisContext bytecode
-                    memory_.storePointer(1, activeContext_,
+                    ctxStore(1, activeContext_,
                                          Oop::fromSmallInteger(pc - 1));
                 }
             }
@@ -21649,7 +21649,7 @@ Oop Interpreter::materializeFrameStackImpl() {
             // when forked with Processor yield).
             for (int i = 0; i < numItems && (ContextFixedFields + i) < static_cast<int>(ctxSlots); i++) {
                 Oop item = *(framePointer_ + 1 + i);
-                memory_.storePointer(ContextFixedFields + i, activeContext_, item);
+                ctxStore(ContextFixedFields + i, activeContext_, item);
             }
         }
         matfsComplete_ = true;
@@ -21739,9 +21739,9 @@ Oop Interpreter::materializeFrameStackImpl() {
             // stale savedIP from the inline frame.
 
             // Update method, closure, receiver
-            memory_.storePointer(3, activeContext_, frame0.savedMethod);
-            memory_.storePointer(4, activeContext_, frame0.savedClosure);
-            memory_.storePointer(5, activeContext_, frame0.savedReceiver);
+            ctxStore(3, activeContext_, frame0.savedMethod);
+            ctxStore(4, activeContext_, frame0.savedClosure);
+            ctxStore(5, activeContext_, frame0.savedReceiver);
 
             // Update temps from inline stack
             Oop methodHeader = memory_.fetchPointer(0, frame0.savedMethod);
@@ -21765,7 +21765,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                 size_t ctxSlots = acHdr->slotCount();
                 for (int t = 0; t < numTemps; t++) {
                     if (static_cast<size_t>(CtxFixed + t) < ctxSlots) {
-                        memory_.storePointer(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
+                        ctxStore(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
                     }
                     savedCount++;
                 }
@@ -21798,7 +21798,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                             }
                             break;
                         }
-                        memory_.storePointer(CtxFixed + numTemps + e, activeContext_, *(exprStart + e));
+                        ctxStore(CtxFixed + numTemps + e, activeContext_, *(exprStart + e));
                         savedCount++;
                     }
                 }
@@ -22026,7 +22026,7 @@ Oop Interpreter::materializeFrameStackImpl() {
         Oop* const rawSlots = context.asObjectPtr()->slots();
         auto ctxPut = [&](size_t k, Oop v) {
             if (rawCtx) rawSlots[k] = v;
-            else memory_.storePointer(k, context, v);
+            else ctxStore(k, context, v);
         };
         // A fresh context is referenced by nothing yet, so its sender link
         // cannot close a cycle: setSenderSafe's walk (up to 200 senders,
@@ -22242,11 +22242,11 @@ Oop Interpreter::materializeFrameStackImpl() {
                 if (!reusingContext) {
                     setSenderSafe(context, sender);
                 }
-                memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
+                ctxStore(1, context, Oop::fromSmallInteger(pc));    // pc
                 // stackp is set below after we know how many items we saved
-                memory_.storePointer(3, context, method_);                      // method
-                memory_.storePointer(4, context, closure_);                      // closureOrNil
-                memory_.storePointer(5, context, receiver_);                    // receiver
+                ctxStore(3, context, method_);                      // method
+                ctxStore(4, context, closure_);                      // closureOrNil
+                ctxStore(5, context, receiver_);                    // receiver
 
                 // Copy ALL current temps from the frame (was capped at 32;
                 // methods encode up to 63 temps — silent truncation).
@@ -22254,7 +22254,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                 int savedCount = 0;
                 for (int t = 0; t < numTemps && (size_t)(6 + t) < ctxCap; t++) {
                     Oop temp = *(framePointer_ + 1 + t);
-                    memory_.storePointer(6 + t, context, temp);
+                    ctxStore(6 + t, context, temp);
                     savedCount++;
                 }
 
@@ -22274,7 +22274,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                             break;
                         }
                         Oop item = *(operandBase + o);
-                        memory_.storePointer(6 + numTemps + o, context, item);
+                        ctxStore(6 + numTemps + o, context, item);
                         savedCount++;
                     }
                 }

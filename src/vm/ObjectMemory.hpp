@@ -508,7 +508,9 @@ public:
     void storePointer(size_t index, Oop obj, Oop value) {
         if (__builtin_expect(!obj.isObject()
                 || GET_DEBUG_BOOL(PHARO_SENDER_TRIPWIRE)
-                || GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0
+                // A diagnostic: compiled out with the other knobs (it was an
+                // array load and compare on every store of the C++ side).
+                || (PHARO_DIAG_KNOB_LIVE && GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0)
                 || GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
             storePointerSlow(index, obj, value);
             return;

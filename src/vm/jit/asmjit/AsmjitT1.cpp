@@ -58,6 +58,7 @@ extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
 extern "C" void* pharo_mcf_perform(pharo::jit::JITState* st, uint32_t nArgs);
 extern "C" void* pharo_mcf_prim_fail(pharo::jit::JITState* st, uint32_t nArgs);
+extern "C" uint64_t pharo_mcf_this_context(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_array_create(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_call_census(uint64_t method);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
@@ -6914,6 +6915,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // inline.  Reuse EXIT_ARITH_OVERFLOW: chain-loop handler syncs
     // ip+sp and returns to interp's main loop, which executes the
     // 0x52 normally and runs the rest of the method in interp.
+    if (op == SistaV1::PushThisContext && ::pharo::mcfEnabled() && g_fsrLazy
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_THIS_CONTEXT)) {
+        // Machine-code frames: pharo_mcf_this_context does what the
+        // interpreter does (materialize the frames, collapse to depth 0)
+        // and answers the context; this frame then continues here, at
+        // depth 0.  The exit ran the rest of the method interpreted:
+        // resume:through: (every non-local return through ensure:) and
+        // every exception handler search.
+        a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+        a.str(x5, ptr(x0, OFF_IP));                  // past the bytecode
+        emitSyncSpToState(a);
+        a.stp(x0, x30, ptr_pre(sp, -16));
+        a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_this_context));
+        a.blr(x16);
+        a.mov(x1, x0);
+        a.ldp(x0, x30, ptr_post(sp, 16));
+        emitPushReg(a, x1);
+        return true;
+    }
     if (op == SistaV1::PushThisContext) {
         if (g_fsrLazy) {
             // M4: the method mirror may be stale (per-call store

@@ -1923,6 +1923,20 @@ public:
     bool mcfConstantReturn(Oop method, Oop& value);
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
     bool mcfFastReplace(jit::JITState* st);
+    Oop mcfThisContext(jit::JITState* st);
+    // A slot store into a context being materialized: a raw store when the
+    // context is young (no barrier needed), else storePointer.  Most
+    // contexts a frame sync writes are young; storePointer's checks were
+    // half of materializeFrameStack (a non-local return through ensure:
+    // syncs ~60 slots).
+    void ctxStore(size_t k, Oop ctx, Oop v) {   // storePointer's argument order
+        if (memory_.isYoung(ctx) && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)
+                && !GET_DEBUG_BOOL(PHARO_SENDER_TRIPWIRE)) {
+            ObjectHeader* h = ctx.asObjectPtr();
+            if (k < h->slotCount()) { h->slots()[k] = v; return; }
+        }
+        memory_.storePointer(k, ctx, v);
+    }
     // Slots of a context made for a frame: 6 + the header's frame size, as
     // Cog sizes it (16, or 56 with the large-frame bit 17), or 6 + numTemps
     // + stackDepth + 8 when that is more.  (Was 6 + numTemps + 32 at least:
