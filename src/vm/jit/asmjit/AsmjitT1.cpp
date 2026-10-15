@@ -5741,6 +5741,10 @@ static void emitMcfSiteInfo(asmjit::a64::Assembler& a, int ipOff, int bcStartAdd
     a.mov(w12, asmjit::Imm(legacyInfo | (jit::g_mcfIpInInfo ? (2u << 24) : 0u)));
 }
 
+// Set while the perform call stub is emitted: no countdown test.
+static bool g_mcfStubSkipCtdn = false;
+static uint64_t g_mcfPerformCallStub = 0;
+
 static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
@@ -5753,11 +5757,17 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     // every 1024 calls.  Charging the callee's numBytecodes made a small hot
     // callee exit every ~50 calls, and each exit runs the send through the
     // interpreter.
-    mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
-    if (::pharo::mcfCtdnReadOnly()) {
+    if (g_mcfStubSkipCtdn) {
+        // The perform call stub: pharo_mcf_perform made this test before
+        // it removed the selector, and a refusal now would hand the
+        // fallback a shifted stack.  The heartbeat sets the countdown from
+        // another thread, so a second test can fail where the first passed.
+    } else if (::pharo::mcfCtdnReadOnly()) {
+        mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
         a.cmp(w11, asmjit::Imm(1));
         a.b_le(fail);
     } else {
+        mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
         a.subs(w11, w11, asmjit::Imm(1));
         a.b_le(fail);
         mcfFieldStr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10, true);
@@ -12769,7 +12779,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.br(x16);
                     a.bind(notBV);
                 }
-                if (nArgs >= 1 && nArgs <= 4 && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CALL)) {
+                if (nArgs >= 1 && nArgs <= 4 && g_mcfPerformCallStub != 0
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CALL)) {
                     // perform: (primitive 83): pharo_mcf_perform finds the
                     // target, removes the selector and answers its call
                     // entry; the call is then one argument shorter.  Its
@@ -12811,7 +12822,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.adr(x15, mcfSlow);                     // not taken (see above)
                     emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
                                     callerArgCount | ((nArgs - 1) << 8));
-                    a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
+                    a.mov(x16, asmjit::Imm(g_mcfPerformCallStub));   // no countdown refusal
                     a.br(x16);
                     if (perfInPlace) {
                         a.bind(performInPlace);              // flags of cmp x7, #2
@@ -17002,6 +17013,12 @@ void pharo::jit::mcfBuildStubs() {
         g_mcfPrimStub[2] = buildMcfStubPage(emitMcfInlinePrims2);
     }
     if (!g_mcfCallStub) g_mcfCallStub = buildMcfStubPage(emitMcfCallStub);
+    if (!g_mcfPerformCallStub)
+        g_mcfPerformCallStub = buildMcfStubPage([](asmjit::a64::Assembler& a) {
+            g_mcfStubSkipCtdn = true;
+            emitMcfCallStub(a);
+            g_mcfStubSkipCtdn = false;
+        });
     if (!g_mcfTinyStub) g_mcfTinyStub = buildMcfStubPage(emitMcfTinyShapes);
     if (!g_mcfBlockStub) g_mcfBlockStub = buildMcfStubPage(emitMcfBlockStub);
     g_mcfLazyCloAct = mcfLazyCloAct();
