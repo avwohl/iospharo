@@ -1834,7 +1834,7 @@ void Interpreter::mcfInit() {
         L.dirYield = direct(forceYieldAddr(), 1);
         L.pairDepthCtx = L.dirDepth != jit::kMcfNoDirect && L.dirMatCtx == L.dirDepth + 8
             && L.dirDepth % 8 == 0 && L.dirDepth >= -512 && L.dirDepth <= 496
-            && !GET_DEBUG_BOOL(PHARO_MCF_NO_PAIRED_DEPTH);
+            && GET_DEBUG_BOOL(PHARO_MCF_PAIRED_DEPTH);   // opt-in: see the plan's stage 1 note
         if (GET_DEBUG_BOOL(PHARO_MCF_CENSUS))
             fprintf(stderr, "[MCF-LAYOUT] depth=%d matctx=%d actctx=%d ctdn=%d yield=%d pairDepthCtx=%d (yield at %td)\n",
                     L.dirDepth, L.dirMatCtx, L.dirActCtx, L.dirCtdn, L.dirYield, (int)L.pairDepthCtx,

@@ -7,6 +7,16 @@ offset needs more than 16 bits still makes a native call; it passes the old
 pair and marks the record recFull 2 (raw ip and argument count, no tail
 fields).
 
+**Stage 1 is off by default (opt-in `PHARO_MCF_PAIRED_DEPTH`).**  It
+removes 4 instructions per call pair, but `32 benchFib` takes 53 ms with it
+and 38 ms without, and lexicon wall time is about 4% worse.  The depth and
+the context are also read and written one word at a time elsewhere, and a
+load that is wider or narrower than the store it reads cannot take the
+store's value directly on this core: it waits for the store to reach the
+cache.  Splitting only the loads or only the stores did not help; splitting
+both restored 38 ms.  Measure wall time as well as instructions for any
+change that pairs memory accesses on a hot store-to-load path.
+
 Status (2026-10-15): this plan comes from a judge pass over two designs (A, minimal risk; B, maximum gain) and three census reports. The judge read the cited code at HEAD `ee7f1201`. Nothing was edited, built or run. All AsmjitT1.cpp line numbers below are for `ee7f1201`.
 
 The plan saves 9 instructions per linked monomorphic call pair: 49 now, 40 after all four stages. Lexicon makes about 970M native calls (docs/linked-mcf-sends-plan.md:107), so the saving is about 8.7e9 of about 246e9 instructions retired (about 3.5%). Stages 1-4 keep every rule in docs/mcf-call-trim-plan.md. No C++ code derives anything through a record's mcJM.

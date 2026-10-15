@@ -253,7 +253,7 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_LEAF_PRIM)             // machine code calls every pr
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_WIDE_ARITH)         // T1 simStack: SmallInteger * bitAnd: bitOr: go through the memory operand stack
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_RETURN)             // T1 simStack: a pending result is stored to the stack and reloaded for ReturnTop
 DEBUG_BOOL_RT(PHARO_T1_NO_DIRECT_YIELD)           // T1 back jumps load forceYield_ through an absolute address (three more instructions)
-DEBUG_BOOL_RT(PHARO_MCF_NO_PAIRED_DEPTH)           // native call/return move frameDepth_ and currentFrameMaterializedCtx_ separately (docs/mcf-record-trim-plan.md stage 1)
+DEBUG_BOOL_RT(PHARO_MCF_PAIRED_DEPTH)              // opt-in: native call/return move frameDepth_ and currentFrameMaterializedCtx_ as one ldp/stp pair (4 fewer instructions, but 40% slower on benchFib: a store-forwarding stall; docs/mcf-record-trim-plan.md stage 1)
 DEBUG_BOOL(PHARO_MCF_PAIR_SABOTAGE)                // stage-1 oracle proof: the native push leaves the caller's context current (PHARO_MATCTX_OWNER_CHECK must fire)
 DEBUG_BOOL_RT(PHARO_MCF_KEEP_TAIL_ZERO)           // native pushes zero savedBytecodeEnd and materializedRetSlot again (docs/mcf-record-trim-plan.md stage 2)
 DEBUG_BOOL(PHARO_MCF_TAIL_POISON)                  // stage-2 oracle: native pushes write 0xBAD0... into both tail fields; any raw read of them breaks
