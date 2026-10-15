@@ -22121,10 +22121,20 @@ Oop Interpreter::materializeFrameStackImpl() {
         // Initialize context (sender via cycle guard)
         // A context just allocated is young (the usual case): its slots need
         // no store barrier, and nothing allocates before they are filled.
-        const bool rawCtx = freshContext && memory_.isYoung(context);
+        // A young context needs no write barrier: raw stores, fresh or a
+        // lazy stub being synced (the stubs' slot-by-slot ctxStore calls
+        // were most of a non-local return's materialize).
+        static const bool rawAnyYoung = !GET_DEBUG_BOOL(PHARO_MAT_RAW_FRESH_ONLY)
+            && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS) && !GET_DEBUG_BOOL(PHARO_SENDER_TRIPWIRE);
+        const bool rawCtx = (freshContext || rawAnyYoung) && memory_.isYoung(context);
         Oop* const rawSlots = context.asObjectPtr()->slots();
+        // An old context: raw store plus the old-to-young barrier inline
+        // (ctxStore's out-of-line storePointer per slot was most of a
+        // non-local return's resync of the frames below it).
+        const bool rawOld = !rawCtx && rawAnyYoung;
         auto ctxPut = [&](size_t k, Oop v) {
             if (rawCtx) rawSlots[k] = v;
+            else if (rawOld) memory_.slotAtPutBarriered(context.asObjectPtr(), k, v);
             else ctxStore(k, context, v);
         };
         // A fresh context is referenced by nothing yet, so its sender link
