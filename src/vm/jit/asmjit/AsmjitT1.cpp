@@ -166,6 +166,9 @@ static bool g_fsrNodepth = false;        // FSR M3
 static bool g_fsrNodepthVerify = false;  // FSR M3 stage (a)
 static bool g_fsrLazy = false;         // FSR M4
 static int g_bcStartDelta = 0;         // (2+numLits)*8: methObj->bcStart delta (M4 exit-ip)
+// The code object being compiled, for literals known at compile time.
+static pharo::ObjectHeader* g_emitLitObj = nullptr;
+static int g_emitNumLits = 0;
 static bool g_fsrLazyVerify = false;   // FSR M4 stage (a)
 static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
@@ -13924,7 +13927,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 push(SimK::Ivar, op); return 1;
             }
             if (op >= 0x40 && op <= 0x4B) { push(SimK::Temp, op - 0x40); return 1; }
-            if (op >= 0x20 && op <= 0x3F) { push(SimK::Lit, op - 0x20); return 1; }
+            if (op >= 0x20 && op <= 0x3F) {
+                // An immediate literal (SmallInteger, Character, SmallFloat)
+                // is a constant in the code, as Cog's JIT has it: two
+                // dependent loads per use otherwise.  Cog does not recompile
+                // when objectAt:put: changes a literal, nor do we.
+                const int li = op - 0x20;
+                if (g_emitLitObj && li < g_emitNumLits && !GET_DEBUG_BOOL(PHARO_T1_NO_IMM_LITERALS)) {
+                    const uint64_t lv = g_emitLitObj->slotAt((size_t)(1 + li)).rawBits();
+                    if ((lv & 7) != 0) { push(SimK::Const, (int64_t)lv); return 1; }
+                }
+                push(SimK::Lit, li); return 1;
+            }
             if (op == SistaV1::PushReceiver) { push(SimK::Rcvr, 0); return 1; }
             if (op == 0x4D) { push(SimK::StateOop, OFF_TRUEOOP); return 1; }
             if (op == 0x4E) { push(SimK::StateOop, OFF_FALSEOOP); return 1; }
@@ -15773,6 +15787,8 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // no emitted exit stub to do the publish).
     g_fsrX19 = true;
     g_bcStartDelta = (2 + numLiterals) * 8;
+    g_emitLitObj = methObj;
+    g_emitNumLits = numLiterals;
     g_fsrLazyVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
     g_fsrLazy = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY) || g_fsrLazyVerify || mcfLazyView();
     g_fsrNodepthVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH_VERIFY);

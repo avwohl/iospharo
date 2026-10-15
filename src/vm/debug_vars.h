@@ -265,6 +265,7 @@ DEBUG_BOOL(PHARO_MCF_IP_VERIFY)                    // stage-4 oracle: sites also
 DEBUG_BOOL(PHARO_MCF_IP_SABOTAGE)                  // stage-4 oracle proof: sites pass ipOff + 1
 DEBUG_BOOL_RT(PHARO_MCF_PAIR_MCRETURN)            // native push stores (mcReturn, savedIP) as one stp even when savedIP is unused (stage 4)
 DEBUG_BOOL_RT(PHARO_MCF_CTDN_SPEND)               // opt-out: native calls spend the checkpoint countdown again (load, subtract, store per call)
+DEBUG_BOOL_RT(PHARO_T1_NO_IMM_LITERALS)            // opt-out: T1 loads immediate literals (SmallInteger, Character, SmallFloat) from the literal frame
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_QUICK)          // opt-out: perform: of a quick-primitive method (constant, ivar) takes the full primitive call
 DEBUG_BOOL_RT(PHARO_NO_PIN_TENURE)                // pinning a young object only sets the bit (a later scavenge still moves it)
 DEBUG_BOOL(PHARO_NLR_SEG_EAGER)                   // frozen NLR segment: deopt right after the freeze (tests the stash and deopt, no laziness)
