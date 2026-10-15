@@ -269,6 +269,13 @@ public:
     /// Returns nil if allocation fails.
     Oop allocateBytes(uint32_t classIndex, size_t byteCount);
 
+    /// allocateBytes in eden: old space when eden is full, young gen is off,
+    /// or the object needs an overflow header (as allocateSlots).  Only for a
+    /// result the caller hands straight to the stack (a LargeInteger primitive
+    /// answer): a C++ caller that stores a byte object into an old object
+    /// without storePointer's barrier must keep using allocateBytes.
+    Oop allocateBytesYoung(uint32_t classIndex, size_t byteCount);
+
     /// Create a ByteString from a C++ string
     Oop createString(const std::string& str);
 

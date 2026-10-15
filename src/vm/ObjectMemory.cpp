@@ -326,6 +326,29 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     return oopFromPointer(obj);
 }
 
+Oop ObjectMemory::allocateBytesYoung(uint32_t classIndex, size_t byteCount) {
+    size_t slotCount = (byteCount + 7) / 8;
+    // Overflow-header objects stay old, as in allocateSlots.
+    if (slotCount >= 255 || !enableYoungGen_) return allocateBytes(classIndex, byteCount);
+
+    size_t totalSize = sizeof(ObjectHeader) + slotCount * 8;
+    if (totalSize < 16) totalSize = 16;  // Spur minimum (see allocateSlots)
+    // Eden full sets needsScavenge_; the scavenge runs at the next safe
+    // point, never inside this call, so the caller's Oops stay valid.
+    ObjectHeader* obj = allocateRaw(totalSize, Space::New);
+    if (!obj) return allocateBytes(classIndex, byteCount);
+
+    size_t padding = (slotCount * 8) - byteCount;
+    initializeHeader(obj, classIndex, slotCount,
+        static_cast<ObjectFormat>(static_cast<int>(ObjectFormat::Indexable8) + padding));
+    std::memset(obj->bytes(), 0, slotCount * 8);
+    if (slotCount == 0) {
+        reinterpret_cast<uint64_t*>(obj->slots())[0] = 0;  // min-16 pad word
+    }
+    bytesAllocated_ += totalSize;
+    return oopFromPointer(obj);
+}
+
 Oop ObjectMemory::createString(const std::string& str) {
     Oop stringClass = specialObject(SpecialObjectIndex::ClassByteString);
     if (stringClass.isNil() || !stringClass.isObject()) {

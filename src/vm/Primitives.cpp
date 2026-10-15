@@ -270,6 +270,13 @@ static int compareIntegers(ObjectMemory& memory, Oop a, Oop b);
 static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value);
 static std::vector<uint8_t> magnitudeLeftShift(const std::vector<uint8_t>& mag, int64_t shift);
 
+// In-place LargeInteger core (defined with the LargeInteger primitives).
+// Results are allocated in eden: only for answers that go onto the stack.
+static Oop liInt64(ObjectMemory& memory, int64_t value);
+static Oop liMagnitude128(ObjectMemory& memory, unsigned __int128 mag, bool neg);
+static Oop liShiftLeftInt64(ObjectMemory& memory, int64_t value, int64_t shift, bool* overflow);
+static PrimitiveResult liPrimAddSub(Interpreter& interp, bool subtract);
+
 // Helper: Convert uint64_t to SmallInteger or LargePositiveInteger.
 // Returns nil on allocation failure.
 static Oop uint64ToOop(ObjectMemory& memory, uint64_t value) {
@@ -1227,6 +1234,13 @@ PrimitiveResult Interpreter::primitiveAdd(int argCount) {
         }
 
         // Overflow: produce LargeInteger
+        if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+            Oop large = liInt64(memory_, result);
+            if (large.isNil()) return PrimitiveResult::Failure;
+            popN(2);
+            push(large);
+            return PrimitiveResult::Success;
+        }
         bool resultNeg = (result < 0);
         uint64_t absResult = resultNeg ? static_cast<uint64_t>(-result) : static_cast<uint64_t>(result);
         uint8_t mag[8];
@@ -1254,6 +1268,7 @@ PrimitiveResult Interpreter::primitiveAdd(int argCount) {
     }
 
     // Handle SmallInteger + LargeInteger (and vice versa)
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimAddSub(*this, false);
     std::vector<uint8_t> aMag, bMag;
     bool aNeg, bNeg;
     if (extractInteger(memory_, rcvr, aMag, aNeg) &&
@@ -1300,6 +1315,13 @@ PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
         }
 
         // Overflow: produce LargeInteger
+        if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+            Oop large = liInt64(memory_, result);
+            if (large.isNil()) return PrimitiveResult::Failure;
+            popN(2);
+            push(large);
+            return PrimitiveResult::Success;
+        }
         bool resultNeg = (result < 0);
         uint64_t absResult = resultNeg ? static_cast<uint64_t>(-result) : static_cast<uint64_t>(result);
         uint8_t mag[8];
@@ -1327,6 +1349,7 @@ PrimitiveResult Interpreter::primitiveSubtract(int argCount) {
     }
 
     // Handle mixed SmallInteger/LargeInteger subtraction
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimAddSub(*this, true);
     std::vector<uint8_t> aMag, bMag;
     bool aNeg, bNeg;
     if (extractInteger(memory_, rcvr, aMag, aNeg) &&
@@ -1397,6 +1420,13 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
             bool resultNeg = (wideResult < 0);
             if (resultNeg) wideResult = -wideResult;
 
+            if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+                Oop large = liMagnitude128(memory_, static_cast<unsigned __int128>(wideResult), resultNeg);
+                if (large.isNil()) return PrimitiveResult::Failure;
+                popN(2);
+                push(large);
+                return PrimitiveResult::Success;
+            }
             // Convert to byte magnitude (little-endian)
             uint8_t mag[16];
             int magLen = 0;
@@ -1455,6 +1485,12 @@ PrimitiveResult Interpreter::primitiveMultiply(int argCount) {
         }
 
         // Create LargeInteger
+        if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+            Oop large = liMagnitude128(memory_, static_cast<unsigned __int128>(wideResult), resultNeg);
+            if (large.isNil()) return PrimitiveResult::Failure;
+            primitiveSuccess(large);
+            return PrimitiveResult::Success;
+        }
         uint8_t mag[16];
         int magLen = 0;
         __int128 val = wideResult;
@@ -1535,6 +1571,12 @@ PrimitiveResult Interpreter::primitiveMod(int argCount) {
             return PrimitiveResult::Success;
         }
         // Result doesn't fit in SmallInteger - create LargeInteger
+        if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+            Oop large = liInt64(memory_, rem);
+            if (large.isNil()) return PrimitiveResult::Failure;
+            primitiveSuccess(large);
+            return PrimitiveResult::Success;
+        }
         bool neg = rem < 0;
         uint64_t mag = neg ? (uint64_t)(-(rem + 1)) + 1 : (uint64_t)rem;
         std::vector<uint8_t> bytes;
@@ -1591,6 +1633,13 @@ PrimitiveResult Interpreter::primitiveDiv(int argCount) {
             return PrimitiveResult::Success;
         }
         // Result doesn't fit SmallInt — make LargeInteger
+        if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+            Oop large = liInt64(memory_, q);
+            if (large.isNil()) return PrimitiveResult::Failure;
+            popN(2);
+            push(large);
+            return PrimitiveResult::Success;
+        }
         bool resultNeg = q < 0;
         uint64_t absQ = resultNeg ? static_cast<uint64_t>(-q) : static_cast<uint64_t>(q);
         std::vector<uint8_t> mag;
@@ -1621,7 +1670,8 @@ PrimitiveResult Interpreter::primitiveQuo(int argCount) {
         // INT64_MIN / -1 overflows int64 (undefined; SIGFPE on x86_64).
         if (b == -1 && a == INT64_MIN) return PrimitiveResult::Failure;
         // Truncated division (quo:)
-        Oop result = int64ToOop(memory_, a / b);
+        Oop result = GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)
+            ? int64ToOop(memory_, a / b) : liInt64(memory_, a / b);
         if (result.isNil()) return PrimitiveResult::Failure;
         primitiveSuccess(result);
         return PrimitiveResult::Success;
@@ -1637,7 +1687,8 @@ PrimitiveResult Interpreter::primitiveBitAnd(int argCount) {
     if (!trySigned64BitValueOf(memory_, rcvr, a) ||
         !trySigned64BitValueOf(memory_, arg, b))
         return PrimitiveResult::Failure;
-    Oop result = int64ToOop(memory_, a & b);
+    Oop result = GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)
+        ? int64ToOop(memory_, a & b) : liInt64(memory_, a & b);
     if (result.isNil()) return PrimitiveResult::Failure;
     primitiveSuccess(result);
     return PrimitiveResult::Success;
@@ -1650,7 +1701,8 @@ PrimitiveResult Interpreter::primitiveBitOr(int argCount) {
     if (!trySigned64BitValueOf(memory_, rcvr, a) ||
         !trySigned64BitValueOf(memory_, arg, b))
         return PrimitiveResult::Failure;
-    Oop result = int64ToOop(memory_, a | b);
+    Oop result = GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)
+        ? int64ToOop(memory_, a | b) : liInt64(memory_, a | b);
     if (result.isNil()) return PrimitiveResult::Failure;
     primitiveSuccess(result);
     return PrimitiveResult::Success;
@@ -1663,7 +1715,8 @@ PrimitiveResult Interpreter::primitiveBitXor(int argCount) {
     if (!trySigned64BitValueOf(memory_, rcvr, a) ||
         !trySigned64BitValueOf(memory_, arg, b))
         return PrimitiveResult::Failure;
-    Oop result = int64ToOop(memory_, a ^ b);
+    Oop result = GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)
+        ? int64ToOop(memory_, a ^ b) : liInt64(memory_, a ^ b);
     if (result.isNil()) return PrimitiveResult::Failure;
     primitiveSuccess(result);
     return PrimitiveResult::Success;
@@ -1702,6 +1755,12 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
             }
             // Fits in int64 but not SmallInteger
             if (wide >= INT64_MIN && wide <= INT64_MAX) {
+                if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+                    Oop large = liInt64(memory_, static_cast<int64_t>(wide));
+                    if (large.isNil()) return PrimitiveResult::Failure;
+                    primitiveSuccess(large);
+                    return PrimitiveResult::Success;
+                }
                 int64_t result = (int64_t)wide;
                 bool neg = result < 0;
                 uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
@@ -1718,6 +1777,13 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
         // Result exceeds int64 range — use magnitude-based shift
         // This handles the case where Smalltalk fallback would incorrectly
         // create a LargePositiveInteger from a negative SmallInteger
+        if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) {
+            bool overflow;
+            Oop large = liShiftLeftInt64(memory_, value, shift, &overflow);
+            if (overflow || large.isNil()) return PrimitiveResult::Failure;
+            primitiveSuccess(large);
+            return PrimitiveResult::Success;
+        }
         bool neg = value < 0;
         uint64_t mag = neg ? (uint64_t)(-(value + 1)) + 1 : (uint64_t)value;
         std::vector<uint8_t> magBytes;
@@ -7582,9 +7648,11 @@ static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value)
     size_t byteSize = memory.byteSizeOf(oop);
     if (byteSize > 8) return false;  // Too large for 64 bits
 
+    // One copy instead of byteSize checked fetchByte calls (which read a
+    // pointer-format body as zeros).
     uint64_t mag = 0;
-    for (size_t i = 0; i < byteSize; i++) {
-        mag |= static_cast<uint64_t>(memory.fetchByte(i, oop)) << (i * 8);
+    if (!oop.asObjectPtr()->isPointersObject()) {
+        std::memcpy(&mag, oop.asObjectPtr()->bytes(), byteSize);
     }
 
     // Check if it fits in signed 64 bits
@@ -7619,8 +7687,8 @@ static bool tryUnsigned64BitValueOf(ObjectMemory& memory, Oop oop, uint64_t& val
     if (byteSize > 8) return false;
 
     value = 0;
-    for (size_t i = 0; i < byteSize; i++) {
-        value |= static_cast<uint64_t>(memory.fetchByte(i, oop)) << (i * 8);
+    if (!oop.asObjectPtr()->isPointersObject()) {
+        std::memcpy(&value, oop.asObjectPtr()->bytes(), byteSize);  // as trySigned64BitValueOf
     }
     return true;
 }
@@ -8138,7 +8206,794 @@ static bool extractInteger(ObjectMemory& memory, Oop oop, std::vector<uint8_t>& 
     return false;
 }
 
+// ===== IN-PLACE LARGE INTEGER CORE =====
+//
+// The vector path above copies each operand byte by byte through the checked
+// fetchByte into a std::vector, converts it to 32-bit words and back, stores
+// the result byte by byte, and puts every result in old space: 3-6 mallocs per
+// operation, and every temporary LargeInteger is old-space garbage that only a
+// full GC reclaims (Pharo 13's Random>>next does five LargeInteger operations).
+// This core reads an operand in place as 64-bit little-endian limbs, computes
+// into on-stack buffers (the heap only past kLimbInline limbs), and allocates
+// the result once, at its exact size, in eden.  An answer that fits a
+// SmallInteger is a SmallInteger, a LargeInteger answer has no leading zero
+// bytes, and zero is never negative -- as makeLargeInteger did.  Each primitive
+// keeps the vector path's failure conditions.  The results only ever go onto
+// the stack, so no old object gains an unremembered young reference.
+// Opt-out PHARO_NO_FAST_LARGEINT (the vector path, old-space results).
+
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              "LargeInteger bytes are read as little-endian 64-bit limbs");
+
+namespace {
+
+// n elements: inline up to N, on the heap past that.
+template <typename T, size_t N>
+class SmallBuf {
+public:
+    explicit SmallBuf(size_t n) {
+        if (n > N) { heap_.reset(new T[n]); p_ = heap_.get(); }
+        else p_ = inline_;
+    }
+    SmallBuf(const SmallBuf&) = delete;
+    SmallBuf& operator=(const SmallBuf&) = delete;
+    T* data() { return p_; }
+    T& operator[](size_t i) { return p_[i]; }
+private:
+    T inline_[N];
+    std::unique_ptr<T[]> heap_;
+    T* p_;
+};
+
+constexpr size_t kLimbInline = 32;                 // 2048 bits on the stack
+using LimbBuf = SmallBuf<uint64_t, kLimbInline>;
+using DigitBuf = SmallBuf<uint32_t, 2 * kLimbInline + 2>;
+
+// Below this many limbs in the shorter operand, schoolbook multiplication;
+// at and above it, the vector path's Karatsuba (multiplyWords).
+constexpr size_t kKaratsubaLimbs = 48;
+
+// The left-shift size cap of magnitudeLeftShift (128 MB of result bytes).
+constexpr uint64_t kMaxShiftResultBytes = 128ULL * 1024 * 1024;
+
+struct LIClasses { uint32_t pos, neg; };
+
+// An integer operand: magnitude p[0..n) with p[n-1] != 0 (n == 0 for zero).
+struct LIOperand {
+    const uint64_t* p = nullptr;
+    size_t n = 0;
+    bool neg = false;
+    uint64_t small = 0;                  // a SmallInteger's magnitude
+    std::unique_ptr<uint64_t[]> masked;  // copy whose padding bytes are cleared
+};
+
+enum class LIBitOp { And, Or, Xor };
+
+}  // namespace
+
+static inline LIClasses liClasses(ObjectMemory& memory) {
+    return { memory.indexOfClass(memory.specialObject(SpecialObjectIndex::ClassLargePositiveInteger)),
+             memory.indexOfClass(memory.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger)) };
+}
+
+// Read a SmallInteger or LargeInteger in place.  False for anything else
+// (the vector path's extractInteger condition).
+static bool liRead(ObjectMemory& memory, const LIClasses& cls, Oop oop, LIOperand& x) {
+    if (oop.isSmallInteger()) {
+        int64_t v = oop.asSmallInteger();
+        x.neg = v < 0;
+        x.small = x.neg ? 0 - static_cast<uint64_t>(v) : static_cast<uint64_t>(v);
+        x.p = &x.small;
+        x.n = x.small != 0;
+        return true;
+    }
+    if (!oop.isObject()) return false;
+    ObjectHeader* h = oop.asObjectPtr();
+    uint32_t ci = h->classIndex();
+    if (__builtin_expect(ci == ObjectHeader::ForwardedClassIndex, 0)) {
+        oop = memory.followForwarded(oop);
+        if (!oop.isObject()) return false;
+        h = oop.asObjectPtr();
+        ci = h->classIndex();
+    }
+    if (ci != 0 && ci == cls.pos) {
+        x.neg = false;
+    } else if (ci != 0 && ci == cls.neg) {
+        x.neg = true;
+    } else if (!isLargeInteger(memory, oop, x.neg)) {
+        return false;
+    }
+    x.small = 0;
+    x.p = &x.small;
+    x.n = 0;
+    if (h->isPointersObject()) return true;  // fetchByte reads such a body as zeros
+    size_t bytes = h->byteSize();
+    size_t n = (bytes + 7) / 8;
+    const uint64_t* p = reinterpret_cast<const uint64_t*>(h->bytes());
+    size_t pad = n * 8 - bytes;
+    if (pad != 0 && (p[n - 1] >> (64 - 8 * pad)) != 0) {
+        // The bytes past byteSize are not part of the number.
+        x.masked.reset(new uint64_t[n]);
+        std::memcpy(x.masked.get(), p, n * 8);
+        x.masked[n - 1] &= ~0ULL >> (8 * pad);
+        p = x.masked.get();
+    }
+    while (n != 0 && p[n - 1] == 0) n--;
+    x.p = p;
+    x.n = n;
+    return true;
+}
+
+// Bytes in a normalized magnitude (the vector path counts zero as 1 byte).
+static inline uint64_t liByteLength(const uint64_t* p, size_t n) {
+    if (n == 0) return 1;
+    return (n - 1) * 8 + (71 - __builtin_clzll(p[n - 1])) / 8;
+}
+
+// The integer with magnitude r[0..n) and sign neg: a SmallInteger when it
+// fits, else a new normalized LargeInteger in eden.  Nil if allocation fails.
+static Oop liResult(ObjectMemory& memory, const LIClasses& cls,
+                    const uint64_t* r, size_t n, bool neg) {
+    while (n != 0 && r[n - 1] == 0) n--;
+    if (n == 0) return Oop::fromSmallInteger(0);
+    if (n == 1) {
+        uint64_t m = r[0];
+        if (!neg && m <= static_cast<uint64_t>(Oop::smallIntegerMax()))
+            return Oop::fromSmallInteger(static_cast<int64_t>(m));
+        if (neg && m <= static_cast<uint64_t>(Oop::smallIntegerMax()) + 1)
+            return Oop::fromSmallInteger(-static_cast<int64_t>(m));
+    }
+    uint32_t classIndex = neg ? cls.neg : cls.pos;
+    if (classIndex == 0) {
+        classIndex = memory.registerClass(memory.specialObject(neg
+            ? SpecialObjectIndex::ClassLargeNegativeInteger
+            : SpecialObjectIndex::ClassLargePositiveInteger));
+    }
+    Oop obj = memory.allocateBytesYoung(classIndex, liByteLength(r, n));
+    if (obj.isNil()) return obj;
+    // n slots exactly; the top limb's high bytes are zero, so is the padding.
+    std::memcpy(obj.asObjectPtr()->bytes(), r, n * 8);
+    return obj;
+}
+
+static Oop liInt64(ObjectMemory& memory, int64_t value) {
+    if (Oop::canBeSmallInteger(value)) return Oop::fromSmallInteger(value);
+    uint64_t m = value < 0 ? 0 - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+    return liResult(memory, liClasses(memory), &m, 1, value < 0);
+}
+
+static Oop liMagnitude128(ObjectMemory& memory, unsigned __int128 mag, bool neg) {
+    uint64_t r[2] = { static_cast<uint64_t>(mag), static_cast<uint64_t>(mag >> 64) };
+    return liResult(memory, liClasses(memory), r, 2, neg);
+}
+
+// ----- magnitude arithmetic on normalized limb arrays -----
+
+static inline int liCmpMag(const uint64_t* a, size_t an, const uint64_t* b, size_t bn) {
+    if (an != bn) return an < bn ? -1 : 1;
+    for (size_t i = an; i-- > 0;) {
+        if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    }
+    return 0;
+}
+
+// r = a + b; r has max(an, bn) + 1 limbs.  Answers that count.
+static size_t liAddMag(const uint64_t* a, size_t an, const uint64_t* b, size_t bn, uint64_t* r) {
+    if (an < bn) { std::swap(a, b); std::swap(an, bn); }
+    uint64_t carry = 0;
+    size_t i = 0;
+    for (; i < bn; i++) {
+        uint64_t s = a[i] + carry;
+        uint64_t c = s < carry;
+        s += b[i];
+        c |= s < b[i];
+        r[i] = s;
+        carry = c;
+    }
+    for (; i < an; i++) {
+        uint64_t s = a[i] + carry;
+        carry = s < carry;
+        r[i] = s;
+    }
+    r[an] = carry;
+    return an + 1;
+}
+
+// r = a - b for a >= b; r has an limbs (r may be a).  Answers an.
+static size_t liSubMag(const uint64_t* a, size_t an, const uint64_t* b, size_t bn, uint64_t* r) {
+    uint64_t borrow = 0;
+    size_t i = 0;
+    for (; i < bn; i++) {
+        uint64_t t = a[i] - b[i];
+        uint64_t b1 = a[i] < b[i];
+        uint64_t d = t - borrow;
+        borrow = b1 | (t < borrow);
+        r[i] = d;
+    }
+    for (; i < an; i++) {
+        uint64_t d = a[i] - borrow;
+        borrow = a[i] < borrow;
+        r[i] = d;
+    }
+    return an;
+}
+
+// r = a * b for nonzero a and b; r has an + bn limbs.
+static void liMulMag(const uint64_t* a, size_t an, const uint64_t* b, size_t bn, uint64_t* r) {
+    if (std::min(an, bn) >= kKaratsubaLimbs) {
+        std::vector<uint32_t> wa(2 * an), wb(2 * bn);
+        std::memcpy(wa.data(), a, an * 8);
+        std::memcpy(wb.data(), b, bn * 8);
+        trimWords(wa);
+        trimWords(wb);
+        std::vector<uint32_t> wr = multiplyWords(wa, wb);
+        std::memset(r, 0, (an + bn) * 8);
+        std::memcpy(r, wr.data(), std::min(wr.size() * 4, (an + bn) * 8));
+        return;
+    }
+    if (an < bn) { std::swap(a, b); std::swap(an, bn); }
+    // Row 0 initializes r[0..an]; later rows accumulate.
+    uint64_t carry = 0;
+    for (size_t j = 0; j < an; j++) {
+        unsigned __int128 t = static_cast<unsigned __int128>(a[j]) * b[0] + carry;
+        r[j] = static_cast<uint64_t>(t);
+        carry = static_cast<uint64_t>(t >> 64);
+    }
+    r[an] = carry;
+    for (size_t i = 1; i < bn; i++) {
+        uint64_t bi = b[i];
+        carry = 0;
+        for (size_t j = 0; j < an; j++) {
+            unsigned __int128 t = static_cast<unsigned __int128>(a[j]) * bi + r[i + j] + carry;
+            r[i + j] = static_cast<uint64_t>(t);
+            carry = static_cast<uint64_t>(t >> 64);
+        }
+        r[i + an] = carry;
+    }
+}
+
+// q = a / b, r = a mod b, for b nonzero.  q has max(an - bn + 1, 1) limbs,
+// r has max(an, bn) limbs; *qn and *rn get the counts used (not normalized).
+// A divisor of two or more 32-bit digits goes through Knuth's algorithm D on
+// 32-bit digits (Hacker's Delight divmnu), which needs only 64/32 divides.
+static void liDivMag(const uint64_t* a, size_t an, const uint64_t* b, size_t bn,
+                     uint64_t* q, size_t* qn, uint64_t* r, size_t* rn) {
+    if (liCmpMag(a, an, b, bn) < 0) {
+        *qn = 0;
+        if (an != 0) std::memcpy(r, a, an * 8);
+        *rn = an;
+        return;
+    }
+    if (bn == 1 && b[0] <= 0xFFFFFFFFULL) {
+        uint64_t d = b[0], rem = 0;
+        for (size_t i = an; i-- > 0;) {
+            uint64_t hi = (rem << 32) | (a[i] >> 32);
+            uint64_t qh = hi / d;
+            rem = hi - qh * d;
+            uint64_t lo = (rem << 32) | (a[i] & 0xFFFFFFFFULL);
+            uint64_t ql = lo / d;
+            rem = lo - ql * d;
+            q[i] = (qh << 32) | ql;
+        }
+        *qn = an;
+        r[0] = rem;
+        *rn = 1;
+        return;
+    }
+
+    size_t m = 2 * an, n = 2 * bn;
+    DigitBuf un(m + 1), vn(n);
+    std::memcpy(un.data(), a, an * 8);
+    std::memcpy(vn.data(), b, bn * 8);
+    while (n > 0 && vn[n - 1] == 0) n--;
+    while (m > 0 && un[m - 1] == 0) m--;
+    // n >= 2 (b >= 2^32) and m >= n (a >= b).
+
+    // Normalize: shift so the divisor's top digit has its high bit set.
+    int s = __builtin_clz(vn[n - 1]);
+    for (size_t i = n - 1; i > 0; i--) {
+        vn[i] = (vn[i] << s) | static_cast<uint32_t>(static_cast<uint64_t>(vn[i - 1]) >> (32 - s));
+    }
+    vn[0] <<= s;
+    un[m] = static_cast<uint32_t>(static_cast<uint64_t>(un[m - 1]) >> (32 - s));
+    for (size_t i = m - 1; i > 0; i--) {
+        un[i] = (un[i] << s) | static_cast<uint32_t>(static_cast<uint64_t>(un[i - 1]) >> (32 - s));
+    }
+    un[0] <<= s;
+
+    const uint64_t base = 1ULL << 32;
+    size_t qd = m - n + 1;
+    DigitBuf qdig(qd);
+    for (size_t jj = qd; jj-- > 0;) {
+        size_t j = jj;
+        uint64_t num = (static_cast<uint64_t>(un[j + n]) << 32) | un[j + n - 1];
+        uint64_t qhat = num / vn[n - 1];
+        uint64_t rhat = num - qhat * vn[n - 1];
+        while (qhat >= base || qhat * vn[n - 2] > ((rhat << 32) | un[j + n - 2])) {
+            qhat--;
+            rhat += vn[n - 1];
+            if (rhat >= base) break;
+        }
+        // Multiply and subtract.
+        int64_t k = 0, t;
+        for (size_t i = 0; i < n; i++) {
+            uint64_t p = qhat * vn[i];
+            t = static_cast<int64_t>(un[i + j]) - k - static_cast<int64_t>(p & 0xFFFFFFFFULL);
+            un[i + j] = static_cast<uint32_t>(t);
+            k = static_cast<int64_t>(p >> 32) - (t >> 32);
+        }
+        t = static_cast<int64_t>(un[j + n]) - k;
+        un[j + n] = static_cast<uint32_t>(t);
+        qdig[j] = static_cast<uint32_t>(qhat);
+        if (t < 0) {
+            // Subtracted too much: add the divisor back.
+            qdig[j]--;
+            uint64_t c = 0;
+            for (size_t i = 0; i < n; i++) {
+                uint64_t sum = static_cast<uint64_t>(un[i + j]) + vn[i] + c;
+                un[i + j] = static_cast<uint32_t>(sum);
+                c = sum >> 32;
+            }
+            un[j + n] += static_cast<uint32_t>(c);
+        }
+    }
+
+    // Unnormalize the remainder into un[0..n).
+    for (size_t i = 0; i + 1 < n; i++) {
+        un[i] = (un[i] >> s) | static_cast<uint32_t>(static_cast<uint64_t>(un[i + 1]) << (32 - s));
+    }
+    un[n - 1] >>= s;
+
+    size_t qLimbs = (qd + 1) / 2;
+    std::memset(q, 0, qLimbs * 8);
+    std::memcpy(q, qdig.data(), qd * 4);
+    *qn = qLimbs;
+    size_t rLimbs = (n + 1) / 2;
+    std::memset(r, 0, rLimbs * 8);
+    std::memcpy(r, un.data(), n * 4);
+    *rn = rLimbs;
+}
+
+// r = a << s; r has n + s/64 + 1 limbs.  Answers that count.
+static size_t liShlMag(const uint64_t* a, size_t n, uint64_t s, uint64_t* r) {
+    size_t ls = static_cast<size_t>(s / 64);
+    unsigned bs = static_cast<unsigned>(s % 64);
+    std::memset(r, 0, ls * 8);
+    if (bs == 0) {
+        if (n != 0) std::memcpy(r + ls, a, n * 8);
+        r[ls + n] = 0;
+    } else {
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; i++) {
+            r[ls + i] = (a[i] << bs) | carry;
+            carry = a[i] >> (64 - bs);
+        }
+        r[ls + n] = carry;
+    }
+    return ls + n + 1;
+}
+
+// r = a >> s; r has n limbs and may be a.  Answers the count used.
+static size_t liShrMag(const uint64_t* a, size_t n, uint64_t s, uint64_t* r) {
+    if (s / 64 >= n) return 0;
+    size_t ls = static_cast<size_t>(s / 64);
+    unsigned bs = static_cast<unsigned>(s % 64);
+    size_t rn = n - ls;
+    if (bs == 0) {
+        std::memmove(r, a + ls, rn * 8);
+    } else {
+        for (size_t i = 0; i < rn; i++) {
+            uint64_t hi = (ls + i + 1 < n) ? a[ls + i + 1] << (64 - bs) : 0;
+            r[i] = (a[ls + i] >> bs) | hi;
+        }
+    }
+    return rn;
+}
+
+// ----- signed operations: answer an Oop, nil on allocation failure -----
+
+static Oop liAddSigned(ObjectMemory& memory, const LIClasses& cls,
+                       const LIOperand& a, const LIOperand& b, bool subtract) {
+    bool bNeg = b.neg != subtract;
+    LimbBuf r(std::max(a.n, b.n) + 1);
+    size_t rn;
+    bool rNeg;
+    if (a.neg == bNeg) {
+        rn = liAddMag(a.p, a.n, b.p, b.n, r.data());
+        rNeg = a.neg;
+    } else if (liCmpMag(a.p, a.n, b.p, b.n) >= 0) {
+        rn = liSubMag(a.p, a.n, b.p, b.n, r.data());
+        rNeg = a.neg;
+    } else {
+        rn = liSubMag(b.p, b.n, a.p, a.n, r.data());
+        rNeg = bNeg;
+    }
+    return liResult(memory, cls, r.data(), rn, rNeg);
+}
+
+static Oop liMultiply(ObjectMemory& memory, const LIClasses& cls,
+                      const LIOperand& a, const LIOperand& b, bool neg) {
+    if (a.n == 0 || b.n == 0) return Oop::fromSmallInteger(0);
+    LimbBuf r(a.n + b.n);
+    liMulMag(a.p, a.n, b.p, b.n, r.data());
+    return liResult(memory, cls, r.data(), a.n + b.n, neg);
+}
+
+// The vector path's compareIntegers: zero of either sign is zero.
+static int liCmpSigned(const LIOperand& a, const LIOperand& b) {
+    bool az = a.n == 0, bz = b.n == 0;
+    if (az && bz) return 0;
+    if (az) return b.neg ? 1 : -1;
+    if (bz) return a.neg ? -1 : 1;
+    if (a.neg != b.neg) return a.neg ? -1 : 1;
+    int c = liCmpMag(a.p, a.n, b.p, b.n);
+    return a.neg ? -c : c;
+}
+
+// Magnitude division into caller buffers sized liDivBufs.
+struct LIDivision {
+    LimbBuf q, r;
+    size_t qn = 0, rn = 0;
+    LIDivision(const LIOperand& a, const LIOperand& b)
+        : q(a.n >= b.n ? a.n - b.n + 2 : 1), r(std::max(a.n, b.n) + 1) {
+        liDivMag(a.p, a.n, b.p, b.n, q.data(), &qn, r.data(), &rn);
+        while (qn != 0 && q[qn - 1] == 0) qn--;
+        while (rn != 0 && r[rn - 1] == 0) rn--;
+    }
+};
+
+// Add 1 to v[0..n); v has n + 1 limbs.  Answers the new count.
+static size_t liIncrement(uint64_t* v, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (++v[i] != 0) return n;
+    }
+    v[n] = 1;
+    return n + 1;
+}
+
+// Two's-complement limb i of x, sign-extended.  borrow carries the "- 1" of
+// ~(magnitude - 1) across limbs; it starts at 1.
+static inline uint64_t liTcLimb(const LIOperand& x, size_t i, uint64_t& borrow) {
+    uint64_t m = i < x.n ? x.p[i] : 0;
+    if (!x.neg) return m;
+    uint64_t d = m - borrow;
+    borrow = m < borrow;
+    return ~d;
+}
+
+static inline uint64_t liApply(LIBitOp op, uint64_t a, uint64_t b) {
+    switch (op) {
+        case LIBitOp::And: return a & b;
+        case LIBitOp::Or:  return a | b;
+        default:           return a ^ b;
+    }
+}
+
+// Bitwise and/or/xor with two's-complement semantics for negative operands.
+static Oop liBitLogic(ObjectMemory& memory, const LIClasses& cls,
+                      const LIOperand& a, const LIOperand& b, LIBitOp op) {
+    if (!a.neg && !b.neg) {
+        size_t rn = op == LIBitOp::And ? std::min(a.n, b.n) : std::max(a.n, b.n);
+        LimbBuf r(std::max<size_t>(rn, 1));
+        for (size_t i = 0; i < rn; i++) {
+            r[i] = liApply(op, i < a.n ? a.p[i] : 0, i < b.n ? b.p[i] : 0);
+        }
+        return liResult(memory, cls, r.data(), rn, false);
+    }
+    size_t L = std::max(a.n, b.n) + 1;
+    LimbBuf r(L);
+    uint64_t ba = 1, bb = 1;
+    for (size_t i = 0; i < L; i++) {
+        r[i] = liApply(op, liTcLimb(a, i, ba), liTcLimb(b, i, bb));
+    }
+    bool neg = (r[L - 1] >> 63) != 0;
+    if (neg) {
+        // magnitude = ~r + 1
+        uint64_t carry = 1;
+        for (size_t i = 0; i < L; i++) {
+            uint64_t v = ~r[i] + carry;
+            carry = carry & (v == 0);
+            r[i] = v;
+        }
+    }
+    return liResult(memory, cls, r.data(), L, neg);
+}
+
+// a bitShift: shift.  arithmetic: a negative receiver shifted right rounds
+// toward negative infinity (primitive 37); otherwise the magnitude shifts and
+// the sign stays (primDigitBitShiftMagnitude).  *overflow: the result would
+// pass magnitudeLeftShift's 128 MB cap (the primitive fails).
+static Oop liShift(ObjectMemory& memory, const LIClasses& cls, const LIOperand& a,
+                   int64_t shift, bool arithmetic, bool* overflow) {
+    *overflow = false;
+    if (shift >= 0) {
+        uint64_t s = static_cast<uint64_t>(shift);
+        if (liByteLength(a.p, a.n) + s / 8 + 1 > kMaxShiftResultBytes) {
+            *overflow = true;
+            return Oop::fromSmallInteger(0);
+        }
+        LimbBuf r(a.n + s / 64 + 1);
+        size_t rn = liShlMag(a.p, a.n, s, r.data());
+        return liResult(memory, cls, r.data(), rn, a.neg);
+    }
+    uint64_t s = 0 - static_cast<uint64_t>(shift);
+    if (!arithmetic || !a.neg || a.n == 0) {
+        LimbBuf r(std::max<size_t>(a.n, 1));
+        size_t rn = liShrMag(a.p, a.n, s, r.data());
+        return liResult(memory, cls, r.data(), rn, a.neg);
+    }
+    // -m >> s = -(((m - 1) >> s) + 1)
+    LimbBuf t(a.n + 1);
+    uint64_t one = 1;
+    liSubMag(a.p, a.n, &one, 1, t.data());
+    size_t tn = liShrMag(t.data(), a.n, s, t.data());
+    tn = liIncrement(t.data(), tn);
+    return liResult(memory, cls, t.data(), tn, true);
+}
+
+// ----- primitive bodies -----
+
+// Primitives 1/2 mixed-operand paths and 21/22: receiver +/- argument.
+static PrimitiveResult liPrimAddSub(Interpreter& interp, bool subtract) {
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liRead(memory, cls, interp.stackValue(1), a) ||
+        !liRead(memory, cls, interp.stackValue(0), b)) {
+        return PrimitiveResult::Failure;
+    }
+    Oop result = liAddSigned(memory, cls, a, b, subtract);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    interp.popN(2);
+    interp.push(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 17's int64 receiver shifted left past __int128: |value| << shift
+// with value's sign.  *overflow as liShift.
+static Oop liShiftLeftInt64(ObjectMemory& memory, int64_t value, int64_t shift, bool* overflow) {
+    LIClasses cls = liClasses(memory);
+    LIOperand a;
+    a.neg = value < 0;
+    a.small = a.neg ? 0 - static_cast<uint64_t>(value) : static_cast<uint64_t>(value);
+    a.p = &a.small;
+    a.n = a.small != 0;
+    return liShift(memory, cls, a, shift, false, overflow);
+}
+
+// Read receiver (stackValue(1)) and argument (stackValue(0)).
+static inline bool liReadPair(Interpreter& interp, ObjectMemory& memory, const LIClasses& cls,
+                              LIOperand& a, LIOperand& b) {
+    return liRead(memory, cls, interp.stackValue(1), a) &&
+           liRead(memory, cls, interp.stackValue(0), b);
+}
+
+// Pop `pops` and push result; fail on a nil (allocation failure) result.
+static inline PrimitiveResult liAnswer(Interpreter& interp, size_t pops, Oop result) {
+    if (result.isNil()) return PrimitiveResult::Failure;
+    interp.popN(pops);
+    interp.push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveSuccess-style answer (pops argCount_ + 1), for the primitives
+// whose vector path answered through primitiveSuccess.
+static inline PrimitiveResult liSucceed(Interpreter& interp, Oop result) {
+    if (result.isNil()) return PrimitiveResult::Failure;
+    interp.primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+// Primitive 29.
+static PrimitiveResult liPrimMultiply(Interpreter& interp) {
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    return liAnswer(interp, 2, liMultiply(memory, cls, a, b, a.neg != b.neg));
+}
+
+// Primitives 20 (rem:), 30 (/ when exact), 31 (\\), 32 (//), 33 (quo:).
+enum class LIDivKind { Rem, Exact, Mod, Floor, Quo };
+static PrimitiveResult liPrimDivide(Interpreter& interp, LIDivKind kind) {
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    if (b.n == 0) return PrimitiveResult::Failure;  // division by zero
+    LIDivision d(a, b);
+    switch (kind) {
+        case LIDivKind::Exact:
+            if (d.rn != 0) return PrimitiveResult::Failure;  // not exact
+            return liAnswer(interp, 2, liResult(memory, cls, d.q.data(), d.qn, a.neg != b.neg));
+        case LIDivKind::Quo:
+            return liSucceed(interp, liResult(memory, cls, d.q.data(), d.qn, a.neg != b.neg));
+        case LIDivKind::Floor: {
+            bool neg = a.neg != b.neg;
+            size_t qn = d.qn;
+            if (neg && d.rn != 0) qn = liIncrement(d.q.data(), qn);
+            return liSucceed(interp, liResult(memory, cls, d.q.data(), qn, neg));
+        }
+        case LIDivKind::Rem:
+            return liSucceed(interp, liResult(memory, cls, d.r.data(), d.rn, a.neg));
+        case LIDivKind::Mod: {
+            // Sign of the divisor: a nonzero remainder of mixed signs is |b| - r.
+            size_t rn = d.rn;
+            if (rn != 0 && a.neg != b.neg) rn = liSubMag(b.p, b.n, d.r.data(), rn, d.r.data());
+            return liAnswer(interp, 2, liResult(memory, cls, d.r.data(), rn, b.neg));
+        }
+    }
+    return PrimitiveResult::Failure;
+}
+
+// Primitives 23-28.
+enum class LICmpKind { Lt, Gt, Le, Ge, Eq, Ne };
+static PrimitiveResult liPrimCompare(Interpreter& interp, LICmpKind kind) {
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    int c = liCmpSigned(a, b);
+    bool r = false;
+    switch (kind) {
+        case LICmpKind::Lt: r = c < 0; break;
+        case LICmpKind::Gt: r = c > 0; break;
+        case LICmpKind::Le: r = c <= 0; break;
+        case LICmpKind::Ge: r = c >= 0; break;
+        case LICmpKind::Eq: r = c == 0; break;
+        case LICmpKind::Ne: r = c != 0; break;
+    }
+    interp.primitiveSuccess(r ? memory.trueObject() : memory.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// Primitives 34-36 and primDigitBitAnd/Or/Xor.
+static PrimitiveResult liPrimBitLogic(Interpreter& interp, LIBitOp op) {
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    return liSucceed(interp, liBitLogic(memory, cls, a, b, op));
+}
+
+// Primitive 37 (arithmetic) and primDigitBitShiftMagnitude.
+static PrimitiveResult liPrimShift(Interpreter& interp, bool arithmetic) {
+    Oop arg = interp.stackValue(0);
+    if (!arg.isSmallInteger()) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a;
+    if (!liRead(memory, cls, interp.stackValue(1), a)) return PrimitiveResult::Failure;
+    bool overflow;
+    Oop result = liShift(memory, cls, a, arg.asSmallInteger(), arithmetic, &overflow);
+    if (overflow) return PrimitiveResult::Failure;
+    return liSucceed(interp, result);
+}
+
+// primDigitMultiplyNegative: receiver digitMultiply: arg neg: aBoolean.
+static PrimitiveResult liPrimDigitMultiplyNegative(Interpreter& interp, int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liRead(memory, cls, interp.stackValue(2), a) ||
+        !liRead(memory, cls, interp.stackValue(1), b)) {
+        return PrimitiveResult::Failure;
+    }
+    bool neg = interp.stackValue(0).rawBits() == memory.trueObject().rawBits();
+    return liAnswer(interp, 3, liMultiply(memory, cls, a, b, neg));
+}
+
+// primDigitAdd: |receiver| + |arg| with the receiver's sign.
+static PrimitiveResult liPrimDigitAdd(Interpreter& interp, int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    LimbBuf r(std::max(a.n, b.n) + 1);
+    size_t rn = liAddMag(a.p, a.n, b.p, b.n, r.data());
+    return liAnswer(interp, 2, liResult(memory, cls, r.data(), rn, a.neg));
+}
+
+// primDigitSubtract: |receiver| - |arg|; the receiver's sign, flipped when
+// |arg| is the larger.
+static PrimitiveResult liPrimDigitSubtract(Interpreter& interp, int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    LimbBuf r(std::max<size_t>(std::max(a.n, b.n), 1));
+    size_t rn;
+    bool neg;
+    if (liCmpMag(a.p, a.n, b.p, b.n) >= 0) {
+        rn = liSubMag(a.p, a.n, b.p, b.n, r.data());
+        neg = a.neg;
+    } else {
+        rn = liSubMag(b.p, b.n, a.p, a.n, r.data());
+        neg = !a.neg;
+    }
+    return liAnswer(interp, 2, liResult(memory, cls, r.data(), rn, neg));
+}
+
+// primDigitCompare: -1, 0 or 1 comparing |receiver| with |arg|.
+static PrimitiveResult liPrimDigitCompare(Interpreter& interp, int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liReadPair(interp, memory, cls, a, b)) return PrimitiveResult::Failure;
+    int c = liCmpMag(a.p, a.n, b.p, b.n);
+    interp.popN(2);
+    interp.push(Oop::fromSmallInteger(c));
+    return PrimitiveResult::Success;
+}
+
+// primNormalizePositive / primNormalizeNegative: |receiver| with the given
+// sign, as a SmallInteger when it fits.  A receiver already in normal form
+// (that sign's class, no leading zero byte, too big for a SmallInteger) is
+// answered itself, as Cog's LargeIntegers plugin does, not a copy.
+static PrimitiveResult liPrimNormalize(Interpreter& interp, int argCount, bool neg) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    Oop rcvr = interp.stackTop();
+    LIOperand a;
+    if (!liRead(memory, cls, rcvr, a)) return PrimitiveResult::Failure;
+    if (rcvr.isObject() && a.neg == neg && a.n != 0) {
+        ObjectHeader* h = rcvr.asObjectPtr();
+        uint64_t smallLimit = static_cast<uint64_t>(Oop::smallIntegerMax()) + (neg ? 1 : 0);
+        if (h->classIndex() == (neg ? cls.neg : cls.pos) && !h->isPointersObject()
+                && h->byteSize() == liByteLength(a.p, a.n)
+                && (a.n > 1 || a.p[0] > smallLimit)) {
+            return PrimitiveResult::Success;  // the receiver stays on the stack
+        }
+    }
+    return liAnswer(interp, 1, liResult(memory, cls, a.p, a.n, neg));
+}
+
+// primDigitDivNegative: receiver digitDiv: arg neg: aBoolean -> {quo. rem}.
+// The quotient's sign is the flag, the remainder's the receiver's.
+static PrimitiveResult liPrimDigitDivNegative(Interpreter& interp, int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    ObjectMemory& memory = interp.memory();
+    LIClasses cls = liClasses(memory);
+    LIOperand a, b;
+    if (!liRead(memory, cls, interp.stackValue(2), a) ||
+        !liRead(memory, cls, interp.stackValue(1), b)) {
+        return PrimitiveResult::Failure;
+    }
+    if (b.n == 0) return PrimitiveResult::Failure;
+    bool quoNeg = interp.stackValue(0).rawBits() == memory.trueObject().rawBits();
+    LIDivision d(a, b);
+
+    // Allocation never collects (a scavenge waits for the next safe point),
+    // but the intermediates go on the stack as in the vector path.
+    Oop quotient = liResult(memory, cls, d.q.data(), d.qn, quoNeg);
+    if (quotient.isNil()) return PrimitiveResult::Failure;
+    interp.push(quotient);
+    Oop remainder = liResult(memory, cls, d.r.data(), d.rn, a.neg);
+    if (remainder.isNil()) { interp.pop(); return PrimitiveResult::Failure; }
+    interp.push(remainder);
+
+    Oop arrayClass = memory.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIdx = memory.indexOfClass(arrayClass);
+    if (arrayClassIdx == 0) arrayClassIdx = memory.registerClass(arrayClass);
+    Oop resultArray = memory.allocateSlots(arrayClassIdx, 2, ObjectFormat::Indexable);
+    if (resultArray.isNil()) { interp.popN(2); return PrimitiveResult::Failure; }
+    remainder = interp.stackValue(0);
+    quotient = interp.stackValue(1);
+    interp.popN(2);
+    memory.storePointer(0, resultArray, quotient);
+    memory.storePointer(1, resultArray, remainder);
+    interp.popN(3);
+    interp.push(resultArray);
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveAddLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimAddSub(*this, false);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8183,6 +9038,7 @@ PrimitiveResult Interpreter::primitiveAddLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveSubtractLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimAddSub(*this, true);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8230,6 +9086,7 @@ PrimitiveResult Interpreter::primitiveSubtractLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveMultiplyLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimMultiply(*this);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8258,6 +9115,7 @@ PrimitiveResult Interpreter::primitiveMultiplyLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveDivideLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDivide(*this, LIDivKind::Exact);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8298,6 +9156,7 @@ PrimitiveResult Interpreter::primitiveDivideLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveModLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDivide(*this, LIDivKind::Mod);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8365,6 +9224,7 @@ PrimitiveResult Interpreter::primitiveModLargeIntegers(int argCount) {
 // Primitive 20: LargeInteger rem: - C-style remainder (sign of dividend)
 // Unlike mod (\\) which has sign of divisor, rem: has sign of dividend
 PrimitiveResult Interpreter::primitiveRemLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDivide(*this, LIDivKind::Rem);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8434,6 +9294,7 @@ static int compareIntegers(ObjectMemory& memory, Oop a, Oop b) {
 }
 
 PrimitiveResult Interpreter::primitiveLessThanLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimCompare(*this, LICmpKind::Lt);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8451,6 +9312,7 @@ PrimitiveResult Interpreter::primitiveLessThanLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveGreaterThanLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimCompare(*this, LICmpKind::Gt);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8468,6 +9330,7 @@ PrimitiveResult Interpreter::primitiveGreaterThanLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveLessOrEqualLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimCompare(*this, LICmpKind::Le);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8485,6 +9348,7 @@ PrimitiveResult Interpreter::primitiveLessOrEqualLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveGreaterOrEqualLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimCompare(*this, LICmpKind::Ge);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8502,6 +9366,7 @@ PrimitiveResult Interpreter::primitiveGreaterOrEqualLargeIntegers(int argCount) 
 }
 
 PrimitiveResult Interpreter::primitiveEqualLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimCompare(*this, LICmpKind::Eq);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8519,6 +9384,7 @@ PrimitiveResult Interpreter::primitiveEqualLargeIntegers(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveNotEqualLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimCompare(*this, LICmpKind::Ne);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8537,6 +9403,7 @@ PrimitiveResult Interpreter::primitiveNotEqualLargeIntegers(int argCount) {
 
 // Primitive 32: Integer division (truncates toward negative infinity)
 PrimitiveResult Interpreter::primitiveDivLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDivide(*this, LIDivKind::Floor);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8594,6 +9461,7 @@ PrimitiveResult Interpreter::primitiveDivLargeIntegers(int argCount) {
 
 // Primitive 33: Integer quotient (truncates toward zero)
 PrimitiveResult Interpreter::primitiveQuoLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDivide(*this, LIDivKind::Quo);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8718,6 +9586,7 @@ static void fromTwosComplement(const std::vector<uint8_t>& tc, std::vector<uint8
 
 // Primitive 34: Bitwise AND (with two's complement for negative integers)
 PrimitiveResult Interpreter::primitiveBitAndLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimBitLogic(*this, LIBitOp::And);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8765,6 +9634,7 @@ PrimitiveResult Interpreter::primitiveBitAndLargeIntegers(int argCount) {
 
 // Primitive 35: Bitwise OR (with two's complement for negative integers)
 PrimitiveResult Interpreter::primitiveBitOrLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimBitLogic(*this, LIBitOp::Or);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8810,6 +9680,7 @@ PrimitiveResult Interpreter::primitiveBitOrLargeIntegers(int argCount) {
 
 // Primitive 36: Bitwise XOR (with two's complement for negative integers)
 PrimitiveResult Interpreter::primitiveBitXorLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimBitLogic(*this, LIBitOp::Xor);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8927,6 +9798,7 @@ static std::vector<uint8_t> magnitudeAddOne(const std::vector<uint8_t>& mag) {
 // Primitive 37: Bit shift (positive = left, negative = right)
 // Supports negative receivers via arithmetic shift semantics
 PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimShift(*this, true);
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8995,6 +9867,7 @@ PrimitiveResult Interpreter::primitiveBitShiftLargeIntegers(int argCount) {
 // receiver that loses set bits -- so an odd negative LargeInteger shifted
 // right came out one too small (`((2 raisedTo: 100) + 1) negated bitShift: -1`).
 PrimitiveResult Interpreter::primDigitBitShiftMagnitude(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimShift(*this, false);
     if (argCount != 1) return PrimitiveResult::Failure;
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
@@ -9032,6 +9905,7 @@ PrimitiveResult Interpreter::primDigitBitShiftMagnitude(int argCount) {
 // primDigitMultiplyNegative: receiver * arg, with explicit neg flag
 // receiver: Integer, args: (Integer, Boolean)
 PrimitiveResult Interpreter::primDigitMultiplyNegative(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDigitMultiplyNegative(*this, argCount);
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop negFlag = stackValue(0);  // Boolean
@@ -9062,6 +9936,7 @@ PrimitiveResult Interpreter::primDigitMultiplyNegative(int argCount) {
 // primDigitAdd: receiver digitAdd: arg
 // receiver: Integer, args: (Integer)
 PrimitiveResult Interpreter::primDigitAddLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDigitAdd(*this, argCount);
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop arg = stackValue(0);
@@ -9088,6 +9963,7 @@ PrimitiveResult Interpreter::primDigitAddLargeIntegers(int argCount) {
 // primNormalizePositive: strip leading zeros, convert to SmallInt if fits
 // receiver: LargePositiveInteger, no args
 PrimitiveResult Interpreter::primNormalizePositive(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimNormalize(*this, argCount, false);
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop rcvr = stackTop();
@@ -9110,6 +9986,7 @@ PrimitiveResult Interpreter::primNormalizePositive(int argCount) {
 // primNormalizeNegative: strip leading zeros, convert to SmallInt if fits
 // receiver: LargeNegativeInteger, no args
 PrimitiveResult Interpreter::primNormalizeNegative(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimNormalize(*this, argCount, true);
     if (argCount != 0) return PrimitiveResult::Failure;
 
     Oop rcvr = stackTop();
@@ -9132,6 +10009,7 @@ PrimitiveResult Interpreter::primNormalizeNegative(int argCount) {
 // primDigitDivNegative: receiver digitDiv: arg neg: ng
 // Returns Array of (quotient, remainder)
 PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDigitDivNegative(*this, argCount);
     if (argCount != 2) return PrimitiveResult::Failure;
 
     Oop negFlag = stackValue(0);  // Boolean (neg flag for quotient)
@@ -9199,6 +10077,7 @@ PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
 // primDigitSubtract: receiver digitSubtract: arg
 // Used by Integer>>- for same-sign subtraction
 PrimitiveResult Interpreter::primDigitSubtractLargeIntegers(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDigitSubtract(*this, argCount);
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop arg = stackValue(0);
@@ -9235,6 +10114,7 @@ PrimitiveResult Interpreter::primDigitSubtractLargeIntegers(int argCount) {
 // primDigitCompare: compare magnitudes of two integers
 // Returns SmallInteger: -1 if receiver < arg, 0 if equal, 1 if receiver > arg
 PrimitiveResult Interpreter::primDigitCompare(int argCount) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_FAST_LARGEINT)) return liPrimDigitCompare(*this, argCount);
     if (argCount != 1) return PrimitiveResult::Failure;
 
     Oop arg = stackValue(0);
