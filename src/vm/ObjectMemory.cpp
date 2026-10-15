@@ -2020,6 +2020,26 @@ bool ObjectMemory::becomeTwoWayYoung(const std::vector<std::pair<Oop, Oop>>& pai
     return true;
 }
 
+bool ObjectMemory::becomeForwardLazy(const std::vector<std::pair<Oop, Oop>>& pairs) {
+    if (pairs.empty() || !pendingClassIndexRemap_.empty()) return false;
+    for (const auto& pr : pairs) {
+        ObjectHeader* h = pr.first.asObjectPtr();
+        if (h->slotCount() < 1 || h->hasOverflowSlots() || h->isForwarded() || h->isPinned()
+                || h->isImmutable() || pr.first.rawBits() == pr.second.rawBits())
+            return false;
+    }
+    g_objectMotionEpoch++;
+    for (const auto& pr : pairs) {
+        ObjectHeader* h = pr.first.asObjectPtr();
+        h->setClassIndex(ObjectHeader::ForwardedClassIndex);
+        h->setFormat(ObjectFormat::Reserved7);
+        slotAtPutBarriered(h, 0, pr.second);   // remembers an old forwarder to a young target
+    }
+    g_lazyForwarders = true;
+    lazyPairsSinceUnforward_ += pairs.size();
+    return true;
+}
+
 bool ObjectMemory::becomeTwoWayLazy(const std::vector<std::pair<Oop, Oop>>& pairs) {
     if (pairs.empty() || !pendingClassIndexRemap_.empty()) return false;
     auto ok = [&](Oop o) {
@@ -5231,6 +5251,11 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
 }
 
 size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {
+    // A forwarder's one live pointer is its target (slot 0): a scavenge
+    // updates it when the target moves (an old forwarder to a young object
+    // is remembered).
+    if (obj->classIndex() == ObjectHeader::ForwardedClassIndex)
+        return obj->slotCount() >= 1 ? 1 : 0;
     ObjectFormat fmt = obj->format();
 
     // Pointer objects (formats 0-5): all slots are pointers

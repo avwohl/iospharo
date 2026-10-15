@@ -16560,10 +16560,15 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
     // visits for a single primitive call.
     std::unordered_map<uint64_t, Oop> forwarding;
     forwarding.reserve(fromSize);
+    std::vector<std::pair<Oop, Oop>> pairs;
     bool cachesAffected = false;
     for (size_t i = 0; i < fromSize; i++) {
         Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
         Oop toObj = memory_.fetchPointer(i, toArrayOop);
+        if (__builtin_expect(g_lazyForwarders, 0)) {   // become the targets
+            fromObj = memory_.followForwarded(fromObj);
+            toObj = memory_.followForwarded(toObj);
+        }
 
         // Skip if either is an immediate or nil
         if (!fromObj.isObject() || fromObj.isNil()) {
@@ -16582,17 +16587,35 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         }
 
         forwarding[fromObj.rawBits()] = toObj;
+        pairs.emplace_back(fromObj, toObj);
         cachesAffected = cachesAffected || becomeAffectsCaches(fromObj) || becomeAffectsCaches(toObj);
-
-        // Also scan C++ execution stack - critical for stack-based VM.
-        // Without this, local variables (temps) on the stack still point to old
-        // objects. Bounded by frame depth, so it is not worth batching.
-        scanStackReplace(fromObj, toObj);
     }
 
-    // Called from the interpreter only (not a machine-code primitive), where
-    // young objects may move: forward young keys through a scavenge.
-    memory_.becomeForwardAll(forwarding, /* viaScavenge */ true);
+    // Lazy (docs/lazy-become-design.md): each from becomes a forwarder; the
+    // roots are fixed and the heap follows lazily.  A String promoted to a
+    // WideString (36-51 per Spec presenter test) scanned the heap each time.
+    bool lazyDone = false;
+    if (GET_DEBUG_BOOL(PHARO_LAZY_BECOME) && !cachesAffected && !pairs.empty()) {
+        bool eligible = true;
+        for (auto& [f, t] : pairs)
+            if (!lazyBecomeEligible(f) || !t.isObject() || t.isNil()) { eligible = false; break; }
+        if (eligible && memory_.becomeForwardLazy(pairs)) {
+            followForwardersInRoots();
+            if (memory_.lazyPairsSinceUnforward() >= 256) memory_.unforwardAll();
+            lazyDone = true;
+        }
+    }
+    if (!lazyDone) {
+        // The VM roots (the C++ execution stack, registers, frames): one
+        // pass for all pairs.  Then the heap: called from the interpreter
+        // only (not a machine-code primitive), where young objects may
+        // move: forward young keys through a scavenge.
+        forEachRoot([&](Oop& slot) {
+            auto it = forwarding.find(slot.rawBits());
+            if (it != forwarding.end()) slot = it->second;
+        });
+        memory_.becomeForwardAll(forwarding, /* viaScavenge */ true);
+    }
 
     // The method cache and the JIT caches hold methods, classes and
     // selectors.  Forwarding anything else leaves them right (Cog flushes

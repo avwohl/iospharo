@@ -726,6 +726,9 @@ public:
     // forwarders in the VM roots.  False (nothing changed) when a pair
     // does not qualify or a copy cannot be allocated.
     bool becomeTwoWayLazy(const std::vector<std::pair<Oop, Oop>>& pairs);
+    // Lazy one-way become: each first object becomes a forwarder to its
+    // second; no heap scan.  The caller replaces forwarders in the roots.
+    bool becomeForwardLazy(const std::vector<std::pair<Oop, Oop>>& pairs);
     // Replace every reference to a forwarder (heap, class table, VM roots)
     // with its target; clears g_lazyForwarders.  Run by markPhase.
     void unforwardAll();
