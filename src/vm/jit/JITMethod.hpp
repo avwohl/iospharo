@@ -389,6 +389,9 @@ inline bool g_mcfLazyCloAct = false;
 // docs/mcf-record-trim-plan.md stage 3: SavedFrame::savedTB holds the frame's
 // tempBase (fp + 1), which native code has in x22; read SavedFrame::fp().
 inline bool g_mcfTbRecord = false;
+// Stage 4: a native push's info word carries the ip as an offset from the
+// caller's method (recFull 0); SavedFrame::ip() / argCount() derive.
+inline bool g_mcfIpInInfo = false;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
 // PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and

@@ -259,6 +259,9 @@ DEBUG_BOOL_RT(PHARO_MCF_KEEP_TAIL_ZERO)           // native pushes zero savedByt
 DEBUG_BOOL(PHARO_MCF_TAIL_POISON)                  // stage-2 oracle: native pushes write 0xBAD0... into both tail fields; any raw read of them breaks
 DEBUG_BOOL_RT(PHARO_MCF_NO_TB_RECORD)             // frame records hold fp, not tempBase: native push and return keep their sub/add (docs/mcf-record-trim-plan.md stage 3)
 DEBUG_BOOL(PHARO_MCF_TB_SABOTAGE)                  // stage-3 oracle proof: native pushes store x25 as the caller's tempBase
+DEBUG_BOOL_RT(PHARO_MCF_NO_IP_IN_INFO)            // native call sites compute savedIP (ldr+add) and pass argCount in w12 (docs/mcf-record-trim-plan.md stage 4)
+DEBUG_BOOL(PHARO_MCF_IP_VERIFY)                    // stage-4 oracle: sites also pass the real ip in x13; mcfVerifyPush checks ip() against it
+DEBUG_BOOL(PHARO_MCF_IP_SABOTAGE)                  // stage-4 oracle proof: sites pass ipOff + 1
 DEBUG_BOOL_RT(PHARO_NO_PIN_TENURE)                // pinning a young object only sets the bit (a later scavenge still moves it)
 DEBUG_BOOL(PHARO_NLR_SEG_EAGER)                   // frozen NLR segment: deopt right after the freeze (tests the stash and deopt, no laziness)
 DEBUG_BOOL(PHARO_NLR_SEG_CENSUS)                  // frozen NLR segment: count freezes, pops and deopts

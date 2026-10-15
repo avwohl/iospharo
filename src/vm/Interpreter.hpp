@@ -671,7 +671,7 @@ private:
         // clears it, and mcfCodeChanged clears them all, so a non-null memo
         // is current.
         void* mcReturn;
-        uint8_t* savedIP;
+        uint8_t* savedIPRaw;      // read ip() / write setIP()
         void* mcJM;            // jit::JITMethod* that mcReturn points into
         Oop materializedContext;  // Cached context from materializeFrameStack (nil if not yet materialized)
         // The frame's tempBase (fp + 1) under jit::g_mcfTbRecord, else its
@@ -683,7 +683,7 @@ private:
         // The info word.  A native push stores the call site's w12
         // (callerArgCount | nArgs << 8, zero-extended): savedArgCount, a
         // siteNArgs nobody reads, ctxSynced false and no home marker.
-        uint8_t savedArgCount;
+        uint8_t savedArgCountRaw;  // read argCount()
         uint8_t siteNArgs;
         // True only if materializedContext's pc/temps/expr snapshot was
         // synced AFTER this frame last executed — gates the incremental
@@ -715,12 +715,38 @@ private:
         // push.  Deferred A6 iter N+30i root cause; bug presented as fib(N)
         // returning fib(N-2) for ~20% of runs with the inline-J2J gate off.
         Oop* materializedRetSlotRaw;
-        uint8_t* bcEnd() const { return recFull ? savedBytecodeEndRaw : nullptr; }   // null: derive
+        // recFull: 1 = a C++ push (all raw fields valid); 0 = a native push
+        // (stage 4: bytes 0-1 hold the ip offset from savedMethod under
+        // jit::g_mcfIpInInfo); 2 = a native push from a site whose offset
+        // needs more than 16 bits (raw ip and arg count, no tail fields).
+        uint8_t* bcEnd() const { return recFull == 1 ? savedBytecodeEndRaw : nullptr; }   // null: derive
+        bool ipInInfo() const { return recFull == 0 && jit::g_mcfIpInInfo; }
+        uint8_t* ip() const {
+            return ipInInfo() ? reinterpret_cast<uint8_t*>(savedMethod.rawBits())
+                                    + (savedArgCountRaw | (siteNArgs << 8))
+                              : savedIPRaw;
+        }
+        int argCount() const {
+            return ipInInfo()
+                ? (int)((savedMethod.asObjectPtr()->slotAt(0).asSmallInteger() >> 24) & 0xF)
+                : savedArgCountRaw;
+        }
+        // A C++ change of the ip makes the record a full one.
+        void setIP(uint8_t* p) {
+            if (ipInInfo()) {
+                savedArgCountRaw = (uint8_t)argCount();
+                siteNArgs = 0;
+                savedBytecodeEndRaw = nullptr;
+                materializedRetSlotRaw = nullptr;
+                recFull = 1;
+            }
+            savedIPRaw = p;
+        }
         Oop* fp() const {
             return jit::g_mcfTbRecord ? (savedTB ? savedTB - 1 : nullptr) : savedTB;
         }
         void setFp(Oop* f) { savedTB = jit::g_mcfTbRecord ? (f ? f + 1 : nullptr) : f; }
-        Oop* retSlot() const { return recFull ? materializedRetSlotRaw : nullptr; }
+        Oop* retSlot() const { return recFull == 1 ? materializedRetSlotRaw : nullptr; }
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
         const char* pushSite;
@@ -737,6 +763,7 @@ private:
     struct FrameGCSide {
         ptrdiff_t savedIPOffset;
         ptrdiff_t savedBytecodeEndOffset;
+        uint64_t methodBits;    // savedMethod before the GC (did it move?)
         // GC verify (PHARO_GC_FRAME_VERIFY): byte at savedIP stashed by
         // prepareForGC, checked after afterGC rebuilds savedIP.
         uint8_t gcVerifyByte;
@@ -745,12 +772,12 @@ private:
     static_assert(sizeof(SavedFrame) == 128, "T1 indexes savedFrames_ with lsl #7");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
-    static_assert(offsetof(SavedFrame, savedIP) == offsetof(SavedFrame, mcReturn) + 8
+    static_assert(offsetof(SavedFrame, savedIPRaw) == offsetof(SavedFrame, mcReturn) + 8
                   && offsetof(SavedFrame, materializedContext) == offsetof(SavedFrame, mcJM) + 8
                   && offsetof(SavedFrame, savedReceiver) == offsetof(SavedFrame, savedTB) + 8
-                  && offsetof(SavedFrame, savedArgCount) == offsetof(SavedFrame, savedMethod) + 8
-                  && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCount) + 2
-                  && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCount) + 4
+                  && offsetof(SavedFrame, savedArgCountRaw) == offsetof(SavedFrame, savedMethod) + 8
+                  && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCountRaw) + 2
+                  && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCountRaw) + 4
                   && offsetof(SavedFrame, savedActiveContextRaw) == offsetof(SavedFrame, savedClosureRaw) + 8
                   && offsetof(SavedFrame, materializedRetSlotRaw) == offsetof(SavedFrame, savedBytecodeEndRaw) + 8
                   && offsetof(SavedFrame, mcReturn) % 16 == 0,
@@ -2022,7 +2049,7 @@ public:
     void* mcfPoppedMemo(const SavedFrame* popped, void** jm) const {
         if (popped && poppedMcReturn_ && popped == &savedFrames_[poppedMcDepth_]
                 && poppedMcDepth_ == frameDepth_
-                && popped->savedIP == instructionPointer_
+                && popped->ip() == instructionPointer_
                 && !GET_DEBUG_BOOL(PHARO_MCF_NO_POP_MEMO_KEEP)) {
             *jm = poppedMcJM_;
             return poppedMcReturn_;
@@ -2357,7 +2384,7 @@ public:
         // Save current frame — GC-critical Oop fields + IP/bytecodeEnd
         SavedFrame& frame = savedFrames_[frameDepth_++];
         frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
-        frame.savedIP = instructionPointer_;
+        frame.savedIPRaw = instructionPointer_;
         frame.savedBytecodeEndRaw = bytecodeEnd_;
         frame.recFull = 1;
         frame.savedMethod = method_;
@@ -2372,7 +2399,7 @@ public:
         // Without this, stale materializedRetSlot from a prior occupant of
         // this slot can leak into returnValue and corrupt fib results.
         frame.materializedRetSlotRaw = nullptr;
-        frame.savedArgCount = argCount_;
+        frame.savedArgCountRaw = argCount_;
         frame.setHomeFrameDepth(SIZE_MAX);
 
         // Set up callee state in interpreter
@@ -2481,7 +2508,7 @@ public:
         homeMethod_ = callerMethod;
         receiver_ = callerRecv;
         framePointer_ = frame.fp();
-        argCount_ = frame.savedArgCount;
+        argCount_ = frame.argCount();
         bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     }
 
@@ -2511,7 +2538,7 @@ public:
         ObjectHeader* methObj = method.asObjectPtr();
         SavedFrame& frame = savedFrames_[frameDepth_++];
         frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
-        frame.savedIP = ip;
+        frame.savedIPRaw = ip;
         frame.savedBytecodeEndRaw = methObj->bytes() + methObj->byteSize();
         frame.recFull = 1;
         frame.savedMethod = method;
@@ -2522,7 +2549,7 @@ public:
         frame.ctxSynced = false;
         frame.setFp(tempBase - 1);
         frame.materializedRetSlotRaw = nullptr;  // Step 7: no callers — clear for safety
-        frame.savedArgCount = argCount;
+        frame.savedArgCountRaw = argCount;
         frame.setHomeFrameDepth(SIZE_MAX);
     }
 

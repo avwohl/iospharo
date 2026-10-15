@@ -663,7 +663,7 @@ void Interpreter::mcfVerifyMemo(const SavedFrame& f, const char* site) {
     if (!jm || jm->compiledMethodOop != f.savedMethod.rawBits()) why = "jm-method";
     else if (f.savedMethod.rawBits() != method_.rawBits()) why = "frame-method";
     else {
-        void* want = mcfEntryFor(jm, f.savedIP);
+        void* want = mcfEntryFor(jm, f.ip());
         if (want && want != f.mcReturn) {
             // A native call memo points at the send's continuation, which
             // may precede the next bytecode's label; accept any address
@@ -679,7 +679,7 @@ void Interpreter::mcfVerifyMemo(const SavedFrame& f, const char* site) {
             memory_.selectorOf(f.savedMethod).c_str(),
             jm ? (unsigned long long)jm->compiledMethodOop : 0ULL,
             (unsigned long long)f.savedMethod.rawBits(),
-            (const void*)f.savedIP, (const void*)f.savedIP, frameDepth_);
+            (const void*)f.ip(), (const void*)f.ip(), frameDepth_);
     stopVM("MCF memo verification failed");
 }
 
@@ -709,7 +709,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     const int nArgsCaller = (int)((hdr.asSmallInteger() >> 24) & 0xF);
     const uint8_t* bc0 = mo->bytes() + (1 + nLits) * 8;
     const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
-    if (f.savedIP <= bc0 || f.savedIP > end) bad("savedIP outside caller");
+    if (f.ip() <= bc0 || f.ip() > end) bad("savedIP outside caller");
     // The lazy view leaves savedBytecodeEnd null (derived when read).
     if (f.bcEnd() != end && !(f.bcEnd() == nullptr && ::pharo::mcfLazyView()))
         bad("savedBytecodeEnd");
@@ -734,7 +734,11 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
             }
         }
     }
-    if (f.savedArgCount != nArgsCaller) bad("argCount");
+    if (f.argCount() != nArgsCaller) bad("argCount");
+    // Stage 4 oracle: under PHARO_MCF_IP_VERIFY the site also passed the real
+    // ip, which the push stored raw.
+    if (GET_DEBUG_BOOL(PHARO_MCF_IP_VERIFY) && f.ipInInfo() && f.ip() != f.savedIPRaw)
+        bad("ip in the info word is not the site's ip");
     if (f.ctxSynced) bad("ctxSynced set");
     if (f.retSlot()) bad("retSlot set");
     if (f.mcJM && static_cast<const jit::JITMethod*>(f.mcJM)->compiledMethodOop
@@ -765,9 +769,9 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
         // sends only; walk the bytecodes to the one that ends at savedIP.
         const uint8_t* pc = bc0;
         const uint8_t* prev = nullptr;
-        while (pc < f.savedIP) { prev = pc; pc += jit::SistaV1::bytecodeLength(*pc); }
+        while (pc < f.ip()) { prev = pc; pc += jit::SistaV1::bytecodeLength(*pc); }
         Oop sel = Oop::nil();
-        if (pc == f.savedIP && prev && (prev == bc0 || (prev[-1] != jit::SistaV1::ExtendA
+        if (pc == f.ip() && prev && (prev == bc0 || (prev[-1] != jit::SistaV1::ExtendA
                                                          && prev[-1] != jit::SistaV1::ExtendB))) {
             const uint8_t op = *prev;
             if (op >= jit::SistaV1::ArithBase && op <= jit::SistaV1::SpecialSendLast) {
@@ -1793,7 +1797,7 @@ void Interpreter::mcfInit() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
     L.size = sizeof(SavedFrame);
-    L.savedIP = offsetof(SavedFrame, savedIP);
+    L.savedIP = offsetof(SavedFrame, savedIPRaw);
     L.savedBytecodeEnd = offsetof(SavedFrame, savedBytecodeEndRaw);
     L.savedMethod = offsetof(SavedFrame, savedMethod);
     L.savedReceiver = offsetof(SavedFrame, savedReceiver);
@@ -1803,7 +1807,7 @@ void Interpreter::mcfInit() {
     L.ctxSynced = offsetof(SavedFrame, ctxSynced);
     L.savedFP = offsetof(SavedFrame, savedTB);
     L.materializedRetSlot = offsetof(SavedFrame, materializedRetSlotRaw);
-    L.savedArgCount = offsetof(SavedFrame, savedArgCount);
+    L.savedArgCount = offsetof(SavedFrame, savedArgCountRaw);
     L.homeFramePlus1 = offsetof(SavedFrame, homeFramePlus1);
     L.mcReturn = offsetof(SavedFrame, mcReturn);
     L.guardOk = reinterpret_cast<char*>(&savedFrames_[0]) - reinterpret_cast<char*>(&mcfGuardFrame_)
@@ -1989,7 +1993,7 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
         jm = static_cast<jit::JITMethod*>(pjm);
         entry = pmemo;
     } else if (popped && popped->mcReturn
-            && popped->savedIP == instructionPointer_) {
+            && popped->ip() == instructionPointer_) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyMemo(*popped, "resume-after-return");
         jm = static_cast<jit::JITMethod*>(popped->mcJM);
@@ -2335,9 +2339,9 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                         jit::JITMethod* cjm = jitRuntime_.methodMap().lookup(f.savedMethod.rawBits());
                         const uint8_t* mb = f.savedMethod.asObjectPtr()->bytes();
                         k += " cjm=" + std::to_string(cjm != nullptr)
-                             + " entry=" + std::to_string(cjm ? mcfEntryFor(cjm, f.savedIP) != nullptr : 0)
-                             + " ipoff=" + std::to_string(f.savedIP - mb)
-                             + " nextop=" + std::to_string(*f.savedIP)
+                             + " entry=" + std::to_string(cjm ? mcfEntryFor(cjm, f.ip()) != nullptr : 0)
+                             + " ipoff=" + std::to_string(f.ip() - mb)
+                             + " nextop=" + std::to_string(*f.ip())
                              + " blk=" + std::to_string(!recClosure(f).isNil());
                     }
                 }
@@ -2482,7 +2486,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                 }
             }
             if (popped.mcReturn
-                    && popped.savedIP == instructionPointer_) {
+                    && popped.ip() == instructionPointer_) {
                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
                     mcfVerifyMemo(popped, "mcfRun-return");
                 jm = static_cast<jit::JITMethod*>(popped.mcJM);

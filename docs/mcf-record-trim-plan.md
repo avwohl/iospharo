@@ -1,5 +1,12 @@
 # MCF native call record: trim plan
 
+**Done 2026-10-16.** All four stages are in (`ea1bc3a2`, `db63fa46`,
+`ddaf2fb3` and the stage 4 commit).  Lexicon 226.3 -> 220.5 billion
+instructions.  Stage 4 differs from the plan in one point: a site whose ip
+offset needs more than 16 bits still makes a native call; it passes the old
+pair and marks the record recFull 2 (raw ip and argument count, no tail
+fields).
+
 Status (2026-10-15): this plan comes from a judge pass over two designs (A, minimal risk; B, maximum gain) and three census reports. The judge read the cited code at HEAD `ee7f1201`. Nothing was edited, built or run. All AsmjitT1.cpp line numbers below are for `ee7f1201`.
 
 The plan saves 9 instructions per linked monomorphic call pair: 49 now, 40 after all four stages. Lexicon makes about 970M native calls (docs/linked-mcf-sends-plan.md:107), so the saving is about 8.7e9 of about 246e9 instructions retired (about 3.5%). Stages 1-4 keep every rule in docs/mcf-call-trim-plan.md. No C++ code derives anything through a record's mcJM.

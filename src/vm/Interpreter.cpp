@@ -1028,6 +1028,8 @@ Interpreter::Interpreter(ObjectMemory& memory)
     // Before any frame record exists: every record, C++ or native, then
     // holds a tempBase (docs/mcf-record-trim-plan.md stage 3).
     jit::g_mcfTbRecord = !GET_DEBUG_BOOL(PHARO_MCF_NO_TB_RECORD);
+    // Stage 4: native records carry the ip in their info word.
+    jit::g_mcfIpInInfo = !GET_DEBUG_BOOL(PHARO_MCF_NO_IP_IN_INFO);
     // Clear method cache
     for (auto& entry : methodCache_) {
         entry.selector = Oop::nil();
@@ -10931,7 +10933,7 @@ bool Interpreter::tryRestoreCollapsedFrames() {
                 || h->slotAt(4).rawBits() != r.savedClosureRaw.rawBits()
                 || h->slotAt(5).rawBits() != r.savedReceiver.rawBits()
                 || !pc.isSmallInteger()
-                || pc.asSmallInteger() != (int64_t)(r.savedIP - mo->bytes()) + 1
+                || pc.asSmallInteger() != (int64_t)(r.ip() - mo->bytes()) + 1
                 || !sp.isSmallInteger() || sp.asSmallInteger() != c.stackps[k]
                 || (size_t)(6 + c.stackps[k]) > h->slotCount())
             { restoreFail(7); return false; }
@@ -11008,8 +11010,8 @@ bool Interpreter::nlrSegmentFreeze(size_t h, Oop value) {
         g.recs[k].savedClosureRaw = recClosure(savedFrames_[k]);
         g.recs[k].savedActiveContextRaw = recActiveCtx(savedFrames_[k]);
         const SavedFrame& fk = savedFrames_[k];
-        g.ipOff[k] = (fk.savedMethod.isObject() && fk.savedIP)
-            ? fk.savedIP - fk.savedMethod.asObjectPtr()->bytes() : 0;
+        g.ipOff[k] = (fk.savedMethod.isObject() && fk.ip())
+            ? fk.ip() - fk.savedMethod.asObjectPtr()->bytes() : 0;
     }
     g.base = stackBase_;
     g.end = end;
@@ -11111,7 +11113,7 @@ bool Interpreter::nlrSegmentPop() {
         SavedFrame r = g.recs[k];
         if (r.savedMethod.isObject()) {
             ObjectHeader* mo = r.savedMethod.asObjectPtr();
-            r.savedIP = mo->bytes() + g.ipOff[k];   // a GC may have moved the method
+            if (!r.ipInInfo()) r.savedIPRaw = mo->bytes() + g.ipOff[k];   // a GC may have moved the method
             if (r.bcEnd()) r.savedBytecodeEndRaw = mo->bytes() + mo->compiledCodeByteSize();
         }
         savedFrames_[k] = r;
@@ -11180,7 +11182,7 @@ void Interpreter::nlrSegmentDeopt() {
             // Derived fields fixed now: the frames move under the materialize.
             g.protoRecs[k].savedClosureRaw = recClosure(savedFrames_[k]);
             g.protoRecs[k].savedActiveContextRaw = recActiveCtx(savedFrames_[k]);
-            g.protoIpOff[k] = ipOffOf(savedFrames_[k].savedMethod, savedFrames_[k].savedIP);
+            g.protoIpOff[k] = ipOffOf(savedFrames_[k].savedMethod, savedFrames_[k].ip());
         }
         Oop* const protoSP = stackPointer_;
         Oop* const lo = stackBase_;
@@ -11199,7 +11201,7 @@ void Interpreter::nlrSegmentDeopt() {
         for (size_t k = 0; k < b; k++) {
             SavedFrame r = g.recs[k];
             ObjectHeader* mo = r.savedMethod.asObjectPtr();
-            r.savedIP = mo->bytes() + g.ipOff[k];
+            if (!r.ipInInfo()) r.savedIPRaw = mo->bytes() + g.ipOff[k];
             if (r.bcEnd()) r.savedBytecodeEndRaw = mo->bytes() + mo->compiledCodeByteSize();
             savedFrames_[k] = r;
         }
@@ -11214,7 +11216,7 @@ void Interpreter::nlrSegmentDeopt() {
         stackPointer_ = g.recs[h].fp();
         instructionPointer_ = bmo->bytes() + g.ipOff[b];
         bytecodeEnd_ = bmo->bytes() + bmo->compiledCodeByteSize();
-        argCount_ = rb.savedArgCount;
+        argCount_ = rb.argCount();
         activeContext_ = g.baseActiveCtx;
         currentFrameMaterializedCtx_ = g.boundaryCtx;
         lazyCtxPending_ = 1;
@@ -11223,9 +11225,9 @@ void Interpreter::nlrSegmentDeopt() {
         // moved the methods).
         for (size_t k = 0; k < pd; k++) {
             SavedFrame r = g.protoRecs[k];
-            if (r.savedMethod.isObject() && r.savedIP) {
+            if (r.savedMethod.isObject() && r.ip()) {
                 ObjectHeader* mo = r.savedMethod.asObjectPtr();
-                r.savedIP = mo->bytes() + g.protoIpOff[k];
+                if (!r.ipInInfo()) r.savedIPRaw = mo->bytes() + g.protoIpOff[k];
                 if (r.bcEnd()) r.savedBytecodeEndRaw = mo->bytes() + mo->compiledCodeByteSize();
             }
             savedFrames_[k] = r;
@@ -17194,7 +17196,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         fprintf(stderr, "[FPUSH-A fd=%zu] #%s\n", frameDepth_ - 1,
                 memory_.selectorOf(method_).c_str());
     }
-    frame.savedIP = instructionPointer_;
+    frame.savedIPRaw = instructionPointer_;
     frame.savedBytecodeEndRaw = bytecodeEnd_;
     frame.recFull = 1;
     frame.savedMethod = method_;
@@ -17202,7 +17204,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedActiveContextRaw = activeContext_;  // Save active context for proper return chain
     frame.setFp(framePointer_);
     frame.materializedRetSlotRaw = nullptr;  // Step 7: normal pushFrame, not materialize-bail
-    frame.savedArgCount = argCount_;
+    frame.savedArgCountRaw = argCount_;
     frame.savedClosureRaw = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.setHomeFrameDepth(SIZE_MAX);  // Default: not a block (will be set by activateBlock if needed)
     frame.materializedContext = cachedCtx;  // Preserve cached context from current frame
@@ -17212,7 +17214,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     if (DIAG_FLAG(g_doOn) && frame.savedMethod.rawBits() == g_doMethod)
         doRec("PUSH", recActiveCtx(frame).rawBits(),
               (int)(frame.fp() ? (stackPointer_ - frame.fp() - 1) : -1),
-              argCount, (int)(frame.savedIP - g_doBase), g_stepNum);
+              argCount, (int)(frame.ip() - g_doBase), g_stepNum);
 
     // PHARO_TRACE_FRAME_TEMPS: at PUSH time, record where this activation's
     // temps actually live according to the JIT (state.tempBase) next to where
@@ -17240,10 +17242,10 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         uint8_t* mBytes = mObj->bytes();
         // savedBytecodeEnd IS mBytes + byteSize() (activateMethod sets
         // bytecodeEnd_ that way); byteSize() decoded the header each send.
-        if (frame.savedIP >= mBytes && frame.savedIP < frame.bcEnd()) {
-            int64_t pc = static_cast<int64_t>(frame.savedIP - mBytes) + 1;
+        if (frame.ip() >= mBytes && frame.ip() < frame.bcEnd()) {
+            int64_t pc = static_cast<int64_t>(frame.ip() - mBytes) + 1;
             if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
-                checkPcBoundary("pushFrame-fd1", frame.savedMethod, frame.savedIP,
+                checkPcBoundary("pushFrame-fd1", frame.savedMethod, frame.ip(),
                                 frame.pushSite);
             // A SmallInteger into a known Context: the inline store, not
             // the out-of-line storePointer, on every send at depth 0.
@@ -17645,7 +17647,7 @@ bool Interpreter::popFrame() {
                         "bcSize=%zu savedIP_off=%lld\n",
                         memory_.selectorOf(sf.savedMethod).c_str(),
                         nLits, nTemps, nArgs, bcSize,
-                        (long long)(sf.savedIP - bcs));
+                        (long long)(sf.ip() - bcs));
                     fprintf(stderr, "  bytecodes:");
                     for (size_t i = 0; i < bcSize && i < 80; i++) {
                         fprintf(stderr, " %02x", bcs[i]);
@@ -17727,7 +17729,7 @@ bool Interpreter::popFrame() {
                         "    [%zu] savedFP=%p savedMethod=#%s savedIP=%p\n",
                         f, (void*)savedFrames_[f].fp(),
                         memory_.selectorOf(savedFrames_[f].savedMethod).c_str(),
-                        (void*)savedFrames_[f].savedIP);
+                        (void*)savedFrames_[f].ip());
                 }
             }
             // PHARO_SP_CORRUPT_TRAP=1: trigger SIGTRAP when corruption
@@ -17741,7 +17743,7 @@ bool Interpreter::popFrame() {
     stackPointer_ = framePointer_;
 
     // Restore saved execution state
-    instructionPointer_ = frame.savedIP;
+    instructionPointer_ = frame.ip();
     bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
     homeMethod_ = homeMethodFor(frame.savedMethod, recClosure(frame));   // derived, not stored (trim step 5)
@@ -17750,7 +17752,7 @@ bool Interpreter::popFrame() {
     activeContext_ = recActiveCtx(frame);  // Restore active context for proper return chain
     currentFrameMaterializedCtx_ = frame.materializedContext;  // Restore cached context for this frame
     framePointer_ = frame.fp();
-    argCount_ = frame.savedArgCount;
+    argCount_ = frame.argCount();
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
         static char lbl[96];
         snprintf(lbl, sizeof lbl, "popFrame(pushed by %s)",
@@ -17904,7 +17906,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
 
     // Restore interpreter state from saved frame
     stackPointer_ = framePointer_;  // Discard callee's locals
-    instructionPointer_ = frame.savedIP;
+    instructionPointer_ = frame.ip();
     bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
     homeMethod_ = homeMethodFor(frame.savedMethod, recClosure(frame));   // derived, not stored (trim step 5)
@@ -17913,7 +17915,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     activeContext_ = recActiveCtx(frame);
     currentFrameMaterializedCtx_ = frame.materializedContext;
     framePointer_ = frame.fp();
-    argCount_ = frame.savedArgCount;
+    argCount_ = frame.argCount();
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
         static char lbl[96];
         snprintf(lbl, sizeof lbl, "popFrameForJIT(pushed by %s)",
@@ -18873,14 +18875,14 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             if (sf.savedMethod.isObject()) {
                                 ObjectHeader* mo = sf.savedMethod.asObjectPtr();
                                 size_t nl = memory_.numLiteralsOf(sf.savedMethod);
-                                ipo = sf.savedIP - (mo->bytes() + (1 + nl) * 8);
+                                ipo = sf.ip() - (mo->bytes() + (1 + nl) * 8);
                             }
                             fprintf(stderr, "[DNU-FORENSICS]   frame[-%d] m=#%s "
                                     "ipOff=%ld matRetSlot=%p savedFP=%p argc=%d\n",
                                     k + 1,
                                     memory_.selectorOf(sf.savedMethod).c_str(), ipo,
                                     (void*)sf.retSlot(),
-                                    (void*)sf.fp(), sf.savedArgCount);
+                                    (void*)sf.fp(), sf.argCount());
                         }
                     }
                 } catch (...) {
@@ -19541,10 +19543,10 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 fprintf(stderr, "[MB-FORENSICS]   frame[-%d] m=#%s ipOff=%lld\n",
                         k + 1,
                         memory_.selectorOf(sf.savedMethod).c_str(),
-                        (long long)(sf.savedIP
+                        (long long)(sf.ip()
                             - (sf.savedMethod.isObject()
                                ? sf.savedMethod.asObjectPtr()->bytes()
-                               : sf.savedIP)));
+                               : sf.ip())));
             }
             PHARO_DEBUGTRAP();
         }
@@ -20513,7 +20515,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
         fprintf(stderr, "[FPUSH-B fd=%zu] #%s\n", frameDepth_ - 1,
                 memory_.selectorOf(method_).c_str());
     }
-    frame.savedIP = instructionPointer_;
+    frame.savedIPRaw = instructionPointer_;
     frame.savedBytecodeEndRaw = bytecodeEnd_;
     frame.recFull = 1;
     frame.savedMethod = method_;
@@ -20521,7 +20523,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     frame.savedActiveContextRaw = activeContext_;
     frame.setFp(framePointer_);
     frame.materializedRetSlotRaw = nullptr;
-    frame.savedArgCount = argCount_;
+    frame.savedArgCountRaw = argCount_;
     frame.savedClosureRaw = closure_;
     frame.setHomeFrameDepth(SIZE_MAX);
     frame.materializedContext = currentFrameMaterializedCtx_;
@@ -22275,7 +22277,7 @@ Oop Interpreter::materializeFrameStackImpl() {
             storeContextStackp(activeContext_, savedCount);
             if (DIAG_FLAG(g_doOn) && frame0.savedMethod.rawBits() == g_doMethod)
                 doRec("SAVE-F0", activeContext_.rawBits(), savedCount, numTemps,
-                      (int)(frame0.savedIP - g_doBase), g_stepNum);
+                      (int)(frame0.ip() - g_doBase), g_stepNum);
             if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
                     && method_.isObject()) {
                 std::string f0s = memory_.selectorOf(method_);
@@ -22360,15 +22362,15 @@ Oop Interpreter::materializeFrameStackImpl() {
         int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
 
         // GC SAFETY: Compute IP offset BEFORE any allocation that could trigger GC.
-        // frame.savedIP is a raw uint8_t* into the method's byte array. GC compaction
+        // frame.ip() is a raw uint8_t* into the method's byte array. GC compaction
         // moves methods but does NOT update raw pointers (only Oop fields via forEachRoot).
         // After GC, savedIP is stale. Capture the offset now while both savedIP and
         // methodHdr point to the same (pre-GC) address space.
         int ipOffset = 0;
         {
             uint8_t* mBytes = methodHdr->bytes();
-            if (frame.savedIP >= mBytes && frame.savedIP < mBytes + methodHdr->byteSize()) {
-                ipOffset = static_cast<int>(frame.savedIP - mBytes);
+            if (frame.ip() >= mBytes && frame.ip() < mBytes + methodHdr->byteSize()) {
+                ipOffset = static_cast<int>(frame.ip() - mBytes);
             }
         }
 
@@ -25391,7 +25393,7 @@ void Interpreter::describeOperandSlot(Oop* slot, char* buf, size_t bufSize) {
                                                : std::string("?");
     snprintf(buf, bufSize, "slot %td/%td frame#%zu/%zu #%s fp+%td args=%d",
              idx, live, owner, frameDepth_, sel.c_str(),
-             slot - f.fp(), f.savedArgCount);
+             slot - f.fp(), f.argCount());
 }
 
 void Interpreter::raiseContextStackpTo(Oop context, int slots) {
@@ -25476,9 +25478,9 @@ void Interpreter::prepareForGC() {
         checkIpCoherence("prepareForGC");
         for (size_t i = 0; i < frameDepth_; ++i) {
             SavedFrame& f = savedFrames_[i];
-            if (!f.savedMethod.isObject() || !f.savedIP || f.savedMethod.rawBits() <= 0x10000) continue;
+            if (!f.savedMethod.isObject() || !f.ip() || f.savedMethod.rawBits() <= 0x10000) continue;
             ObjectHeader* mo = f.savedMethod.asObjectPtr();
-            if (f.savedIP < mo->bytes() || f.savedIP > mo->bytes() + mo->byteSize()) {
+            if (f.ip() < mo->bytes() || f.ip() > mo->bytes() + mo->byteSize()) {
                 static int nGF = 0;
                 if (++nGF <= 8)
                     fprintf(stderr, "[GC-SAVED-IP-OUTSIDE #%d] frame %zu #%s pushed by %s fd=%zu\n",
@@ -25507,14 +25509,15 @@ void Interpreter::prepareForGC() {
     if (frameGCSide_.size() < frameDepth_) frameGCSide_.resize(frameDepth_);
     for (size_t i = 0; i < frameDepth_; ++i) {
         SavedFrame& frame = savedFrames_[i];
-        if (frame.savedMethod.isObject() && frame.savedIP) {
+        frameGCSide_[i].methodBits = frame.savedMethod.rawBits();
+        if (frame.savedMethod.isObject() && frame.ip()) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
-            frameGCSide_[i].savedIPOffset = frame.savedIP - methodBytes;
+            frameGCSide_[i].savedIPOffset = frame.ip() - methodBytes;
             // A machine-code push leaves it null (MCF lazy view): derive.
             uint8_t* be = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
             frameGCSide_[i].savedBytecodeEndOffset = be - methodBytes;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY)) {
-                frameGCSide_[i].gcVerifyByte = *frame.savedIP;
+                frameGCSide_[i].gcVerifyByte = *frame.ip();
                 size_t mSize = frame.savedMethod.asObjectPtr()->byteSize();
                 if (frameGCSide_[i].savedIPOffset < 0 ||
                     frameGCSide_[i].savedIPOffset >= (ptrdiff_t)mSize) {
@@ -25723,7 +25726,7 @@ void Interpreter::prepareForGC() {
         // just computed above from savedIP; the context pc convention is
         // a 1-based bytecode-relative index, matching pushFrame's fd==1
         // sync and materializeFrameStack.
-        if (frame.savedMethod.isObject() && frame.savedIP) {
+        if (frame.savedMethod.isObject() && frame.ip()) {
             ObjectHeader* mObj = frame.savedMethod.asObjectPtr();
             Oop hdrOop = mObj->slotAt(0);
             if (hdrOop.isSmallInteger()) {
@@ -25890,19 +25893,18 @@ void Interpreter::afterGC(bool fullGC) {
         SavedFrame& frame = savedFrames_[i];
         if (frame.savedMethod.isObject()) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
-            uint8_t* const ipBefore = frame.savedIP;
-            frame.savedIP = methodBytes + frameGCSide_[i].savedIPOffset;
-            if (frame.recFull) frame.savedBytecodeEndRaw = methodBytes + frameGCSide_[i].savedBytecodeEndOffset;
             // The memo holds for the ip it was made at: drop it where the
-            // method moved.
-            if (frame.savedIP != ipBefore) frame.mcReturn = nullptr;
+            // method moved.  A stage-4 record's ip follows its method.
+            if (frame.savedMethod.rawBits() != frameGCSide_[i].methodBits) frame.mcReturn = nullptr;
+            if (!frame.ipInInfo()) frame.savedIPRaw = methodBytes + frameGCSide_[i].savedIPOffset;
+            if (frame.recFull == 1) frame.savedBytecodeEndRaw = methodBytes + frameGCSide_[i].savedBytecodeEndOffset;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY) &&
-                frameGCSide_[i].gcVerifyByte != 0xFF && frame.savedIP &&
-                *frame.savedIP != frameGCSide_[i].gcVerifyByte) {
+                frameGCSide_[i].gcVerifyByte != 0xFF && frame.ip() &&
+                *frame.ip() != frameGCSide_[i].gcVerifyByte) {
                 fprintf(stderr,
                     "[GC-FRAME-VERIFY-FAIL] frame=%zu/%zu saved=0x%02X actual=0x%02X "
                     "ipOff=%lld method=%s>>#%s closure=%s\n",
-                    i, frameDepth_, frameGCSide_[i].gcVerifyByte, *frame.savedIP,
+                    i, frameDepth_, frameGCSide_[i].gcVerifyByte, *frame.ip(),
                     (long long)frameGCSide_[i].savedIPOffset,
                     classNameOfMethod(frame.savedMethod).c_str(),
                     memory_.selectorOf(frame.savedMethod).c_str(),
@@ -26014,15 +26016,15 @@ void Interpreter::afterGC(bool fullGC) {
         checkIpCoherence(fullGC ? "afterFullGC" : "afterScavenge");
         for (size_t i = 0; i < frameDepth_; ++i) {
             SavedFrame& f = savedFrames_[i];
-            if (!f.savedMethod.isObject() || !f.savedIP || f.savedMethod.rawBits() <= 0x10000) continue;
+            if (!f.savedMethod.isObject() || !f.ip() || f.savedMethod.rawBits() <= 0x10000) continue;
             ObjectHeader* mo = f.savedMethod.asObjectPtr();
-            if (f.savedIP < mo->bytes() || f.savedIP > mo->bytes() + mo->byteSize()) {
+            if (f.ip() < mo->bytes() || f.ip() > mo->bytes() + mo->byteSize()) {
                 static int nAF = 0;
                 if (++nAF <= 8)
                     fprintf(stderr, "[AFTERGC-SAVED-IP-OUTSIDE #%d] full=%d frame %zu #%s "
                             "off=%lld size=%zu pushed by %s fd=%zu\n", nAF, (int)fullGC, i,
                             memory_.selectorOf(f.savedMethod).c_str(),
-                            (long long)(f.savedIP - mo->bytes()), mo->byteSize(),
+                            (long long)(f.ip() - mo->bytes()), mo->byteSize(),
                             f.pushSite ? f.pushSite : "?", frameDepth_);
             }
         }
@@ -31285,7 +31287,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
             }
         }
     }
-    frame.savedIP = saveIp;
+    frame.savedIPRaw = saveIp;
     frame.pushSite = siteTag;
     // Use CompiledMethod's actual byteSize.  saveJM->numBytecodes is 0
     // for AsmjitT1 methods with send sites (advertiseResume gate at
@@ -31416,7 +31418,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
         }
     }
     frame.materializedRetSlotRaw = save.sp - (saveNArgs + 1);
-    frame.savedArgCount = saveJM->argCount;
+    frame.savedArgCountRaw = saveJM->argCount;
     frame.setHomeFrameDepth(SIZE_MAX);
     materializedFrameCount_++;
     // MAT-SP trace: dump the reconstructed caller sp for a save, filtered by
@@ -35090,7 +35092,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             SavedFrame& frame = savedFrames_[frameDepth_++];
                             frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                             frame.pushSite = "push@L32786";
-                            frame.savedIP = instructionPointer_;  // past-send
+                            frame.savedIPRaw = instructionPointer_;  // past-send
                             frame.savedBytecodeEndRaw = sMO->bytes() + sMO->byteSize();
                             frame.recFull = 1;
                             frame.savedMethod = savedMethod;
@@ -35118,7 +35120,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // (state.sp[-(nArgs+1)] = retVal).
                             frame.materializedRetSlotRaw =
                                 savedSP - (nArgs + 1);
-                            frame.savedArgCount = savedArgCount;
+                            frame.savedArgCountRaw = savedArgCount;
                             frame.setHomeFrameDepth(SIZE_MAX);
                             materializedFrameCount_++;
                         }

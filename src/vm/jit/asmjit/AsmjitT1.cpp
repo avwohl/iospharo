@@ -5720,6 +5720,27 @@ static void emitMcfPushRecordTail(asmjit::a64::Assembler& a) {
     g_mcfPushDepth0 = nullptr;
 }
 
+// Trim plan stage 4: a native call's info word.  With jit::g_mcfIpInInfo
+// w12 = the ip after the send as an offset from the caller's method oop
+// (recFull 0: the record derives savedIP and the arg count from it), and
+// x13 is not set.  A site whose offset does not fit 16 bits passes the old
+// pair (x13 = ip, w12 = argCount | nArgs << 8) marked recFull 2.
+static void emitMcfSiteInfo(asmjit::a64::Assembler& a, int ipOff, int bcStartAddend,
+                            uint32_t legacyInfo) {
+    using namespace asmjit::a64;
+    if (jit::g_mcfIpInInfo && ipOff >= 0 && ipOff <= 0xFFFF) {
+        if (GET_DEBUG_BOOL(PHARO_MCF_IP_VERIFY)) {
+            a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x13, x13, asmjit::Imm(bcStartAddend));
+        }
+        a.mov(w12, asmjit::Imm(ipOff + (GET_DEBUG_BOOL(PHARO_MCF_IP_SABOTAGE) ? 1 : 0)));
+        return;
+    }
+    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+    a.add(x13, x13, asmjit::Imm(bcStartAddend));
+    a.mov(w12, asmjit::Imm(legacyInfo | (jit::g_mcfIpInInfo ? (2u << 24) : 0u)));
+}
+
 static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
@@ -5755,6 +5776,14 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.b_eq(fail);
         a.tst(x16, asmjit::Imm(0x7));
         a.b_ne(fail);
+        asmjit::Label legacyIp = a.new_label(), havePc = a.new_label();
+        if (jit::g_mcfIpInInfo) {
+            // w12 = ip - method oop; the 1-based pc is that - 8 + 1.
+            a.tbnz(w12, asmjit::Imm(25), legacyIp);    // recFull 2: x13 holds the ip
+            a.sub(x17, x12, asmjit::Imm(7));
+            a.b(havePc);
+        }
+        a.bind(legacyIp);
         if (::pharo::mcfLazyView())
             a.ldr(x17, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
         else
@@ -5762,6 +5791,7 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.add(x17, x17, asmjit::Imm(8));           // its bytes
         a.sub(x17, x13, x17);                      // savedIP - bytes
         a.add(x17, x17, asmjit::Imm(1));           // 1-based pc
+        a.bind(havePc);
         a.lsl(x17, x17, asmjit::Imm(3));
         a.add(x17, x17, asmjit::Imm(1));           // SmallInteger tag
         a.str(x17, ptr(x16, OBJ_SLOT_0 + 8));      // activeContext_ pc
@@ -5896,7 +5926,8 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
 // ip, bytecode end.  x11 = nArgs on exit.
 static void emitMcfCalleeView(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
-    a.lsr(w11, w12, asmjit::Imm(8));               // nArgs
+    if (jit::g_mcfIpInInfo) a.ldrb(w11, ptr(x9, (int)offsetof(JITMethod, argCount)));   // nArgs (stage 4)
+    else a.lsr(w11, w12, asmjit::Imm(8));          // nArgs
     const bool lazy = ::pharo::mcfLazyView();
     if (!lazy) {
         a.str(x6, ptr(x0, OFF_METHOD));
@@ -6047,7 +6078,8 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     // The temporaries must hold the arguments and the copied values.
     a.ldrb(w16, ptr(x1, 7));                       // closure slot count (< 255, site)
     a.sub(w16, w16, asmjit::Imm(4));               // copied values
-    a.lsr(w17, w12, asmjit::Imm(8));               // nArgs
+    if (jit::g_mcfIpInInfo) a.ldrb(w17, ptr(x9, (int)offsetof(JITMethod, argCount)));   // nArgs (stage 4)
+    else a.lsr(w17, w12, asmjit::Imm(8));          // nArgs
     a.add(w17, w17, w16);
     a.ldrb(w8, ptr(x9, (int)offsetof(JITMethod, tempCount)));
     a.cmp(w8, w17);
@@ -7175,11 +7207,10 @@ static void emitMcfHelperSend(asmjit::a64::Assembler& a, uint32_t desc, int nArg
     a.b_eq(extDeopt);
     a.ldp(x6, x9, ptr(x7));                  // method, callee JM
     a.bind(extCall);
-    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-    a.add(x13, x13, asmjit::Imm(globalIdx + sendLen));   // ip after the send
     a.adr(x14, cont);
     a.adr(x15, extExit);
-    a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+    emitMcfSiteInfo(a, g_bcStartDelta + globalIdx + sendLen, globalIdx + sendLen,
+                    callerArgCount | (nArgs << 8));         // ip after the send
     a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
     a.br(x16);
     a.bind(extDone);                         // result on the stack
@@ -8860,11 +8891,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.cmp(x10, x11);
                 a.b_ne(notBlock);                            // not a block entry, or arity
                 // The call itself is the shared stub (emitMcfBlockStub).
-                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                 a.adr(x14, mcfCont);
                 a.adr(x15, notBlock);
-                a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
+                                callerArgCount | (nArgs << 8));
                 a.ldr(x16, ptr(x0, OFF_MCF_BLOCK_STUB));
                 a.br(x16);
                 a.bind(notBlock);
@@ -9004,11 +9034,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.movk(w6, kImpossibleKeyHi16, 16);         // W1: key hi16 (impossible until linked)
                 a.cmp(w4, w6);
                 a.b_ne(Lprobe);
-                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                 a.adr(x14, mcfCont);
                 a.adr(x15, Lprobe);
-                a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
+                                callerArgCount | (nArgs << 8));
                 a.bind(w2L);
                 a.b(Lprobe);                                // W2: -> b <callee entry> when linked
                 a.bind(LmissNoX5);
@@ -12641,11 +12670,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.cbnz(x10, mcfSpecial);
                 a.bind(mcfNativeCall);
                 // The call itself is the shared stub (emitMcfCallStub).
-                a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                 a.adr(x14, mcfCont);
                 a.adr(x15, mcfSlow);
-                a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
+                                callerArgCount | (nArgs << 8));
                 if (!GET_DEBUG_BOOL(PHARO_MCF_NO_LE)) {
                     // The callee's own entry when it has one.
                     asmjit::Label viaStub = a.new_label();
@@ -12713,11 +12741,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(x11, asmjit::Imm(kMcfBlockEntry | (uint64_t)nArgs));
                     a.cmp(x10, x11);
                     a.b_ne(mcfSlow);
-                    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                    a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                     a.adr(x14, mcfCont);
                     a.adr(x15, mcfSlow);
-                    a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                    emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
+                                    callerArgCount | (nArgs << 8));
                     a.ldr(x16, ptr(x0, OFF_MCF_BLOCK_STUB));
                     a.br(x16);
                     a.bind(notBV);
@@ -12760,11 +12787,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.b_ls(performInPlace);
                     }
                     a.ldp(x6, x9, ptr(x7));
-                    a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                    a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                     a.adr(x14, mcfCont);
                     a.adr(x15, mcfSlow);                     // not taken (see above)
-                    a.mov(w12, asmjit::Imm(callerArgCount | ((nArgs - 1) << 8)));
+                    emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
+                                    callerArgCount | ((nArgs - 1) << 8));
                     a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
                     a.br(x16);
                     if (perfInPlace) {
@@ -12860,11 +12886,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cbz(x7, noBody);
                         a.ldr(x5, ptr(x0, OFF_ICDATAPTR));   // for a refused call's exit
                         a.ldp(x6, x9, ptr(x7));
-                        a.ldr(x13, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
-                        a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
                         a.adr(x14, mcfCont);
                         a.adr(x15, mcfSlow);                 // refused: the exit retries it
-                        a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                        emitMcfSiteInfo(a, bcOffsetFromMethObj + 1, bcOffsetFromMethObj - g_bcStartDelta + 1,
+                                        callerArgCount | (nArgs << 8));
                         a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
                         a.br(x16);
                         a.bind(noBody);
