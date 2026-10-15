@@ -1025,6 +1025,9 @@ Interpreter::Interpreter(ObjectMemory& memory)
     // where it appears here — keep the list in declaration order.
     , vmThreadId_(std::this_thread::get_id())
 {
+    // Before any frame record exists: every record, C++ or native, then
+    // holds a tempBase (docs/mcf-record-trim-plan.md stage 3).
+    jit::g_mcfTbRecord = !GET_DEBUG_BOOL(PHARO_MCF_NO_TB_RECORD);
     // Clear method cache
     for (auto& entry : methodCache_) {
         entry.selector = Oop::nil();
@@ -2667,7 +2670,7 @@ void Interpreter::pushSlow(Oop value) {
             size_t lo = (frameDepth_ > 40) ? (frameDepth_ - 40) : 0;
             Oop* priorFP = framePointer_;  // current frame's base
             for (size_t i = frameDepth_; i > lo; i--) {
-                Oop* thisFP = savedFrames_[i-1].savedFP;
+                Oop* thisFP = savedFrames_[i-1].fp();
                 long long frameSize = priorFP ? (long long)(priorFP - thisFP) : -1;
                 fprintf(stderr, "  frame[%zu] method=#%s rcvr=0x%llx fp=%p size=%lld\n", i,
                         memory_.selectorOf(savedFrames_[i-1].savedMethod).c_str(),
@@ -10882,7 +10885,7 @@ void Interpreter::captureCollapsedFrames(size_t homeFrame, Oop homeCtx) {
         if (h->slotAt(3).rawBits() != r.savedMethod.rawBits()
                 || h->slotAt(4).rawBits() != r.savedClosureRaw.rawBits()
                 || h->slotAt(5).rawBits() != r.savedReceiver.rawBits()
-                || !r.savedFP || !r.savedMethod.isObject())
+                || !r.fp() || !r.savedMethod.isObject())
             { restoreFail(15); return; }
         c.ctxs[k] = ctx;
         if (k < homeFrame) {
@@ -10932,8 +10935,8 @@ bool Interpreter::tryRestoreCollapsedFrames() {
                 || !sp.isSmallInteger() || sp.asSmallInteger() != c.stackps[k]
                 || (size_t)(6 + c.stackps[k]) > h->slotCount())
             { restoreFail(7); return false; }
-        Oop* next = c.recs[k + 1].savedFP;
-        if (r.savedFP + 1 + c.stackps[k] != next) { restoreFail(8); return false; }
+        Oop* next = c.recs[k + 1].fp();
+        if (r.fp() + 1 + c.stackps[k] != next) { restoreFail(8); return false; }
     }
     // The returning context dies, as on any return.
     memory_.storePointer(0, activeContext_, memory_.nil());
@@ -10942,7 +10945,7 @@ bool Interpreter::tryRestoreCollapsedFrames() {
     for (size_t k = 0; k < n; k++) {
         SavedFrame& r = c.recs[k];
         ObjectHeader* h = c.ctxs[k].asObjectPtr();
-        Oop* fp = r.savedFP;
+        Oop* fp = r.fp();
         fp[0] = r.savedClosureRaw.isNil() ? r.savedReceiver : r.savedClosureRaw;
         for (int64_t j = 0; j < c.stackps[k]; j++) fp[1 + j] = h->slotAt(6 + j);
         r.materializedContext = c.ctxs[k];
@@ -10950,7 +10953,7 @@ bool Interpreter::tryRestoreCollapsedFrames() {
         savedFrames_[k] = r;
     }
     frameDepth_ = n;
-    framePointer_ = c.recs[n].savedFP;      // the home's place
+    framePointer_ = c.recs[n].fp();      // the home's place
     stackPointer_ = framePointer_ + 1;
     currentFrameMaterializedCtx_ = memory_.nil();
     // INV-AC: the restored records' active context.  popFrame used to
@@ -10990,10 +10993,10 @@ bool Interpreter::nlrSegmentFreeze(size_t h, Oop value) {
     if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) return refuse(3);
     if (!isContextObject(activeContext_)) return refuse(4);
     for (size_t k = 0; k < d; k++)
-        if (savedFrames_[k].retSlot() || !savedFrames_[k].savedFP
+        if (savedFrames_[k].retSlot() || !savedFrames_[k].fp()
                 || !savedFrames_[k].savedMethod.isObject())
             return refuse(5);
-    Oop* end = savedFrames_[h].savedFP;
+    Oop* end = savedFrames_[h].fp();
     if (end < stackBase_) return refuse(6);
     const size_t b = h - 1;
     NlrSegment& g = seg_;
@@ -11119,10 +11122,10 @@ bool Interpreter::nlrSegmentPop() {
         for (size_t k = 0; k < h; k++) {
             const SavedFrame& r = savedFrames_[k];
             Oop want = recClosure(r).isNil() ? r.savedReceiver : recClosure(r);
-            if (r.savedFP[0].rawBits() != want.rawBits()) {
+            if (r.fp()[0].rawBits() != want.rawBits()) {
                 fprintf(stderr, "[NLR-SEG-VERIFY] pop: record %zu of %zu #%s fp[0]=0x%llx want 0x%llx\n",
                         k, h, memory_.selectorOf(r.savedMethod).c_str(),
-                        (unsigned long long)r.savedFP[0].rawBits(), (unsigned long long)want.rawBits());
+                        (unsigned long long)r.fp()[0].rawBits(), (unsigned long long)want.rawBits());
                 stopVM("nlrSegmentPop: a restored frame does not match its record");
             }
         }
@@ -11131,7 +11134,7 @@ bool Interpreter::nlrSegmentPop() {
     bh->slotAtPut(0, memory_.nil());
     segUnmark();
     frameDepth_ = h;
-    framePointer_ = g.recs[h].savedFP;
+    framePointer_ = g.recs[h].fp();
     stackPointer_ = framePointer_ + 1;
     currentFrameMaterializedCtx_ = memory_.nil();
     activeContext_ = g.baseActiveCtx;
@@ -11207,8 +11210,8 @@ void Interpreter::nlrSegmentDeopt() {
         receiver_ = rb.savedReceiver;
         closure_ = rb.savedClosureRaw;
         homeMethod_ = homeMethodFor(method_, closure_);
-        framePointer_ = rb.savedFP;
-        stackPointer_ = g.recs[h].savedFP;
+        framePointer_ = rb.fp();
+        stackPointer_ = g.recs[h].fp();
         instructionPointer_ = bmo->bytes() + g.ipOff[b];
         bytecodeEnd_ = bmo->bytes() + bmo->compiledCodeByteSize();
         argCount_ = rb.savedArgCount;
@@ -14458,7 +14461,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     fprintf(df, "frame[%zu] %s\n", i, sel.c_str());
                     if (sel == "convertStorePop:forinstructionSequence:" ||
                         sel == "visitSequence:") {
-                        Oop seqArg = *(f.savedFP + (sel[0] == 'c' ? 2 : 1));
+                        Oop seqArg = *(f.fp() + (sel[0] == 'c' ? 2 : 1));
                         fprintf(df, "seqArg=%llx cls=%s\n",
                                 (unsigned long long)seqArg.rawBits(),
                                 memory_.classNameOf(seqArg).c_str());
@@ -14519,9 +14522,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         ? memory_.classNameOf(sr) : (sr.isSmallInteger() ? "SmI" : "imm");
                     // dump the frame's args/temps (savedFP+1..): look for a 0 index
                     std::string temps;
-                    if (savedFrames_[f].savedFP) {
+                    if (savedFrames_[f].fp()) {
                         for (int t = 1; t <= 4; t++) {
-                            Oop tv = *(savedFrames_[f].savedFP + t);
+                            Oop tv = *(savedFrames_[f].fp() + t);
                             char buf[32];
                             if (tv.isSmallInteger()) snprintf(buf, sizeof buf, " t%d=%lld", t, (long long)tv.asSmallInteger());
                             else if (tv.isObject() && tv.rawBits() > 0x10000) { std::string cn = memory_.classNameOf(tv); snprintf(buf, sizeof buf, " t%d=%.12s", t, cn.c_str()); }
@@ -14532,8 +14535,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     // If t1 is the object being reflectively read, dump its
                     // slotCount vs its class instSize (the mismatch signature).
                     std::string extra;
-                    if (savedFrames_[f].savedFP) {
-                        Oop obj = *(savedFrames_[f].savedFP + 1);
+                    if (savedFrames_[f].fp()) {
+                        Oop obj = *(savedFrames_[f].fp() + 1);
                         if (obj.isObject() && obj.rawBits() > 0x10000) {
                             size_t sc = obj.asObjectPtr()->slotCount();
                             Oop cls = memory_.classOf(obj);
@@ -14645,8 +14648,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         std::string sel = memory_.selectorOf(f.savedMethod);
                         fprintf(df, "frame[%zu] %s\n", i, sel.c_str());
                         if (sel == "convertStorePop:forinstructionSequence:") {
-                            Oop assoc = *(f.savedFP + 1);
-                            Oop seqArg = *(f.savedFP + 2);
+                            Oop assoc = *(f.fp() + 1);
+                            Oop seqArg = *(f.fp() + 2);
                             dumpObj("assoc", assoc, 4);
                             if (assoc.isObject()) {
                                 dumpObj("assoc.key(store)", assoc.asObjectPtr()->slotAt(0), 4);
@@ -17197,7 +17200,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedMethod = method_;
     frame.savedReceiver = receiver_;
     frame.savedActiveContextRaw = activeContext_;  // Save active context for proper return chain
-    frame.savedFP = framePointer_;
+    frame.setFp(framePointer_);
     frame.materializedRetSlotRaw = nullptr;  // Step 7: normal pushFrame, not materialize-bail
     frame.savedArgCount = argCount_;
     frame.savedClosureRaw = closure_;  // Save current frame's closure (nil for methods, block for block activations)
@@ -17208,7 +17211,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     if (DIAG_FLAG(g_doOn) && frame.savedMethod.rawBits() == g_doMethod)
         doRec("PUSH", recActiveCtx(frame).rawBits(),
-              (int)(frame.savedFP ? (stackPointer_ - frame.savedFP - 1) : -1),
+              (int)(frame.fp() ? (stackPointer_ - frame.fp() - 1) : -1),
               argCount, (int)(frame.savedIP - g_doBase), g_stepNum);
 
     // PHARO_TRACE_FRAME_TEMPS: at PUSH time, record where this activation's
@@ -17222,10 +17225,10 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             Oop* jitTB = currentJITState_ ? currentJITState_->tempBase : nullptr;
             fprintf(stderr,
                 "[FRAME-PUSH] #%s savedFP+1=%p jitTempBase=%p %s t0=%s\n",
-                psel.c_str(), (void*)(frame.savedFP + 1), (void*)jitTB,
-                (jitTB && jitTB != frame.savedFP + 1) ? "MISMATCH" : "match",
-                (*(frame.savedFP + 1)).isNil() ? "nil"
-                  : memory_.classNameOf(*(frame.savedFP + 1)).c_str());
+                psel.c_str(), (void*)(frame.fp() + 1), (void*)jitTB,
+                (jitTB && jitTB != frame.fp() + 1) ? "MISMATCH" : "match",
+                (*(frame.fp() + 1)).isNil() ? "nil"
+                  : memory_.classNameOf(*(frame.fp() + 1)).c_str());
         }
     }
 
@@ -17495,7 +17498,7 @@ bool Interpreter::popFrame() {
             pollEventPopCnt++;
             if (pollEventPopCnt <= 5 || pollEventPopCnt % 5000 == 1) {
                 long long savedFP = (frameDepth_ > 0)
-                    ? (long long)((Oop*)savedFrames_[frameDepth_ - 1].savedFP - stack_.data())
+                    ? (long long)((Oop*)savedFrames_[frameDepth_ - 1].fp() - stack_.data())
                     : -1;
                 fprintf(stderr,
                     "[A1-POP] #%zu popFrame(of #pollEvent:) "
@@ -17521,7 +17524,7 @@ bool Interpreter::popFrame() {
     // some path that calls pushFrame without matching popFrame.
     if (__builtin_expect(traceSpCorrupt_, 0) && frameDepth_ <= 3) {
         SavedFrame& sf = savedFrames_[frameDepth_ - 1];
-        long long savedFpOff = (long long)((Oop*)sf.savedFP - stack_.data());
+        long long savedFpOff = (long long)((Oop*)sf.fp() - stack_.data());
         long long curFpOff = (long long)(framePointer_ - stack_.data());
         long long curSpOff = (long long)(stackPointer_ - stack_.data());
         static long long lastReportedFp[4] = {0, 0, 0, 0};
@@ -17539,7 +17542,7 @@ bool Interpreter::popFrame() {
             // Dump the full saved-frame chain
             for (size_t f = 0; f < frameDepth_ && f < 6; f++) {
                 SavedFrame& sff = savedFrames_[f];
-                long long sfpOff = (long long)((Oop*)sff.savedFP - stack_.data());
+                long long sfpOff = (long long)((Oop*)sff.fp() - stack_.data());
                 fprintf(stderr,
                     "  chain[%zu] savedFP_off=%lld method=#%s\n",
                     f, sfpOff,
@@ -17549,7 +17552,7 @@ bool Interpreter::popFrame() {
             // what is filling them.  These are slots accumulated in
             // the pollEvent:/eventLoop expression stack.
             if (frameDepth_ >= 2) {
-                Oop* leakBase = (Oop*)savedFrames_[1].savedFP;
+                Oop* leakBase = (Oop*)savedFrames_[1].fp();
                 fprintf(stderr,
                     "  leaked slots (sample 12 above pollEvent FP=%lld):\n",
                     (long long)(leakBase - stack_.data()));
@@ -17716,13 +17719,13 @@ bool Interpreter::popFrame() {
                     memory_.selectorOf(method_).c_str(), frameDepth_,
                     got0 && info0.dli_sname ? info0.dli_sname : "?",
                     got0 ? (long long)((uint8_t*)ra0 - (uint8_t*)info0.dli_saddr) : 0LL,
-                    (void*)frame.savedFP,
+                    (void*)frame.fp(),
                     memory_.selectorOf(frame.savedMethod).c_str());
                 fprintf(stderr, "  savedFrames_:\n");
                 for (size_t f = 0; f <= frameDepth_ + 1 && f < 8; f++) {
                     fprintf(stderr,
                         "    [%zu] savedFP=%p savedMethod=#%s savedIP=%p\n",
-                        f, (void*)savedFrames_[f].savedFP,
+                        f, (void*)savedFrames_[f].fp(),
                         memory_.selectorOf(savedFrames_[f].savedMethod).c_str(),
                         (void*)savedFrames_[f].savedIP);
                 }
@@ -17746,7 +17749,7 @@ bool Interpreter::popFrame() {
     closure_ = recClosure(frame);  // Restore caller's closure (nil for methods, block for block activations)
     activeContext_ = recActiveCtx(frame);  // Restore active context for proper return chain
     currentFrameMaterializedCtx_ = frame.materializedContext;  // Restore cached context for this frame
-    framePointer_ = frame.savedFP;
+    framePointer_ = frame.fp();
     argCount_ = frame.savedArgCount;
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
         static char lbl[96];
@@ -17909,7 +17912,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     closure_ = recClosure(frame);
     activeContext_ = recActiveCtx(frame);
     currentFrameMaterializedCtx_ = frame.materializedContext;
-    framePointer_ = frame.savedFP;
+    framePointer_ = frame.fp();
     argCount_ = frame.savedArgCount;
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RESUME_EXIT_CHECK), 0)) {
         static char lbl[96];
@@ -18877,7 +18880,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                     k + 1,
                                     memory_.selectorOf(sf.savedMethod).c_str(), ipo,
                                     (void*)sf.retSlot(),
-                                    (void*)sf.savedFP, sf.savedArgCount);
+                                    (void*)sf.fp(), sf.savedArgCount);
                         }
                     }
                 } catch (...) {
@@ -20516,7 +20519,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     frame.savedMethod = method_;
     frame.savedReceiver = receiver_;
     frame.savedActiveContextRaw = activeContext_;
-    frame.savedFP = framePointer_;
+    frame.setFp(framePointer_);
     frame.materializedRetSlotRaw = nullptr;
     frame.savedArgCount = argCount_;
     frame.savedClosureRaw = closure_;
@@ -22193,7 +22196,7 @@ Oop Interpreter::materializeFrameStackImpl() {
             int savedCount = 0;
             static const int CtxFixed = 6;
 
-            if (frame0.savedFP != nullptr) {
+            if (frame0.fp() != nullptr) {
                 // Sync temps: C++ stack → context (C++ stack is canonical).
                 // Same fix as the frameDepth_==0 path: bytecodes modify temps
                 // on the C++ stack, not on the context object.
@@ -22205,7 +22208,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                 size_t ctxSlots = acHdr->slotCount();
                 for (int t = 0; t < numTemps; t++) {
                     if (static_cast<size_t>(CtxFixed + t) < ctxSlots) {
-                        ctxStore(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
+                        ctxStore(CtxFixed + t, activeContext_, *(frame0.fp() + 1 + t));
                     }
                     savedCount++;
                 }
@@ -22216,10 +22219,10 @@ Oop Interpreter::materializeFrameStackImpl() {
                 // as the >100-items skip fixed in materializeFrameStack
                 // (2026-07-02).  Bound by the context's actual capacity
                 // instead, and warn on shortfall (never silently).
-                Oop* exprStart = frame0.savedFP + 1 + numTemps;
+                Oop* exprStart = frame0.fp() + 1 + numTemps;
                 Oop* exprEnd;
                 if (1 < frameDepth_) {
-                    exprEnd = savedFrames_[1].savedFP;
+                    exprEnd = savedFrames_[1].fp();
                 } else {
                     exprEnd = framePointer_;
                 }
@@ -22376,7 +22379,7 @@ Oop Interpreter::materializeFrameStackImpl() {
         bool freshContext = false;   // just allocated: every slot nil
         if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
             noteDeadReuse("saved-frame", context, frame.savedMethod);
-            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(8, context, frame.savedFP ? frame.savedFP + 1 : nullptr);
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) checkActivation(8, context, frame.fp() ? frame.fp() + 1 : nullptr);
             // FIX: If reusing a context that IS the sender (e.g. frame 0 was
             // activeContext_ on a prior materialization), do NOT update its sender
             // — that would create a self-referential chain. The context's existing
@@ -22405,10 +22408,10 @@ Oop Interpreter::materializeFrameStackImpl() {
             // dropped deeper expression stacks via storePointer's bounds
             // check — truncated frame state resumed wrong after preemption).
             size_t exprNeed = 0;
-            if (frame.savedFP != nullptr) {
-                Oop* exprStartPre = frame.savedFP + 1 + numTemps;
+            if (frame.fp() != nullptr) {
+                Oop* exprStartPre = frame.fp() + 1 + numTemps;
                 Oop* nextStartPre = (i + 1 < frameDepth_)
-                    ? savedFrames_[i + 1].savedFP : framePointer_;
+                    ? savedFrames_[i + 1].fp() : framePointer_;
                 if (nextStartPre > exprStartPre)
                     exprNeed = static_cast<size_t>(nextStartPre - exprStartPre);
             }
@@ -22520,12 +22523,12 @@ Oop Interpreter::materializeFrameStackImpl() {
         // Expression stack items sit above the temps, ending just before the
         // next frame's receiver (or the current frame's FP for the last saved frame).
         int savedCount = 0;
-        if (frame.savedFP != nullptr) {
+        if (frame.fp() != nullptr) {
             // Save ALL temps (was capped at 32 — methods encode up to 63
             // temps; truncation silently lost temps 33+ across preemption).
             size_t ctxCap = context.asObjectPtr()->slotCount();
             for (int t = 0; t < numTemps && (size_t)(6 + t) < ctxCap; t++) {
-                Oop temp = *(frame.savedFP + 1 + t);
+                Oop temp = *(frame.fp() + 1 + t);
                 ctxPut(6 + t, temp);
                 savedCount++;
             }
@@ -22541,9 +22544,9 @@ Oop Interpreter::materializeFrameStackImpl() {
                 if (fsel.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS))
                         != std::string::npos) {
                     fprintf(stderr, "[FRAME-TEMPS] #%s fp=%p numTemps=%d:",
-                            fsel.c_str(), (void*)frame.savedFP, numTemps);
+                            fsel.c_str(), (void*)frame.fp(), numTemps);
                     for (int t = 0; t < numTemps; t++) {
-                        Oop tv = *(frame.savedFP + 1 + t);
+                        Oop tv = *(frame.fp() + 1 + t);
                         fprintf(stderr, " t%d=%s", t,
                                 tv.isNil() ? "nil"
                                   : tv.isSmallInteger() ? "SmI"
@@ -22555,10 +22558,10 @@ Oop Interpreter::materializeFrameStackImpl() {
             }
 
             // Save expression stack items above the temps.
-            Oop* exprStart = frame.savedFP + 1 + numTemps;
+            Oop* exprStart = frame.fp() + 1 + numTemps;
             Oop* nextFrameStart;
             if (i + 1 < frameDepth_) {
-                nextFrameStart = savedFrames_[i + 1].savedFP;
+                nextFrameStart = savedFrames_[i + 1].fp();
             } else {
                 nextFrameStart = framePointer_;
             }
@@ -22593,7 +22596,7 @@ Oop Interpreter::materializeFrameStackImpl() {
                         topINamed ? memory_.classNameOf(topI) : std::string();
                     const char* tc = topI.isNil() ? "nil" : topI.isSmallInteger() ? "SmI"
                         : topINamed ? topIName.c_str() : "imm";
-                    ptrdiff_t gap = nextFrameStart - frame.savedFP;
+                    ptrdiff_t gap = nextFrameStart - frame.fp();
                     fprintf(stderr, "[SAVE-FRM %zu] #%s numTemps=%d exprCount=%td top=%s fpGap=%td fd=%zu step=%llu\n",
                         i, fs.c_str(), numTemps, ec, tc, gap, frameDepth_, (unsigned long long)g_stepNum);
                 }
@@ -25375,7 +25378,7 @@ void Interpreter::describeOperandSlot(Oop* slot, char* buf, size_t bufSize) {
     // earlier, deeper activation left behind at the same address.
     size_t owner = SIZE_MAX;
     for (size_t i = 0; i < frameDepth_; ++i) {
-        if (savedFrames_[i].savedFP && savedFrames_[i].savedFP <= slot) owner = i;
+        if (savedFrames_[i].fp() && savedFrames_[i].fp() <= slot) owner = i;
     }
     const ptrdiff_t idx  = slot - stackBase_;
     const ptrdiff_t live = stackPointer_ - stackBase_;
@@ -25388,7 +25391,7 @@ void Interpreter::describeOperandSlot(Oop* slot, char* buf, size_t bufSize) {
                                                : std::string("?");
     snprintf(buf, bufSize, "slot %td/%td frame#%zu/%zu #%s fp+%td args=%d",
              idx, live, owner, frameDepth_, sel.c_str(),
-             slot - f.savedFP, f.savedArgCount);
+             slot - f.fp(), f.savedArgCount);
 }
 
 void Interpreter::raiseContextStackpTo(Oop context, int slots) {
@@ -25682,7 +25685,7 @@ void Interpreter::prepareForGC() {
         // Sync each temp: C++ stack → context
         if (GET_DEBUG_BOOL(PHARO_NO_GC_TEMPSYNC)) continue;
         for (int t = 0; t < numTemps && (ContextFixedFields + t) < static_cast<int>(ctxSlots); t++) {
-            Oop* stackSlot = frame.savedFP + 1 + t;
+            Oop* stackSlot = frame.fp() + 1 + t;
             if (stackSlot >= stackBase_ && stackSlot < stackPointer_) {
                 memory_.storePointer(ContextFixedFields + t, matCtx, *stackSlot);
             } else if (GET_DEBUG_STR(PHARO_PIN_DIAG)) {
@@ -25693,7 +25696,7 @@ void Interpreter::prepareForGC() {
                         "slot=%p outside [%p,%p) — ctx temps NOT synced\n",
                         i, frameDepth_,
                         memory_.selectorOf(frame.savedMethod).c_str(), t,
-                        (void*)frame.savedFP, (void*)stackSlot,
+                        (void*)frame.fp(), (void*)stackSlot,
                         (void*)stackBase_, (void*)stackPointer_);
                 }
             }
@@ -31382,7 +31385,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.materializedContext = currentFrameMaterializedCtx_;
     currentFrameMaterializedCtx_ = nil;
     frame.ctxSynced = false;
-    frame.savedFP = save.tempBase - 1;
+    frame.setFp(save.tempBase - 1);
     // Same activation materialized twice?  Two frames on one frame pointer
     // means two returns, and the second lands in a context the first killed.
     //
@@ -31398,7 +31401,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     size_t frameIdx = static_cast<size_t>(&frame - savedFrames_.data());
     for (size_t bi = 1, n = frameIdx > 8 ? 8 : frameIdx; bi <= n; bi++) {
         SavedFrame& other = savedFrames_[frameIdx - bi];
-        if (other.savedFP == frame.savedFP
+        if (other.fp() == frame.fp()
                 && other.savedMethod.rawBits() == frame.savedMethod.rawBits()) {
             g_duplicateActivation[1]++;
             if (g_duplicateActivation[1] <= 3)
@@ -31407,7 +31410,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                         "%zu below it already holds\n",
                         (unsigned long long)g_duplicateActivation[1],
                         memory_.selectorOf(frame.savedMethod).c_str(),
-                        frameIdx, (void*)frame.savedFP,
+                        frameIdx, (void*)frame.fp(),
                         siteTag ? siteTag : "?", frameIdx - bi);
             break;
         }
@@ -31443,7 +31446,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                 (int)saveJM->numICEntries, saveNArgs,
                 (int)saveJM->tempCount, (int)saveJM->argCount,
                 (void*)save.sp, (void*)save.tempBase, depthW,
-                (void*)frame.retSlot(), (void*)frame.savedFP);
+                (void*)frame.retSlot(), (void*)frame.fp());
             fflush(stderr);
         }
     }
@@ -35107,7 +35110,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.materializedContext = currentFrameMaterializedCtx_;
                             currentFrameMaterializedCtx_ = memory_.nil();
                             frame.ctxSynced = false;
-                            frame.savedFP = savedTempBase - 1;
+                            frame.setFp(savedTempBase - 1);
                             // Step 7: OUTER frame's send-receiver slot.
                             // savedSP = OUTER caller's sp at send time;
                             // nArgs = OUTER caller's send arg count.  Mirrors

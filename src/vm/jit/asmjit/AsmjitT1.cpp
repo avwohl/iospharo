@@ -5326,7 +5326,18 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.ldp(r1, r2, ptr(x7, o1));
         else { a.ldr(r1, ptr(x7, o1)); a.ldr(r2, ptr(x7, o2)); }
     };
-    if (fold) {
+#if PHARO_T1_SP_IN_X25 && !PHARO_T1_TB_IN_X26
+    // Stage 3: the caller's tempBase and receiver come back in one ldp
+    // after the commit; the memo alone decides here.
+    const bool tbFast = jit::g_mcfTbRecord && fold && t1TbReg() && mcfLazyCloAct()
+        && L.savedReceiver == L.savedFP + 8;
+#else
+    const bool tbFast = false;
+#endif
+    if (fold && tbFast) {
+        a.ldr(x9, ptr(x7, L.mcReturn));
+        a.cbz(x9, fall);
+    } else if (fold) {
         ldp2(x9, L.mcReturn, x11, L.savedFP);  // adjacent (step 5): one ldp
         a.cbz(x9, fall);
         if (!::pharo::mcfLazyView()) ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
@@ -5394,7 +5405,9 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.stur(x1, ptr(x22, -8));
         a.mov(x25, x22);
         // Caller's view.
-        a.add(x22, x11, asmjit::Imm(8));      // savedFP + 8
+        if (tbFast) a.ldp(x22, x21, ptr(x7, L.savedFP));   // savedTB, savedReceiver
+        else if (jit::g_mcfTbRecord) a.mov(x22, x11);       // savedTB
+        else a.add(x22, x11, asmjit::Imm(8));               // savedFP + 8
         if (!mcfLazyRT()) a.str(x22, ptr(x0, OFF_TEMPBASE));
     } else
 #endif
@@ -5403,11 +5416,12 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.stur(x1, ptr(x8, -8));
         emitStoreSp(a, x8);
         // Caller's view.
-        a.add(x8, x11, asmjit::Imm(8));       // savedFP + 8
+        if (jit::g_mcfTbRecord) a.mov(x8, x11);                // savedTB
+        else a.add(x8, x11, asmjit::Imm(8));       // savedFP + 8
         emitStoreTempBase(a, x8);
     }
     if (lazyCA) {
-        a.ldr(x21, ptr(x7, L.savedReceiver));
+        if (!tbFast) a.ldr(x21, ptr(x7, L.savedReceiver));
         emitMcfPoisonRT(a);
     } else if (sc) {
         ldp2(x21, L.savedReceiver, x14, L.savedClosure);
@@ -5805,7 +5819,14 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         // savedBytecodeEnd null: C++ derives it from the method when it
         // pops the frame (no per-call view to read it from).
         a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
-        put2(x13, L.savedIP, x16, L.savedMethod);
+        if (L.savedIP == L.mcReturn + 8) {
+            // Stage 3 layout: (mcReturn, savedIP) and (savedMethod, info) pairs.
+            put2(x14, L.mcReturn, x13, L.savedIP);
+            if (mcfShortcuts()) put2(x16, L.savedMethod, x12, L.savedArgCount);
+            else a.str(x16, ptr(x8, L.savedMethod));
+        } else {
+            put2(x13, L.savedIP, x16, L.savedMethod);
+        }
         // Stage 2: the info word's recFull byte is 0, so C++ reads neither
         // field; the folded return never reads them either.
         if (GET_DEBUG_BOOL(PHARO_MCF_NO_RET_FOLD) || GET_DEBUG_BOOL(PHARO_MCF_KEEP_TAIL_ZERO))
@@ -5826,7 +5847,10 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     // The info word: the call site's w12 (callerArgCount | nArgs << 8, a
     // 32-bit mov, so zero-extended) is savedArgCount, siteNArgs, ctxSynced
     // false and no home marker.
-    if (sc) {
+    const bool stage3Pairs = ::pharo::mcfLazyView() && L.savedIP == L.mcReturn + 8;
+    if (sc && stage3Pairs) {
+        // (savedTB, savedReceiver) is stored with the frame below.
+    } else if (sc) {
         put2(x21, L.savedReceiver, x12, L.savedArgCount);
     } else {
         if (t1TbReg()) a.mov(x16, x21);
@@ -5848,9 +5872,23 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         mcfFieldStr(a, nilR, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
         put2(x19, L.mcJM, x17, L.materializedContext);
     }
-    if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
-    else { emitLoadTempBase(a, x16); a.sub(x16, x16, asmjit::Imm(8)); }
-    put2(x14, L.mcReturn, x16, L.savedFP);
+    if (sc && stage3Pairs && t1TbReg()) {
+        // savedTB = the caller's tempBase as it is (trim plan stage 3).
+        if (jit::g_mcfTbRecord) {
+            if (GET_DEBUG_BOOL(PHARO_MCF_TB_SABOTAGE)) put2(x25, L.savedFP, x21, L.savedReceiver);
+            else put2(x22, L.savedFP, x21, L.savedReceiver);
+        } else {
+            a.sub(x16, x22, asmjit::Imm(8));
+            put2(x16, L.savedFP, x21, L.savedReceiver);
+        }
+    } else {
+        if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
+        else { emitLoadTempBase(a, x16); a.sub(x16, x16, asmjit::Imm(8)); }
+        if (jit::g_mcfTbRecord) a.add(x16, x16, asmjit::Imm(8));
+        if (stage3Pairs) a.str(x16, ptr(x8, L.savedFP));
+        else put2(x14, L.mcReturn, x16, L.savedFP);
+        if (stage3Pairs && sc) a.str(x21, ptr(x8, L.savedReceiver));
+    }
     // No code epoch: mcfCodeChanged clears the memos of the live frames.
 }
 

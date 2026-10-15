@@ -386,6 +386,9 @@ inline uint64_t g_mcfNlrStub = 0;
 // Trim steps 7-8: native pushes/returns do not save or restore the closure
 // and active context (C++ derives them).  Set by mcfBuildStubs.
 inline bool g_mcfLazyCloAct = false;
+// docs/mcf-record-trim-plan.md stage 3: SavedFrame::savedTB holds the frame's
+// tempBase (fp + 1), which native code has in x22; read SavedFrame::fp().
+inline bool g_mcfTbRecord = false;
 // &Interpreter::lazyCtxPending_ (a byte), for compiled Context methods.
 inline uint64_t g_lazyCtxPendingAddr = 0;
 // PHARO_MCF_COUNT_CALLS: native calls through the method / block stubs and

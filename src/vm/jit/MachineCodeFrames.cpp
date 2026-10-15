@@ -713,13 +713,13 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     // The lazy view leaves savedBytecodeEnd null (derived when read).
     if (f.bcEnd() != end && !(f.bcEnd() == nullptr && ::pharo::mcfLazyView()))
         bad("savedBytecodeEnd");
-    if (f.savedFP[0].rawBits() != (recClosure(f).isNil() ? f.savedReceiver
+    if (f.fp()[0].rawBits() != (recClosure(f).isNil() ? f.savedReceiver
                                                          : recClosure(f)).rawBits())
         bad("fp[0] is neither the receiver nor the closure");
     // INV-FP0: a block frame's closure is fp[0]; a method frame has none.
     {
         const bool callerIsBlock = mo->classIndex() == compiledBlockClassIndex_;
-        if (callerIsBlock ? recClosure(f).rawBits() != f.savedFP[0].rawBits()
+        if (callerIsBlock ? recClosure(f).rawBits() != f.fp()[0].rawBits()
                           : !recClosure(f).isNil()) {
             bad("INV-FP0 closure");
             static int nd = 0;
@@ -727,7 +727,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
                 auto cls = [&](Oop o) { return o.isObject() && o.rawBits() > 0x10000
                     ? memory_.classNameOf(o) : std::string(o.isNil() ? "nil" : "imm"); };
                 fprintf(stderr, "[MCF-VERIFY-PUSH]   fp0=%s closure=%s rcv=%s home=#%s mcJM=%p "
-                        "pushSite=%s depth=%zu\n", cls(f.savedFP[0]).c_str(), cls(recClosure(f)).c_str(),
+                        "pushSite=%s depth=%zu\n", cls(f.fp()[0]).c_str(), cls(recClosure(f)).c_str(),
                         cls(f.savedReceiver).c_str(),
                         memory_.selectorOf(blockHomeMethodForNLR(f.savedMethod)).c_str(), f.mcJM,
                         f.pushSite ? f.pushSite : "-", frameDepth_);
@@ -745,7 +745,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
                                                          : st->closure).rawBits())
         bad("callee fp[0]");
-    if (st->tempBase - 1 <= f.savedFP) bad("callee fp below caller fp");
+    if (st->tempBase - 1 <= f.fp()) bad("callee fp below caller fp");
     {
         Oop ch = st->method.asObjectPtr()->slotAt(0);
         const int nArgsCallee = (int)((ch.asSmallInteger() >> 24) & 0xF);
@@ -1801,7 +1801,7 @@ void Interpreter::mcfInit() {
     L.savedActiveContext = offsetof(SavedFrame, savedActiveContextRaw);
     L.materializedContext = offsetof(SavedFrame, materializedContext);
     L.ctxSynced = offsetof(SavedFrame, ctxSynced);
-    L.savedFP = offsetof(SavedFrame, savedFP);
+    L.savedFP = offsetof(SavedFrame, savedTB);
     L.materializedRetSlot = offsetof(SavedFrame, materializedRetSlotRaw);
     L.savedArgCount = offsetof(SavedFrame, savedArgCount);
     L.homeFramePlus1 = offsetof(SavedFrame, homeFramePlus1);
@@ -1915,7 +1915,7 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
         case jit::SistaV1::ReturnNil:      value = memory_.nil(); break;
         default:                           value = pop(); break;   // ReturnTop
     }
-    Oop* homeFP = savedFrames_[h].savedFP;
+    Oop* homeFP = savedFrames_[h].fp();
     while (frameDepth_ > h) {
         widowUnwoundContext();
         if (!popFrame()) return reinterpret_cast<void*>(1);

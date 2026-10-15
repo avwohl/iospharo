@@ -4000,11 +4000,11 @@ int64_t Interpreter::contextStackp(Oop ctx, Oop** frameBase) {
         bool carries = (f.materializedContext.isObject() && f.materializedContext.rawBits() == ctx.rawBits())
                     || (recActiveCtx(f).isObject() && recActiveCtx(f).rawBits() == ctx.rawBits());
         if (!carries || f.savedMethod.rawBits() != ctxMethod.rawBits()) continue;
-        if (!f.savedFP) break;
-        Oop* calleeFP = (i + 1 < frameDepth_) ? savedFrames_[i + 1].savedFP : framePointer_;
-        if (!calleeFP || calleeFP <= f.savedFP) break;
-        if (frameBase) *frameBase = f.savedFP;
-        return static_cast<int64_t>(calleeFP - f.savedFP) - 1;
+        if (!f.fp()) break;
+        Oop* calleeFP = (i + 1 < frameDepth_) ? savedFrames_[i + 1].fp() : framePointer_;
+        if (!calleeFP || calleeFP <= f.fp()) break;
+        if (frameBase) *frameBase = f.fp();
+        return static_cast<int64_t>(calleeFP - f.fp()) - 1;
     }
     Oop sp = memory_.fetchPointer(2, ctx);
     return sp.isSmallInteger() && sp.asSmallInteger() > 0 ? sp.asSmallInteger() : 0;
@@ -13694,7 +13694,7 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
                  savedFrames_[i].materializedContext == context) ||
                 (recActiveCtx(savedFrames_[i]).isObject() &&
                  recActiveCtx(savedFrames_[i]) == context)) {
-                *(savedFrames_[i].savedFP + 1 + zeroIndex) = value;
+                *(savedFrames_[i].fp() + 1 + zeroIndex) = value;
                 break;
             }
         }

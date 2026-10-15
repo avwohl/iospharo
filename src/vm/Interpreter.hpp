@@ -671,12 +671,15 @@ private:
         // clears it, and mcfCodeChanged clears them all, so a non-null memo
         // is current.
         void* mcReturn;
-        Oop* savedFP;
+        uint8_t* savedIP;
         void* mcJM;            // jit::JITMethod* that mcReturn points into
         Oop materializedContext;  // Cached context from materializeFrameStack (nil if not yet materialized)
-        uint8_t* savedIP;
-        Oop savedMethod;
+        // The frame's tempBase (fp + 1) under jit::g_mcfTbRecord, else its
+        // fp: a native push stores x22 as it is (trim plan stage 3).  Read
+        // and write it only through fp() / setFp().
+        Oop* savedTB;
         Oop savedReceiver;
+        Oop savedMethod;
         // The info word.  A native push stores the call site's w12
         // (callerArgCount | nArgs << 8, zero-extended): savedArgCount, a
         // siteNArgs nobody reads, ctxSynced false and no home marker.
@@ -713,6 +716,10 @@ private:
         // returning fib(N-2) for ~20% of runs with the inline-J2J gate off.
         Oop* materializedRetSlotRaw;
         uint8_t* bcEnd() const { return recFull ? savedBytecodeEndRaw : nullptr; }   // null: derive
+        Oop* fp() const {
+            return jit::g_mcfTbRecord ? (savedTB ? savedTB - 1 : nullptr) : savedTB;
+        }
+        void setFp(Oop* f) { savedTB = jit::g_mcfTbRecord ? (f ? f + 1 : nullptr) : f; }
         Oop* retSlot() const { return recFull ? materializedRetSlotRaw : nullptr; }
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
@@ -738,10 +745,10 @@ private:
     static_assert(sizeof(SavedFrame) == 128, "T1 indexes savedFrames_ with lsl #7");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
-    static_assert(offsetof(SavedFrame, savedFP) == offsetof(SavedFrame, mcReturn) + 8
+    static_assert(offsetof(SavedFrame, savedIP) == offsetof(SavedFrame, mcReturn) + 8
                   && offsetof(SavedFrame, materializedContext) == offsetof(SavedFrame, mcJM) + 8
-                  && offsetof(SavedFrame, savedMethod) == offsetof(SavedFrame, savedIP) + 8
-                  && offsetof(SavedFrame, savedArgCount) == offsetof(SavedFrame, savedReceiver) + 8
+                  && offsetof(SavedFrame, savedReceiver) == offsetof(SavedFrame, savedTB) + 8
+                  && offsetof(SavedFrame, savedArgCount) == offsetof(SavedFrame, savedMethod) + 8
                   && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCount) + 2
                   && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCount) + 4
                   && offsetof(SavedFrame, savedActiveContextRaw) == offsetof(SavedFrame, savedClosureRaw) + 8
@@ -2078,10 +2085,10 @@ public:
     // context is activeContext_ (INV-AC).  Native pushes no longer write
     // the raw fields.
     Oop recClosure(const SavedFrame& f) const {
-        if (!jit::g_mcfLazyCloAct || !f.savedFP || !f.savedMethod.isObject())
+        if (!jit::g_mcfLazyCloAct || !f.fp() || !f.savedMethod.isObject())
             return f.savedClosureRaw;
         return f.savedMethod.asObjectPtr()->classIndex() == compiledBlockClassIndex_
-            ? f.savedFP[0] : memory_.nil();
+            ? f.fp()[0] : memory_.nil();
     }
     Oop recActiveCtx(const SavedFrame& f) const {
         return jit::g_mcfLazyCloAct ? activeContext_ : f.savedActiveContextRaw;
@@ -2360,7 +2367,7 @@ public:
         frame.savedActiveContextRaw = nil;
         frame.materializedContext = nil;
         frame.ctxSynced = false;
-        frame.savedFP = framePointer_;
+        frame.setFp(framePointer_);
         // Step 7: not a materialize-bail frame; standard popFrame applies.
         // Without this, stale materializedRetSlot from a prior occupant of
         // this slot can leak into returnValue and corrupt fib results.
@@ -2473,7 +2480,7 @@ public:
         method_ = callerMethod;
         homeMethod_ = callerMethod;
         receiver_ = callerRecv;
-        framePointer_ = frame.savedFP;
+        framePointer_ = frame.fp();
         argCount_ = frame.savedArgCount;
         bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     }
@@ -2513,7 +2520,7 @@ public:
         frame.savedActiveContextRaw = nil;
         frame.materializedContext = nil;
         frame.ctxSynced = false;
-        frame.savedFP = tempBase - 1;
+        frame.setFp(tempBase - 1);
         frame.materializedRetSlotRaw = nullptr;  // Step 7: no callers — clear for safety
         frame.savedArgCount = argCount;
         frame.setHomeFrameDepth(SIZE_MAX);
