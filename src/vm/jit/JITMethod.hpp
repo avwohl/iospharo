@@ -855,7 +855,12 @@ public:
         if (!entries_) return false;
         ++g_jitStateEpoch;
         presenceSet(compiledMethodBits);
-        if (count_ * 4 >= capacity_ * 3) return false;  // 75% load factor
+        // 75% load: grow.  This returned false, and no caller checks: the
+        // map held at most 6144 methods, and every method compiled after
+        // that had machine code no lookup found, so it ran interpreted for
+        // good (package test suites compile 7-10K methods: Vienna 4x, Smock
+        // 6.5x slower than Cog).
+        if (count_ * 4 >= capacity_ * 3 && !grow()) return false;
 
         size_t mask = capacity_ - 1;
         size_t idx = hash(compiledMethodBits) & mask;
@@ -925,12 +930,37 @@ public:
     }
 
     size_t count() const { return count_; }
+    size_t capacity() const { return capacity_; }
 
 private:
     struct Entry {
         uint64_t   key;    // CompiledMethod Oop raw bits (0 = empty)
         JITMethod* value;  // Compiled version (nullptr = tombstone)
     };
+
+    // Double the table and re-insert the live entries (tombstones go).
+    bool grow() {
+        const size_t newCap = capacity_ * 2;
+        Entry* ne = new(std::nothrow) Entry[newCap];
+        if (!ne) return false;
+        for (size_t i = 0; i < newCap; i++) { ne[i].key = 0; ne[i].value = nullptr; }
+        size_t live = 0;
+        const size_t mask = newCap - 1;
+        for (size_t i = 0; i < capacity_; i++) {
+            const Entry& e = entries_[i];
+            if (e.key == 0 || e.value == nullptr) continue;
+            size_t idx = hash(e.key) & mask;
+            while (ne[idx].key != 0) idx = (idx + 1) & mask;
+            ne[idx] = e;
+            live++;
+        }
+        delete[] entries_;
+        entries_ = ne;
+        capacity_ = newCap;
+        count_ = live;
+        ++g_jitStateEpoch;
+        return true;
+    }
 
     Entry* entries_;
     size_t capacity_;
