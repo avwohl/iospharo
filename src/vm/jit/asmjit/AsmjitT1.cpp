@@ -5256,6 +5256,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.stp(x3, x4, ptr(sp, 32));
         a.stp(x5, x6, ptr(sp, 48));
         a.stp(x7, x9, ptr(sp, 64));
+        emitSyncSpToState(a);                 // the oracle reads st.sp / the lazy view
         a.mov(x2, x7);                        // the popped frame record
         a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_verify_ret));
         a.blr(x16);

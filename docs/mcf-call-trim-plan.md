@@ -1,7 +1,13 @@
 # Machine-code frames: trimming the native call and return
 
 Status (2026-10-15): plan from a design panel (three designs, a judge
-that checked them against the code at `5d591c5f`).  No step is done.
+that checked them against the code at `5d591c5f`).  Step 0 is done:
+the push oracle derives the lazy view, runs every check, and checks the
+record (method against its JM, ctxSynced, home marker, ret slot,
+INV-FP0, INV-AC); INV-AC is also checked at each native return.  It
+found that executeFromContext left a resumed block frame's receiver in
+fp[0] (fixed: the closure, as every other block frame).  Lexicon runs
+with PHARO_MCF_VERIFY and no report.
 Today a native call plus return is about 67 instructions (push 41,
 return 26); Cog needs about 20.  Lexicon makes about 1e9 native calls a
 run.
@@ -77,7 +83,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - lexicon instructions retired (time -l, arms interleaved), with PHARO_MCF_COUNT_CALLS counts unchanged so the saving is not a rise in refusals, and the [JIT] Stats line checked for refused compiles;
 - an lldb single-step of one call+return to confirm the count.
 
-**Step 0: oracles and baseline. No behaviour change, gain 0.** Files: MachineCodeFrames.cpp, AsmjitT1.cpp.
+**Step 0: oracles and baseline. No behaviour change, gain 0. -- DONE** Files: MachineCodeFrames.cpp, AsmjitT1.cpp.
 - mcfVerifyPush:
   - call mcfDeriveView first;
   - accept a null bcEnd under lazy view;

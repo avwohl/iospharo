@@ -24186,8 +24186,12 @@ bool Interpreter::executeFromContext(Oop context) {
         stackp = static_cast<int>(savedStackp.asSmallInteger());
     }
 
-    // Push receiver first - this establishes our frame
-    push(receiver_);
+    // fp[0]: the receiver of a method frame, the closure of a block frame,
+    // as pushFrame/activateBlock, tryRestoreCollapsedFrames and the native
+    // push lay frames out (INV-FP0).  A block resumed here kept its
+    // receiver in fp[0]; the MCF push oracle found it.
+    push(closure_.isObject() && !closure_.isNil() && !GET_DEBUG_BOOL(PHARO_EFC_FP0_RECEIVER)
+             ? closure_ : receiver_);
     framePointer_ = stackPointer_ - 1;
 
 

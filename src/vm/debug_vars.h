@@ -234,6 +234,7 @@ DEBUG_BOOL_RT(PHARO_MCF_NLR_NO_CONT)             // MCF native NLR: pop the fram
 DEBUG_BOOL(PHARO_MCF_NLR_CENSUS)                 // MCF native NLR: count refusals by reason (printed every 64K)
 DEBUG_BOOL(PHARO_MCF_NLR_VERIFY)                 // MCF native NLR oracle: the home agrees with findBlockHomeFrame; the state after the pops is checked
 DEBUG_BOOL_RT(PHARO_MCF_NO_SUPER_SITE_CACHE)      // MCF: naked super sends do not fill their site cache (every call looks up in pharo_mcf_extsend)
+DEBUG_BOOL_RT(PHARO_EFC_FP0_RECEIVER)             // executeFromContext puts the receiver in a resumed block frame's fp[0] (the old layout) instead of the closure
 DEBUG_BOOL(PHARO_WKA_DRAIN_ANY_DICT)             // native weak-association drain for every dictionary with the unscaled header hash (pre-2026-10-15; loses live keys)
 DEBUG_BOOL_RT(PHARO_T1_NO_SIM_EQ)                // T1 simStack: == takes the memory-stack path (which checks operands for forwarders) instead of a register compare
 DEBUG_BOOL(PHARO_T1_NO_SIM_EQ_FWD_CHECK)         // T1 simStack ==: no forwarder check on a mismatch (wrong when a forwarder meets its target)

@@ -632,36 +632,79 @@ void Interpreter::mcfVerifyMemo(const SavedFrame& f, const char* site) {
 // PHARO_MCF_VERIFY: T1 just pushed a SavedFrame natively and set up the
 // callee view.  Check the record against what pushFrame would write.
 void Interpreter::mcfVerifyPush(jit::JITState* st) {
+    // The lazy view writes no method/argCount per call: derive them first,
+    // or the callee checks below compare stale state.
+    mcfDeriveView(*st);
     const SavedFrame& f = savedFrames_[frameDepth_ - 1];
     const char* why = nullptr;
+    // Every check runs and counts on its own (an else-if chain hid every
+    // check after the first that failed).
+    static uint64_t fails = 0;
+    auto bad = [&](const char* w) {
+        if (!why) why = w;
+        static int shown = 0;
+        if (++shown <= 20)
+            fprintf(stderr, "[MCF-VERIFY-PUSH] %s: caller=#%s callee=#%s fd=%zu\n", w,
+                    memory_.selectorOf(f.savedMethod).c_str(), memory_.selectorOf(st->method).c_str(),
+                    frameDepth_);
+        ++fails;
+    };
     ObjectHeader* mo = f.savedMethod.asObjectPtr();
     Oop hdr = mo->slotAt(0);
     const int nLits = (int)(hdr.asSmallInteger() & 0x7FFF);
     const int nArgsCaller = (int)((hdr.asSmallInteger() >> 24) & 0xF);
     const uint8_t* bc0 = mo->bytes() + (1 + nLits) * 8;
     const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
-    if (f.savedIP <= bc0 || f.savedIP > end) why = "savedIP outside caller";
-    else if (f.savedBytecodeEnd != end) why = "savedBytecodeEnd";
-
-    else if (f.savedFP[0].rawBits() != (f.savedClosure.isNil() ? f.savedReceiver
-                                                               : f.savedClosure).rawBits())
-        why = "fp[0] is neither the receiver nor the closure";
-    else if (f.savedArgCount != nArgsCaller) why = "argCount";
-    else if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
-                                                              : st->closure).rawBits())
-        why = "callee fp[0]";
-    else if (st->tempBase - 1 <= f.savedFP) why = "callee fp below caller fp";
-    else {
+    if (f.savedIP <= bc0 || f.savedIP > end) bad("savedIP outside caller");
+    // The lazy view leaves savedBytecodeEnd null (derived when read).
+    if (f.savedBytecodeEnd != end && !(f.savedBytecodeEnd == nullptr && ::pharo::mcfLazyView()))
+        bad("savedBytecodeEnd");
+    if (f.savedFP[0].rawBits() != (f.savedClosure.isNil() ? f.savedReceiver
+                                                         : f.savedClosure).rawBits())
+        bad("fp[0] is neither the receiver nor the closure");
+    // INV-FP0: a block frame's closure is fp[0]; a method frame has none.
+    {
+        const bool callerIsBlock = mo->classIndex() == compiledBlockClassIndex_;
+        if (callerIsBlock ? f.savedClosure.rawBits() != f.savedFP[0].rawBits()
+                          : !f.savedClosure.isNil()) {
+            bad("INV-FP0 closure");
+            static int nd = 0;
+            if (++nd <= 6) {
+                auto cls = [&](Oop o) { return o.isObject() && o.rawBits() > 0x10000
+                    ? memory_.classNameOf(o) : std::string(o.isNil() ? "nil" : "imm"); };
+                fprintf(stderr, "[MCF-VERIFY-PUSH]   fp0=%s closure=%s rcv=%s home=#%s mcJM=%p "
+                        "pushSite=%s depth=%zu\n", cls(f.savedFP[0]).c_str(), cls(f.savedClosure).c_str(),
+                        cls(f.savedReceiver).c_str(),
+                        memory_.selectorOf(blockHomeMethodForNLR(f.savedMethod)).c_str(), f.mcJM,
+                        f.pushSite ? f.pushSite : "-", frameDepth_);
+            }
+        }
+    }
+    if (f.savedArgCount != nArgsCaller) bad("argCount");
+    if (f.ctxSynced) bad("ctxSynced set");
+    if (f.materializedRetSlot) bad("retSlot set");
+    if (f.mcJM && static_cast<const jit::JITMethod*>(f.mcJM)->compiledMethodOop
+                      != f.savedMethod.rawBits())
+        bad("mcJM is not the caller's code");
+    if (f.savedActiveContext.rawBits() != activeContext_.rawBits()) bad("INV-AC");
+    if (st->closure.isNil() && f.homeFrameDepth != SIZE_MAX) bad("home marker on a method call");
+    if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
+                                                         : st->closure).rawBits())
+        bad("callee fp[0]");
+    if (st->tempBase - 1 <= f.savedFP) bad("callee fp below caller fp");
+    {
         Oop ch = st->method.asObjectPtr()->slotAt(0);
         const int nArgsCallee = (int)((ch.asSmallInteger() >> 24) & 0xF);
         const int nTemps = (int)((ch.asSmallInteger() >> 18) & 0x3F);
-        if (nArgsCallee != st->argCount) why = "callee argCount";
-        else if (st->sp != st->tempBase + nTemps) why = "callee sp";
-        else if (st->closure.isNil()) {   // a block's copied values are not nil
+        if (nArgsCallee != st->argCount) bad("callee argCount");
+        if (st->sp != st->tempBase + nTemps) bad("callee sp");
+        if (st->closure.isNil()) {   // a block's copied values are not nil
             for (int t = nArgsCallee; t < nTemps; t++)
-                if (!st->tempBase[t].isNil()) { why = "temp not nil"; break; }
+                if (!st->tempBase[t].isNil()) { bad("temp not nil"); break; }
         }
     }
+    if (fails && (fails & 0xFFFF) == 1) fprintf(stderr, "[MCF-VERIFY-PUSH] failures=%llu\n",
+                                                (unsigned long long)fails);
     if (!why && st->closure.isNil()) {
         // The callee must be the method the send at the caller's ip names
         // (a poisoned inline cache calls another one).  Short and special
@@ -683,7 +726,9 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
         if (!sel.isNil() && sel.isObject() && sel.asObjectPtr()->isBytesObject()) {
             const std::string want = memory_.oopToString(sel);
             const std::string got = memory_.selectorOf(st->method);
-            if (want != got && got != "?") {
+            // perform: and its with: forms call the performed method natively.
+            const bool perform = want.rfind("perform:", 0) == 0;
+            if (want != got && got != "?" && !perform) {
                 static int m = 0;
                 if (++m <= 20)
                     fprintf(stderr, "[MCF-VERIFY-SEL] site sends #%s but calls #%s (caller #%s, rcv %s)\n",
@@ -692,11 +737,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
             }
         }
     }
-    static int n = 0;
-    if (!why || ++n > 10) return;
-    fprintf(stderr, "[MCF-VERIFY-PUSH] %s: caller=#%s callee=#%s fd=%zu\n", why,
-            memory_.selectorOf(f.savedMethod).c_str(), memory_.selectorOf(st->method).c_str(),
-            frameDepth_);
+    (void)why;
 }
 
 // PHARO_MCF_WATCH_OOP: is a store of the watched oop about to happen?  The
@@ -732,6 +773,17 @@ void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
         if (bad && ++nb <= 10)
             fprintf(stderr, "[MCF-VERIFY-RET] native return with %s (fd=%zu #%s)\n", bad,
                     frameDepth_, memory_.selectorOf(f.savedMethod).c_str());
+        // INV-AC (docs/mcf-call-trim-plan.md step 0): every live record a
+        // native return pops saved the current activeContext_.
+        if (f.savedActiveContext.rawBits() != activeContext_.rawBits()) {
+            static int na = 0;
+            if (++na <= 10)
+                fprintf(stderr, "[MCF-VERIFY-RET] INV-AC: record activeContext 0x%llx, "
+                        "activeContext_ 0x%llx (fd=%zu #%s)\n",
+                        (unsigned long long)f.savedActiveContext.rawBits(),
+                        (unsigned long long)activeContext_.rawBits(), frameDepth_,
+                        memory_.selectorOf(f.savedMethod).c_str());
+        }
     } else {
         static int nz = 0;
         if (++nz <= 10) fprintf(stderr, "[MCF-VERIFY-RET] native return at depth 0\n");
@@ -747,6 +799,7 @@ void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
 // PHARO_MCF_VERIFY: the IC entry T1 is about to call through must hold
 // the method a lookup finds for the send at `where`.
 void Interpreter::mcfVerifyCall(jit::JITState* st, Oop method, uint64_t where) {
+    mcfDeriveView(*st);   // the lazy view leaves st->method stale
     const uint32_t bcOff = (uint32_t)(where & 0xFFFFFFFF);
     const int nArgs = (int)(where >> 32);
     auto* jm = st->jitMethod;
