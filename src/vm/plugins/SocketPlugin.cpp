@@ -33,8 +33,9 @@ struct PrivateSocket {
     int writeSema;       // write semaphore index
     int sockState;       // one of SOCK_* constants
     int sockError;       // SOCK_LAST_ERROR after socket error
-    bool writeSignaled;  // true after write-ready signaled; reset on SOCK_EAGAIN
-    bool readSignaled;   // true after read-ready signaled; reset by each recv().
+    // Written by the io thread and the interpreter: atomic.
+    std::atomic<bool> writeSignaled;  // true after write-ready signaled; reset on SOCK_EAGAIN
+    std::atomic<bool> readSignaled;   // true after read-ready signaled; reset after each recv().
                          // EDGE suppression: without it the io loop signals
                          // readSema every poll iteration (~5us) while data sits
                          // unread -> hundreds of excess signals per message ->
@@ -401,11 +402,21 @@ static void ioMonitorLoop() {
                 // RPC wake-latency family; stock aio is one-shot per arm).
                 if (isReadable[i] && !ps->readSignaled) {
                     ps->readSignaled = true;
+                    bool stale = false;
                     if (!ps->eofDetected) {
                         // First time seeing readability — peek to detect EOF
                         char peek;
                         int n = (int)recv(ps->fd, &peek, 1, MSG_PEEK);
-                        if (n == 0) {
+                        if (n < 0 && (SOCK_LAST_ERROR == SOCK_EAGAIN
+                                      || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK)) {
+                            // The readability was stale (a recv drained the
+                            // socket after poll answered): no edge.  Latching
+                            // it left the flag set on an empty socket, and
+                            // the socket out of the poll set, until a recv
+                            // that never came (a 30 s Zn timeout per stall).
+                            ps->readSignaled = false;
+                            stale = true;
+                        } else if (n == 0) {
                             // EOF (FIN received) — DON'T change sockState here.
                             // The recv() primitive will set SOCK_OTHER_END_CLOSED
                             // when Pharo actually reads 0 bytes. This prevents a
@@ -431,7 +442,7 @@ static void ioMonitorLoop() {
                     // has buffered data that needs draining via recv().
                     // (One signal per edge; recv() re-arms, so an EOF socket
                     // signals at the reader's own pace, not per poll spin.)
-                    if (ps->readSema > 0 && vm) {
+                    if (!stale && ps->readSema > 0 && vm) {
                         SOCKDBG("io: fd=%d readable, signal readSema=%d t=%lldus\n",
                                 ps->fd, ps->readSema,
                                 (long long)std::chrono::duration_cast<std::chrono::microseconds>(
@@ -1013,6 +1024,14 @@ extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
         available = false;
     }
 
+    // No data: re-arm the readable notification, as Cog's
+    // sqSocketReceiveDataAvailable re-arms its aio handler.  waitForDataFor:
+    // asks this right before it waits, so a flag latched on stale
+    // readability cannot keep the waiter asleep.
+    if (!available && !ps->eofDetected && ps->readSignaled) {
+        ps->readSignaled = false;
+        wakeIOThread();
+    }
     vm->popthenPush(2, available ? vm->trueObject() : vm->falseObject());
     return 0;
 }
@@ -1037,15 +1056,15 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
     sqInt offset = startIndex - 1;
     if (offset < 0 || offset + count > bufSize) return vm->primitiveFail();
 
+    ssize_t received = recv(ps->fd, buf + offset, (size_t)count, 0);
     // Re-arm the one-shot readable notification (see readSignaled): the
-    // reader is consuming now, so the NEXT readability edge must signal.
-    // The io loop stopped watching the socket at the edge: wake it.
+    // NEXT readability edge must signal.  After recv(), not before: re-armed
+    // first, the io thread could latch the data this recv() then drained,
+    // and stop watching an empty socket (a lost wakeup).
     if (ps->readSignaled) {
         ps->readSignaled = false;
         wakeIOThread();
     }
-
-    ssize_t received = recv(ps->fd, buf + offset, (size_t)count, 0);
     if (received < 0) {
         int e = SOCK_LAST_ERROR;
         if (e == SOCK_EAGAIN || e == SOCK_EWOULDBLOCK) {
@@ -1758,14 +1777,14 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
     socklen_t fromLen = sizeof(from);
     memset(&from, 0, sizeof(from));
 
-    // Re-arm the one-shot readable notification (see readSignaled).
+    ssize_t received = recvfrom(ps->fd, buf + offset, (size_t)count, 0,
+                                (struct sockaddr*)&from, &fromLen);
+    // Re-arm the one-shot readable notification after the read (see the
+    // TCP receive primitive).
     if (ps->readSignaled) {
         ps->readSignaled = false;
         wakeIOThread();
     }
-
-    ssize_t received = recvfrom(ps->fd, buf + offset, (size_t)count, 0,
-                                (struct sockaddr*)&from, &fromLen);
     bool moreData = false;
     if (received < 0) {
         if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
