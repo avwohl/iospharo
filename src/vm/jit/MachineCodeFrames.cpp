@@ -1642,6 +1642,7 @@ void Interpreter::mcfClearMemos() {
     // memo into code freed since would come back.
     for (SavedFrame& r : collapsed_.recs) r.mcReturn = nullptr;
     pendingMcReturn_ = nullptr;
+    poppedMcReturn_ = nullptr;
 }
 
 void Interpreter::mcfInit() {
@@ -1708,7 +1709,17 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
     jit::JITMethod* jm;
     void* entry;
     // A non-null memo is current: mcfCodeChanged clears them (no epoch).
-    if (popped && popped->mcReturn
+    void* pjm = nullptr;
+    void* pmemo = mcfPoppedMemo(popped, &pjm);
+    if (pmemo) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)) {
+            SavedFrame f = *popped;
+            f.mcReturn = pmemo; f.mcJM = pjm;
+            mcfVerifyMemo(f, "resume-after-return");
+        }
+        jm = static_cast<jit::JITMethod*>(pjm);
+        entry = pmemo;
+    } else if (popped && popped->mcReturn
             && popped->savedIP == instructionPointer_) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyMemo(*popped, "resume-after-return");
@@ -2154,6 +2165,19 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                 return;
             }
             const SavedFrame& popped = savedFrames_[frameDepth_];
+            {
+                void* pjm = nullptr;
+                if (void* pmemo = mcfPoppedMemo(&popped, &pjm)) {
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)) {
+                        SavedFrame f = popped;
+                        f.mcReturn = pmemo; f.mcJM = pjm;
+                        mcfVerifyMemo(f, "mcfRun-return");
+                    }
+                    jm = static_cast<jit::JITMethod*>(pjm);
+                    entry = pmemo;
+                    continue;
+                }
+            }
             if (popped.mcReturn
                     && popped.savedIP == instructionPointer_) {
                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))

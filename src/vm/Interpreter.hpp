@@ -1909,6 +1909,23 @@ public:
     // patchJITICAfterSendSlow applies the patch only to that send.
     const uint8_t* pendingICOwnerIP_ = nullptr;
     void* pendingMcReturn_ = nullptr;
+    // The memo of the record the last popFrame popped (cleared in the
+    // record): see popFrame and mcfPoppedMemo.
+    void* poppedMcReturn_ = nullptr;
+    void* poppedMcJM_ = nullptr;
+    size_t poppedMcDepth_ = SIZE_MAX;
+    // The popped record's memo when `popped` is that record and it is
+    // current; nullptr otherwise.
+    void* mcfPoppedMemo(const SavedFrame* popped, void** jm) const {
+        if (popped && poppedMcReturn_ && popped == &savedFrames_[poppedMcDepth_]
+                && poppedMcDepth_ == frameDepth_
+                && popped->savedIP == instructionPointer_
+                && !GET_DEBUG_BOOL(PHARO_MCF_NO_POP_MEMO_KEEP)) {
+            *jm = poppedMcJM_;
+            return poppedMcReturn_;
+        }
+        return nullptr;
+    }
     const uint8_t* pendingMcKeyIP_ = nullptr;
     void* pendingMcJM_ = nullptr;
     uint32_t pendingMcEpoch_ = 0;

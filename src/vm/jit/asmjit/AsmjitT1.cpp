@@ -6647,16 +6647,41 @@ static void emitMcfBlockCreateStub(asmjit::a64::Assembler& a) {
     a.orr(x10, x10, asmjit::Imm(3ULL << 24));       // IndexableWithFixed
     a.orr(x10, x10, x9);
     a.str(x10, ptr(x8));
-    a.add(x6, x8, asmjit::Imm(8));
-    a.mov(x7, x5);
-    a.tbz(x7, asmjit::Imm(0), fill);                // odd: one slot first
-    a.str(x14, ptr_post(x6, 8));
-    a.sub(x7, x7, asmjit::Imm(1));
-    a.bind(fill);                                   // then two per store
-    a.cbz(x7, filled);
-    a.stp(x14, x14, ptr_post(x6, 16));
-    a.sub(x7, x7, asmjit::Imm(2));
-    a.b(fill);
+    if (!GET_DEBUG_BOOL(PHARO_MCF_NO_CTX_TAIL_FILL)) {
+        // Nil only the sender and the slots past the temps: pc, stackp,
+        // method, closure, receiver and the temps are stored below.  Four
+        // slots per pass (the whole-object two-per-pass fill was a third of
+        // this stub's instructions).  x5 >= numTemps + 14, so the tail is
+        // at least 8 slots.
+        asmjit::Label fill1 = a.new_label();
+        a.str(x14, ptr(x8, 8));                     // sender
+        a.add(x6, x8, x4, lsl(3));
+        a.add(x6, x6, asmjit::Imm(8 + 48));         // first slot past the temps
+        a.sub(x7, x12, x6);                         // bytes to fill
+        a.bind(fill);
+        a.cmp(x7, asmjit::Imm(32));
+        a.b_lo(fill1);
+        a.stp(x14, x14, ptr_post(x6, 16));
+        a.stp(x14, x14, ptr_post(x6, 16));
+        a.sub(x7, x7, asmjit::Imm(32));
+        a.b(fill);
+        a.bind(fill1);
+        a.cbz(x7, filled);
+        a.str(x14, ptr_post(x6, 8));
+        a.sub(x7, x7, asmjit::Imm(8));
+        a.b(fill1);
+    } else {
+        a.add(x6, x8, asmjit::Imm(8));
+        a.mov(x7, x5);
+        a.tbz(x7, asmjit::Imm(0), fill);            // odd: one slot first
+        a.str(x14, ptr_post(x6, 8));
+        a.sub(x7, x7, asmjit::Imm(1));
+        a.bind(fill);                               // then two per store
+        a.cbz(x7, filled);
+        a.stp(x14, x14, ptr_post(x6, 16));
+        a.sub(x7, x7, asmjit::Imm(2));
+        a.b(fill);
+    }
     a.bind(filled);
     a.str(x12, ptr(x11));                           // commit
     a.str(x3, ptr(x8, 8 + 8));                      // pc

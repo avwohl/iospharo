@@ -17315,6 +17315,13 @@ bool Interpreter::popFrame() {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+    // The memo continues the frame being returned into: kept here for
+    // returnValue's resume and mcfRun's ExitReturn, which read it after
+    // this pop (they read the cleared slot before, and looked the code up
+    // on every return through C++).
+    poppedMcReturn_ = frame.mcReturn;
+    poppedMcJM_ = frame.mcJM;
+    poppedMcDepth_ = frameDepth_;
     frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
 
     // NLR-marker hygiene (cascade-#3 residual, 2026-06-11): scrub the
@@ -17463,6 +17470,13 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+    // The memo continues the frame being returned into: kept here for
+    // returnValue's resume and mcfRun's ExitReturn, which read it after
+    // this pop (they read the cleared slot before, and looked the code up
+    // on every return through C++).
+    poppedMcReturn_ = frame.mcReturn;
+    poppedMcJM_ = frame.mcJM;
+    poppedMcDepth_ = frameDepth_;
     frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
 
     // jit-may24 Step 2: decrement materialize-bail counter, same as
