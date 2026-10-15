@@ -993,6 +993,13 @@ private:
     jit::JITState mcfStateStorage_{};
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
+    // Any thread: make the next interrupt point a checkpoint.  Machine code
+    // only reads the countdown (pharo::mcfCtdnReadOnly), so this is how it
+    // learns of a heartbeat tick or a signal.  A racing interpreter
+    // decrement can lose the store; the next heartbeat tick repeats it.
+    void requestCheckpoint() {
+        if (::pharo::mcfCtdnReadOnly()) __atomic_store_n(&checkCountdown_, 0, __ATOMIC_RELAXED);
+    }
     std::atomic<bool> forceYield_{false};  // set by the heartbeat thread; polled at back jumps
     // jit-may24 Step 2: counter of SavedFrames currently on the stack
     // with materializedRetSlot != nullptr.  Used by canJITActivate's

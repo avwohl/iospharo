@@ -780,6 +780,7 @@ public:
     bool needsCompactGC() const { return needsCompactGC_; }
     void clearCompactGCFlag() { needsCompactGC_ = false; }
     bool needsScavenge() const { return needsScavenge_; }
+    void setCheckpointRequest(int* countdown) { checkpointRequest_ = countdown; }
     void clearScavengeFlag() { needsScavenge_ = false; }
 
     // ===== FINALIZATION / MOURNING =====
@@ -1024,6 +1025,7 @@ public:
             return obj;
         }
         needsScavenge_ = true;
+        if (checkpointRequest_) *checkpointRequest_ = 0;
         return nullptr;
     }
 
@@ -1175,6 +1177,7 @@ private:
     // GC state
     bool needsCompactGC_ = false;  // Set by allocator when compaction needed at safe point
     bool needsScavenge_ = false;   // Set by allocator when eden is full
+    int* checkpointRequest_ = nullptr;  // set to 0 with needsScavenge_ (the interpreter's countdown)
 
 public:
     // Young-gen allocation enable — default off during image load

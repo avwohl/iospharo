@@ -4063,6 +4063,9 @@ void Interpreter::interpret() {
     }
 
     checkCountdown_ = 1024;
+    // A full eden asks for a checkpoint now: machine code only reads the
+    // countdown (mcfCtdnReadOnly) and would run on, allocating in old space.
+    if (::pharo::mcfCtdnReadOnly()) memory_.setCheckpointRequest(&checkCountdown_);
     uint64_t totalSteps = 0;
     uint8_t bytecode;
     // --- Bytecode pair profiling (compile-time flag) ---
@@ -6713,6 +6716,7 @@ void Interpreter::startHeartbeat() {
             // heartbeat must NOT inject wall-clock yields.
             if (tickCount % 2 == 0 && !GET_DEBUG_BOOL(PHARO_DET_SCHED)) {
                 forceYield_.store(true, std::memory_order_release);
+                requestCheckpoint();
             }
 
             if (tickCount % 5000 == 0) {
@@ -6809,6 +6813,7 @@ void Interpreter::signalExternalSemaphore(int index) {
         }
         // CAS lost to a concurrent producer — retry with the fresh head.
     }
+    requestCheckpoint();
     // If the VM thread is in prim 230's idle sleep, cut it short — the
     // signal's waiter should wake now, not after the 10 ms quantum.
     wakeIdleSleep();

@@ -5745,15 +5745,23 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
     const bool pinned = mcfPinnedRegs() && L.size == 128;
-    // Interrupt checks: a native call spends 1 of the checkpoint countdown,
-    // so machine code reaches a checkpoint (an exit) every 1024 calls, some
-    // 10-50 us.  Charging the callee's numBytecodes made a small hot callee
-    // exit every ~50 calls, about once a microsecond, and each exit runs
-    // the send through the interpreter.
+    // Interrupt checks.  By default a native call only reads the checkpoint
+    // countdown: the heartbeat, external signals and a full eden set it to
+    // 0 (mcfCtdnReadOnly).  A per-call load, subtract and store made every
+    // call wait for the previous call's store (fibA 33 vs 25 ms).
+    // Otherwise a call spends 1 of it, so machine code reaches a checkpoint
+    // every 1024 calls.  Charging the callee's numBytecodes made a small hot
+    // callee exit every ~50 calls, and each exit runs the send through the
+    // interpreter.
     mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
-    a.subs(w11, w11, asmjit::Imm(1));
-    a.b_le(fail);
-    mcfFieldStr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10, true);
+    if (::pharo::mcfCtdnReadOnly()) {
+        a.cmp(w11, asmjit::Imm(1));
+        a.b_le(fail);
+    } else {
+        a.subs(w11, w11, asmjit::Imm(1));
+        a.b_le(fail);
+        mcfFieldStr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10, true);
+    }
     // Stage 1 (docs/mcf-record-trim-plan.md): depth and the caller's
     // context in one ldp; x10 holds the context until the record store.
     const bool pairDC = L.pairDepthCtx && mcfShortcuts();   // nil is x27 there

@@ -4528,6 +4528,7 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
             }
             // Eden full — signal scavenge at next safe point.
             needsScavenge_ = true;
+            if (checkpointRequest_) *checkpointRequest_ = 0;
             return nullptr;
         }
         default:

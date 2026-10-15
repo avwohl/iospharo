@@ -90,6 +90,17 @@ inline bool mcfEnabled() {
 #endif
 }
 
+// Native calls only read the checkpoint countdown (no load, subtract, store
+// chain per call: fibA 33 -> 25 ms).  Whatever needs a checkpoint sets the
+// countdown to 0 instead: the heartbeat tick, an external signal, a full
+// eden.  Deterministic scheduling keeps the per-call charge, so the
+// interleaving stays a function of the call count.  Opt-out
+// PHARO_MCF_CTDN_SPEND.
+inline bool mcfCtdnReadOnly() {
+    return mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_CTDN_SPEND)
+        && !GET_DEBUG_BOOL(PHARO_DET_SCHED);
+}
+
 // MCF lazy view: machine code keeps the JIT method in x19 only; C++ derives
 // method, literals, arg count and bytecode end from it (mcfDeriveView).
 inline bool mcfLazyView() {
