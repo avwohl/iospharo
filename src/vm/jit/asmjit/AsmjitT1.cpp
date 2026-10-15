@@ -5806,7 +5806,15 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         // pops the frame (no per-call view to read it from).
         a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
         put2(x13, L.savedIP, x16, L.savedMethod);
-        put2(xzr, L.savedBytecodeEnd, xzr, L.materializedRetSlot);
+        // Stage 2: the info word's recFull byte is 0, so C++ reads neither
+        // field; the folded return never reads them either.
+        if (GET_DEBUG_BOOL(PHARO_MCF_NO_RET_FOLD) || GET_DEBUG_BOOL(PHARO_MCF_KEEP_TAIL_ZERO))
+            put2(xzr, L.savedBytecodeEnd, xzr, L.materializedRetSlot);
+        else if (GET_DEBUG_BOOL(PHARO_MCF_TAIL_POISON)) {
+            a.mov(x16, asmjit::Imm(0xBAD0BAD0BAD0BAD0ull));
+            put2(x16, L.savedBytecodeEnd, x16, L.materializedRetSlot);
+            a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, compiledMethodOop)));
+        }
     } else {
         a.ldr(x16, ptr(x0, OFF_METHOD));
         a.ldr(x17, ptr(x0, OFF_MCF_BCEND_OFF));

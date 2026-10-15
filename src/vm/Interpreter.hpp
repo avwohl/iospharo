@@ -687,7 +687,11 @@ private:
         // skip in materializeFrameStack.  Cleared whenever the frame's
         // logical state may have advanced (push, suspend-with-identity).
         bool ctxSynced = false;
-        uint8_t infoPad;
+        // 1 when a C++ push built this record: savedBytecodeEndRaw and
+        // materializedRetSlotRaw are then valid.  A native push leaves both
+        // unwritten and this 0 (byte 3 of its w12): read bcEnd() / retSlot()
+        // (docs/mcf-record-trim-plan.md stage 2).
+        uint8_t recFull;
         // For non-local block returns: the frame to return to, plus 1
         // (0 = none).  Use homeFrameDepth() / setHomeFrameDepth().
         uint32_t homeFramePlus1;
@@ -697,7 +701,7 @@ private:
         // activeContext_, INV-AC).
         Oop savedClosureRaw;     // FullBlockClosure for block frames, nil for method frames
         Oop savedActiveContextRaw;  // Active context at time of call (for proper return chain)
-        uint8_t* savedBytecodeEnd;
+        uint8_t* savedBytecodeEndRaw;
         // jit-may20b Step 7 (recursive-safe materialize): when this SavedFrame
         // was pushed from a J2JSave by the chain-loop materialize-bail
         // fallback, materializedRetSlot points at the caller's "receiver slot"
@@ -707,7 +711,9 @@ private:
         // sets stackPointer_ to materializedRetSlot+1, and skips the standard
         // push.  Deferred A6 iter N+30i root cause; bug presented as fib(N)
         // returning fib(N-2) for ~20% of runs with the inline-J2J gate off.
-        Oop* materializedRetSlot;
+        Oop* materializedRetSlotRaw;
+        uint8_t* bcEnd() const { return recFull ? savedBytecodeEndRaw : nullptr; }   // null: derive
+        Oop* retSlot() const { return recFull ? materializedRetSlotRaw : nullptr; }
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
         const char* pushSite;
@@ -739,7 +745,7 @@ private:
                   && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCount) + 2
                   && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCount) + 4
                   && offsetof(SavedFrame, savedActiveContextRaw) == offsetof(SavedFrame, savedClosureRaw) + 8
-                  && offsetof(SavedFrame, materializedRetSlot) == offsetof(SavedFrame, savedBytecodeEnd) + 8
+                  && offsetof(SavedFrame, materializedRetSlotRaw) == offsetof(SavedFrame, savedBytecodeEndRaw) + 8
                   && offsetof(SavedFrame, mcReturn) % 16 == 0,
                   "native push pairs (docs/mcf-call-trim-plan.md step 5)");
 #pragma GCC diagnostic pop
@@ -1860,7 +1866,7 @@ public:
                 ? ((frameDepth_ < 4) ? frameDepth_ : 4)
                 : (frameDepth_ < 1 ? frameDepth_ : 1);
             for (size_t i = 0; i < scan; i++) {
-                if (savedFrames_[frameDepth_ - 1 - i].materializedRetSlot
+                if (savedFrames_[frameDepth_ - 1 - i].retSlot()
                         != nullptr) {
                     return false;
                 }
@@ -2345,7 +2351,8 @@ public:
         SavedFrame& frame = savedFrames_[frameDepth_++];
         frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
         frame.savedIP = instructionPointer_;
-        frame.savedBytecodeEnd = bytecodeEnd_;
+        frame.savedBytecodeEndRaw = bytecodeEnd_;
+        frame.recFull = 1;
         frame.savedMethod = method_;
         frame.savedReceiver = receiver_;
         // closure_, activeContext_, materializedContext_ are always nil during J2J
@@ -2357,7 +2364,7 @@ public:
         // Step 7: not a materialize-bail frame; standard popFrame applies.
         // Without this, stale materializedRetSlot from a prior occupant of
         // this slot can leak into returnValue and corrupt fib results.
-        frame.materializedRetSlot = nullptr;
+        frame.materializedRetSlotRaw = nullptr;
         frame.savedArgCount = argCount_;
         frame.setHomeFrameDepth(SIZE_MAX);
 
@@ -2468,7 +2475,7 @@ public:
         receiver_ = callerRecv;
         framePointer_ = frame.savedFP;
         argCount_ = frame.savedArgCount;
-        bytecodeEnd_ = frame.savedBytecodeEnd;
+        bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     }
 
     /// Upgrade an IC entry to J2J direct call if the target is now JIT-compiled.
@@ -2498,7 +2505,8 @@ public:
         SavedFrame& frame = savedFrames_[frameDepth_++];
         frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
         frame.savedIP = ip;
-        frame.savedBytecodeEnd = methObj->bytes() + methObj->byteSize();
+        frame.savedBytecodeEndRaw = methObj->bytes() + methObj->byteSize();
+        frame.recFull = 1;
         frame.savedMethod = method;
         frame.savedReceiver = recv;
         frame.savedClosureRaw = nil;
@@ -2506,7 +2514,7 @@ public:
         frame.materializedContext = nil;
         frame.ctxSynced = false;
         frame.savedFP = tempBase - 1;
-        frame.materializedRetSlot = nullptr;  // Step 7: no callers — clear for safety
+        frame.materializedRetSlotRaw = nullptr;  // Step 7: no callers — clear for safety
         frame.savedArgCount = argCount;
         frame.setHomeFrameDepth(SIZE_MAX);
     }

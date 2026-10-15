@@ -254,6 +254,8 @@ DEBUG_BOOL_RT(PHARO_T1_NO_SIM_WIDE_ARITH)         // T1 simStack: SmallInteger *
 DEBUG_BOOL_RT(PHARO_T1_NO_DIRECT_YIELD)           // T1 back jumps load forceYield_ through an absolute address (three more instructions)
 DEBUG_BOOL_RT(PHARO_MCF_NO_PAIRED_DEPTH)           // native call/return move frameDepth_ and currentFrameMaterializedCtx_ separately (docs/mcf-record-trim-plan.md stage 1)
 DEBUG_BOOL(PHARO_MCF_PAIR_SABOTAGE)                // stage-1 oracle proof: the native push leaves the caller's context current (PHARO_MATCTX_OWNER_CHECK must fire)
+DEBUG_BOOL_RT(PHARO_MCF_KEEP_TAIL_ZERO)           // native pushes zero savedBytecodeEnd and materializedRetSlot again (docs/mcf-record-trim-plan.md stage 2)
+DEBUG_BOOL(PHARO_MCF_TAIL_POISON)                  // stage-2 oracle: native pushes write 0xBAD0... into both tail fields; any raw read of them breaks
 DEBUG_BOOL_RT(PHARO_NO_PIN_TENURE)                // pinning a young object only sets the bit (a later scavenge still moves it)
 DEBUG_BOOL(PHARO_NLR_SEG_EAGER)                   // frozen NLR segment: deopt right after the freeze (tests the stash and deopt, no laziness)
 DEBUG_BOOL(PHARO_NLR_SEG_CENSUS)                  // frozen NLR segment: count freezes, pops and deopts

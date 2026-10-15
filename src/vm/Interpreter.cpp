@@ -8983,7 +8983,7 @@ void Interpreter::returnValue(Oop value) {
     // sp must end at save.sp - nArgs*8.  Normal pushFrame leaves this
     // nullptr.  See SavedFrame::materializedRetSlot.
     Oop* matRetSlot = (frameDepth_ > 0)
-        ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+        ? savedFrames_[frameDepth_ - 1].retSlot()
         : nullptr;
 
     if (__builtin_expect(GET_DEBUG_STR(PHARO_WIDOW_TRACE_SEL) != nullptr, 0))
@@ -10990,7 +10990,7 @@ bool Interpreter::nlrSegmentFreeze(size_t h, Oop value) {
     if (nlrTargetCtx_.isObject() && !nlrTargetCtx_.isNil()) return refuse(3);
     if (!isContextObject(activeContext_)) return refuse(4);
     for (size_t k = 0; k < d; k++)
-        if (savedFrames_[k].materializedRetSlot || !savedFrames_[k].savedFP
+        if (savedFrames_[k].retSlot() || !savedFrames_[k].savedFP
                 || !savedFrames_[k].savedMethod.isObject())
             return refuse(5);
     Oop* end = savedFrames_[h].savedFP;
@@ -11109,7 +11109,7 @@ bool Interpreter::nlrSegmentPop() {
         if (r.savedMethod.isObject()) {
             ObjectHeader* mo = r.savedMethod.asObjectPtr();
             r.savedIP = mo->bytes() + g.ipOff[k];   // a GC may have moved the method
-            if (r.savedBytecodeEnd) r.savedBytecodeEnd = mo->bytes() + mo->compiledCodeByteSize();
+            if (r.bcEnd()) r.savedBytecodeEndRaw = mo->bytes() + mo->compiledCodeByteSize();
         }
         savedFrames_[k] = r;
     }
@@ -11197,7 +11197,7 @@ void Interpreter::nlrSegmentDeopt() {
             SavedFrame r = g.recs[k];
             ObjectHeader* mo = r.savedMethod.asObjectPtr();
             r.savedIP = mo->bytes() + g.ipOff[k];
-            if (r.savedBytecodeEnd) r.savedBytecodeEnd = mo->bytes() + mo->compiledCodeByteSize();
+            if (r.bcEnd()) r.savedBytecodeEndRaw = mo->bytes() + mo->compiledCodeByteSize();
             savedFrames_[k] = r;
         }
         const SavedFrame& rb = g.recs[b];
@@ -11223,7 +11223,7 @@ void Interpreter::nlrSegmentDeopt() {
             if (r.savedMethod.isObject() && r.savedIP) {
                 ObjectHeader* mo = r.savedMethod.asObjectPtr();
                 r.savedIP = mo->bytes() + g.protoIpOff[k];
-                if (r.savedBytecodeEnd) r.savedBytecodeEnd = mo->bytes() + mo->compiledCodeByteSize();
+                if (r.bcEnd()) r.savedBytecodeEndRaw = mo->bytes() + mo->compiledCodeByteSize();
             }
             savedFrames_[k] = r;
         }
@@ -16038,7 +16038,7 @@ past_sista_block:
                 // chain-loop materialize-bail (rare but possible).
                 {
                     Oop* matRet = (frameDepth_ > 0)
-                        ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                        ? savedFrames_[frameDepth_ - 1].retSlot()
                         : nullptr;
                     if (!popFrame()) {
                         if (benchMode_) {
@@ -17192,12 +17192,13 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 memory_.selectorOf(method_).c_str());
     }
     frame.savedIP = instructionPointer_;
-    frame.savedBytecodeEnd = bytecodeEnd_;
+    frame.savedBytecodeEndRaw = bytecodeEnd_;
+    frame.recFull = 1;
     frame.savedMethod = method_;
     frame.savedReceiver = receiver_;
     frame.savedActiveContextRaw = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
-    frame.materializedRetSlot = nullptr;  // Step 7: normal pushFrame, not materialize-bail
+    frame.materializedRetSlotRaw = nullptr;  // Step 7: normal pushFrame, not materialize-bail
     frame.savedArgCount = argCount_;
     frame.savedClosureRaw = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.setHomeFrameDepth(SIZE_MAX);  // Default: not a block (will be set by activateBlock if needed)
@@ -17236,7 +17237,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         uint8_t* mBytes = mObj->bytes();
         // savedBytecodeEnd IS mBytes + byteSize() (activateMethod sets
         // bytecodeEnd_ that way); byteSize() decoded the header each send.
-        if (frame.savedIP >= mBytes && frame.savedIP < frame.savedBytecodeEnd) {
+        if (frame.savedIP >= mBytes && frame.savedIP < frame.bcEnd()) {
             int64_t pc = static_cast<int64_t>(frame.savedIP - mBytes) + 1;
             if (__builtin_expect(GET_DEBUG_STR(PHARO_PC_BOUNDARY_SEL) != nullptr, 0))
                 checkPcBoundary("pushFrame-fd1", frame.savedMethod, frame.savedIP,
@@ -17693,7 +17694,7 @@ bool Interpreter::popFrame() {
     // here (not in returnValue's matRetSlot path) because popFrame is
     // the single sink for all frame removal — covers returnValue, NLR,
     // ensure-cleanup, and stack-overflow paths uniformly.
-    if (__builtin_expect(frame.materializedRetSlot != nullptr, 0)) {
+    if (__builtin_expect(frame.retSlot() != nullptr, 0)) {
         if (materializedFrameCount_ > 0) materializedFrameCount_--;
     }
 
@@ -17738,7 +17739,7 @@ bool Interpreter::popFrame() {
 
     // Restore saved execution state
     instructionPointer_ = frame.savedIP;
-    bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
+    bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
     homeMethod_ = homeMethodFor(frame.savedMethod, recClosure(frame));   // derived, not stored (trim step 5)
     receiver_ = frame.savedReceiver;
@@ -17835,7 +17836,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
 
     // jit-may24 Step 2: decrement materialize-bail counter, same as
     // popFrame().  popFrameForJIT is used by JIT direct-call paths.
-    if (__builtin_expect(frame.materializedRetSlot != nullptr, 0)) {
+    if (__builtin_expect(frame.retSlot() != nullptr, 0)) {
         if (materializedFrameCount_ > 0) materializedFrameCount_--;
     }
 
@@ -17901,7 +17902,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     // Restore interpreter state from saved frame
     stackPointer_ = framePointer_;  // Discard callee's locals
     instructionPointer_ = frame.savedIP;
-    bytecodeEnd_ = frame.savedBytecodeEnd ? frame.savedBytecodeEnd : bytecodeEndOf(frame.savedMethod);
+    bytecodeEnd_ = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
     method_ = frame.savedMethod;
     homeMethod_ = homeMethodFor(frame.savedMethod, recClosure(frame));   // derived, not stored (trim step 5)
     receiver_ = frame.savedReceiver;
@@ -18875,7 +18876,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                     "ipOff=%ld matRetSlot=%p savedFP=%p argc=%d\n",
                                     k + 1,
                                     memory_.selectorOf(sf.savedMethod).c_str(), ipo,
-                                    (void*)sf.materializedRetSlot,
+                                    (void*)sf.retSlot(),
                                     (void*)sf.savedFP, sf.savedArgCount);
                         }
                     }
@@ -20510,12 +20511,13 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
                 memory_.selectorOf(method_).c_str());
     }
     frame.savedIP = instructionPointer_;
-    frame.savedBytecodeEnd = bytecodeEnd_;
+    frame.savedBytecodeEndRaw = bytecodeEnd_;
+    frame.recFull = 1;
     frame.savedMethod = method_;
     frame.savedReceiver = receiver_;
     frame.savedActiveContextRaw = activeContext_;
     frame.savedFP = framePointer_;
-    frame.materializedRetSlot = nullptr;
+    frame.materializedRetSlotRaw = nullptr;
     frame.savedArgCount = argCount_;
     frame.savedClosureRaw = closure_;
     frame.setHomeFrameDepth(SIZE_MAX);
@@ -25506,8 +25508,8 @@ void Interpreter::prepareForGC() {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
             frameGCSide_[i].savedIPOffset = frame.savedIP - methodBytes;
             // A machine-code push leaves it null (MCF lazy view): derive.
-            if (!frame.savedBytecodeEnd) frame.savedBytecodeEnd = bytecodeEndOf(frame.savedMethod);
-            frameGCSide_[i].savedBytecodeEndOffset = frame.savedBytecodeEnd - methodBytes;
+            uint8_t* be = frame.bcEnd() ? frame.bcEnd() : bytecodeEndOf(frame.savedMethod);
+            frameGCSide_[i].savedBytecodeEndOffset = be - methodBytes;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY)) {
                 frameGCSide_[i].gcVerifyByte = *frame.savedIP;
                 size_t mSize = frame.savedMethod.asObjectPtr()->byteSize();
@@ -25887,7 +25889,7 @@ void Interpreter::afterGC(bool fullGC) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
             uint8_t* const ipBefore = frame.savedIP;
             frame.savedIP = methodBytes + frameGCSide_[i].savedIPOffset;
-            frame.savedBytecodeEnd = methodBytes + frameGCSide_[i].savedBytecodeEndOffset;
+            if (frame.recFull) frame.savedBytecodeEndRaw = methodBytes + frameGCSide_[i].savedBytecodeEndOffset;
             // The memo holds for the ip it was made at: drop it where the
             // method moved.
             if (frame.savedIP != ipBefore) frame.mcReturn = nullptr;
@@ -27167,7 +27169,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             // return value, let the interp's caller-side resume.
             // Step 7: honor materializedRetSlot.
             Oop* matRet = (frameDepth_ > 0)
-                ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                ? savedFrames_[frameDepth_ - 1].retSlot()
                 : nullptr;
             if (!popFrame()) {
                 // Audit fix (2026-06-11): popFrame()==false means "the
@@ -28579,7 +28581,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
             // the frame being popped was pushed by a materialize-bail path.
             {
             Oop* matRetSlot17325 = (frameDepth_ > 0)
-                ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                ? savedFrames_[frameDepth_ - 1].retSlot()
                 : nullptr;
             // The returning frame's own Context (docs/vm-compat-bugs.md #28),
             // widowed only AFTER the return value has reached the caller.
@@ -31287,9 +31289,10 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     // AsmjitT1.cpp:6415), which would set bytecodeEnd_ = bcStart and
     // trip the dispatch-loop safety net that returns receiver_.
     ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-    frame.savedBytecodeEnd = methObj
+    frame.savedBytecodeEndRaw = methObj
         ? methObj->bytes() + methObj->byteSize()
         : saveJM->bcStart() + saveJM->numBytecodes;
+    frame.recFull = 1;
     frame.savedMethod = saveMethod;
     frame.savedReceiver = save.receiver;
     // Block frames need their FullBlockClosure (option A, 2026-06-13):
@@ -31409,7 +31412,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
             break;
         }
     }
-    frame.materializedRetSlot = save.sp - (saveNArgs + 1);
+    frame.materializedRetSlotRaw = save.sp - (saveNArgs + 1);
     frame.savedArgCount = saveJM->argCount;
     frame.setHomeFrameDepth(SIZE_MAX);
     materializedFrameCount_++;
@@ -31440,7 +31443,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                 (int)saveJM->numICEntries, saveNArgs,
                 (int)saveJM->tempCount, (int)saveJM->argCount,
                 (void*)save.sp, (void*)save.tempBase, depthW,
-                (void*)frame.materializedRetSlot, (void*)frame.savedFP);
+                (void*)frame.retSlot(), (void*)frame.savedFP);
             fflush(stderr);
         }
     }
@@ -32680,7 +32683,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // not — sourcing the small-delta fib failures).
             {
                 Oop* matRetSlot = (frameDepth_ > 0)
-                    ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                    ? savedFrames_[frameDepth_ - 1].retSlot()
                     : nullptr;
                 if (!popFrame()) {
                     if (benchMode_) { handleBenchComplete(state.returnValue); return true; }
@@ -32988,7 +32991,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // ExitReturn site (Step 7) above.
                 {
                     Oop* matRetSlot = (frameDepth_ > 0)
-                        ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                        ? savedFrames_[frameDepth_ - 1].retSlot()
                         : nullptr;
                     popFrame();
                     if (matRetSlot) {
@@ -33104,7 +33107,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // frame popped here delivered its retval via plain push at the
             // wrong slot.
             Oop* matRetSlotD0 = (frameDepth_ > 0)
-                ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                ? savedFrames_[frameDepth_ - 1].retSlot()
                 : nullptr;
             if (!popFrame()) {
                 // fd=0: follow context sender chain
@@ -35085,7 +35088,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                             frame.pushSite = "push@L32786";
                             frame.savedIP = instructionPointer_;  // past-send
-                            frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
+                            frame.savedBytecodeEndRaw = sMO->bytes() + sMO->byteSize();
+                            frame.recFull = 1;
                             frame.savedMethod = savedMethod;
                             frame.savedReceiver = savedRecv;
                             frame.savedClosureRaw = memory_.nil();
@@ -35109,7 +35113,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // nArgs = OUTER caller's send arg count.  Mirrors
                             // the chain-loop success path at line 20946
                             // (state.sp[-(nArgs+1)] = retVal).
-                            frame.materializedRetSlot =
+                            frame.materializedRetSlotRaw =
                                 savedSP - (nArgs + 1);
                             frame.savedArgCount = savedArgCount;
                             frame.setHomeFrameDepth(SIZE_MAX);
@@ -35650,7 +35654,7 @@ jit_loop_exit:
     case jit::ExitReturn: {
         // Honor materializedRetSlot (see the chainCallDepth>0 pop above).
         Oop* matRetSlotLoopExit = (frameDepth_ > 0)
-            ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+            ? savedFrames_[frameDepth_ - 1].retSlot()
             : nullptr;
         if (!popFrame()) {
             if (activeContext_.isObject() && !activeContext_.isNil()) {

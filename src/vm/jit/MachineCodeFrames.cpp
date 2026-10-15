@@ -711,7 +711,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
     if (f.savedIP <= bc0 || f.savedIP > end) bad("savedIP outside caller");
     // The lazy view leaves savedBytecodeEnd null (derived when read).
-    if (f.savedBytecodeEnd != end && !(f.savedBytecodeEnd == nullptr && ::pharo::mcfLazyView()))
+    if (f.bcEnd() != end && !(f.bcEnd() == nullptr && ::pharo::mcfLazyView()))
         bad("savedBytecodeEnd");
     if (f.savedFP[0].rawBits() != (recClosure(f).isNil() ? f.savedReceiver
                                                          : recClosure(f)).rawBits())
@@ -736,7 +736,7 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     }
     if (f.savedArgCount != nArgsCaller) bad("argCount");
     if (f.ctxSynced) bad("ctxSynced set");
-    if (f.materializedRetSlot) bad("retSlot set");
+    if (f.retSlot()) bad("retSlot set");
     if (f.mcJM && static_cast<const jit::JITMethod*>(f.mcJM)->compiledMethodOop
                       != f.savedMethod.rawBits())
         bad("mcJM is not the caller's code");
@@ -821,7 +821,7 @@ void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
     // memo, so a native return never gets here with one of them true.
     if (frameDepth_ > 0) {
         const SavedFrame& f = savedFrames_[frameDepth_ - 1];
-        const char* bad = f.materializedRetSlot ? "retSlot"
+        const char* bad = f.retSlot() ? "retSlot"
             : (f.homeFrameDepth() != SIZE_MAX && st->closure.isNil()) ? "home-of-method-frame"
             : nullptr;
         static int nb = 0;
@@ -1794,7 +1794,7 @@ void Interpreter::mcfInit() {
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
     L.size = sizeof(SavedFrame);
     L.savedIP = offsetof(SavedFrame, savedIP);
-    L.savedBytecodeEnd = offsetof(SavedFrame, savedBytecodeEnd);
+    L.savedBytecodeEnd = offsetof(SavedFrame, savedBytecodeEndRaw);
     L.savedMethod = offsetof(SavedFrame, savedMethod);
     L.savedReceiver = offsetof(SavedFrame, savedReceiver);
     L.savedClosure = offsetof(SavedFrame, savedClosureRaw);
@@ -1802,7 +1802,7 @@ void Interpreter::mcfInit() {
     L.materializedContext = offsetof(SavedFrame, materializedContext);
     L.ctxSynced = offsetof(SavedFrame, ctxSynced);
     L.savedFP = offsetof(SavedFrame, savedFP);
-    L.materializedRetSlot = offsetof(SavedFrame, materializedRetSlot);
+    L.materializedRetSlot = offsetof(SavedFrame, materializedRetSlotRaw);
     L.savedArgCount = offsetof(SavedFrame, savedArgCount);
     L.homeFramePlus1 = offsetof(SavedFrame, homeFramePlus1);
     L.mcReturn = offsetof(SavedFrame, mcReturn);
@@ -1895,7 +1895,7 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
         Oop m = savedFrames_[i].savedMethod;
         if (m.isObject() && !m.isNil() && primitiveIndexOf(m) == 198) return refuse(kEnsure);
     }
-    if (savedFrames_[h - 1].materializedRetSlot) return refuse(kRetSlot);
+    if (savedFrames_[h - 1].retSlot()) return refuse(kRetSlot);
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_NLR_VERIFY), 0)) {
         Oop hm = expected;
         Oop outer = closure_.isObject() && !closure_.isNil()
@@ -2325,7 +2325,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                 else {
                     const SavedFrame& f = savedFrames_[d - 1];
                     k += f.homeFrameDepth() != SIZE_MAX ? (blockFrame ? " home(blk)" : " why=home") : "";
-                    k += f.materializedRetSlot ? " why=retslot" : "";
+                    k += f.retSlot() ? " why=retslot" : "";
                     k += !f.mcReturn ? " why=nomemo" : "";
                     k += blockFrame ? " blk" : " meth";
                     k += " caller=" + classNameOfMethod(f.savedMethod) + ">>#"
