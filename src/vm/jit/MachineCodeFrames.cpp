@@ -1113,6 +1113,38 @@ void Interpreter::mcfSetBlockHome(Oop closure) {
     }
     Oop home = blockHomeMethodForNLR(compiledBlock);
     size_t homeFrame = SIZE_MAX;
+    // The closure was made in a method context: its home frame is the
+    // topmost one holding that context and that method, the exact match
+    // findBlockHomeFrame tries first -- found here without its context-chain
+    // and literal walks.  A recursive or re-entered home missed the memo
+    // above at every call (deeptraverser's withAllSubclasses: 12%).
+    if (home.isObject() && !home.isNil() && outerContext.isObject() && !outerContext.isNil()
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_FAST_BLOCK_HOME)) {
+        ObjectHeader* oc = outerContext.asObjectPtr();
+        if (oc->slotCount() > 4 && oc->slotAt(4).isNil()
+                && oc->slotAt(3).rawBits() == home.rawBits()) {
+            const size_t stop = frameDepth_ > 16 ? frameDepth_ - 16 : 0;
+            for (size_t i = frameDepth_; i > stop; i--) {
+                const SavedFrame& f = savedFrames_[i - 1];
+                if (f.materializedContext.rawBits() == outerContext.rawBits()
+                        && f.savedMethod.rawBits() == home.rawBits()) {
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0)) {
+                        Oop h2 = home;
+                        size_t slow = findBlockHomeFrame(h2, outerContext, compiledBlock);
+                        static int nv = 0;
+                        if (slow != i - 1 && ++nv <= 10)
+                            fprintf(stderr, "[MCF-VERIFY-HOME] fast=%zu slow=%zu fd=%zu\n",
+                                    i - 1, slow, frameDepth_);
+                    }
+                    nlrMemoBlock_ = compiledBlock;
+                    nlrMemoHome_ = home;
+                    nlrMemoFrame_ = i - 1;
+                    savedFrames_[frameDepth_ - 1].homeFrameDepth = i - 1;
+                    return;
+                }
+            }
+        }
+    }
     if (home.isObject() && !home.isNil()) {
         Oop primaryHome = home;
         homeFrame = findBlockHomeFrame(home, outerContext, compiledBlock);

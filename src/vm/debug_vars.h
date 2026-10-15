@@ -216,6 +216,7 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_RET_FOLD)             // MCF native return: test dept
 DEBUG_BOOL_RT(PHARO_MCF_NO_GUARD_FRAME)          // MCF native return: test depth 0 instead of reading the guard record
 DEBUG_BOOL_RT(PHARO_MCF_NO_LE)                   // MCF: no per-method call entry; every native method call goes through the shared call stub
 DEBUG_BOOL_RT(PHARO_MCF_NO_LINK)                 // MCF: send sites are not linked to their callee's call entry (no patchable head)
+DEBUG_BOOL(PHARO_MCF_NO_FAST_BLOCK_HOME)         // MCF block with ^: always find the home frame with findBlockHomeFrame
 DEBUG_BOOL(PHARO_SCAV_FULL_AFTERGC)             // a checkpoint scavenge runs the full-GC afterGC tail (method cache + JIT cache flush), as before 2026-10-15
 DEBUG_BOOL(PHARO_LOOKUP_CENSUS)                 // count full method lookups (method-cache misses) by selector and class
 DEBUG_BOOL(PHARO_FLUSH_CENSUS)                  // count method-cache flushes (print every 256 with a caller address)
