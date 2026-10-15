@@ -427,6 +427,26 @@ slot pointed at it, nothing called it, and Spur has no scalar two-way become
 for it to be.  The audit found no other case of an implemented primitive that
 the image actually calls and the table leaves null.
 
+### Named (plugin) primitives: the image calls some that the VM lacks
+
+Audited 2026-10-15 on the polymath image (312 named primitive call sites,
+288 distinct module:name pairs).  A named primitive the VM does not register
+runs the image's Smalltalk fallback; since 475c32c2 the failed lookup is
+cached, so it costs only the fallback.  Missing pairs that Cog HAS (its
+`Plugins/` folder is the reference):
+
+  * **LocalePlugin** (8 functions: primDST, primLongDateFormat,
+    primShortDateFormat, primMeasurement, primCurrencyNotation, ...).  Ours
+    answers the fallbacks: DST false, `dddd, mmmm d, yyyy` and `m/d/yy`
+    formats, metric true.  Cog asks macOS: DST true, `y MMMM d HH:mm:ss z`,
+    `y-MM-dd HH:mm`, metric false.  No sweep test fails on it.  Needs
+    CFLocale on Apple platforms and a POSIX answer elsewhere.
+
+Missing pairs Cog does NOT have either (not a gap): ZipPlugin, MD5Plugin,
+Matrix2x3Plugin, FontPlugin, BMPReadWriterPlugin, AsynchFilePlugin,
+InternetConfigPlugin, KedamaPlugin.  SocketPlugin and SqueakSSL register
+through their own tables, so a grep for registerNamedPrimitive misses them.
+
 ## Platform validation status
 
 - **Windows has no CI job and has not been validated in ~250 commits** (last

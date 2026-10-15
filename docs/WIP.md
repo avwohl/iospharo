@@ -15,7 +15,7 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16) -- missing plugin primitives; pushed `49d3ca96`, sweep L34 on `475c32c2`
+## Right now (2026-10-15, night) -- missing plugin primitives; pushed `49d3ca96`, sweep L34 on `475c32c2`
 
 Pushed `7c70461a` (L32: 27803 / 8 / 1) and `49d3ca96` (L33: 27803 / 7 /
 3; its two new entries, StCritiqueRuleSelectorPresenterTest and
