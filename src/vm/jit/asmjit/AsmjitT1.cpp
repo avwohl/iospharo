@@ -170,6 +170,10 @@ static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
 // send emit inside emitOne_arm64 — same single-threaded pattern):
 static asmjit::Label g_codeStartLabel;
+// The compile emits a per-method MCF call entry (a CompiledMethod under
+// machine-code frames); g_mcfEntryOff receives its code offset (0 = none).
+static bool g_emitMcfEntry = false;
+static uint32_t g_mcfEntryOff = 0;
 static std::vector<std::pair<uint32_t, asmjit::Label>>* g_resumeOverridesPtr
     = nullptr;
 // PMS B1 (docs/patched-ic-design.md §9): per-site patch-word labels,
@@ -5680,6 +5684,44 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     a.ldur(x26, ptr(x25, -8));                     // TOS mirror
     a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
     a.br(x17);
+    a.bind(fail);
+    a.br(x15);
+}
+
+// A CompiledMethod's own MCF call entry: emitMcfCallStub with the callee's
+// argument and temp counts as constants, its JITMethod from its own pc, the
+// temporaries' nil stores unrolled and a direct branch into its code.  Same
+// register contract as the shared stub (x13, x14, x15, w12 from the caller;
+// x5-x9 are not read).  Emitted after the method's code.
+static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
+                               const asmjit::Label& codeStart) {
+    using namespace asmjit::a64;
+    asmjit::Label fail = a.new_label();
+    emitMcfCount(a, &g_mcfCountCalls);
+    emitMcfPushRecord(a, fail);
+    a.adr(x19, codeStart);
+    a.sub(x19, x19, asmjit::Imm((int)sizeof(JITMethod)));   // this method's JM
+    a.sub(x16, x25, asmjit::Imm(nArgs * 8));                // tempBase (first arg)
+    a.ldur(x1, ptr(x16, -8));                               // receiver
+    emitStoreTempBase(a, x16);
+    a.str(x1, ptr(x0, OFF_RECEIVER));
+    if (t1TbReg()) a.mov(x21, x1);
+    a.str(x4, ptr(x0, OFF_CLOSURE));                        // a method frame
+    int n = nTemps - nArgs;
+    if (n > 16) {
+        asmjit::Label loop = a.new_label();
+        a.mov(w17, asmjit::Imm(n));
+        a.bind(loop);
+        a.str(x4, ptr_post(x25, 8));
+        a.subs(w17, w17, asmjit::Imm(1));
+        a.b_gt(loop);
+    } else {
+        for (; n >= 2; n -= 2) a.stp(x4, x4, ptr_post(x25, 16));
+        if (n) a.str(x4, ptr_post(x25, 8));
+    }
+    emitMcfVerifyPushCall(a);
+    a.ldur(x26, ptr(x25, -8));                              // TOS mirror
+    a.b(codeStart);
     a.bind(fail);
     a.br(x15);
 }
@@ -11988,6 +12030,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.adr(x14, mcfCont);
                 a.adr(x15, mcfSlow);
                 a.mov(w12, asmjit::Imm(callerArgCount | (nArgs << 8)));
+                if (!GET_DEBUG_BOOL(PHARO_MCF_NO_LE)) {
+                    // The callee's own entry when it has one.
+                    asmjit::Label viaStub = a.new_label();
+                    a.ldr(w16, ptr(x9, (int)offsetof(JITMethod, mcfEntryOffset)));
+                    a.cbz(w16, viaStub);
+                    a.add(x16, x9, x16);
+                    a.br(x16);
+                    a.bind(viaStub);
+                }
                 a.ldr(x16, ptr(x0, OFF_MCF_CALL_STUB));
                 a.br(x16);
                 a.bind(mcfSpecial);
@@ -14355,11 +14406,21 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         emitSyncSpToState(a);
         a.ret(a64::x30);
     }
+    asmjit::Label mcfEntryLabel;
+    if (g_emitMcfEntry) {
+        mcfEntryLabel = a.new_label();
+        a.bind(mcfEntryLabel);
+        emitMcfMethodEntry(a, callerArgCount, callerTempCount, g_codeStartLabel);
+    }
 #endif
 
     if (encErr.failed) return false;  // an instruction was silently dropped
     err = code.flatten();
     if (err != kErrorOk) return false;
+#if defined(__aarch64__) || defined(_M_ARM64)
+    g_mcfEntryOff = g_emitMcfEntry
+        ? (uint32_t)code.label_offset_from_base(mcfEntryLabel) : 0;
+#endif
 
     // Fill bcToCodeOut from bound labels.  bcToCodeOut[bcLen] is the
     // end-of-machine-code offset (used by findMethodByPC etc.).
@@ -15031,6 +15092,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     if (GET_DEBUG_BOOL(PHARO_T1_REGSTACK_CENSUS))
         jit::regStackCensus(bc, bcLen, &memory);
     std::vector<std::pair<uint32_t,uint32_t>> resumeOvPairs;
+    g_emitMcfEntry = ::pharo::mcfEnabled() && mcfLazyView()
+        && methObj->classIndex() != interp.compiledBlockClassIndex()
+        && !GET_DEBUG_BOOL(PHARO_MCF_NO_LE)
+        && !GET_DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)
+        && !GET_DEBUG_BOOL(PHARO_MCF_KEEP_IP_STORE);
+    g_mcfEntryOff = 0;
     bool emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
                          buf.data(), cap, &emitted, &isReal, bcToCode.data(),
@@ -15378,6 +15445,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         numSendSites > 0 ? selBitsArrayOffset : 0;
     jm->patchMapOffset = patchMapOffset;   // PMS B1 (0 = no map)
     jm->resumeOvOffset = resumeOvOffset;   // send-resume side table (0 = none)
+    jm->mcfEntryOffset = g_mcfEntryOff ? (uint32_t)sizeof(JITMethod) + g_mcfEntryOff : 0;
     jm->tier              = 1;
     // hasPrimPrologue = true means the chain loop's inline-activation
     // path (Interpreter.cpp:18731-18732) will activate this method

@@ -576,7 +576,10 @@ struct JITMethod {
     // (stencils.cpp) models the first 96 bytes by fixed offsets —
     // never insert mid-struct.
     uint32_t  resumeOvOffset;
-    uint32_t  _pad_resv;
+    // Machine-code frames: offset from this JITMethod (not codeStart) of
+    // the method's own call entry, the shared call stub specialized to
+    // this method (docs/linked-mcf-sends-plan.md, step 4).  0 = none.
+    uint32_t  mcfEntryOffset;
 
     // --- FSR M0 (docs/frame-state-residency.md): literals cache ---
     // = compiledMethodOop + 16 (slots()+1, past the header word) —
