@@ -646,6 +646,21 @@ void Interpreter::mcfWatchStore(const char* site, int primIndex, int nArgs) {
 void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
     (void)value;
     mcfVerifyReceiver(st, "native-return");
+    // Every condition the folded return no longer tests must imply a null
+    // memo, so a native return never gets here with one of them true.
+    if (frameDepth_ > 0) {
+        const SavedFrame& f = savedFrames_[frameDepth_ - 1];
+        const char* bad = f.materializedRetSlot ? "retSlot"
+            : (f.homeFrameDepth != SIZE_MAX && st->closure.isNil()) ? "home-of-method-frame"
+            : f.mcKeyIP != f.savedIP ? "keyIP" : nullptr;
+        static int nb = 0;
+        if (bad && ++nb <= 10)
+            fprintf(stderr, "[MCF-VERIFY-RET] native return with %s (fd=%zu #%s)\n", bad,
+                    frameDepth_, memory_.selectorOf(f.savedMethod).c_str());
+    } else {
+        static int nz = 0;
+        if (++nz <= 10) fprintf(stderr, "[MCF-VERIFY-RET] native return at depth 0\n");
+    }
     if (framePtr != &savedFrames_[frameDepth_ - 1]) {
         static int n = 0;
         if (++n <= 10)
@@ -1484,6 +1499,9 @@ void Interpreter::mcfInit() {
     L.savedArgCount = offsetof(SavedFrame, savedArgCount);
     L.homeFrameDepth = offsetof(SavedFrame, homeFrameDepth);
     L.mcReturn = offsetof(SavedFrame, mcReturn);
+    L.guardOk = reinterpret_cast<char*>(&savedFrames_[0]) - reinterpret_cast<char*>(&mcfGuardFrame_)
+                    == (ptrdiff_t)sizeof(SavedFrame)
+                && mcfGuardFrame_.mcReturn == nullptr;
     L.mcKeyIP = offsetof(SavedFrame, mcKeyIP);
     L.mcJM = offsetof(SavedFrame, mcJM);
     L.mcEpoch = offsetof(SavedFrame, mcEpoch);

@@ -5012,8 +5012,14 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
     asmjit::Label fall = a.new_label();
+    // Folded checks: a record whose return is the interpreter's (depth 0,
+    // the ensure: continuation of a non-local return, a materialize-bail
+    // return slot, an ip that moved) has a null memo, so one test of the
+    // memo decides (docs/linked-mcf-sends-plan.md, step 2).
+    const bool fold = !GET_DEBUG_BOOL(PHARO_MCF_NO_RET_FOLD);
+    const bool guard = fold && L.guardOk && !GET_DEBUG_BOOL(PHARO_MCF_NO_GUARD_FRAME);
     mcfFieldLdr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2);      // frameDepth_
-    a.cbz(x3, fall);
+    if (!guard) a.cbz(x3, fall);
     mcfFieldLdr(a, x5, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4);    // currentFrameMaterializedCtx_
     a.ldr(x6, ptr(x0, OFF_MCF_NIL));
     // A frame with a context (it made a block) widows it below, unless a
@@ -5033,7 +5039,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     // A method frame whose record has a home frame index is the ensure:
     // continuation of a non-local return: the interpreter's.  A block
     // frame's own local return is an ordinary pop, whatever its index.
-    {
+    if (!fold) {
         asmjit::Label noHome = a.new_label();
         a.ldr(x8, ptr(x7, L.homeFrameDepth));
         a.cmn(x8, asmjit::Imm(1));
@@ -5048,13 +5054,20 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.ldp(r1, r2, ptr(x7, o1));
         else { a.ldr(r1, ptr(x7, o1)); a.ldr(r2, ptr(x7, o2)); }
     };
-    ldp2(x11, L.savedFP, x8, L.materializedRetSlot);
-    a.cbnz(x8, fall);
-    ldp2(x9, L.mcReturn, x8, L.mcKeyIP);
-    a.cbz(x9, fall);
-    ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
-    a.cmp(x8, x10);
-    a.b_ne(fall);
+    if (fold) {
+        a.ldr(x9, ptr(x7, L.mcReturn));
+        a.cbz(x9, fall);
+        a.ldr(x11, ptr(x7, L.savedFP));
+        if (!::pharo::mcfLazyView()) ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
+    } else {
+        ldp2(x11, L.savedFP, x8, L.materializedRetSlot);
+        a.cbnz(x8, fall);
+        ldp2(x9, L.mcReturn, x8, L.mcKeyIP);
+        a.cbz(x9, fall);
+        ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
+        a.cmp(x8, x10);
+        a.b_ne(fall);
+    }
 
     if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
         // The memo's code must belong to the caller's method.

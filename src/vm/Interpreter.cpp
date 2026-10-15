@@ -10056,6 +10056,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                         }
                         return;
                     }
@@ -10249,6 +10250,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                                     }
                                     return;
                                 }
@@ -10467,6 +10469,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                                     }
                                     return;
                                 }
@@ -10655,6 +10658,7 @@ void Interpreter::returnFromBlock() {
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
         }
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        savedFrames_[frameDepth_ - 1].mcReturn = nullptr;   // an ensure: continuation: the interpreter returns it
                                 }
                                 return;
                             }
@@ -25455,6 +25459,9 @@ void Interpreter::afterGC(bool fullGC) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
             frame.savedIP = methodBytes + frame.savedIPOffset;
             frame.savedBytecodeEnd = methodBytes + frame.savedBytecodeEndOffset;
+            // The memo holds for the ip it was made at; the native return no
+            // longer compares them, so drop it where the method moved.
+            if (frame.savedIP != frame.mcKeyIP) frame.mcReturn = nullptr;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY) &&
                 frame.gcVerifyByte != 0xFF && frame.savedIP &&
                 *frame.savedIP != frame.gcVerifyByte) {

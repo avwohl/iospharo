@@ -212,6 +212,8 @@ DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW)               // MCF: the primitive stub does 
 DEBUG_BOOL(PHARO_T1_INLINE_IMM_KEY)             // T1: the immediate-receiver IC key inline (heap receivers branch over it), the pre-2026-10-15 layout
 DEBUG_BOOL_RT(PHARO_NO_COUNT_EVICT)              // JIT entry counts: a full count-map bucket records nothing (the pre-2026-10-15 rule: methods past the ~16Kth never compile)
 DEBUG_BOOL(PHARO_NO_EXTCALL_MISS_CACHE)          // named primitives the VM lacks: repeat the full literal search at every call
+DEBUG_BOOL_RT(PHARO_MCF_NO_RET_FOLD)             // MCF native return: test depth, home index, return slot and memo ip one by one (pre-2026-10-15)
+DEBUG_BOOL_RT(PHARO_MCF_NO_GUARD_FRAME)          // MCF native return: test depth 0 instead of reading the guard record
 DEBUG_BOOL(PHARO_SCAV_FULL_AFTERGC)             // a checkpoint scavenge runs the full-GC afterGC tail (method cache + JIT cache flush), as before 2026-10-15
 DEBUG_BOOL(PHARO_LOOKUP_CENSUS)                 // count full method lookups (method-cache misses) by selector and class
 DEBUG_BOOL(PHARO_FLUSH_CENSUS)                  // count method-cache flushes (print every 256 with a caller address)

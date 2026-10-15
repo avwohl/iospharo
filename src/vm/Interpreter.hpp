@@ -886,6 +886,12 @@ private:
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
     static constexpr int PrimErrNoMemory_       = 9;  // Insufficient object memory
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
+    // Machine-code frames: the record "below" savedFrames_[0], never pushed
+    // (mcReturn stays null).  T1's native return reads savedFrames_[depth-1]
+    // without testing depth 0 first: at depth 0 it reads this record and
+    // takes the interpreter's return.  Must stay right before savedFrames_
+    // (mcfInit checks).
+    SavedFrame mcfGuardFrame_{};
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     // Overrun canary.  ~Interpreter aborts with
     // POINTER_BEING_FREED_WAS_NOT_ALLOCATED on some packages
