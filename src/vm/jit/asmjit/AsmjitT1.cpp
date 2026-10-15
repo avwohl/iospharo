@@ -5125,6 +5125,19 @@ static_assert(OFF_MCF_ACTCTX_PTR == offsetof(JITState, mcfActiveCtxPtr), "OFF_MC
 static_assert(OFF_MCF_CTDN_PTR == offsetof(JITState, mcfCheckCountdownPtr), "OFF_MCF_CTDN_PTR");
 static_assert(OFF_MCF_DEPTH_LIMIT == offsetof(JITState, mcfDepthLimit), "OFF_MCF_DEPTH_LIMIT");
 static_assert(OFF_MCF_NIL == offsetof(JITState, mcfNil), "OFF_MCF_NIL");
+// JIT_CALL / JIT_RESUME_CALL (JITState.hpp) and pharo_jit_osr_resume
+// (TrampolineAsm.S) load the pinned x24/x27 with these offsets as literals.
+static_assert(OFF_MCF_FRAMES == 344 && OFF_MCF_NIL == 392,
+              "update the literals in JIT_CALL, JIT_RESUME_CALL and pharo_jit_osr_resume");
+
+// Machine-code frames' pinned registers (plan step 7): x24 = savedFrames_
+// base, x27 = nil, loaded at every C++ -> T1 entry (JIT_CALL,
+// JIT_RESUME_CALL, pharo_jit_osr_resume).
+static bool mcfPinnedRegs() {
+    static const bool on = !GET_DEBUG_BOOL(PHARO_MCF_NO_PINNED_REGS);
+    return on;
+}
+
 static_assert(OFF_MCF_EPOCH_PTR == offsetof(JITState, mcfEpochPtr), "OFF_MCF_EPOCH_PTR");
 static_assert(OFF_MCF_CALL_CACHE == offsetof(JITState, mcfCallCache), "OFF_MCF_CALL_CACHE");
 static_assert(OFF_MCF_BCEND_OFF == offsetof(JITState, mcfBcEndOff), "OFF_MCF_BCEND_OFF");
@@ -5170,7 +5183,9 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     mcfFieldLdr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2);      // frameDepth_
     if (!guard) a.cbz(x3, fall);
     mcfFieldLdr(a, x5, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4);    // currentFrameMaterializedCtx_
-    a.ldr(x6, ptr(x0, OFF_MCF_NIL));
+    const bool pinned = mcfPinnedRegs() && L.size == 128;
+    if (pinned) a.mov(x6, x27);
+    else a.ldr(x6, ptr(x0, OFF_MCF_NIL));
     // A frame with a context (it made a block) widows it below, unless a
     // widow diagnostic wants the interpreter's widowReturningContext.
     const bool widowInline = !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)
@@ -5182,10 +5197,13 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.b_ne(fall);                         // context to widow: interpreter
     }
     a.sub(x3, x3, asmjit::Imm(1));
-    a.ldr(x7, ptr(x0, OFF_MCF_FRAMES));
-    if (L.size == 128) {
+    if (pinned) {
+        a.add(x7, x24, x3, asmjit::a64::lsl(7));  // x7 = &savedFrames_[depth-1]
+    } else if (L.size == 128) {
+        a.ldr(x7, ptr(x0, OFF_MCF_FRAMES));
         a.add(x7, x7, x3, asmjit::a64::lsl(7));   // x7 = &savedFrames_[depth-1]
     } else {
+        a.ldr(x7, ptr(x0, OFF_MCF_FRAMES));
         a.mov(x8, asmjit::Imm(L.size));
         a.madd(x7, x3, x8, x7);
     }
@@ -5550,6 +5568,7 @@ static uint64_t getSharedReturnPreludeStub() {
 static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
+    const bool pinned = mcfPinnedRegs() && L.size == 128;
     // Interrupt checks: a native call spends 1 of the checkpoint countdown,
     // so machine code reaches a checkpoint (an exit) every 1024 calls, some
     // 10-50 us.  Charging the callee's numBytecodes made a small hot callee
@@ -5571,8 +5590,12 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         asmjit::Label notDepth0 = a.new_label();
         a.cbnz(x11, notDepth0);
         mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x16);  // activeContext_
-        a.ldr(x17, ptr(x0, OFF_MCF_NIL));
-        a.cmp(x16, x17);
+        if (pinned) {
+            a.cmp(x16, x27);
+        } else {
+            a.ldr(x17, ptr(x0, OFF_MCF_NIL));
+            a.cmp(x16, x17);
+        }
         a.b_eq(fail);
         a.tst(x16, asmjit::Imm(0x7));
         a.b_ne(fail);
@@ -5591,10 +5614,13 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.ldr(x8, ptr(x0, OFF_MCF_DEPTH_LIMIT));
     a.cmp(x11, x8);
     a.b_hs(fail);                                  // near overflow: interpreter
-    a.ldr(x8, ptr(x0, OFF_MCF_FRAMES));
-    if (L.size == 128) {
+    if (pinned) {
+        a.add(x8, x24, x11, asmjit::a64::lsl(7));  // x8 = &savedFrames_[depth]
+    } else if (L.size == 128) {
+        a.ldr(x8, ptr(x0, OFF_MCF_FRAMES));
         a.add(x8, x8, x11, asmjit::a64::lsl(7));   // x8 = &savedFrames_[depth]
     } else {
+        a.ldr(x8, ptr(x0, OFF_MCF_FRAMES));
         a.mov(x16, asmjit::Imm(L.size));
         a.madd(x8, x11, x16, x8);
     }
@@ -5621,7 +5647,8 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     else a.ldr(x16, ptr(x0, OFF_RECEIVER));
     a.ldr(x17, ptr(x0, OFF_CLOSURE));
     put2(x16, L.savedReceiver, x17, L.savedClosure);
-    a.ldr(x4, ptr(x0, OFF_MCF_NIL));               // x4 = nil from here on
+    if (pinned) a.mov(x4, x27);                    // x4 = nil from here on
+    else a.ldr(x4, ptr(x0, OFF_MCF_NIL));
     mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
     mcfFieldStr(a, x4, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
     mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);

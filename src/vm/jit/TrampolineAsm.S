@@ -611,12 +611,13 @@ Ltramp_exit:
 SYMBOL(pharo_jit_osr_resume):
     // x0 = JITState*  (preserved through to JIT code)
     // x1 = entry function pointer
-    stp     x29, x30, [sp, #-80]!     // save fp, lr
+    stp     x29, x30, [sp, #-96]!     // save fp, lr
     stp     x19, x20, [sp, #16]       // save x19/x20 (AAPCS callee-saved)
     str     x25, [sp, #32]            // save x25 (sp-residency mirror)
     str     x26, [sp, #48]            // save x26 (simStack TOS mirror)
     str     x23, [sp, #56]            // save x23 (FSR M2 cursor mirror)
     stp     x21, x22, [sp, #64]       // save x21/x22 (MCF receiver/tempBase registers)
+    stp     x24, x27, [sp, #80]       // save x24/x27 (MCF pinned frames base / nil)
     mov     x29, sp
     ldr     x19, [x0, #JS_JITMETHOD]
     ldr     x20, [x0, #JS_J2J_DEPTH_INC]
@@ -631,6 +632,11 @@ SYMBOL(pharo_jit_osr_resume):
     // gated cursor mode corrupt: tryResume/tryResumeFast enter JIT here,
     // not via JIT_CALL, and emitted code consumed an uninitialized x23.
     ldr     x23, [x0, #JS_J2J_SAVE_CURSOR]
+    // MCF pinned registers: x24 = savedFrames_ base (JITState offset 344,
+    // OFF_MCF_FRAMES), x27 = nil (offset 392, OFF_MCF_NIL); both asserted
+    // in AsmjitT1.cpp.
+    ldr     x24, [x0, #344]
+    ldr     x27, [x0, #392]
     blr     x1                         // call JIT'd code
     ldr     x9,  [sp, #40]
 #if PHARO_T1_SP_IN_X25
@@ -640,10 +646,11 @@ SYMBOL(pharo_jit_osr_resume):
                                       //  the snapshot-resume onErrorDo: corruption)
     ldr     x23, [sp, #56]            // restore x23 for our caller
     ldp     x21, x22, [sp, #64]       // restore x21/x22 for our caller
+    ldp     x24, x27, [sp, #80]       // restore x24/x27 for our caller
     ldr     x26, [sp, #48]            // restore x26 for our caller
     ldr     x25, [sp, #32]            // restore x25 for our caller
     ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller
-    ldp     x29, x30, [sp], #80
+    ldp     x29, x30, [sp], #96
     ret
 
 // Cross-TU sentinel: a uint64_t holding our JM_SIZE constant.

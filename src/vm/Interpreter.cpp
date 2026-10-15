@@ -31730,8 +31730,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // callee-saved registers across BLR to stencils. Only runs the loop
         // if we're actually entering it; otherwise the C++ fall-through below
         // is a no-op (matches the while-condition in the fallback version).
-        if (state.exitReason == jit::ExitJ2JCall ||
-            (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+        // Never under machine-code frames: the trampoline keeps its own
+        // state in x24/x27, which T1 code there holds pinned.
+        if (!::pharo::mcfEnabled() && (state.exitReason == jit::ExitJ2JCall ||
+            (state.exitReason == jit::ExitReturn && j2jDepth > 0))) {
             if (::pharo::mcfEnabled()) {
                 // T1 code under MCF keeps tempBase in x22, which the
                 // trampoline pins for its save stack.  MCF disables inline

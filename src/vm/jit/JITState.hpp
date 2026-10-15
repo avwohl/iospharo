@@ -434,7 +434,16 @@ typedef void (*StencilFunc)(JITState*);
         /* compiler never trusts (compile start state is invalid) — */ \
         /* do NOT "fix" the unconditional load. */ \
         "ldur x26, [x25, #-8]\n\t" \
+        /* x24 = savedFrames_ base, x27 = nil (machine-code frames'  */ \
+        /* pinned registers; offsets 344/392 = OFF_MCF_FRAMES /      */ \
+        /* OFF_MCF_NIL, asserted in AsmjitT1.cpp).  Saved and        */ \
+        /* restored here: clobbering them leaves the compiler too    */ \
+        /* few registers for the operands.                           */ \
+        "stp x24, x27, [sp, #-16]!\n\t" \
+        "ldr x24, [x0, #344]\n\t" \
+        "ldr x27, [x0, #392]\n\t" \
         "blr %[e]\n\t" \
+        "ldp x24, x27, [sp], #16\n\t" \
         /* sp-residency live-out: JIT code maintained x25; publish it */ \
         /* (=0: x25 stale, _JIT_CALL_SP_WB is empty — sp stays in mem) */ \
         _JIT_CALL_SP_WB \
@@ -473,7 +482,11 @@ typedef void (*StencilFunc)(JITState*);
         /* live-out store is needed and non-FSR code can ignore it.  */ \
         "ldr x23, [x0, #144]\n\t" \
         "ldur x26, [x25, #-8]\n\t" \
+        "stp x24, x27, [sp, #-16]!\n\t" \
+        "ldr x24, [x0, #344]\n\t" \
+        "ldr x27, [x0, #392]\n\t" \
         "blr %[e]\n\t" \
+        "ldp x24, x27, [sp], #16\n\t" \
         _JIT_CALL_SP_WB \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
