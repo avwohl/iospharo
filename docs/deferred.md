@@ -444,6 +444,14 @@ through memory: the checkpoint countdown (load, subtract, store on every
 call), frameDepth_ and currentFrameMaterializedCtx_ (load and store on push
 and on return).  Each call waits for the previous call's store.
 
+**Countdown done 2026-10-16** (e04ed3b2): native calls only read the
+countdown; fibA 33 -> 25 ms, benchFib 38 -> 35 ms.  **frameDepth_ in a
+register (x28, written through, reloaded after each C call): no gain**
+(benchFib 35-36 ms both ways, single-step trace confirmed the register
+use); reverted.  What is left per benchFib activation is instruction count:
+about 50 instructions against about 25 for Cog, most of them the six-store
+frame record and the send checks.
+
 ## The primitive surface is much larger than the primitive table
 
 Audited 2026-09-02, recorded so nobody re-derives it and reads it as breakage:
