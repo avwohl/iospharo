@@ -2138,7 +2138,11 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         c.mcfMatCtxPtr = &currentFrameMaterializedCtx_;
         c.mcfActiveCtxPtr = &activeContext_;
         c.mcfCheckCountdownPtr = &checkCountdown_;
-        c.mcfDepthLimit = StackOverflowLimit - 64;
+        // The fused depth test (trim step 4) calls natively only up to
+        // depth 32768; pharo_mcf_perform must not answer a call the stub
+        // then refuses.
+        c.mcfDepthLimit = GET_DEBUG_BOOL(PHARO_MCF_NO_FUSED_DEPTH)
+            ? StackOverflowLimit - 64 : 32768;
         c.mcfEpochPtr = &jit::g_mcCodeEpoch;
         c.mcfCallCache = jit::g_mcfCallCache;
         c.mcfCallStubAddr = jit::g_mcfCallStub;

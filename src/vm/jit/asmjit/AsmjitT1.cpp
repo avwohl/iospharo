@@ -265,6 +265,7 @@ static inline bool tosFam(uint32_t bit) {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <cstdint>
 #include <algorithm>
 #include <string>
@@ -5598,6 +5599,26 @@ static uint64_t getSharedReturnPreludeStub() {
 // x5 (the site's IC entry) is preserved: the fallback may exit with it.
 // Any refusal (interrupt countdown, depth, temps) is `br x15` with nothing
 // written but the countdown.
+// Trim step 4: native calls only at depth 1..32768 (one bit test).
+static bool mcfFusedDepth() {
+    static const bool on = !GET_DEBUG_BOOL(PHARO_MCF_NO_FUSED_DEPTH);
+    return on;
+}
+// The out-of-line part of the last emitMcfPushRecord (fused depth test).
+static asmjit::Label g_mcfPushSlow, g_mcfPushBack, g_mcfPushFail;
+static std::function<void()> g_mcfPushDepth0;
+// Call after the code that follows emitMcfPushRecord has ended in a branch:
+// depth > 32768 refuses, depth 0 runs the depth-0 body and goes back.
+static void emitMcfPushRecordTail(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    if (!g_mcfPushDepth0) return;
+    a.bind(g_mcfPushSlow);
+    a.cbnz(x11, g_mcfPushFail);
+    g_mcfPushDepth0();
+    a.b(g_mcfPushBack);
+    g_mcfPushDepth0 = nullptr;
+}
+
 static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fail) {
     using namespace asmjit::a64;
     const McfFrameLayout& L = g_mcfLayout;
@@ -5617,11 +5638,8 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     // sent every send of a method resumed at depth 0 (after a process
     // switch or a thisContext collapse) through the interpreter for the
     // rest of its run.
-    if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
-        a.cbz(x11, fail);
-    } else {
-        asmjit::Label notDepth0 = a.new_label();
-        a.cbnz(x11, notDepth0);
+    // By value: it may run after this function returned (the tail).
+    auto depth0Body = [=, &a]() {
         mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x16);  // activeContext_
         if (pinned) {
             a.cmp(x16, x27);
@@ -5642,11 +5660,32 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.lsl(x17, x17, asmjit::Imm(3));
         a.add(x17, x17, asmjit::Imm(1));           // SmallInteger tag
         a.str(x17, ptr(x16, OBJ_SLOT_0 + 8));      // activeContext_ pc
-        a.bind(notDepth0);
+    };
+    if (mcfFusedDepth() && !GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
+        // One test for depth 0 and for depth > 32768 (trim step 4): depth-1
+        // has bit 15 set in both cases (0 wraps).  The depth-0 body runs
+        // out of line (emitMcfPushRecordTail) and comes back here.
+        g_mcfPushSlow = a.new_label();
+        g_mcfPushBack = a.new_label();
+        g_mcfPushDepth0 = depth0Body;
+        g_mcfPushFail = fail;
+        a.sub(x16, x11, asmjit::Imm(1));
+        a.tbnz(x16, asmjit::Imm(15), g_mcfPushSlow);
+        a.bind(g_mcfPushBack);
+    } else {
+        g_mcfPushDepth0 = nullptr;
+        if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
+            a.cbz(x11, fail);
+        } else {
+            asmjit::Label notDepth0 = a.new_label();
+            a.cbnz(x11, notDepth0);
+            depth0Body();
+            a.bind(notDepth0);
+        }
+        a.ldr(x8, ptr(x0, OFF_MCF_DEPTH_LIMIT));
+        a.cmp(x11, x8);
+        a.b_hs(fail);                              // near overflow: interpreter
     }
-    a.ldr(x8, ptr(x0, OFF_MCF_DEPTH_LIMIT));
-    a.cmp(x11, x8);
-    a.b_hs(fail);                                  // near overflow: interpreter
     if (pinned) {
         a.add(x8, x24, x11, asmjit::a64::lsl(7));  // x8 = &savedFrames_[depth]
     } else if (L.size == 128) {
@@ -5843,6 +5882,7 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));                     // TOS mirror
     a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
     a.br(x17);
+    emitMcfPushRecordTail(a);
     a.bind(fail);
     a.br(x15);
 }
@@ -5909,6 +5949,7 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));                     // TOS mirror
     a.add(x17, x9, asmjit::Imm((int)sizeof(JITMethod)));
     a.br(x17);
+    emitMcfPushRecordTail(a);
     a.bind(fail);
     a.br(x15);
 }
@@ -5924,8 +5965,17 @@ static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
     asmjit::Label fail = a.new_label();
     emitMcfCount(a, &g_mcfCountCalls);
     emitMcfPushRecord(a, fail);
-    a.adr(x19, codeStart);
-    a.sub(x19, x19, asmjit::Imm((int)sizeof(JITMethod)));   // this method's JM
+    // This method's JM: it sits just before the code, whose start is
+    // buffer offset 0 (g_codeStartLabel), so one raw-encoded adr reaches it
+    // (asmjit's adr takes a label, not label - constant).
+    const int64_t jmDelta = -((int64_t)a.offset() + (int64_t)sizeof(JITMethod));
+    if (!GET_DEBUG_BOOL(PHARO_MCF_NO_ADR_JM) && jmDelta >= -(int64_t)(1 << 20)) {
+        const uint32_t imm = (uint32_t)jmDelta & 0x1FFFFF;
+        a.embed_uint32(0x10000000u | ((imm & 3u) << 29) | ((imm >> 2) << 5) | 19u);   // adr x19
+    } else {
+        a.adr(x19, codeStart);
+        a.sub(x19, x19, asmjit::Imm((int)sizeof(JITMethod)));
+    }
     const asmjit::a64::Gp nilR = mcfNilReg();
     if (mcfShortcuts()) {
         a.sub(x22, x25, asmjit::Imm(nArgs * 8));            // tempBase (first arg)
@@ -5955,6 +6005,7 @@ static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
     emitMcfVerifyPushCall(a);
     if (tosMirrorLive()) a.ldur(x26, ptr(x25, -8));                              // TOS mirror
     a.b(codeStart);
+    emitMcfPushRecordTail(a);
     a.bind(fail);
     a.br(x15);
 }

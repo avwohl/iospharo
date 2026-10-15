@@ -108,11 +108,11 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Drop the return's `mov x26,x1` when the global PHARO_T1_TOS_REG is off. Key on the global knob, not on g_useTos, because the caller's compile decides whether x26 is trusted.
 - Test: a PHARO_T1_TOS_REG + TOS_VERIFY + TOS_POISON run on build-dbg must stay clean, because the mov is kept there. Sabotage: poison at endOfSend must crash.
 
-**Step 3: one adr for the callee JM, -1 (-> 58).** Knob PHARO_MCF_NO_ADR_JM.
+**Step 3: one adr for the callee JM, -1 (-> 58). -- DONE (steps 3+4: lexicon 260.3 -> 257.1).** Knob PHARO_MCF_NO_ADR_JM.
 - Raw-encode `adr x19, -(curOffset + sizeof(JITMethod))` in emitMcfMethodEntry.
 - Test: the g_fsrX19Verify exit oracle. Sabotage: a delta off by 8 must hit brk 0xF14.
 
-**Step 4: fused depth check, -2 (-> 56).** Knob PHARO_MCF_NO_FUSED_DEPTH.
+**Step 4: fused depth check, -2 (-> 56). -- DONE (steps 3+4: lexicon 260.3 -> 257.1).** Knob PHARO_MCF_NO_FUSED_DEPTH.
 - `sub x16,x11,#1; tbnz x16,#15,slow`, with the depth-0 body out of line (`cbnz x11,fail`).
 - Set mcfDepthLimit (MachineCodeFrames.cpp:2088) to 32768 when the knob is off, and keep it at 55936 when the knob is on. Add a static_assert that MaxFrameDepth <= 65536.
 - Tests: recursion probes at 30000, 40000 and 60000 deep compared with NO_JIT (same overflow signal), and a depth-0-after-yield probe that shows native calls still happen at depth 0.

@@ -709,6 +709,8 @@ private:
     std::vector<FrameGCSide> frameGCSide_;
     static_assert(sizeof(SavedFrame) == 128, "T1 indexes savedFrames_ with lsl #7");
     static constexpr size_t MaxFrameDepth = 65536;
+    // The MCF fused depth test (bit 15 of depth-1) needs depths below 2^16.
+    static_assert(MaxFrameDepth <= 65536, "fused native depth test");
     // Soft recursion limit.  Raised 4096 -> 56000 (2026-06-19): the
     // savedFrames_ array already holds MaxFrameDepth=65536 frames, but the old
     // 4096 limit false-positived on LEGITIMATE deep recursion that fits the
