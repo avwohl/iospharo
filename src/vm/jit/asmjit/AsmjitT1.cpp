@@ -10288,6 +10288,28 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.tst(x7, x6);
                     a.b_eq(dispatchCached);
                 }
+                // An extras word that is exactly the at: / at:put: / size kind
+                // (bit 60, the J2J flag, aside): straight to its inline code.
+                // The full chain below tested six other bits first, ~10
+                // instructions per Array access.  Exact, so no alias: a W3
+                // or W6 value or any specialization bit makes it unequal.
+                if (::pharo::mcfEnabled() && g_debug.t1InlinePrimAt
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_PK_FIRST)) {
+                    const bool atOk = nArgs == 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_AT_READ);
+                    const bool atPutOk = nArgs == 2 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_PRIM_ATPUT);
+                    const bool sizeOk = nArgs == 0 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_SIZE);
+                    if (atOk || atPutOk || sizeOk) {
+                        asmjit::Label notPk = a.new_label();
+                        a.and_(x6, x7, asmjit::Imm(~(1ULL << 60)));   // drop bit 60 (encodable as a full-width mask)
+                        a.lsr(x6, x6, asmjit::Imm(48));
+                        a.cmp(x6, asmjit::Imm(atOk ? 14 : atPutOk ? 15 : 16));
+                        a.b_ne(notPk);
+                        a.tst(x1, asmjit::Imm(0x7));
+                        a.b_ne(dispatchCached);                     // the inline code needs a heap receiver
+                        a.b(atOk ? tryPrimAt : atPutOk ? tryPrimAtPut : tryPrimSize);
+                        a.bind(notPk);
+                    }
+                }
                 // Machine-code frames: this is the path every site takes (no
                 // inline J2J), so give it the receiver-independent
                 // specializations the inline-J2J path dispatches before its
