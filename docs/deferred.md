@@ -195,6 +195,13 @@ The history lives in `docs/history/`; nothing was deleted.
     mismatch (interpreter, inline T1, prim 110); inline `class`.
   - After installing forwarders, scan the frames and machine-code
     registers (scanStackReplace/Swap) so no frame holds one.
+  - FIRST the full GC: ObjectMemory::markAndTrace returns early for a
+    forwarder (ForwardedClassIndex has no class-table entry), so it does
+    not trace the target through it or rewrite the reference.  Safe
+    today only because every become scans away all references before it
+    leaves a forwarder.  Lazy forwarding needs marking to follow a
+    forwarder to its target and the slot to be rewritten (Spur does this
+    in its mark loop), then the forwarders freed.
 
 - **~~Every scavenge scans ALL of old space for old->young pointers~~ --
   DONE 2026-10-13 (`064e1de6`): the remembered set is trusted by default
