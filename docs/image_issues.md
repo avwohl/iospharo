@@ -224,28 +224,30 @@ check in waitTimeoutMilliseconds:; (c) make the Delay scheduler's
 backend loop survive per-delay errors instead of dying with the first
 poisoned delay.
 
-## `OCClassBuilderTest>>testCreateNormalClassWithTraitComposition` names a trait that no longer exists (2026-09-02)
+## Test defects fixed by `scripts/pharo13-image-fixes.st` (2026-10-15)
 
-Pharo 13.1 build 745 (`Pharo-13.1.0+SNAPSHOT.build.745.sha.4f7563d`, the
-`get.pharo.org/64/130` image on 2026-09-02) fails this test deterministically,
-alone or in a suite, on our VM:
+Six tests failed in every sweep, and each failed the same way on stock Cog
+with the pristine image.  The defects are in the image's tests or base code,
+not in a VM.  `scripts/pharo13-image-fixes.st` recompiles one method for
+each.  File it in when you prepare the sweep image, after
+`setup_fake_gui.st`.  With the fixes, all six tests pass on both VMs.
 
-    OCCodeError: 'Undeclared variable'
-      OCUndeclaredVariableNotice(OCNotice)>>signalError
-      OpalCompiler>>checkNotice: ... OpalCompiler>>evaluate
-      ShiftClassBuilder>>buildFromAST:
+| Test | Defect | Fix |
+|---|---|---|
+| `OCClassBuilderTest>>testCreateNormalClassWithTraitComposition` | The class definition names `TAsStringCommaAndDelimiterTest`, which the image renamed to `TAsStringOnDelimiterTest`.  The compiler refuses the undeclared name. | Use the new name. |
+| `SystemDependenciesTest>>testExternalUIDependencies` | The UI layer now depends on `Reflectivity`, and the allowlist (`knownUIDependencies`) does not include it. | Add `#Reflectivity` to the allowlist. |
+| `ReleaseTest>>testNoShadowedVariablesInMethods` | In `FastStepThroughController>>#findNextContext:having:fixing:`, the argument `homeContext` shadows the instance variable `homeContext`. | Rename the argument to `aHomeContext`.  The method used the argument. |
+| `StDebuggerTest>>testDynamicVariableEvaluation` | The provider forks a process that sets the dynamic variable when it first runs, and `fork` does not run it.  The test passed only if something preempted the test process while the debugger was built (a Delay that fired).  It failed on our VM in every sweep and passed when run alone. | `StTestDebuggerProvider>>debuggerWithDynamicVariableSuspendedContext` yields until the forked process has set the variable. |
+| `StDebuggerTest>>testUpdateLayoutForContextsIfAssertionFailure` | The test reads actual and expected from the assertion's description block by index (actual at 2, expected at 1).  The block's copied values are (actual, expected), so the test compared swapped values: "Got 4 instead of 2". | Swap the indexes. |
+| `StDebuggerInspectorTest>>testUpdateLayoutForContextsWithAssertionFailure` | The same swapped indexes. | Swap the indexes. |
 
-The test compiles a class definition whose trait composition names fifteen
-test traits.  Fourteen exist; `TAsStringCommaAndDelimiterTest` does not:
+The 2026-09-02 analysis of the first test, kept for its evidence: the
+definition names fifteen test traits, and this check finds the one that is
+missing:
 
     (#(TAddForUniquenessTest ... TSetArithmetic)
         reject: [:n | Smalltalk globals includesKey: n ])
     -> #(#TAsStringCommaAndDelimiterTest)
-
-so the compiler is right to refuse it.  Not a VM defect: a missing global is
-the same on any VM.  Not patched -- it is one test, and the fix belongs
-upstream (drop or rename the trait in the test's definition string).  Counted
-as 1 E in `OCClassBuilderTest` in every sweep on this image build.
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 
@@ -254,25 +256,6 @@ re-verified on the PRISTINE Pharo 13 image (get.pharo.org/64/130, build
 737 sha b6a64c69) under stock Cog — they fail identically there, so they
 are upstream image defects, not our-VM or harness artifacts.  We leave
 the tests failing rather than patch semantics the IDE depends on.
-
-### `OCClassBuilderTest>>testCreateNormalClassWithTraitComposition`
-
-Errors with `OCCodeError: Undeclared variable` while building a normal
-class with a trait composition through the OpalCompiler class-builder
-API.  Stock Cog, pristine image: `1 ran ... 1 error`.  Ours: identical.
-
-### `SystemDependenciesTest>>testExternalUIDependencies`
-
-Fails with
-
-    TestFailure: Given Collections do not match!
-        additions : #('Reflectivity')
-        missing: #()
-
-The computed external-dependency set of the UI layer now includes
-`Reflectivity`, which the test's expected allowlist predates.  Pure
-dependency-drift in the image; the fix is a one-line allowlist update
-upstream.
 
 ### `MorphicNativeWindow` lacks `hasProperty:` (taskbar MNU)
 

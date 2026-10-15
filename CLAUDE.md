@@ -432,8 +432,11 @@ Also remember our VM's eval mode touches /tmp/sunit_run_completed.txt
     # runner-only sweep is one data point each.  The recovery pass got all 31
     # lost classes back, so the price was wall-clock, not coverage -- but keep
     # PER_BATCH_TIMEOUT generous and RETRY_DAMAGED on.
+    # Then scripts/pharo13-image-fixes.st: six image/test defects that fail
+    # on stock Cog too (docs/image_issues.md).
     ./build/test_load_image /tmp/harness/Pharo-jit.image eval \
       "'$PWD/scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
+       '$PWD/scripts/pharo13-image-fixes.st' asFileReference fileIn.
        '$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
        Smalltalk snapshot: true andQuit: true"
     # verify it took: a prepped Pharo 13 image jumps ~54 MB -> ~73 MB
