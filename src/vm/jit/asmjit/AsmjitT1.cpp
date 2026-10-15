@@ -8319,9 +8319,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.ldr(w4, ptr(x1));               // low 32 bits of header
             a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
-            a.b(haveKey);
-            a.bind(imm);
-            a.orr(w4, w4, asmjit::Imm(0x80000000U));
+            // A heap receiver falls through to the key compare; the
+            // immediate receiver's key (tag | 0x80000000) is made out of
+            // line, before the miss path.  The heap case took a branch
+            // over it at every send.
+            const bool immOutOfLine = !GET_DEBUG_BOOL(PHARO_T1_INLINE_IMM_KEY);
+            if (!immOutOfLine) {
+                a.b(haveKey);
+                a.bind(imm);
+                a.orr(w4, w4, asmjit::Imm(0x80000000U));
+            }
             a.bind(haveKey);
 
             if (patchedShape) {
@@ -12204,6 +12211,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
             a.ret(x30);
+
+            if (immOutOfLine) {
+                a.bind(imm);                    // the immediate receiver's key
+                a.orr(w4, w4, asmjit::Imm(0x80000000U));
+                a.b(haveKey);
+            }
 
             // === Miss === (emits deferred state setup)
             a.bind(miss);

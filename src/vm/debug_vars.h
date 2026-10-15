@@ -209,6 +209,7 @@ DEBUG_BOOL(PHARO_MCF_NO_TINY_SHAPES)            // MCF: unary field-reading meth
 DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)        // the interpreter's periodic check (process switch, timers, signals) runs at whatever bytecode it falls on, not only at interrupt points (sends, back jumps, frame entry)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_NEW)             // MCF: basicNew (primKind 17) is not allocated inline at the call site
 DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW)               // MCF: the primitive stub does not allocate for basicNew (70); the C primitive does
+DEBUG_BOOL(PHARO_T1_INLINE_IMM_KEY)             // T1: the immediate-receiver IC key inline (heap receivers branch over it), the pre-2026-10-15 layout
 DEBUG_BOOL(PHARO_SCAV_FULL_AFTERGC)             // a checkpoint scavenge runs the full-GC afterGC tail (method cache + JIT cache flush), as before 2026-10-15
 DEBUG_BOOL(PHARO_LOOKUP_CENSUS)                 // count full method lookups (method-cache misses) by selector and class
 DEBUG_BOOL(PHARO_FLUSH_CENSUS)                  // count method-cache flushes (print every 256 with a caller address)
