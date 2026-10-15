@@ -174,7 +174,7 @@ DEBUG_BOOL_RT(PHARO_MCF)                       // DEPRECATED no-op: machine-code
 DEBUG_BOOL_RT(PHARO_NO_LAZY_OUTER)             // opt-out of lazy outer contexts (docs/lazy-contexts.md): block creation materializes the whole frame stack again
 DEBUG_BOOL(PHARO_MCF_CENSUS)                   // MCF: classify every send exit (target compiled / primitive / not compiled / IC miss) and print the counts every 4M exits
 DEBUG_BOOL(PHARO_MATFS_CENSUS)                 // count materializeFrameStack calls, frames walked and frames already synced (printed every 64K calls)
-DEBUG_BOOL(PHARO_MCF_BLOCKS)                   // MCF: also enter / resume block frames in machine code from the interpreter (activateBlock, after a return).  Off: measured slower (block microbenchmark 9.57 -> 9.89 billion instructions, deeptraverser 918 -> 925); native block calls from machine code happen either way
+DEBUG_BOOL(PHARO_MCF_NO_BLOCKS)                // MCF: do not enter / resume block frames in machine code from the interpreter (activateBlock, after a return).  On by default since 2026-10-15: a block resumed after a return stayed interpreted, and each later send from it returned through an exit (766K in lexicon); lexicon 313.0 -> 310.5 billion on the diagnostic build
 DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)            // MCF: OSR at a backward jump does not enter block frames (a loop in a block run once stays interpreted)
 DEBUG_BOOL(PHARO_MCF_COUNT_CALLS)             // MCF: count native calls (method/block stubs) and native returns; printed with the JIT stats
 DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)             // MCF: count native calls per callee method (C call in the stub; slow); top 60 printed with the JIT stats

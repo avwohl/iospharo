@@ -267,10 +267,17 @@ sites, a FullBlockClosure whose CompiledBlock is in the call cache
 T1 pushes the SavedFrame and sets up the block frame as `activateBlock`
 does.  Block code may make native calls (the record saves the caller's
 closure; the native return restores it).  Entering or resuming block
-frames from the interpreter stays opt-in (`PHARO_MCF_BLOCKS`): it was
-slower.  A block microbenchmark: 9.57 billion instructions, against 9.94
-without native block calls and 13.28 interpreted; deeptraverser does not
-change.
+frames from the interpreter was opt-in (`PHARO_MCF_BLOCKS`) because it
+measured slower then.  A block microbenchmark: 9.57 billion instructions,
+against 9.94 without native block calls and 13.28 interpreted;
+deeptraverser does not change.
+
+**Block frames from the interpreter, default (2026-10-15).**  Without
+them, a block frame that the interpreter resumed after a return stayed
+interpreted, and each later send from it came back through an exit with
+no return memo: 766K in a lexicon run.  On, measured on the diagnostic
+build: lexicon 313.0 -> 310.5 billion instructions, the micro suite and
+the idiom battery a little lower.  Opt-out `PHARO_MCF_NO_BLOCKS`.
 
 **Default (2026-10-14).**  `mcfEnabled()` is true on arm64 unless
 `PHARO_NO_MCF` is set.
@@ -461,7 +468,7 @@ only in a build with `-DPHARO_DIAG_KNOBS=ON` (build-dbg, build-dbg2).
 | `PHARO_MCF_CALL_MOD` / `_REM` | Only methods whose selector hash matches are called natively (bisect a method set). |
 | `PHARO_MCF_COMPILE_MOD` / `_REM` | Only matching methods run in machine code. |
 | `PHARO_MCF_WATCH_OOP` | Log every primitive store of this oop, with the frame chain. |
-| `PHARO_MCF_BLOCKS` | Also enter / resume block frames from the interpreter (off: slower). |
+| `PHARO_MCF_NO_BLOCKS` | Do not enter / resume block frames from the interpreter (on by default). |
 | `PHARO_MATFS_CENSUS` | Count materializeFrameStack calls and frames walked, and the calls by caller. |
 | `PHARO_MCF_NO_INLINE_WIDOW` | The native return falls back to the interpreter for a frame that has a context. |
 | `PHARO_MCF_NO_DEPTH0_CALL` | The native call refuses at frame depth 0. |

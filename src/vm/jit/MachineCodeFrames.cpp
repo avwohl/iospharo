@@ -779,7 +779,7 @@ bool Interpreter::mcfCacheableOop(Oop m) const {
 // A block frame (closure_ set, method_ a CompiledBlock), set up by
 // activateBlock, popFrame or a native block call.
 bool Interpreter::mcfIsBlockFrame() const {
-    if (!GET_DEBUG_BOOL(PHARO_MCF_BLOCKS)) return false;
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCKS)) return false;
     return !closure_.isNil()
         && method_.isObject()
         && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
@@ -1496,8 +1496,8 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
         if (!jm || !jm->isExecutable()) { if (tr) fprintf(stderr, "[OSR-R] nojm\n"); return; }
         // OSR (popped == nullptr, from a backward jump): a block frame may
         // enter too.  A loop in a block run once (a test method's or a
-        // DoIt's) otherwise ran interpreted, 4x slower.  Block frames
-        // elsewhere stay behind PHARO_MCF_BLOCKS (measured slower).
+        // DoIt's) otherwise ran interpreted, 4x slower.  (Block frames
+        // elsewhere: mcfIsBlockFrame, on by default since 2026-10-15.)
         const bool osrBlock = !popped && !GET_DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)
             && !closure_.isNil()
             && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
@@ -1813,7 +1813,18 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                     k += (f.mcReturn && f.mcKeyIP != f.savedIP) ? " why=keyip" : "";
                     k += (f.mcReturn && f.mcEpoch != jit::g_mcCodeEpoch) ? " why=epoch" : "";
                     k += blockFrame ? " blk" : " meth";
-                    k += " caller=#" + memory_.selectorOf(f.savedMethod);
+                    k += " caller=" + classNameOfMethod(f.savedMethod) + ">>#"
+                         + memory_.selectorOf(f.savedMethod)
+                         + " callee=" + classNameOfMethod(st.method);
+                    if (!f.mcReturn) {
+                        jit::JITMethod* cjm = jitRuntime_.methodMap().lookup(f.savedMethod.rawBits());
+                        const uint8_t* mb = f.savedMethod.asObjectPtr()->bytes();
+                        k += " cjm=" + std::to_string(cjm != nullptr)
+                             + " entry=" + std::to_string(cjm ? mcfEntryFor(cjm, f.savedIP) != nullptr : 0)
+                             + " ipoff=" + std::to_string(f.savedIP - mb)
+                             + " nextop=" + std::to_string(*f.savedIP)
+                             + " blk=" + std::to_string(!f.savedClosure.isNil());
+                    }
                 }
             }
             byReason[k]++;
