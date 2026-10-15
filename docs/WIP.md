@@ -15,7 +15,41 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-15, night) -- missing plugin primitives; pushed `49d3ca96`, sweep L34 on `475c32c2`
+## Right now (2026-10-15, late night) -- linked MCF sends; pushed `d5636a6d`, sweep L36 on `cbc0635b`
+
+Pushed `475c32c2` (L34: 27732 / 7 / 2; its 2 new entries pass alone) and
+`d5636a6d` (L35: 27802 / 8 / 1; BlockClosureTest>>testBenchFor timed out
+under machine load, passes alone 3 of 3).
+
+The linked-sends plan (docs/linked-mcf-sends-plan.md, from a design panel
+and a judge that checked each design against the code) is under way:
+- step 0: 70% of lexicon's 970M native calls come from slot 0 of a
+  monomorphic site (82% with sites gone polymorphic since); fib 99.9%.
+- step 1 (05c84ed4): every frame push clears the return memo; collapsed
+  records lose theirs on a code change.
+- step 2 (d5636a6d): the native return tests the memo once (depth 0 is a
+  guard record).  Lexicon 300.9 -> 292.8 billion instructions.
+- step 4 (fa8d35bd): each CompiledMethod has its own call entry.  288.9.
+- steps 5-6 (cbc0635b): monomorphic sites branch straight to the callee's
+  entry.  279.4 (fib 411 -> 333).  Sweep L36 validates.
+- step 3 (128-byte record, paired stores) and step 7 (pinned registers)
+  are not done.
+
+Polymath outliers: a workflow found the causes (SmallFloat prologue gives
+up on +-0 and recurses through adaptToFloat:andSend:; hashMultiply and
+shallowCopy take the C call; LargeInteger primitives go through
+std::vector; bit operations on LargeIntegers exit machine code; the full
+GC put every old object into an unordered_set).  Four agents are fixing
+them in worktrees; the full-GC one is done (20 full GCs 1650 -> 870 ms,
+Cog 753).
+
+Per-class Cog comparison over the package images (scratchpad pc/): ours
+is faster in total (389 s vs 522 s over 66 packages).  Outliers to look
+at: DeepTreeGraphTraverserTest 50.6 / 9.7 s, MolInterfacesPresenterTest
+2.9 / 0.2 s, STEptsMetricaSportsTest 8.7 / 1.6 s,
+SmockSymbologyProviderTest 8.1 / 1.8 s.
+
+## Earlier (2026-10-15, night) -- missing plugin primitives; pushed `49d3ca96`, sweep L34 on `475c32c2`
 
 Pushed `7c70461a` (L32: 27803 / 8 / 1) and `49d3ca96` (L33: 27803 / 7 /
 3; its two new entries, StCritiqueRuleSelectorPresenterTest and
