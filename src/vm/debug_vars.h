@@ -219,7 +219,7 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_LE)                   // MCF: no per-method call entr
 DEBUG_BOOL_RT(PHARO_MCF_NO_LINK)                 // MCF: send sites are not linked to their callee's call entry (no patchable head)
 DEBUG_BOOL(PHARO_MCF_NO_FAST_BLOCK_HOME)         // MCF block with ^: always find the home frame with findBlockHomeFrame
 DEBUG_BOOL_RT(PHARO_MCF_NO_EQ_SITE_METHODS)      // MCF = site cache: Object>>= identity answers only, no cached = methods
-DEBUG_BOOL_RT(PHARO_LAZY_BECOME)                 // two-way become of plain objects of different sizes leaves forwarders (docs/lazy-become-design.md); opt-in until validated
+DEBUG_BOOL_RT(PHARO_NO_LAZY_BECOME)              // become of plain objects scans the heap instead of leaving forwarders (docs/lazy-become-design.md; lazy is the default since 2026-10-15)
 DEBUG_BOOL_RT(PHARO_MCF_NO_SPECIAL_SITE_CACHE)   // MCF: special-selector helper sends (+ < bitAnd: ... on non-SmallIntegers) look up at every send (no site cache)
 DEBUG_BOOL(PHARO_NO_EDEN_BYTES_NEW)              // primitive 71: byte/word objects in old space (pre-2026-10-15)
 DEBUG_BOOL_RT(PHARO_PRIM131_FULLGC)              // primitive 131 (garbageCollectMost) runs a full mark-compact GC (pre-2026-10-15) instead of a weak-aware scavenge

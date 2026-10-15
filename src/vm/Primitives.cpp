@@ -543,7 +543,7 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             if (!lazyBecomeEligible(a) || !lazyBecomeEligible(b)) return false;
         return true;
     };
-    if (!heapScanPairs.empty() && !cachesAffected && GET_DEBUG_BOOL(PHARO_LAZY_BECOME)
+    if (!heapScanPairs.empty() && !cachesAffected && !GET_DEBUG_BOOL(PHARO_NO_LAZY_BECOME)
             && allLazyEligible() && memory_.becomeTwoWayLazy(heapScanPairs)) {
         // Lazy: forwarders stand for the pairs (docs/lazy-become-design.md).
         // No frame or register may hold one.  Bound forwarding chains
@@ -16611,7 +16611,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
     // roots are fixed and the heap follows lazily.  A String promoted to a
     // WideString (36-51 per Spec presenter test) scanned the heap each time.
     bool lazyDone = false;
-    if (GET_DEBUG_BOOL(PHARO_LAZY_BECOME) && !cachesAffected && !pairs.empty()) {
+    if (!GET_DEBUG_BOOL(PHARO_NO_LAZY_BECOME) && !cachesAffected && !pairs.empty()) {
         bool eligible = true;
         for (auto& [f, t] : pairs)
             if (!lazyBecomeEligible(f) || !t.isObject() || t.isNil()) { eligible = false; break; }

@@ -1,7 +1,8 @@
 # Lazy two-way become: design
 
 Status: implemented 2026-10-15 (cb5cb04a two-way, 0d328f09 one-way).
-Knob: `PHARO_LAZY_BECOME` (opt-in until a sweep validates it).
+The default since sweep L39 (2026-10-15, clean with it on); opt-out
+`PHARO_NO_LAZY_BECOME`.
 
 ## Problem
 

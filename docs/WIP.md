@@ -39,7 +39,7 @@ investigation workflows found real VM defects, now fixed:
 - 3885344e: 128-byte frame record (plan step 3).  Lexicon now ~275
   billion instructions (session start 411).
 - cb5cb04a, 0d328f09: lazy two-way and one-way become (opt-in
-  PHARO_LAZY_BECOME, docs/lazy-become-design.md).  With it: ReStore 282 s
+  now the default, docs/lazy-become-design.md).  With it: ReStore 282 s
   (Cog 346), NewTools 77 s (Cog 372, two tests pass that fail on Cog).
   Sweep L38 runs with it on; then make it the default.
 
