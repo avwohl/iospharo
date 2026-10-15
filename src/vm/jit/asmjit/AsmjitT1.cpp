@@ -60,7 +60,7 @@ extern "C" void* pharo_mcf_perform(pharo::jit::JITState* st, uint32_t nArgs);
 extern "C" void* pharo_mcf_prim_fail(pharo::jit::JITState* st, uint32_t nArgs);
 extern "C" uint64_t pharo_mcf_this_context(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_array_create(pharo::jit::JITState* st, uint32_t desc);
-extern "C" void pharo_mcf_call_census(uint64_t method);
+extern "C" void pharo_mcf_call_census(uint64_t method, const uint64_t* entry, const void* callerJM);
 extern "C" void pharo_mcf_verify_push(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_verify_ret(pharo::jit::JITState* st, uint64_t value, void* frame);
 extern "C" void pharo_mcf_verify_call(pharo::jit::JITState* st, uint64_t method, uint64_t where);
@@ -5571,6 +5571,8 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
             a.stp(asmjit::a64::x(r), asmjit::a64::x(r + 1), ptr(sp, r * 8));
         a.str(x30, ptr(sp, 144));
         a.mov(x0, x6);
+        a.mov(x1, x5);                                 // matched IC entry
+        a.mov(x2, x19);                                // caller JM
         a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_call_census));
         a.blr(x16);
         a.ldr(x30, ptr(sp, 144));

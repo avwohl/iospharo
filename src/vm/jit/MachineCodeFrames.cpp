@@ -11,6 +11,7 @@
 //
 // arm64 only (pharo_jit_osr_resume).  Opt-in: PHARO_MCF.
 
+#include <map>
 #include "../Interpreter.hpp"
 #include "../DebugVars.hpp"
 #include "JITState.hpp"
@@ -146,10 +147,39 @@ extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
 
 // PHARO_MCF_CALL_CENSUS: native calls by callee method (printed with the
 // JIT stats by mcfCallCensusDump).
+static Interpreter* g_mcfInterp = nullptr;
 static std::unordered_map<uint64_t, uint64_t>* g_mcfCallCensus = nullptr;
-extern "C" void pharo_mcf_call_census(uint64_t method) {
+// Linked-sends plan step 0: could a patched (linked) site have made this
+// call?  By the matched IC entry: its slot, whether the site is monomorphic,
+// the class of slot 0's extras word, and the callee's shape.
+static std::map<std::string, uint64_t>* g_mcfLinkCensus = nullptr;
+extern "C" void pharo_mcf_call_census(uint64_t method, const uint64_t* entry,
+                                      const void* callerJM) {
     if (!g_mcfCallCensus) g_mcfCallCensus = new std::unordered_map<uint64_t, uint64_t>();
     (*g_mcfCallCensus)[method]++;
+    if (!g_mcfLinkCensus) g_mcfLinkCensus = new std::map<std::string, uint64_t>();
+    const jit::JITMethod* jm = static_cast<const jit::JITMethod*>(callerJM);
+    std::string k;
+    const uint64_t* base = jm ? reinterpret_cast<const uint64_t*>(jm->icSiteAt(0)) : nullptr;
+    const size_t perSite = jit::IC_BYTES_PER_SITE / 8;
+    if (!base || entry < base || entry >= base + perSite * jm->numICEntries) {
+        k = "entry-not-in-caller-ic";
+    } else {
+        const size_t off = (size_t)(entry - base);
+        const uint64_t* site = base + (off / perSite) * perSite;
+        const size_t slot = (off % perSite) / 3;
+        bool mono = true;
+        for (int e = 1; e < 6; e++) if (site[e * 3] != 0) mono = false;
+        const uint64_t ex = site[2];
+        constexpr uint64_t kJ2J = 1ULL << 60, kB56 = 1ULL << 56, kAddr = (1ULL << 48) - 1;
+        const char* exk = ex == 0 ? "x0" : ((ex & ~(kJ2J | kB56 | kAddr)) == 0 && (ex & kJ2J)) ? "j2j" : "xother";
+        const jit::JITMethod* cj = g_mcfInterp ? g_mcfInterp->jitRuntime().methodMap().lookup(method) : nullptr;
+        const char* ck = !cj ? "nojm"
+            : cj->state != jit::MethodState::Compiled ? "notcompiled"
+            : cj->isSpliceTarget ? "splice" : cj->isStubOnEntry ? "stub" : "ok";
+        k = std::string(slot == 0 ? "slot0" : "slotN") + (mono ? " mono " : " poly ") + exk + " callee=" + ck;
+    }
+    (*g_mcfLinkCensus)[k]++;
 }
 void Interpreter::mcfCallCensusDump() {
     if (!g_mcfCallCensus) return;
@@ -158,6 +188,10 @@ void Interpreter::mcfCallCensusDump() {
     for (auto& kv : *g_mcfCallCensus) { v.push_back({kv.second, kv.first}); total += kv.second; }
     std::sort(v.rbegin(), v.rend());
     fprintf(stderr, "[MCF-CALLS] total %llu, %zu callees\n", (unsigned long long)total, v.size());
+    if (g_mcfLinkCensus)
+        for (auto& kv : *g_mcfLinkCensus)
+            fprintf(stderr, "[MCF-LINKABLE] %12llu %5.2f%% %s\n", (unsigned long long)kv.second,
+                    100.0 * kv.second / total, kv.first.c_str());
     for (size_t k = 0; k < v.size() && k < 60; k++) {
         Oop m = Oop::fromRawBits(v[k].second);
         if (!m.isObject()) continue;
@@ -1418,8 +1452,7 @@ void Interpreter::mcfNotePrimitiveTarget(Oop method, Oop receiver) {
 }
 
 // Called once from initializeJIT: SavedFrame layout for T1's native call
-// and return, and the call cache.
-static Interpreter* g_mcfInterp = nullptr;
+// and return, and the call cache.  (g_mcfInterp is defined near the top.)
 
 void Interpreter::mcfClearMemos() {
     for (size_t d = 0; d < frameDepth_ && d < savedFrames_.size(); d++)

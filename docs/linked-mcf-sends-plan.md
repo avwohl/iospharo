@@ -102,6 +102,17 @@ Knob: existing PHARO_MCF_CALL_CENSUS.
 
 Done when f is printed for lexicon, fib and polymath. Also take an lldb single-step histogram of one call+return. Kill or rescope the linking steps (5-6) if lexicon f < 0.3; steps 1-4 do not depend on f.
 
+**Step 0 result (2026-10-15, PHARO_MCF_CALL_CENSUS on build-dbg3):**
+
+    lexicon  970M native calls: slot 0 of a monomorphic site 69.6%
+             (64.6% extras j2j, 5.0% extras 0); slot 0 of a site that is
+             polymorphic now 12.8%; other slots 15%; entry not in the
+             caller's IC (mega cache) 2.6%.  Callee shape ok for all.
+    fib      2.70G native calls: slot 0 of a monomorphic site 99.9%.
+
+So f is 0.70 (first link needs a monomorphic site) to 0.82 (a link made
+before the site went polymorphic keeps slot 0's class).  Steps 5-6 go ahead.
+
 ### Step 1: correctness fixes and refactors (C++ only)
 
 Changes:
