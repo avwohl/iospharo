@@ -5139,6 +5139,18 @@ static bool mcfPinnedRegs() {
     return on;
 }
 
+// docs/mcf-call-trim-plan.md step 1: the push, entries and return use x27
+// (nil), x21 and x22 directly instead of copies in x4/x6/x16/x1.
+static bool mcfShortcuts() {
+    static const bool on = mcfPinnedRegs() && g_mcfLayout.size == 128 && t1TbReg()
+        && !GET_DEBUG_BOOL(PHARO_MCF_NO_ENTRY_SHORTCUTS);
+    return on;
+}
+// The register holding nil after emitMcfPushRecord.
+static asmjit::a64::Gp mcfNilReg() {
+    return mcfShortcuts() ? asmjit::a64::x27 : asmjit::a64::x4;
+}
+
 static_assert(OFF_MCF_EPOCH_PTR == offsetof(JITState, mcfEpochPtr), "OFF_MCF_EPOCH_PTR");
 static_assert(OFF_MCF_CALL_CACHE == offsetof(JITState, mcfCallCache), "OFF_MCF_CALL_CACHE");
 static_assert(OFF_MCF_BCEND_OFF == offsetof(JITState, mcfBcEndOff), "OFF_MCF_BCEND_OFF");
@@ -5185,8 +5197,13 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     if (!guard) a.cbz(x3, fall);
     mcfFieldLdr(a, x5, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4);    // currentFrameMaterializedCtx_
     const bool pinned = mcfPinnedRegs() && L.size == 128;
-    if (pinned) a.mov(x6, x27);
-    else a.ldr(x6, ptr(x0, OFF_MCF_NIL));
+    const bool sc = mcfShortcuts();
+    // x6 = nil (x27 itself with the shortcuts).
+    const asmjit::a64::Gp nil6 = sc ? asmjit::a64::x27 : asmjit::a64::x6;
+    if (!sc) {
+        if (pinned) a.mov(x6, x27);
+        else a.ldr(x6, ptr(x0, OFF_MCF_NIL));
+    }
     // A frame with a context (it made a block) widows it below, unless a
     // widow diagnostic wants the interpreter's widowReturningContext.
     const bool widowInline = !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)
@@ -5194,7 +5211,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         && !GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK)
         && !GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE);
     if (!widowInline) {
-        a.cmp(x5, x6);
+        a.cmp(x5, nil6);
         a.b_ne(fall);                         // context to widow: interpreter
     }
     a.sub(x3, x3, asmjit::Imm(1));
@@ -5217,7 +5234,7 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.cmn(x8, asmjit::Imm(1));
         a.b_eq(noHome);
         a.ldr(x8, ptr(x0, OFF_CLOSURE));
-        a.cmp(x8, x6);                        // nil: a method frame
+        a.cmp(x8, nil6);                      // nil: a method frame
         a.b_eq(fall);
         a.bind(noHome);
     }
@@ -5270,10 +5287,10 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     // as widowReturningContext; nil needs no store barrier), then popFrame.
     if (widowInline) {
         asmjit::Label noCtx = a.new_label();
-        a.cmp(x5, x6);
+        a.cmp(x5, nil6);
         a.b_eq(noCtx);
-        a.str(x6, ptr(x5, OBJ_SLOT_0));
-        a.str(x6, ptr(x5, OBJ_SLOT_0 + 8));
+        a.str(nil6, ptr(x5, OBJ_SLOT_0));
+        a.str(nil6, ptr(x5, OBJ_SLOT_0 + 8));
         a.bind(noCtx);
     }
     mcfFieldStr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2, true);
@@ -5298,9 +5315,14 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.add(x8, x11, asmjit::Imm(8));       // savedFP + 8
         emitStoreTempBase(a, x8);
     }
-    ldp2(x13, L.savedReceiver, x14, L.savedClosure);
-    a.str(x13, ptr(x0, OFF_RECEIVER));
-    if (t1TbReg()) a.mov(x21, x13);
+    if (sc) {
+        ldp2(x21, L.savedReceiver, x14, L.savedClosure);
+        a.str(x21, ptr(x0, OFF_RECEIVER));
+    } else {
+        ldp2(x13, L.savedReceiver, x14, L.savedClosure);
+        a.str(x13, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x21, x13);
+    }
     a.str(x14, ptr(x0, OFF_CLOSURE));         // the caller's closure (nil: method)
     if (::pharo::mcfLazyView()) {
         a.ldr(x19, ptr(x7, L.mcJM));          // the view is C++'s to derive
@@ -5645,14 +5667,21 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         put2(x13, L.savedIP, x17, L.savedBytecodeEnd);
     }
     put2(x16, L.savedMethod, x16, L.savedHomeMethod);
-    if (t1TbReg()) a.mov(x16, x21);
-    else a.ldr(x16, ptr(x0, OFF_RECEIVER));
-    a.ldr(x17, ptr(x0, OFF_CLOSURE));
-    put2(x16, L.savedReceiver, x17, L.savedClosure);
-    if (pinned) a.mov(x4, x27);                    // x4 = nil from here on
-    else a.ldr(x4, ptr(x0, OFF_MCF_NIL));
+    const bool sc = mcfShortcuts();
+    if (sc) {
+        a.ldr(x17, ptr(x0, OFF_CLOSURE));
+        put2(x21, L.savedReceiver, x17, L.savedClosure);
+    } else {
+        if (t1TbReg()) a.mov(x16, x21);
+        else a.ldr(x16, ptr(x0, OFF_RECEIVER));
+        a.ldr(x17, ptr(x0, OFF_CLOSURE));
+        put2(x16, L.savedReceiver, x17, L.savedClosure);
+        if (pinned) a.mov(x4, x27);                // x4 = nil from here on
+        else a.ldr(x4, ptr(x0, OFF_MCF_NIL));
+    }
+    const asmjit::a64::Gp nilR = mcfNilReg();
     mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
-    mcfFieldStr(a, x4, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
+    mcfFieldStr(a, nilR, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
     mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
     put2(x16, L.savedActiveContext, x17, L.materializedContext);
     a.strb(wzr, ptr(x8, L.ctxSynced));
@@ -5778,18 +5807,26 @@ static void emitMcfCallStub(asmjit::a64::Assembler& a) {
     }
     emitMcfPushRecord(a, fail);
     emitMcfCalleeView(a);
-    a.sub(x16, x25, x11, asmjit::a64::lsl(3));    // callee tempBase (first arg)
-    a.ldur(x1, ptr(x16, -8));                      // receiver
-    emitStoreTempBase(a, x16);
-    a.str(x1, ptr(x0, OFF_RECEIVER));
-    if (t1TbReg()) a.mov(x21, x1);
-    a.str(x4, ptr(x0, OFF_CLOSURE));               // a method frame
+    const asmjit::a64::Gp nilR = mcfNilReg();
+    if (mcfShortcuts()) {
+        a.sub(x22, x25, x11, asmjit::a64::lsl(3)); // callee tempBase (first arg)
+        a.ldur(x21, ptr(x22, -8));                 // receiver
+        a.str(x22, ptr(x0, OFF_TEMPBASE));
+        a.str(x21, ptr(x0, OFF_RECEIVER));
+    } else {
+        a.sub(x16, x25, x11, asmjit::a64::lsl(3)); // callee tempBase (first arg)
+        a.ldur(x1, ptr(x16, -8));                  // receiver
+        emitStoreTempBase(a, x16);
+        a.str(x1, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x21, x1);
+    }
+    a.str(nilR, ptr(x0, OFF_CLOSURE));             // a method frame
     // Temporaries beyond the arguments start as nil (x17 = temp count,
     // from emitMcfCalleeView).
     a.subs(w17, w17, w11);
     a.b_le(tDone);
     a.bind(tInit);
-    a.str(x4, ptr_post(x25, 8));
+    a.str(nilR, ptr_post(x25, 8));
     a.subs(w17, w17, asmjit::Imm(1));
     a.b_gt(tInit);
     a.bind(tDone);
@@ -5839,7 +5876,7 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
     a.bind(nilLoop);
     a.cmp(x25, x17);
     a.b_hs(nilDone);
-    a.str(x4, ptr_post(x25, 8));
+    a.str(mcfNilReg(), ptr_post(x25, 8));
     a.b(nilLoop);
     a.bind(nilDone);
     {
@@ -5880,23 +5917,31 @@ static void emitMcfMethodEntry(asmjit::a64::Assembler& a, int nArgs, int nTemps,
     emitMcfPushRecord(a, fail);
     a.adr(x19, codeStart);
     a.sub(x19, x19, asmjit::Imm((int)sizeof(JITMethod)));   // this method's JM
-    a.sub(x16, x25, asmjit::Imm(nArgs * 8));                // tempBase (first arg)
-    a.ldur(x1, ptr(x16, -8));                               // receiver
-    emitStoreTempBase(a, x16);
-    a.str(x1, ptr(x0, OFF_RECEIVER));
-    if (t1TbReg()) a.mov(x21, x1);
-    a.str(x4, ptr(x0, OFF_CLOSURE));                        // a method frame
+    const asmjit::a64::Gp nilR = mcfNilReg();
+    if (mcfShortcuts()) {
+        a.sub(x22, x25, asmjit::Imm(nArgs * 8));            // tempBase (first arg)
+        a.ldur(x21, ptr(x22, -8));                          // receiver
+        a.str(x22, ptr(x0, OFF_TEMPBASE));
+        a.str(x21, ptr(x0, OFF_RECEIVER));
+    } else {
+        a.sub(x16, x25, asmjit::Imm(nArgs * 8));            // tempBase (first arg)
+        a.ldur(x1, ptr(x16, -8));                           // receiver
+        emitStoreTempBase(a, x16);
+        a.str(x1, ptr(x0, OFF_RECEIVER));
+        if (t1TbReg()) a.mov(x21, x1);
+    }
+    a.str(nilR, ptr(x0, OFF_CLOSURE));                      // a method frame
     int n = nTemps - nArgs;
     if (n > 16) {
         asmjit::Label loop = a.new_label();
         a.mov(w17, asmjit::Imm(n));
         a.bind(loop);
-        a.str(x4, ptr_post(x25, 8));
+        a.str(nilR, ptr_post(x25, 8));
         a.subs(w17, w17, asmjit::Imm(1));
         a.b_gt(loop);
     } else {
-        for (; n >= 2; n -= 2) a.stp(x4, x4, ptr_post(x25, 16));
-        if (n) a.str(x4, ptr_post(x25, 8));
+        for (; n >= 2; n -= 2) a.stp(nilR, nilR, ptr_post(x25, 16));
+        if (n) a.str(nilR, ptr_post(x25, 8));
     }
     emitMcfVerifyPushCall(a);
     a.ldur(x26, ptr(x25, -8));                              // TOS mirror

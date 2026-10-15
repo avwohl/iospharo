@@ -97,7 +97,7 @@ Running totals are instructions per call pair. Each emitter step gets a DEBUG_BO
 - Sabotage knobs: emit ctxSynced=1, skip one popFrame activeContext_ restore, skip one `mov x21`.
 - Run lexicon, myprecious and the full sweep under VERIFY + DET_SCHED. Fix tryRestoreCollapsedFrames now if (a) fires there.
 
-**Step 1: register shortcuts, -6 (67 -> 61).** Knob PHARO_MCF_NO_ENTRY_SHORTCUTS.
+**Step 1: register shortcuts, -6 (67 -> 61). -- DONE (lexicon 268.1 -> 263.0).** Knob PHARO_MCF_NO_ENTRY_SHORTCUTS.
 - Files: emitMcfPushRecord, emitMcfMethodEntry, emitMcfCallStub, emitMcfBlockStub, emitMcfReturn_arm64.
 - Changes: use x27 directly (no `mov x4`); `stp x21` directly; `sub x22,x25,#n*8` then `ldur x21,[x22,#-8]`; on return, compare and store x27 directly (no `mov x6`) and `ldp x21,x14` for the receiver and closure.
 - Non-pinned paths keep the old forms.
