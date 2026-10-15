@@ -5043,8 +5043,12 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     }
     a.sub(x3, x3, asmjit::Imm(1));
     a.ldr(x7, ptr(x0, OFF_MCF_FRAMES));
-    a.mov(x8, asmjit::Imm(L.size));
-    a.madd(x7, x3, x8, x7);                   // x7 = &savedFrames_[depth-1]
+    if (L.size == 128) {
+        a.add(x7, x7, x3, asmjit::a64::lsl(7));   // x7 = &savedFrames_[depth-1]
+    } else {
+        a.mov(x8, asmjit::Imm(L.size));
+        a.madd(x7, x3, x8, x7);
+    }
     // A method frame whose record has a home frame index is the ensure:
     // continuation of a non-local return: the interpreter's.  A block
     // frame's own local return is an ordinary pop, whatever its index.
@@ -5071,11 +5075,9 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     } else {
         ldp2(x11, L.savedFP, x8, L.materializedRetSlot);
         a.cbnz(x8, fall);
-        ldp2(x9, L.mcReturn, x8, L.mcKeyIP);
+        a.ldr(x9, ptr(x7, L.mcReturn));
         a.cbz(x9, fall);
         ldp2(x10, L.savedIP, x12, L.savedBytecodeEnd);
-        a.cmp(x8, x10);
-        a.b_ne(fall);
     }
 
     if (GET_DEBUG_BOOL(PHARO_MCF_VERIFY)) {
@@ -5450,8 +5452,12 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.cmp(x11, x8);
     a.b_hs(fail);                                  // near overflow: interpreter
     a.ldr(x8, ptr(x0, OFF_MCF_FRAMES));
-    a.mov(x16, asmjit::Imm(L.size));
-    a.madd(x8, x11, x16, x8);                      // x8 = &savedFrames_[depth]
+    if (L.size == 128) {
+        a.add(x8, x8, x11, asmjit::a64::lsl(7));   // x8 = &savedFrames_[depth]
+    } else {
+        a.mov(x16, asmjit::Imm(L.size));
+        a.madd(x8, x11, x16, x8);
+    }
     a.add(x11, x11, asmjit::Imm(1));
     mcfFieldStr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10, true);  // frameDepth_++
     // The caller's state (pushFrame).  Adjacent fields go in pairs.
@@ -5488,8 +5494,7 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.strb(w12, ptr(x8, L.savedArgCount));
     a.movn(x16, asmjit::Imm(0));                   // SIZE_MAX: no non-local return
     a.str(x16, ptr(x8, L.homeFrameDepth));
-    put2(x14, L.mcReturn, x13, L.mcKeyIP);
-    a.str(x19, ptr(x8, L.mcJM));
+    put2(x14, L.mcReturn, x19, L.mcJM);
     // No code epoch: mcfCodeChanged clears the memos of the live frames.
 }
 

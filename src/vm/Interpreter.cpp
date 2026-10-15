@@ -16814,9 +16814,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             && instructionPointer_ == pendingMcKeyIP_
             && pendingMcEpoch_ == jit::g_mcCodeEpoch) {
         frame.mcReturn = pendingMcReturn_;
-        frame.mcKeyIP = pendingMcKeyIP_;
         frame.mcJM = pendingMcJM_;
-        frame.mcEpoch = pendingMcEpoch_;
         pendingMcReturn_ = nullptr;
     } else {
         frame.mcReturn = nullptr;
@@ -25078,32 +25076,33 @@ void Interpreter::prepareForGC() {
     }
 
     // Convert saved frames' IPs to offsets
+    if (frameGCSide_.size() < frameDepth_) frameGCSide_.resize(frameDepth_);
     for (size_t i = 0; i < frameDepth_; ++i) {
         SavedFrame& frame = savedFrames_[i];
         if (frame.savedMethod.isObject() && frame.savedIP) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
-            frame.savedIPOffset = frame.savedIP - methodBytes;
+            frameGCSide_[i].savedIPOffset = frame.savedIP - methodBytes;
             // A machine-code push leaves it null (MCF lazy view): derive.
             if (!frame.savedBytecodeEnd) frame.savedBytecodeEnd = bytecodeEndOf(frame.savedMethod);
-            frame.savedBytecodeEndOffset = frame.savedBytecodeEnd - methodBytes;
+            frameGCSide_[i].savedBytecodeEndOffset = frame.savedBytecodeEnd - methodBytes;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY)) {
-                frame.gcVerifyByte = *frame.savedIP;
+                frameGCSide_[i].gcVerifyByte = *frame.savedIP;
                 size_t mSize = frame.savedMethod.asObjectPtr()->byteSize();
-                if (frame.savedIPOffset < 0 ||
-                    frame.savedIPOffset >= (ptrdiff_t)mSize) {
+                if (frameGCSide_[i].savedIPOffset < 0 ||
+                    frameGCSide_[i].savedIPOffset >= (ptrdiff_t)mSize) {
                     fprintf(stderr,
                         "[GC-FRAME-IPRANGE] frame=%zu/%zu ipOff=%lld methodSize=%zu "
                         "method=%s>>#%s closure=%s\n",
-                        i, frameDepth_, (long long)frame.savedIPOffset, mSize,
+                        i, frameDepth_, (long long)frameGCSide_[i].savedIPOffset, mSize,
                         classNameOfMethod(frame.savedMethod).c_str(),
                         memory_.selectorOf(frame.savedMethod).c_str(),
                         frame.savedClosure.isNil() ? "nil" : "BLOCK");
                 }
             }
         } else {
-            frame.savedIPOffset = 0;
-            frame.savedBytecodeEndOffset = 0;
-            frame.gcVerifyByte = 0xFF;
+            frameGCSide_[i].savedIPOffset = 0;
+            frameGCSide_[i].savedBytecodeEndOffset = 0;
+            frameGCSide_[i].gcVerifyByte = 0xFF;
         }
     }
 
@@ -25304,10 +25303,10 @@ void Interpreter::prepareForGC() {
                 // included), same formula as pushFrame's fd==1 sync.  Only
                 // write when the offset lands inside the bytecode region.
                 int nLits = static_cast<int>(hdrOop.asSmallInteger() & 0x7FFF);
-                if (frame.savedIPOffset >= (ptrdiff_t)((1 + nLits) * 8) &&
-                    frame.savedIPOffset < (ptrdiff_t)mObj->byteSize()) {
+                if (frameGCSide_[i].savedIPOffset >= (ptrdiff_t)((1 + nLits) * 8) &&
+                    frameGCSide_[i].savedIPOffset < (ptrdiff_t)mObj->byteSize()) {
                     memory_.storePointer(1, matCtx,
-                        Oop::fromSmallInteger(frame.savedIPOffset + 1));
+                        Oop::fromSmallInteger(frameGCSide_[i].savedIPOffset + 1));
                 }
             }
         }
@@ -25457,19 +25456,20 @@ void Interpreter::afterGC(bool fullGC) {
         SavedFrame& frame = savedFrames_[i];
         if (frame.savedMethod.isObject()) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
-            frame.savedIP = methodBytes + frame.savedIPOffset;
-            frame.savedBytecodeEnd = methodBytes + frame.savedBytecodeEndOffset;
-            // The memo holds for the ip it was made at; the native return no
-            // longer compares them, so drop it where the method moved.
-            if (frame.savedIP != frame.mcKeyIP) frame.mcReturn = nullptr;
+            uint8_t* const ipBefore = frame.savedIP;
+            frame.savedIP = methodBytes + frameGCSide_[i].savedIPOffset;
+            frame.savedBytecodeEnd = methodBytes + frameGCSide_[i].savedBytecodeEndOffset;
+            // The memo holds for the ip it was made at: drop it where the
+            // method moved.
+            if (frame.savedIP != ipBefore) frame.mcReturn = nullptr;
             if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY) &&
-                frame.gcVerifyByte != 0xFF && frame.savedIP &&
-                *frame.savedIP != frame.gcVerifyByte) {
+                frameGCSide_[i].gcVerifyByte != 0xFF && frame.savedIP &&
+                *frame.savedIP != frameGCSide_[i].gcVerifyByte) {
                 fprintf(stderr,
                     "[GC-FRAME-VERIFY-FAIL] frame=%zu/%zu saved=0x%02X actual=0x%02X "
                     "ipOff=%lld method=%s>>#%s closure=%s\n",
-                    i, frameDepth_, frame.gcVerifyByte, *frame.savedIP,
-                    (long long)frame.savedIPOffset,
+                    i, frameDepth_, frameGCSide_[i].gcVerifyByte, *frame.savedIP,
+                    (long long)frameGCSide_[i].savedIPOffset,
                     classNameOfMethod(frame.savedMethod).c_str(),
                     memory_.selectorOf(frame.savedMethod).c_str(),
                     frame.savedClosure.isNil() ? "nil" : "BLOCK");

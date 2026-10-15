@@ -685,24 +685,29 @@ private:
         Oop* materializedRetSlot;
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
-        // GC: IP offsets (set by prepareForGC, read by afterGC)
-        ptrdiff_t savedIPOffset;
-        ptrdiff_t savedBytecodeEndOffset;
-        // GC verify (PHARO_GC_FRAME_VERIFY): byte at savedIP stashed by
-        // prepareForGC, checked after afterGC rebuilds savedIP.
-        uint8_t gcVerifyByte;
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
         const char* pushSite;
         // Machine-code frames (docs/mc-frames-design.md, INV-3): the address
         // in the caller's compiled code that continues the caller after this
-        // frame returns.  A memo of "code entry for (savedMethod, savedIP)",
-        // valid only while savedIP == mcKeyIP and mcEpoch == g_mcCodeEpoch.
+        // frame returns.  A memo of "code entry for (savedMethod, savedIP)":
+        // every push sets or clears it at savedIP, every change of savedIP
+        // clears it, and mcfCodeChanged clears them all, so a non-null memo
+        // is current.
         void* mcReturn;
-        const uint8_t* mcKeyIP;
         void* mcJM;            // jit::JITMethod* that mcReturn points into
-        uint32_t mcEpoch;
     };
+    // 128 bytes: T1 indexes savedFrames_ with a shift.  The GC-time ip
+    // offsets live in frameGCSide_.
+    struct FrameGCSide {
+        ptrdiff_t savedIPOffset;
+        ptrdiff_t savedBytecodeEndOffset;
+        // GC verify (PHARO_GC_FRAME_VERIFY): byte at savedIP stashed by
+        // prepareForGC, checked after afterGC rebuilds savedIP.
+        uint8_t gcVerifyByte;
+    };
+    std::vector<FrameGCSide> frameGCSide_;
+    static_assert(sizeof(SavedFrame) == 128, "T1 indexes savedFrames_ with lsl #7");
     static constexpr size_t MaxFrameDepth = 65536;
     // Soft recursion limit.  Raised 4096 -> 56000 (2026-06-19): the
     // savedFrames_ array already holds MaxFrameDepth=65536 frames, but the old

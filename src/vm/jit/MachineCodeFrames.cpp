@@ -549,7 +549,7 @@ void Interpreter::mcfVerifyMemo(const SavedFrame& f, const char* site) {
             memory_.selectorOf(f.savedMethod).c_str(),
             jm ? (unsigned long long)jm->compiledMethodOop : 0ULL,
             (unsigned long long)f.savedMethod.rawBits(),
-            (const void*)f.savedIP, (const void*)f.mcKeyIP, frameDepth_);
+            (const void*)f.savedIP, (const void*)f.savedIP, frameDepth_);
     stopVM("MCF memo verification failed");
 }
 
@@ -571,7 +571,6 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
                                                                : f.savedClosure).rawBits())
         why = "fp[0] is neither the receiver nor the closure";
     else if (f.savedArgCount != nArgsCaller) why = "argCount";
-    else if (f.mcKeyIP != f.savedIP) why = "keyIP";
     else if (st->tempBase[-1].rawBits() != (st->closure.isNil() ? st->receiver
                                                               : st->closure).rawBits())
         why = "callee fp[0]";
@@ -652,7 +651,7 @@ void Interpreter::mcfVerifyRet(jit::JITState* st, Oop value, void* framePtr) {
         const SavedFrame& f = savedFrames_[frameDepth_ - 1];
         const char* bad = f.materializedRetSlot ? "retSlot"
             : (f.homeFrameDepth != SIZE_MAX && st->closure.isNil()) ? "home-of-method-frame"
-            : f.mcKeyIP != f.savedIP ? "keyIP" : nullptr;
+            : nullptr;
         static int nb = 0;
         if (bad && ++nb <= 10)
             fprintf(stderr, "[MCF-VERIFY-RET] native return with %s (fd=%zu #%s)\n", bad,
@@ -1540,9 +1539,7 @@ void Interpreter::mcfInit() {
     L.guardOk = reinterpret_cast<char*>(&savedFrames_[0]) - reinterpret_cast<char*>(&mcfGuardFrame_)
                     == (ptrdiff_t)sizeof(SavedFrame)
                 && mcfGuardFrame_.mcReturn == nullptr;
-    L.mcKeyIP = offsetof(SavedFrame, mcKeyIP);
     L.mcJM = offsetof(SavedFrame, mcJM);
-    L.mcEpoch = offsetof(SavedFrame, mcEpoch);
 #pragma GCC diagnostic pop
     // The fields T1 call and return code touch, as offsets from the state
     // (mcfStateStorage_ is a member, so they are fixed): usable when a
@@ -1584,7 +1581,7 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
     void* entry;
     // A non-null memo is current: mcfCodeChanged clears them (no epoch).
     if (popped && popped->mcReturn
-            && popped->mcKeyIP == instructionPointer_) {
+            && popped->savedIP == instructionPointer_) {
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
             mcfVerifyMemo(*popped, "resume-after-return");
         jm = static_cast<jit::JITMethod*>(popped->mcJM);
@@ -1918,8 +1915,6 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                     k += f.homeFrameDepth != SIZE_MAX ? (blockFrame ? " home(blk)" : " why=home") : "";
                     k += f.materializedRetSlot ? " why=retslot" : "";
                     k += !f.mcReturn ? " why=nomemo" : "";
-                    k += (f.mcReturn && f.mcKeyIP != f.savedIP) ? " why=keyip" : "";
-                    k += (f.mcReturn && f.mcEpoch != jit::g_mcCodeEpoch) ? " why=epoch" : "";
                     k += blockFrame ? " blk" : " meth";
                     k += " caller=" + classNameOfMethod(f.savedMethod) + ">>#"
                          + memory_.selectorOf(f.savedMethod)
@@ -2032,7 +2027,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             }
             const SavedFrame& popped = savedFrames_[frameDepth_];
             if (popped.mcReturn
-                    && popped.mcKeyIP == instructionPointer_) {
+                    && popped.savedIP == instructionPointer_) {
                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_VERIFY), 0))
                     mcfVerifyMemo(popped, "mcfRun-return");
                 jm = static_cast<jit::JITMethod*>(popped.mcJM);
