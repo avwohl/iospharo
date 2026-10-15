@@ -1828,9 +1828,12 @@ void Interpreter::mcfInit() {
         L.dirActCtx = direct(&activeContext_, 8);
         L.dirCtdn = direct(&checkCountdown_, 4);
         L.dirYield = direct(forceYieldAddr(), 1);
+        L.pairDepthCtx = L.dirDepth != jit::kMcfNoDirect && L.dirMatCtx == L.dirDepth + 8
+            && L.dirDepth % 8 == 0 && L.dirDepth >= -512 && L.dirDepth <= 496
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_PAIRED_DEPTH);
         if (GET_DEBUG_BOOL(PHARO_MCF_CENSUS))
-            fprintf(stderr, "[MCF-LAYOUT] depth=%d matctx=%d actctx=%d ctdn=%d yield=%d (yield at %td)\n",
-                    L.dirDepth, L.dirMatCtx, L.dirActCtx, L.dirCtdn, L.dirYield,
+            fprintf(stderr, "[MCF-LAYOUT] depth=%d matctx=%d actctx=%d ctdn=%d yield=%d pairDepthCtx=%d (yield at %td)\n",
+                    L.dirDepth, L.dirMatCtx, L.dirActCtx, L.dirCtdn, L.dirYield, (int)L.pairDepthCtx,
                     reinterpret_cast<const char*>(forceYieldAddr()) - base);
     }
     jit::g_mcfMegaCache = jitRuntime_.megaCache();

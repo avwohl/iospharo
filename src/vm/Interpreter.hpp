@@ -943,13 +943,15 @@ private:
     // and the periodic check says WHEN (within 1024 bytecodes).
     uint64_t framesCanary_ = 0xF00DFACE5A7EDF00ULL;
     size_t frameDepth_;
+    // Right after frameDepth_: a native call and return load and store the
+    // pair with one ldp/stp (docs/mcf-record-trim-plan.md stage 1).
+    Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
     // Machine-code frames: the state T1 code runs with (x0 points here).
     // It sits between the fields a native call and return touch, so the
     // machine code reaches them at fixed offsets from x0 instead of through
     // pointers in the state (mcfInit checks the offsets).
     jit::JITState mcfStateStorage_{};
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
-    Oop currentFrameMaterializedCtx_;  // Cached context for current frame (reused across materialize calls)
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     std::atomic<bool> forceYield_{false};  // set by the heartbeat thread; polled at back jumps
     // jit-may24 Step 2: counter of SavedFrames currently on the stack

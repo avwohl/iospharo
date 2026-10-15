@@ -327,6 +327,9 @@ struct McfFrameLayout {
     // kMcfNoDirect: reach them through the state's pointers instead.
     int32_t dirDepth, dirMatCtx, dirActCtx, dirCtdn;
     int32_t dirYield = INT32_MIN;   // forceYield_ (a byte), or kMcfNoDirect
+    // frameDepth_ and currentFrameMaterializedCtx_ adjacent at dirDepth:
+    // the native call and return move them with one ldp/stp.
+    bool pairDepthCtx = false;
     // A null-memo record precedes savedFrames_[0] (Interpreter::mcfGuardFrame_).
     bool guardOk;
 };

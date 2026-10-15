@@ -5271,9 +5271,15 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
     // memo decides (docs/linked-mcf-sends-plan.md, step 2).
     const bool fold = !GET_DEBUG_BOOL(PHARO_MCF_NO_RET_FOLD);
     const bool guard = fold && L.guardOk && !GET_DEBUG_BOOL(PHARO_MCF_NO_GUARD_FRAME);
-    mcfFieldLdr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2);      // frameDepth_
-    if (!guard) a.cbz(x3, fall);
-    mcfFieldLdr(a, x5, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4);    // currentFrameMaterializedCtx_
+    const bool pairDC = L.pairDepthCtx;
+    if (pairDC) {
+        a.ldp(x3, x5, ptr(x0, L.dirDepth));                      // frameDepth_, currentFrameMaterializedCtx_
+        if (!guard) a.cbz(x3, fall);
+    } else {
+        mcfFieldLdr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2);      // frameDepth_
+        if (!guard) a.cbz(x3, fall);
+        mcfFieldLdr(a, x5, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4);    // currentFrameMaterializedCtx_
+    }
     const bool pinned = mcfPinnedRegs() && L.size == 128;
     const bool sc = mcfShortcuts();
     // x6 = nil (x27 itself with the shortcuts).
@@ -5369,13 +5375,14 @@ static void emitMcfReturn_arm64(asmjit::a64::Assembler& a) {
         a.str(nil6, ptr(x5, OBJ_SLOT_0 + 8));
         a.bind(noCtx);
     }
-    mcfFieldStr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2, true);
     const bool lazyCA = mcfLazyCloAct();
+    if (!(pairDC && lazyCA)) mcfFieldStr(a, x3, L.dirDepth, OFF_MCF_DEPTH_PTR, x2, true);
     if (lazyCA) {
         // Trim steps 7-8: the caller's JM and context in one ldp; the
         // closure and active context are C++'s to derive.
         ldp2(x19, L.mcJM, x14, L.materializedContext);
-        mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
+        if (pairDC) a.stp(x3, x14, ptr(x0, L.dirDepth));     // depth-1 and the caller's context
+        else mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
     } else {
         ldp2(x13, L.savedActiveContext, x14, L.materializedContext);
         mcfFieldStr(a, x14, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x4, true);
@@ -5712,7 +5719,11 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     a.subs(w11, w11, asmjit::Imm(1));
     a.b_le(fail);
     mcfFieldStr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10, true);
-    mcfFieldLdr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10);
+    // Stage 1 (docs/mcf-record-trim-plan.md): depth and the caller's
+    // context in one ldp; x10 holds the context until the record store.
+    const bool pairDC = L.pairDepthCtx && mcfShortcuts();   // nil is x27 there
+    if (pairDC) a.ldp(x11, x10, ptr(x0, L.dirDepth));
+    else mcfFieldLdr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10);
     // At depth 0 the caller lives in activeContext_: store the caller's pc
     // into it, as pushFrame does on its 0 -> 1 push.  Refusing here instead
     // sent every send of a method resumed at depth 0 (after a process
@@ -5777,7 +5788,13 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.madd(x8, x11, x16, x8);
     }
     a.add(x11, x11, asmjit::Imm(1));
-    mcfFieldStr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10, true);  // frameDepth_++
+    if (pairDC) {
+        // frameDepth_++ and the callee has no context.
+        if (GET_DEBUG_BOOL(PHARO_MCF_PAIR_SABOTAGE)) a.stp(x11, x10, ptr(x0, L.dirDepth));
+        else a.stp(x11, mcfNilReg(), ptr(x0, L.dirDepth));
+    } else {
+        mcfFieldStr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x10, true);  // frameDepth_++
+    }
     // The caller's state (pushFrame).  Adjacent fields go in pairs.
     auto put2 = [&](asmjit::a64::Gp r1, uint32_t o1, asmjit::a64::Gp r2, uint32_t o2) {
         if (o2 == o1 + 8 && o1 % 8 == 0 && o1 <= 504) a.stp(r1, r2, ptr(x8, o1));
@@ -5816,9 +5833,13 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         mcfFieldLdr(a, x16, L.dirActCtx, OFF_MCF_ACTCTX_PTR, x10);
         put2(x17, L.savedClosure, x16, L.savedActiveContext);
     }
-    mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
-    mcfFieldStr(a, nilR, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
-    put2(x19, L.mcJM, x17, L.materializedContext);
+    if (pairDC) {
+        put2(x19, L.mcJM, x10, L.materializedContext);      // loaded with the depth
+    } else {
+        mcfFieldLdr(a, x17, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10);   // the caller's context
+        mcfFieldStr(a, nilR, L.dirMatCtx, OFF_MCF_MATCTX_PTR, x10, true);  // the callee has none
+        put2(x19, L.mcJM, x17, L.materializedContext);
+    }
     if (t1TbReg()) a.sub(x16, x22, asmjit::Imm(8));
     else { emitLoadTempBase(a, x16); a.sub(x16, x16, asmjit::Imm(8)); }
     put2(x14, L.mcReturn, x16, L.savedFP);
