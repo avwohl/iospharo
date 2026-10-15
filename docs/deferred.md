@@ -175,7 +175,26 @@ The history lives in `docs/history/`; nothing was deleted.
   failure and the GC follow them.  This VM follows forwarders only in a
   few places (classOf, prim 148), so lazy forwarding needs a send-path
   receiver fix-up, a forwarder-aware ==, primitive-failure retry and a
-  GC that removes forwarders.
+  GC that removes forwarders.  The same cost fails StSpotterModelTest (12
+  one-way becomes per `StSpotter new`, ByteString -> WideString).
+  Design notes for the change (old objects only; young pairs already go
+  through a scavenge):
+  - Lazy path only for plain objects: not methods, classes, symbols,
+    MethodDictionaries, contexts, processes, semaphores or literal
+    variable bindings (pushLitVar reads the binding's slot directly).
+  - A forwarder gets a reserved format as well as the forwarded class
+    index, so every format-checking fast path (interpreter special sends,
+    inline at:, primitive stubs, mcfFastReplace) rejects it.
+  - A global "forwarders exist" flag, cleared by the full GC that removes
+    them, keeps the new checks off the hot paths otherwise.
+  - Follow (and write back) at: interpreter sends before the method
+    cache probe; pharo_mcf_perform and mcfExtSendTarget (they look up
+    through classOf, which follows, then call natively with the forwarder
+    as receiver -- refuse instead); block activation (a closure's receiver
+    field); executePrimitive's receiver and arguments; `==`/`~~` on a
+    mismatch (interpreter, inline T1, prim 110); inline `class`.
+  - After installing forwarders, scan the frames and machine-code
+    registers (scanStackReplace/Swap) so no frame holds one.
 
 - **~~Every scavenge scans ALL of old space for old->young pointers~~ --
   DONE 2026-10-13 (`064e1de6`): the remembered set is trusted by default
