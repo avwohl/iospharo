@@ -2992,6 +2992,7 @@ private:
     PrimitiveResult primitiveLowSpaceSemaphore(int argCount);
     PrimitiveResult primitiveDeferDisplayUpdates(int argCount);
     PrimitiveResult primitiveArrayBecome(int argCount);
+    int becomeFailCode(Oop a1, Oop a2, bool twoWay, bool copyHash);
     PrimitiveResult primitiveIncrementalGC(int argCount);
     PrimitiveResult primitiveSetInterruptKey(int argCount);
     PrimitiveResult primitiveClone(int argCount);

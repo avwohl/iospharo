@@ -383,6 +383,41 @@ PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Cog's containsOnlyValidBecomeObjects:and:twoWay:copyHash:: 0, or the
+// error code the image's fallback (elementsExchangeIdentityWith:,
+// elementsForwardIdentityTo:) turns into its message -- bad receiver or
+// argument, an immediate (inappropriate operation), a pinned object, an
+// immutable one.  Failing with no code gave a bare PrimitiveFailed.
+int Interpreter::becomeFailCode(Oop a1, Oop a2, bool twoWay, bool copyHash) {
+    auto isArray = [](Oop a) {
+        return a.isObject() && a.asObjectPtr()->format() == ObjectFormat::Indexable;
+    };
+    if (!isArray(a1)) return 2;                                  // bad receiver
+    if (!isArray(a2) || a1.asObjectPtr()->slotCount() != a2.asObjectPtr()->slotCount())
+        return 3;                                                // bad argument
+    auto follow = [&](Oop o) {
+        while (o.isObject() && o.asObjectPtr()->isForwarded()) o = memory_.followForwarded(o);
+        return o;
+    };
+    auto invalid = [](Oop o) -> int {
+        if (!o.isObject()) return 6;                             // inappropriate operation
+        if (o.asObjectPtr()->isPinned()) return 16;              // object is pinned
+        if (o.asObjectPtr()->isImmutable()) return 8;            // no modification
+        return 0;
+    };
+    const size_t n = a1.asObjectPtr()->slotCount();
+    for (size_t i = 0; i < n; i++) {
+        if (int c = invalid(follow(memory_.fetchPointer(i, a1)))) return c;
+        Oop o2 = follow(memory_.fetchPointer(i, a2));
+        if (twoWay) {
+            if (int c = invalid(o2)) return c;
+        } else if (copyHash && (!o2.isObject() || o2.asObjectPtr()->isImmutable())) {
+            return 6;
+        }
+    }
+    return 0;
+}
+
 PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
     // Primitive 128: Two-way become - swaps object identities
     // receiver elementsExchangeIdentityWith: anotherArray
@@ -406,35 +441,11 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
     Oop toArrayOop = stackValue(0);
     Oop fromArrayOop = stackValue(1);
 
-    if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
+    if (int code = becomeFailCode(fromArrayOop, toArrayOop, true, false)) {
+        primFailCode_ = code;
         return PrimitiveResult::Failure;
     }
-
-    ObjectHeader* fromHdr = fromArrayOop.asObjectPtr();
-    ObjectHeader* toHdr = toArrayOop.asObjectPtr();
-
-    // Must be indexable pointer objects (Arrays)
-    if (fromHdr->format() != ObjectFormat::Indexable ||
-        toHdr->format() != ObjectFormat::Indexable) {
-        return PrimitiveResult::Failure;
-    }
-
-    size_t fromSize = fromHdr->slotCount();
-    size_t toSize = toHdr->slotCount();
-
-    // Arrays must be the same size
-    if (fromSize != toSize) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Validate all pairs first: no immediates, no duplicates
-    for (size_t i = 0; i < fromSize; i++) {
-        Oop obj1 = memory_.fetchPointer(i, fromArrayOop);
-        Oop obj2 = memory_.fetchPointer(i, toArrayOop);
-        if (!obj1.isObject() || !obj2.isObject()) {
-            return PrimitiveResult::Failure;
-        }
-    }
+    size_t fromSize = fromArrayOop.asObjectPtr()->slotCount();
     if (__builtin_expect(g_lazyForwarders, 0)) {
         // An element may be a lazy forwarder: become its target.
         for (size_t i = 0; i < fromSize; i++) {
@@ -4029,7 +4040,9 @@ PrimitiveResult Interpreter::primitivePerform(int argCount) {
     int additionalArgs = argCount - 1;
 
     // Validate selector is a Symbol
-    if (!selector.isObject() || selector.rawBits() < 0x10000) {
+    // Any object is a selector, as in Cog: a non-symbol is looked up, found
+    // nowhere, and the receiver gets doesNotUnderstand: (3 perform: 42).
+    if (selector.isObject() && selector.rawBits() < 0x10000) {
         return PrimitiveResult::Failure;
     }
     // Cog: a method with a different arity fails PrimErrBadNumArgs and the
@@ -4091,7 +4104,9 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
     Oop selector = stackValue(1);
     Oop target = stackValue(2);
 
-    if (!selector.isObject() || selector.rawBits() < 0x10000) {
+    // Any object is a selector, as in Cog: a non-symbol is looked up, found
+    // nowhere, and the receiver gets doesNotUnderstand: (3 perform: 42).
+    if (selector.isObject() && selector.rawBits() < 0x10000) {
         return PrimitiveResult::Failure;
     }
     if (!argsArray.isObject()) {
@@ -16570,26 +16585,15 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
     Oop toArrayOop = stackValue(0);
     Oop fromArrayOop = stackValue(1);
 
-    if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
+    if (int code = becomeFailCode(fromArrayOop, toArrayOop, false, true)) {
+        primFailCode_ = code;
         return PrimitiveResult::Failure;
     }
-
     ObjectHeader* fromHdr = fromArrayOop.asObjectPtr();
     ObjectHeader* toHdr = toArrayOop.asObjectPtr();
-
-    // Must be indexable pointer objects (Arrays)
-    if (fromHdr->format() != ObjectFormat::Indexable ||
-        toHdr->format() != ObjectFormat::Indexable) {
-        return PrimitiveResult::Failure;
-    }
-
     size_t fromSize = fromHdr->slotCount();
     size_t toSize = toHdr->slotCount();
-
-    // Arrays must be the same size
-    if (fromSize != toSize) {
-        return PrimitiveResult::Failure;
-    }
+    (void)toSize;
 
     // Collect every pair first, then do ONE heap scan. becomeForward walks the
     // whole heap, so calling it per pair is O(pairs * heap) — a few hundred
@@ -16708,7 +16712,8 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
         copyHash = false;
     }
 
-    if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
+    if (int code = becomeFailCode(fromArrayOop, toArrayOop, false, copyHash)) {
+        primFailCode_ = code;
         return PrimitiveResult::Failure;
     }
 
@@ -16776,17 +16781,11 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) 
     Oop toArrayOop = stackValue(0);
     Oop fromArrayOop = stackValue(1);
 
-    if (!fromArrayOop.isObject() || !toArrayOop.isObject()) {
+    if (int code = becomeFailCode(fromArrayOop, toArrayOop, false, false)) {
+        primFailCode_ = code;
         return PrimitiveResult::Failure;
     }
-
     size_t fromSize = memory_.slotCountOf(fromArrayOop);
-    size_t toSize = memory_.slotCountOf(toArrayOop);
-
-    // Arrays must be the same size
-    if (fromSize != toSize) {
-        return PrimitiveResult::Failure;
-    }
 
     // One heap scan for all pairs, without copying hash (that is the difference
     // from primitive 249). See primitiveArrayBecomeOneWay for why per-pair
