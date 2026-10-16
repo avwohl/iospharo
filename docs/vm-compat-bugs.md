@@ -104,7 +104,10 @@ values than Cog.  A differential check found them: it calls each pure
 primitive (arithmetic, comparison, `at:`, float, character, identity) of
 20 core classes with 34 edge-case receivers and arguments, on both VMs,
 and compares the answers (17526 calls).  The script is
-`scripts/primdiff.st`.
+`scripts/primdiff.st`.  `scripts/primdiff2.st` does the same for
+primitives with up to four arguments and for the LargeIntegers and
+MiscPrimitivePlugin named primitives: 124 methods, 40819 calls, all
+equal to Cog.
 
 - Primitive 158 `compareWith:` answered -1, 0 or 1.  Cog answers the
   first differing characters' difference, else the length difference.
