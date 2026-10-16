@@ -6,6 +6,21 @@ that we need to patch locally for our VM to work the same way as
 stock Cog.  See also `docs/vm-compat-bugs.md` for open VM-side defects, and
 `docs/deferred.md` for intentional platform gaps.
 
+
+## TraitFileOutTest depends on IdentitySet order (2026-10-17, not patched)
+
+Sweeps L73, L74 and L75 each failed TraitFileOutTest (one timeout, then
+`MessageNotUnderstood: TraitedMetaclass >> #getName`).  The test passes
+alone and in its own batch, run the sweep's way, 8 of 8 times.  The stack:
+`Package>>removeTag:` removes trait TD; `Trait>>removeFromSystem` walks
+TD's class-trait users, an IdentitySet, and for a user that is not yet
+obsolete calls `removeFromComposition:`.  The remake then sends
+`getName` to a TraitedMetaclass, which only classes understand.  Whether
+that branch runs depends on the set's iteration order, so on identity
+hash values.  Our identity hashes come from a fixed-seed generator, so
+the order changes only when process timing changes which objects get a
+hash first.  The defect is in the image's removal order, not in the VM.
+
 ## `SDLOSXPlatform` over-releases autoreleased NSStrings
 
 `ObjCLibrary>>nsStringOf:` answers `+[NSString stringWithUTF8String:]`, which is
