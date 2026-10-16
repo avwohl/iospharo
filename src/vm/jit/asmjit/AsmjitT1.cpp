@@ -6818,6 +6818,91 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             (void)boolRes;
             a.bind(notArith);
         }
+        // 158 compareWith: of two byte objects (no collation order): the
+        // first differing bytes' difference, else the length difference, as
+        // primitiveStringCompareWith (and Cog).  String>>< and every sorted
+        // collection of strings or symbols come here; the C call was ~230
+        // instructions.  8 bytes per step, then single bytes.
+        if (!GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_STRCMP)) {
+            asmjit::Label not158 = a.new_label(), have1 = a.new_label(), have2 = a.new_label();
+            asmjit::Label wloop = a.new_label(), bloop = a.new_label(), eqLen = a.new_label();
+            asmjit::Label lt = a.new_label(), gt = a.new_label();
+            a.cmp(w10, asmjit::Imm(158));
+            a.b_ne(not158);
+            a.orr(x3, x1, x2);
+            a.tst(x3, asmjit::Imm(7));
+            a.b_ne(slow);                              // an immediate
+            a.ldr(x3, ptr(x1));
+            a.ubfx(x4, x3, asmjit::Imm(24), asmjit::Imm(5));   // format
+            a.sub(x9, x4, asmjit::Imm(16));
+            a.cmp(x9, asmjit::Imm(7));
+            a.b_hi(slow);                              // not bytes (16-23)
+            a.lsr(x8, x3, asmjit::Imm(56));
+            a.cmp(x8, asmjit::Imm(255));
+            a.b_ne(have1);
+            a.ldur(x8, ptr(x1, -8));
+            a.lsl(x8, x8, asmjit::Imm(8));
+            a.lsr(x8, x8, asmjit::Imm(8));
+            a.bind(have1);
+            a.lsl(x8, x8, asmjit::Imm(3));
+            a.and_(x4, x4, asmjit::Imm(7));
+            a.sub(x8, x8, x4);                         // len1
+            a.ldr(x9, ptr(x2));
+            a.ubfx(x11, x9, asmjit::Imm(24), asmjit::Imm(5));
+            a.sub(x12, x11, asmjit::Imm(16));
+            a.cmp(x12, asmjit::Imm(7));
+            a.b_hi(slow);
+            a.lsr(x12, x9, asmjit::Imm(56));
+            a.cmp(x12, asmjit::Imm(255));
+            a.b_ne(have2);
+            a.ldur(x12, ptr(x2, -8));
+            a.lsl(x12, x12, asmjit::Imm(8));
+            a.lsr(x12, x12, asmjit::Imm(8));
+            a.bind(have2);
+            a.lsl(x12, x12, asmjit::Imm(3));
+            a.and_(x11, x11, asmjit::Imm(7));
+            a.sub(x12, x12, x11);                      // len2
+            a.cmp(x8, x12);
+            a.csel(x13, x8, x12, CondCode::kLO);       // min
+            a.add(x14, x1, asmjit::Imm(8));
+            a.add(x15, x2, asmjit::Imm(8));
+            a.bind(wloop);
+            a.cmp(x13, asmjit::Imm(8));
+            a.b_lo(bloop);
+            a.ldr(x16, ptr_post(x14, 8));
+            a.ldr(x17, ptr_post(x15, 8));
+            a.sub(x13, x13, asmjit::Imm(8));
+            a.cmp(x16, x17);
+            a.b_eq(wloop);
+            a.rev(x16, x16);                           // first byte most significant
+            a.rev(x17, x17);
+            a.eor(x9, x16, x17);
+            a.clz(x9, x9);
+            a.and_(x9, x9, asmjit::Imm(~7ull));       // the first differing byte
+            a.lsl(x16, x16, x9);
+            a.lsl(x17, x17, x9);
+            a.lsr(x16, x16, asmjit::Imm(56));
+            a.lsr(x17, x17, asmjit::Imm(56));
+            a.b(gt);                                   // x16 - x17
+            a.bind(bloop);
+            a.cbz(x13, eqLen);
+            a.ldrb(w16, ptr_post(x14, 1));
+            a.ldrb(w17, ptr_post(x15, 1));
+            a.sub(x13, x13, asmjit::Imm(1));
+            a.cmp(w16, w17);
+            a.b_eq(bloop);
+            a.b(gt);
+            a.bind(eqLen);
+            a.mov(x16, x8);
+            a.mov(x17, x12);
+            a.bind(gt);                                // x16 - x17 as a SmallInteger
+            a.sub(x7, x16, x17);
+            a.lsl(x7, x7, asmjit::Imm(3));
+            a.orr(x7, x7, asmjit::Imm(1));
+            a.b(result);
+            (void)lt;
+            a.bind(not158);
+        }
         // 110 ==
         a.cmp(w10, asmjit::Imm(110));
         a.b_ne(p170);

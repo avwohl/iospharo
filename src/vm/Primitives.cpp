@@ -20526,32 +20526,20 @@ PrimitiveResult Interpreter::primitiveStringCompareWith(int argCount) {
     size_t len1 = hdr1->byteSize();
     size_t len2 = hdr2->byteSize();
 
-    // Compare character by character using optional collation order
+    // As Cog's rawCompare:length:with:length:accessBlock: the first
+    // differing characters' difference (through the order if given), else
+    // the length difference -- not just its sign.
     size_t minLen = std::min(len1, len2);
     for (size_t i = 0; i < minLen; i++) {
-        uint8_t c1 = order ? order[bytes1[i]] : bytes1[i];
-        uint8_t c2 = order ? order[bytes2[i]] : bytes2[i];
-        if (c1 < c2) {
+        int c1 = order ? order[bytes1[i]] : bytes1[i];
+        int c2 = order ? order[bytes2[i]] : bytes2[i];
+        if (c1 != c2) {
             popN(argCount + 1);
-            push(Oop::fromSmallInteger(-1));
-            return PrimitiveResult::Success;
-        }
-        if (c1 > c2) {
-            popN(argCount + 1);
-            push(Oop::fromSmallInteger(1));
+            push(Oop::fromSmallInteger(c1 - c2));
             return PrimitiveResult::Success;
         }
     }
-
-    // All compared characters equal; shorter string is "less"
-    int result;
-    if (len1 < len2) {
-        result = -1;
-    } else if (len1 > len2) {
-        result = 1;
-    } else {
-        result = 0;
-    }
+    int64_t result = (int64_t)len1 - (int64_t)len2;
 
     popN(argCount + 1);
     push(Oop::fromSmallInteger(result));

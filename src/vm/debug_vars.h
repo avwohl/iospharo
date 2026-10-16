@@ -268,6 +268,7 @@ DEBUG_BOOL_RT(PHARO_MCF_CTDN_SPEND)               // opt-out: native calls spend
 DEBUG_BOOL_RT(PHARO_MCF_NO_RESUME_SHORTCUT)        // opt-out: Context>>resume: materializes thisContext and runs resume:through: again (docs/native-nlr-plan.md)
 DEBUG_BOOL(PHARO_MCF_NLR_FULL_POPS)                // MCF non-local return pops every frame with popFrame (no register-skipping drop of the frames above the home one)
 DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_ARITH)             // opt-out: the shared one-argument primitive stub does not run SmallInteger primitives 1-17 (C call)
+DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_STRCMP)            // opt-out: the shared one-argument primitive stub does not run primitive 158 (byte string compareWith:)
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_PRIM_STUB)      // opt-out: a perform: cache primitive hit calls pharo_mcf_prim directly, not the shared primitive stub first
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_DEPTH0)         // opt-out: a T1 perform: site refuses its cache hit at frame depth 0 (C path) instead of calling with the depth-0 caller context
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_CACHE)          // opt-out: T1 perform: sites always call pharo_mcf_perform (no machine-code perform cache)
