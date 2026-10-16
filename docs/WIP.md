@@ -15,7 +15,29 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, 12:00) -- lexicon faster than Cog; package tests 2x faster than Cog
+## Right now (2026-10-16, 17:00) -- sweep L62: 3 non-passes, none a VM defect
+
+- Pushed through `49ce55e5`.  Sweep L62 (image sunit8, runner
+  `1bbfc99`): 27996 tests, 27811 pass.  Left: SpAthensAdapterTest (UI
+  scheduling race, docs/deferred.md), ZdcSecureSocketStreamTest testPlain
+  (network flake), ZnClientTest testQueryGoogle (Cog fails it too).
+- Runner: StDebuggerTest runs through `runCaseManaged` (its
+  testIsInSelectedContextPackage reads the standard SUnit frames).
+- Not yet swept: `284e9ba4` lazy become path compression, unforward every
+  4096 pairs (SSWReStoreSpeedTest 2.3 -> 0.74 s, Cog 2.3); `046bfe7c`
+  lazy become accepts overflow-header objects (microdown HTML tests 1.7x
+  faster).
+- Running: per-class revalidation of all 93 package images with the
+  newest build (scratchpad pc3/, failing selectors recorded by per2.st).
+- Measured, not fixed: an exception signal + return is ~25500
+  instructions, 20000 in C++ (three full frame materializations for
+  thisContext, a lazy-context sync for `sender`, four exits).  Cog marries
+  one frame per `sender` step; doing that here means incremental lazy
+  contexts.  perform: of a compiled method is ~330 instructions (Cog ~40);
+  a machine-code perform cache would cut most of it.  tinyBenchmarks:
+  bytecodes at parity with Cog, sends 68% of Cog.
+
+## Earlier (2026-10-16, 12:00) -- lexicon faster than Cog; package tests 2x faster than Cog
 
 - Pushed through `af483604`; sweeps L59, L60, L61 clean (L61: 27996
   tests, 27810 pass, 4 known failures).
