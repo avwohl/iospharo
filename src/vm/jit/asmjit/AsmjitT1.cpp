@@ -2099,6 +2099,9 @@ static inline void x86ColdEnd(asmjit::x86::Assembler& a) {
 // went to the cold section: the emit loop binds nothing and emits nothing
 // at this bytecode index (the compare did both).
 static int g_x86FusedSkipIdx = -1;
+// Operand bytes a simStack consumer also emitted (an ExtJump's offset byte):
+// the loop steps over them.
+static int g_x86ConsumedExtra = 0;
 
 
 // Machine-code frames on x86: the temp base in r12 and the receiver in r13
@@ -4511,7 +4514,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
 // code sees the memory stack it always did.  Positions with pending items
 // get no bcToCode re-entry entry.  Opt-out PHARO_X86_NO_SIMSTACK (diag).
 namespace {
-enum class XsK : uint8_t { Const, Temp, Rcvr, Lit, Reg };
+enum class XsK : uint8_t { Const, Temp, Rcvr, Lit, Reg, Ivar, State, LitVar };
 struct XsItem { XsK k; int64_t v; };
 std::vector<XsItem> g_xs;
 bool g_xsOn = false;
@@ -4527,6 +4530,12 @@ static void xsLoad(asmjit::x86::Assembler& a, const XsItem& it, const asmjit::x8
     case XsK::Rcvr:  a.mov(dst, r13); break;
     case XsK::Lit:   emitLoadLiteral_x86(a, dst, (int)it.v); break;
     case XsK::Reg:   if (dst.id() != rcx.id()) a.mov(dst, rcx); break;
+    case XsK::Ivar:  a.mov(dst, ptr(r13, (int)(OBJ_SLOT_0 + it.v * 8))); break;
+    case XsK::State: a.mov(dst, ptr(rdi, (int)it.v)); break;
+    case XsK::LitVar:
+        emitLoadLiteral_x86(a, dst, (int)it.v);
+        a.mov(dst, ptr(dst, OBJ_SLOT_0 + 8));    // the association's value
+        break;
     }
 }
 // Store the items to the real stack, in order; the compile-time stack
@@ -4563,6 +4572,17 @@ static bool xsTryDefer(uint8_t op, uint64_t nilBits) {
     if (op == SistaV1::PushOne) { g_xs.push_back({XsK::Const, (int64_t)Oop::fromSmallInteger(1).rawBits()}); return true; }
     if (op >= SistaV1::PushLitConstBase && op <= SistaV1::PushLitConstBase + 31) {
         g_xs.push_back({XsK::Lit, op - SistaV1::PushLitConstBase});
+        return true;
+    }
+    if (GET_DEBUG_BOOL(PHARO_X86_NO_SIM_MORE)) return false;
+    if (op >= SistaV1::PushRecvVarBase && op <= SistaV1::PushRecvVarBase + 15) {
+        g_xs.push_back({XsK::Ivar, op - SistaV1::PushRecvVarBase});
+        return true;
+    }
+    if (op == SistaV1::PushTrue) { g_xs.push_back({XsK::State, OFF_TRUEOOP}); return true; }
+    if (op == SistaV1::PushFalse) { g_xs.push_back({XsK::State, OFF_FALSEOOP}); return true; }
+    if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarBase + 15) {
+        g_xs.push_back({XsK::LitVar, op - SistaV1::PushLitVarBase});
         return true;
     }
     return false;
@@ -6365,9 +6385,52 @@ static bool xsTryConsume_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitSyncSpToState_x86(a); a.ret();
         return true;
     }
-    // + - and the comparisons with both operands pending.
+    // A conditional jump on a pending value: compare it with true and false
+    // directly; anything else exits for mustBeBoolean from the real stack.
+    const bool shortJ = SistaV1::isConditionalShortJump(op);
+    if ((shortJ || ((op == SistaV1::ExtJumpTrue || op == SistaV1::ExtJumpFalse)
+                    && (size_t)globalIdx + 1 < g_tosBcLen && g_tosBc))
+            && !GET_DEBUG_BOOL(PHARO_X86_NO_SIM_MORE)) {
+        const int targetIdx = shortJ ? SistaV1::shortJumpTarget(op, globalIdx)
+                                     : globalIdx + 2 + g_tosBc[globalIdx + 1];
+        if (targetIdx <= globalIdx || (size_t)targetIdx >= bcLabels.size()) return false;
+        const bool jt = shortJ ? SistaV1::isShortJumpTrue(op) : op == SistaV1::ExtJumpTrue;
+        flushBelow(1);
+        const XsItem it = g_xs.back();
+        g_xs.clear();
+        asmjit::Label take = a.new_label(), fall = a.new_label(), notBool = a.new_label();
+        xsLoad(a, it, rax);
+        a.cmp(rax, ptr(rdi, jt ? OFF_TRUEOOP : OFF_FALSEOOP));
+        a.je(bcLabels[targetIdx]);
+        a.cmp(rax, ptr(rdi, jt ? OFF_FALSEOOP : OFF_TRUEOOP));
+        a.jne(notBool);
+        // Falls into the next bytecode (the loop binds its label).
+        const bool cold = x86ColdBegin(a);
+        if (!cold) a.jmp(fall);
+        a.bind(notBool);                             // the value back, then mustBeBoolean
+        a.mov(ptr(X86_SP_REG_OR_RAX), rax);
+        a.add(X86_SP_REG_OR_RAX, asmjit::Imm(8));
+        emitLoadMethod_x86(a, r8);
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
+        emitSyncSpToState_x86(a); a.ret();
+        if (cold) x86ColdEnd(a);
+        a.bind(fall);
+        (void)take;
+        if (!shortJ) {
+            // The operand byte's label (never a jump target).
+            if ((size_t)globalIdx + 1 < bcLabels.size()) a.bind(bcLabels[globalIdx + 1]);
+            g_x86ConsumedExtra = 1;
+        }
+        return true;
+    }
+    // + - and the comparisons with both operands pending; == and ~~ too.
     const bool addSub = op == SistaV1::ArithBase || op == SistaV1::ArithBase + 1;
-    const bool cmp = op >= SistaV1::ArithBase + 2 && op <= SistaV1::ArithBase + 7;
+    const bool eqOp = ::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ)
+        && !GET_DEBUG_BOOL(PHARO_X86_NO_SIM_MORE)
+        && (op == SistaV1::SpecialSendBase + 6 || op == SistaV1::SpecialSendBase + 8);
+    const bool cmp = (op >= SistaV1::ArithBase + 2 && op <= SistaV1::ArithBase + 7) || eqOp;
     if ((addSub || cmp) && n >= 2 && g_x86Cold && !GET_DEBUG_BOOL(PHARO_X86_NO_SIM_ARITH)) {
         flushBelow(2);
         const XsItem A = g_xs[0], B = g_xs[1];
@@ -6376,12 +6439,27 @@ static bool xsTryConsume_x86(asmjit::x86::Assembler& a, uint8_t op,
         xsLoad(a, B, rdx);
         xsLoad(a, A, rcx);
         asmjit::Label tagBail = a.new_label(), ovfBail = a.new_label(), end = a.new_label();
+        if (eqOp) {
+            // Identity, unless an operand is a forwarder (the slow path
+            // exits and the interpreter follows it).
+            for (const Gp& r : {rcx, rdx}) {
+                asmjit::Label imm = a.new_label();
+                a.test(r, asmjit::Imm(0x7));
+                a.jnz(imm);
+                a.mov(r8d, dword_ptr(r));
+                a.and_(r8d, asmjit::Imm(0x3FFFFF));
+                a.cmp(r8d, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+                a.je(tagBail);
+                a.bind(imm);
+            }
+        } else {
         a.mov(r8, rcx);
         a.xor_(r8, rdx);
         a.lea(r9, ptr(rcx, -1));
         a.or_(r8, r9);
         a.test(r8.r8(), asmjit::Imm(7));
         a.jne(tagBail);
+        }
         // A compare fused with the conditional jump after it (no jump target).
         int fNext = -1, fTgt = -1, fPost = -1, fLen = 0;
         bool fJt = false;
@@ -6412,7 +6490,9 @@ static bool xsTryConsume_x86(asmjit::x86::Assembler& a, uint8_t op,
         } else if (fNext >= 0) {
             a.cmp(rcx, rdx);
             const asmjit::Label tgt = bcLabels[fTgt];
-            switch (op - SistaV1::ArithBase) {
+            // == is the = case, ~~ the ~= case.
+            const int k = eqOp ? (op == SistaV1::SpecialSendBase + 6 ? 6 : 7) : op - SistaV1::ArithBase;
+            switch (k) {
             case 2: if (fJt) a.jl(tgt);  else a.jge(tgt); break;
             case 3: if (fJt) a.jg(tgt);  else a.jle(tgt); break;
             case 4: if (fJt) a.jle(tgt); else a.jg(tgt);  break;
@@ -6424,7 +6504,7 @@ static bool xsTryConsume_x86(asmjit::x86::Assembler& a, uint8_t op,
         } else {
             a.cmp(rcx, rdx);
             a.mov(rcx, ptr(rdi, OFF_FALSEOOP));
-            switch (op - SistaV1::ArithBase) {
+            switch (eqOp ? (op == SistaV1::SpecialSendBase + 6 ? 6 : 7) : op - SistaV1::ArithBase) {
             case 2: a.cmovl(rcx, ptr(rdi, OFF_TRUEOOP)); break;
             case 3: a.cmovg(rcx, ptr(rdi, OFF_TRUEOOP)); break;
             case 4: a.cmovle(rcx, ptr(rdi, OFF_TRUEOOP)); break;
@@ -16173,6 +16253,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (xsTryConsume_x86(a, bcReal[i], nilBits, bcOffsetBase + globalIdx, siteIdx,
                                      bcLabels, globalIdx, callerArgCount, callerTempCount,
                                      staticJ2JArgCount)) {
+                    // A consumed send keeps its IC site number.
+                    if (isPhase4SendOp(bcReal[i])) siteIdx++;
+                    i += g_x86ConsumedExtra;
+                    g_x86ConsumedExtra = 0;
                     prevExtPrefix = false;
                     continue;
                 }
