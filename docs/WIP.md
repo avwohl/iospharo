@@ -15,7 +15,23 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-17, 19:00) -- x86 is 10x slower than Cog
+## Right now (2026-10-18, 01:00) -- machine-code frames on x86
+
+- Machine-code frames are ported to x86-64 (opt-in `PHARO_X86_MCF=1`;
+  docs/x86-mcf-port.md).  x86 lexicon instructions (Rosetta): 1468 to
+  1138 billion; zzFib 4x and the send loop 4.5x faster than the x86
+  interpreter.  Sweep X2 (x86, the mode on): 27808 of 27996, the arm64
+  count.
+- Found on the way, for both arches: an exit at an arithmetic special
+  send now runs a primitive target in mcfRun and records a return memo
+  otherwise; the interpreter's FFI symbol loader searches the
+  executable's directory (270 Athens/Roassal errors on x86); the x86
+  TestLibrary has `w64Convention`; a leftover primitiveStringAt trace is
+  gone.
+- Sweep L80 (arm64, `dd9dcc7e`) clean; pushed through `94a38340`.  Sweep
+  L81 runs on `8a799eef`.
+
+## Earlier (2026-10-17, 19:00) -- x86 is 10x slower than Cog
 
 - Sweep L79 clean (2042 classes, 27808 of 27996 pass); pushed through
   `10cf2afd`.

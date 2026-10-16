@@ -87,3 +87,20 @@ Next, from the exit census on lexicon:
 - extended receiver stores (`ExtStoreRecv`, bytecode 243) emitted;
 - block creation (`PushFullBlock`) without an exit;
 - then the arm64 trims (lazy view, pinned registers, shared stubs).
+
+## Status (2026-10-18)
+
+- `cff75da2`: mega cache probe for full sites, extended receiver stores,
+  `=` with a Character receiver (while `Character>>#=` is primitive 110),
+  native calls at frame depth 0.
+- `8a799eef`: super sends exit as sends (a method with a super send was a
+  stub before), the interpreter's block-shape shortcuts are off under the
+  mode (the blocks they answered never compiled), block local returns are
+  native, `PushFullBlock` creates the closure without an exit.
+
+x86 lexicon: 1138 billion instructions (from 1468).  Micro set (ms, x86
+MCF): doBlock 564, dictAt 1599, strEq 680, ocAddRemove 592, collect 178,
+detect 141, isKindOf 280 (Cog: 129, 308, 125, 107, 45, 41, 77).
+
+Next: the census still shows exits at returns without a memo and at
+`value:value:value:`; then the arm64 trims.
