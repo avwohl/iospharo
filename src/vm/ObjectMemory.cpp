@@ -2038,8 +2038,28 @@ bool ObjectMemory::becomeForwardLazy(const std::vector<std::pair<Oop, Oop>>& pai
         slotAtPutBarriered(h, 0, pr.second);   // remembers an old forwarder to a young target
     }
     g_lazyForwarders = true;
+    youngForwardersOnly_ = false;
     lazyPairsSinceUnforward_ += pairs.size();
     return true;
+}
+
+Oop ObjectMemory::tenureByForwarding(Oop o) {
+    if (!o.isObject() || !isYoung(o) || !pendingClassIndexRemap_.empty()) return o;
+    ObjectHeader* h = o.asObjectPtr();
+    if (h->slotCount() < 1 || h->hasOverflowSlots() || h->isForwarded()) return o;
+    Oop c = shallowCopy(o, /*forceOld*/ true);
+    if (!c.isObject() || c.isNil() || !isOld(c)) return o;
+    c.asObjectPtr()->setIdentityHash(h->identityHash());
+    g_objectMotionEpoch++;
+    if (!g_lazyForwarders) youngForwardersOnly_ = true;
+    h->slots()[0] = c;
+    h->setClassIndex(ObjectHeader::ForwardedClassIndex);
+    h->setFormat(ObjectFormat::Reserved7);
+    g_lazyForwarders = true;
+    // No early scavenge: it resolves the forwarders sooner, but it also moves
+    // the young buffers C still holds from earlier calls (SQLite keeps bound
+    // pointers; ReStore's tests hung).  The next scavenge resolves them.
+    return c;
 }
 
 bool ObjectMemory::becomeTwoWayLazy(const std::vector<std::pair<Oop, Oop>>& pairs) {
@@ -2080,6 +2100,7 @@ bool ObjectMemory::becomeTwoWayLazy(const std::vector<std::pair<Oop, Oop>>& pair
         h2->setFormat(ObjectFormat::Reserved7);
     }
     g_lazyForwarders = true;
+    youngForwardersOnly_ = false;
     lazyPairsSinceUnforward_ += pairs.size();
     return true;
 }
@@ -3593,6 +3614,13 @@ GCResult ObjectMemory::scavenge() {
     // Rebuild ips from the offsets stashed at scavenge entry (skips
     // the full-GC-only methodCache/IC flush tail).
     if (ipWrapped) interpreter_->afterGC(false);
+
+    // Forwarders made only by tenureByForwarding were young: this scavenge
+    // followed every reference to them, and eden is empty now.
+    if (youngForwardersOnly_) {
+        youngForwardersOnly_ = false;
+        g_lazyForwarders = false;
+    }
 
     auto end = std::chrono::steady_clock::now();
     result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(

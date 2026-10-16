@@ -12713,19 +12713,21 @@ PrimitiveResult Interpreter::primitivePin(int argCount) {
 
     // A pinned object must not move, and a scavenge moves every young
     // survivor: C code holding a pinned eden buffer across a callback
-    // (qsort with a Smalltalk compare block) then wrote to the stale copy
-    // when a callback scavenged (FFICallbackTest>>testCqsortWithByteArray,
-    // a nearly sorted result).  Spur moves a young object to old space
-    // when it is pinned; a scavenge here does that and updates every
-    // reference (the receiver on the stack included).
+    // (qsort with a Smalltalk compare block) wrote to the stale copy when a
+    // callback scavenged (FFICallbackTest>>testCqsortWithByteArray).  As
+    // Spur: a pinned copy in old space and the original a forwarder
+    // (followed by sends, primitives, ==, named primitives and the FFI
+    // callouts) until the next scavenge.  Not a scavenge here: primitives
+    // never collect (callers hold copies of young oops), and running one
+    // hung ReStore's SQLite tests (SSWReStoreFullTableTest).
     if (shouldPin && memory_.isYoung(rcvr) && !GET_DEBUG_BOOL(PHARO_NO_PIN_TENURE)) {
-        memory_.scavenge();
-        rcvr = memory_.followForwarded(stackValue(1));
-        header = rcvr.asObjectPtr();
-        header->setPinned(true);
-        if (__builtin_expect(memory_.isYoung(rcvr), 0)) {
-            static int ny = 0;
-            if (++ny <= 5) fprintf(stderr, "[PIN] a pinned object is still young after a scavenge\n");
+        Oop moved = memory_.tenureByForwarding(rcvr);
+        if (moved.rawBits() != rcvr.rawBits()) {
+            header->setPinned(false);              // a forwarder now
+            rcvr = moved;
+            header = rcvr.asObjectPtr();
+            header->setPinned(true);
+            stackValuePut(1, rcvr);
         }
     }
 
@@ -17431,9 +17433,45 @@ PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
 }
 
 // Primitive 117: Call out to FFI (Foreign Function Interface)
+// A lazy forwarder (a become, or the pin of a young object) inside an FFI
+// argument: C must get the target's address.  Replaces each forwarder in
+// the slots of `o`, `depth` levels down (the arguments array, then each
+// argument's fields such as a structure's handle).
+void Interpreter::followForwardersDeep(Oop o, int depth) {
+    if (depth <= 0 || !o.isObject() || o.rawBits() < 0x10000) return;
+    ObjectHeader* h = o.asObjectPtr();
+    if (h->isForwarded() || !h->isPointersObject() || h->isCompiledMethod()
+            || (contextClassIndex_ != 0 && h->classIndex() == contextClassIndex_))
+        return;
+    const size_t n = std::min<size_t>(h->slotCount(), 256);
+    for (size_t i = 0; i < n; i++) {
+        Oop v = h->slotAt(i);
+        if (!v.isObject() || v.rawBits() < 0x10000) continue;
+        if (v.asObjectPtr()->isForwarded()) {
+            v = memory_.followForwarded(v);
+            memory_.storePointer(i, o, v);
+        }
+        followForwardersDeep(v, depth - 1);
+    }
+}
+
 // externalFunction args primitiveCalloutToFFI -> result
 // Calls a foreign function through FFI mechanism
 PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
+    // Every named primitive comes through here: follow forwarders in the
+    // receiver and arguments, and one level inside them (a pinned buffer's
+    // forwarder handed to primitiveGetAddressOfOOP gave C the young copy's
+    // address, and FT_Init_FreeType wrote over the forwarding pointer).
+    if (__builtin_expect(g_lazyForwarders, 0)) {
+        for (int i = 0; i <= argCount; i++) {
+            Oop v = stackValue(i);
+            if (v.isObject() && v.rawBits() >= 0x10000 && v.asObjectPtr()->isForwarded()) {
+                v = memory_.followForwarded(v);
+                stackValuePut(i, v);
+            }
+            followForwardersDeep(v, 1);
+        }
+    }
     // --- Named primitive dispatch ---
     // Primitive 117 is used for both old-style FFI callouts (SDL2-specific)
     // and new TFFI primitives (via <primitive: 'name'>).
@@ -31915,7 +31953,7 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
 PrimitiveResult Interpreter::primitiveGetAddressOfOOP(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    Oop objectOop = stackTop();
+    Oop objectOop = memory_.followForwarded(stackTop());
 
     if (objectOop.isImmediate()) {
         return PrimitiveResult::Failure;
@@ -34287,6 +34325,10 @@ static tffiworker::Worker* tffiWorkerOf(pharo::Interpreter& interp,
 // Marshals into a heap task, enqueues it, returns ExternalAddress(task).
 PrimitiveResult Interpreter::primitiveWorkerCallout(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
+    if (__builtin_expect(g_lazyForwarders, 0)) {
+        followForwardersDeep(stackValue(1), 2);   // the arguments
+        followForwardersDeep(stackValue(2), 1);   // the external function
+    }
 
     Oop semaIndexOop = stackValue(0);
     Oop argsArrayOop = stackValue(1);
@@ -34430,6 +34472,10 @@ PrimitiveResult Interpreter::primitiveRegisterDelayRecoverySemaphore(int argCoun
 // Stack: receiver, externalFunction, argumentsArray
 // This is the core FFI call primitive.
 PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
+    if (__builtin_expect(g_lazyForwarders, 0) && argCount == 2) {
+        followForwardersDeep(stackValue(0), 2);   // the arguments
+        followForwardersDeep(stackValue(1), 1);   // the external function
+    }
     if (argCount != 2) {
         return PrimitiveResult::Failure;
     }

@@ -2114,6 +2114,7 @@ public:
                             Oop rcv, jit::McfCallEntry*& e);
     Oop mcfThisContext(jit::JITState* st);
     void* mcfNonLocalReturn(jit::JITState* st);
+    void followForwardersDeep(Oop o, int depth);
     // Trim steps 7-8 (docs/mcf-call-trim-plan.md): a record's closure is
     // fp[0] of a block frame (INV-FP0), nil for a method frame; its active
     // context is activeContext_ (INV-AC).  Native pushes no longer write

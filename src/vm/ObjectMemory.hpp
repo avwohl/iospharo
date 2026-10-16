@@ -729,6 +729,11 @@ public:
     // Lazy one-way become: each first object becomes a forwarder to its
     // second; no heap scan.  The caller replaces forwarders in the roots.
     bool becomeForwardLazy(const std::vector<std::pair<Oop, Oop>>& pairs);
+    // Spur's pin of a young object: a pinned copy in old space and the
+    // original a forwarder to it, until the next scavenge resolves every
+    // reference.  No collection here: primitives never collect.  Answers
+    // the copy, or `o` when it cannot forward.
+    Oop tenureByForwarding(Oop o);
     // Replace every reference to a forwarder (heap, class table, VM roots)
     // with its target; clears g_lazyForwarders.  Run by markPhase.
     void unforwardAll();
@@ -1221,6 +1226,9 @@ private:
     // follows become forwarders in eden to their targets.
     bool becomeForwardersPending_ = false;
     size_t lazyPairsSinceUnforward_ = 0;
+    // Every forwarder is young (made by tenureByForwarding): the next
+    // scavenge resolves them all and clears g_lazyForwarders.
+    bool youngForwardersOnly_ = false;
     bool scavengeWeakAware_ = false;
     uint8_t* oldFreeAtLastScavenge_ = nullptr;  // old-space top when the last scavenge finished (PHARO_SCAV_BIT_AUDIT: "recent" holders)
 
