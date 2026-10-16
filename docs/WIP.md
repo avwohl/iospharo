@@ -15,7 +15,22 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-17, 15:00) -- Cog differential checks, two flakes fixed
+## Right now (2026-10-17, 19:00) -- x86 is 10x slower than Cog
+
+- Sweep L79 clean (2042 classes, 27808 of 27996 pass); pushed through
+  `10cf2afd`.
+- FFI callouts, struct returns, struct pointers and callbacks agree with
+  Cog (`scripts/cogdiff/ffidiff.st`, `ffidiff2.st`).
+- x86-64 build against Cog x86-64, both under Rosetta: lexicon 117.5 s
+  against 11.9 s.  With the x86 JIT off: 98.8 s, so the x86 JIT makes
+  real code slower.  (arm64: 69.0 s interpreted, 10.4 s with the JIT.)
+  The x86 JIT compiles about 400 methods in lexicon; arm64 compiles 5448.
+  Micro set on x86: 4x to 30x Cog.  Rosetta costs about 1.6x
+  (interpreter on both arches), so most of the gap is in the x86 backend.
+  Background: docs/x86-cog-gap.md (the x86 backend has no machine-code
+  frames).
+
+## Earlier (2026-10-17, 15:00) -- Cog differential checks, two flakes fixed
 
 - Pushed through `09c030db` (sweep L73 clean).  Sweep L74 runs on
   `d27dd451`.
