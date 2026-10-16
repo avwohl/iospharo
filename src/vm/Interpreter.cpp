@@ -26393,6 +26393,13 @@ void Interpreter::purgeDeadCacheRoots() {
         if (jmPurged > 0) {
             jitRuntime_.rebuildMethodMap();
         }
+        // Balance the makeWritable above.  This relied on a later
+        // forEachRoot (the compaction's pointer update) to flip the zone
+        // back; a full GC whose compaction moved nothing skipped that walk,
+        // and the next machine-code entry faulted on a writable page
+        // (SIGBUS at a method's codeStart).
+        jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                            jitRuntime_.codeZone().totalBytes());
     }
 #endif
 
