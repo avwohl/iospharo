@@ -995,10 +995,14 @@ one test, `CigCTemplateCollectorTest>>testCollectionOfSpecializedType`, is a
 FAIL on ours and an ERR on Cog).  pharo-sdl-experiments: SDL2 stubs.
 2026-10-16: in a per-class run (all classes in one image) our VM stops in
 `CigFunctionTest` with SIGABRT, "pointer being freed was not allocated".
-This is a package bug, not a VM bug.  cig binds `clang_getCString` and
-`clang_disposeString` with a pointer argument, but libclang takes a
-`CXString` by value.  The callout passes the address of the CXString's
-ByteArray, and `clang_disposeString` gives that heap address to `free()`.
+This is a package bug, not a VM bug.  cig declares `CXString` as an
+FFIExternalObject (one pointer), but libclang passes and returns it as a
+two-field struct by value (`data`, `private_flags`).  A CXString result
+keeps only `data`; `clang_disposeString(self)` then passes `data` in the
+first register and whatever the second register holds as
+`private_flags`, and libclang frees `data` when that value means
+"malloced" (2026-10-17 reading of the package).  The fix is in the
+package: CXString as an FFIExternalStructure with both fields.
 Any VM that loads libclang stops there.  Cog does not stop because it
 cannot load the library on this host (`SymbolNotFoundError ...
 clang_createIndex`), so its 3 tests fail early.
