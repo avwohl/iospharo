@@ -15,7 +15,20 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-18, 01:00) -- machine-code frames on x86
+## Right now (2026-10-18, 21:00) -- x86 at 3x Cog, from 10x
+
+- x86 machine-code frames are the default on macOS and Linux
+  (`632afcd8`).  Since then: the x86 primitive stub (most common
+  primitives on the caller's stack), native ExtendA sends, compare-branch
+  fusion.  x86 lexicon 563 billion instructions (1468 at the start), about
+  35 s against Cog's 11.9 s.  Sweeps X5-X7 pass 27808-27811 of 27996; the
+  extras are compile-heavy tests timing out in a batch (they pass alone).
+- arm64 micro set on an idle machine: 15 of 24 at or below Cog; perform
+  1.50x, exception 1.43x, charTests 1.36x, detect 1.33x.
+- Pushed through `5bae4280`.  Running: the 93 package images on x86
+  (pc5).
+
+## Earlier (2026-10-18, 01:00) -- machine-code frames on x86
 
 - Machine-code frames are ported to x86-64 (the default on macOS and Linux, opt-out `PHARO_NO_X86_MCF=1`;
   docs/x86-mcf-port.md).  x86 lexicon instructions (Rosetta): 1468 to
