@@ -191,6 +191,7 @@ DEBUG_BOOL(PHARO_MCF_NO_HELPER_SEND)           // x86 MCF bisect: super sends an
 DEBUG_BOOL(PHARO_X86_NO_COLD)                   // x86 T1 bisect: slow paths inline after their fast path, not in the cold section
 DEBUG_BOOL(PHARO_X86_NO_COLD_JUMP)              // x86 T1 bisect: a fused compare keeps its conditional jump inline (jmp to the next bytecode)
 DEBUG_BOOL(PHARO_X86_NO_COMPACT_RECORD)         // x86 MCF bisect: full native records (recFull 1) and the arg count / bytecode end in the state view
+DEBUG_BOOL(PHARO_X86_NO_LAZY_CLOSURE)           // x86 MCF bisect: native records and returns save/restore the closure and the active context
 DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)             // x86 T1 bisect: push/pop through rcx (load sp, add, store) as before the short form
 DEBUG_BOOL(PHARO_MCF_NO_NLR_MEMO_INLINE)        // x86 MCF bisect: a native call of a block with ^ always calls pharo_mcf_block_home
 DEBUG_BOOL(PHARO_MCF_ONE_ENTRY_PROBE)          // x86 MCF bisect: probe only IC entry 0, as before the six-entry probe

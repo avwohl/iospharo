@@ -2268,9 +2268,12 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.mov(ptr(r8), r11);                         // frameDepth_ = depth - 1
     a.mov(rdx, ptr(rcx, L.materializedContext));
     a.mov(ptr(r10), rdx);
-    a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
-    a.mov(rdx, ptr(rcx, L.savedActiveContext));
-    a.mov(ptr(r10), rdx);
+    if (!jit::g_mcfLazyCloAct) {
+        // (Lazy: a native push never changes activeContext_, INV-AC.)
+        a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
+        a.mov(rdx, ptr(rcx, L.savedActiveContext));
+        a.mov(ptr(r10), rdx);
+    }
     // The result into the callee's receiver slot; sp just above it.
     a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
     a.mov(ptr(rdx, -8), rax);
@@ -2281,8 +2284,11 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
     a.mov(rdx, ptr(rcx, L.savedReceiver));
     a.mov(ptr(rdi, OFF_RECEIVER), rdx);
-    a.mov(rdx, ptr(rcx, L.savedClosure));
-    a.mov(ptr(rdi, OFF_CLOSURE), rdx);
+    if (!jit::g_mcfLazyCloAct) {
+        // (Lazy: C++ derives the closure, fp[0] of block code.)
+        a.mov(rdx, ptr(rcx, L.savedClosure));
+        a.mov(ptr(rdi, OFF_CLOSURE), rdx);
+    }
     a.mov(rdx, ptr(rcx, L.savedMethod));
     a.mov(ptr(rdi, OFF_METHOD), rdx);
     if (!::pharo::mcfX86Compact()) {
@@ -2397,11 +2403,14 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     }
     a.mov(r10, ptr(rdi, OFF_RECEIVER));
     a.mov(ptr(rcx, L.savedReceiver), r10);
-    a.mov(r10, ptr(rdi, OFF_CLOSURE));
-    a.mov(ptr(rcx, L.savedClosure), r10);
-    a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
-    a.mov(r10, ptr(r10));
-    a.mov(ptr(rcx, L.savedActiveContext), r10);
+    if (!jit::g_mcfLazyCloAct) {
+        // Lazy (trim steps 7-8): C++ derives both (recClosure, recActiveCtx).
+        a.mov(r10, ptr(rdi, OFF_CLOSURE));
+        a.mov(ptr(rcx, L.savedClosure), r10);
+        a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
+        a.mov(r10, ptr(r10));
+        a.mov(ptr(rcx, L.savedActiveContext), r10);
+    }
     a.mov(r10, ptr(rdi, OFF_JITMETHOD));
     a.mov(ptr(rcx, L.mcJM), r10);
     a.mov(r10, ptr(rdi, OFF_MCF_MATCTX_PTR));
@@ -3207,7 +3216,8 @@ static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAf
     a.mov(rdx, ptr(rdx, -8));
     a.mov(ptr(rdi, OFF_RECEIVER), rdx);
     a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
-    a.mov(ptr(rdi, OFF_CLOSURE), rdx);           // a method frame
+    if (!jit::g_mcfLazyCloAct)
+        a.mov(ptr(rdi, OFF_CLOSURE), rdx);       // a method frame
     a.sub(r10d, asmjit::Imm(nArgs));
     a.jle(tDone);
     a.bind(tLoop);
@@ -3453,7 +3463,7 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
     a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
     a.mov(rcx, ptr(rdx, -8));                    // the closure (fp[0])
-    a.mov(ptr(rdi, OFF_CLOSURE), rcx);
+    if (!jit::g_mcfLazyCloAct) a.mov(ptr(rdi, OFF_CLOSURE), rcx);
     a.mov(r10, ptr(rcx, 32));                    // slot 3: the outer receiver
     a.mov(ptr(rdi, OFF_RECEIVER), r10);
     // Copied values (closure slots 4..) after the arguments, then nil.
@@ -19447,6 +19457,10 @@ void pharo::jit::mcfBuildStubs() {
 #if defined(__x86_64__) || defined(_M_X64)
     if (!g_x86PrimStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS))
         g_x86PrimStub = buildX86StubPage(emitX86PrimStub);
+    // Trim steps 7-8 on x86: native records hold no closure or active
+    // context (recClosure, recActiveCtx and mcfDeriveClosure derive them).
+    if (::pharo::mcfX86Compact() && !GET_DEBUG_BOOL(PHARO_X86_NO_LAZY_CLOSURE))
+        g_mcfLazyCloAct = true;
 #endif
 #if defined(__aarch64__) || defined(_M_ARM64)
     if (!g_mcfPrimStub[0]) {
