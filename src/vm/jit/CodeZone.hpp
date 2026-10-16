@@ -581,6 +581,18 @@ private:
     void linkMethod(JITMethod* method) {
         uint8_t* addr = reinterpret_cast<uint8_t*>(method);
 
+        // A bump allocation lies above every method: append at the tail.
+        // The walk from the head made each compile O(methods) -- half of the
+        // start-up compile queue's time was this loop.
+        if (lastMethod_ && reinterpret_cast<uint8_t*>(lastMethod_) < addr) {
+            method->prevInZone = lastMethod_;
+            method->nextInZone = nullptr;
+            lastMethod_->nextInZone = method;
+            lastMethod_ = method;
+            pcIndexDirty_ = true;
+            return;
+        }
+
         // Find insertion point (address order)
         JITMethod* prev = nullptr;
         JITMethod* curr = firstMethod_;
