@@ -15,7 +15,20 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-18, 21:00) -- x86 at 3x Cog, from 10x
+## Right now (2026-10-16 by the machine clock) -- x86 at 2.3x Cog
+
+- The x86 call path has the arm64 trims: compact records, no closure or
+  active context in records, r12/r13/r14 pinned (tempBase, receiver,
+  JIT method) with the lazy method view, short pushes, cold slow paths,
+  native perform:.  x86 lexicon 485 billion instructions, 27 s against
+  Cog's 11.9 s.  Detail: docs/x86-mcf-port.md, last section.
+- Sweeps X8 and X9 (x86): 27810-27811 of 27996 pass; the only extra is a
+  LinkInstallerTest timeout under load.  X10 runs on `70b9f8cc`.
+- Not pushed since `5bae4280`: push after a clean X10 and an arm64 sweep.
+- The dates in the entries below (10-17, 10-18) are wrong; the machine
+  clock said 10-15 and 10-16.
+
+## Earlier -- x86 at 3x Cog, from 10x
 
 - x86 machine-code frames are the default on macOS and Linux
   (`632afcd8`).  Since then: the x86 primitive stub (most common

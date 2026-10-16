@@ -168,3 +168,43 @@ the temporaries' base and the literals in the state, not in registers,
 and every native call writes a full 13-field frame record and an
 8-field view.  The arm64 trims (pinned registers, the lazy view, the
 compact record) would need the same change in the x86 emitter.
+
+## Status (2026-10-16, machine clock; the entries above have wrong dates)
+
+The x86 call path now has the arm64 trims:
+
+- `35f13a46`: compact native records (recFull 0, the ip offset in the
+  info word).  The view keeps no arg count or bytecode end;
+  `mcfDeriveView` derives them on x86 too (`mcfX86Compact()`).
+- `24e8012b`: no closure or active context in native records
+  (`g_mcfLazyCloAct` on x86).
+- `cd6a1e6f`, `70b9f8cc`: r12 = tempBase, r13 = receiver, r14 = the JIT
+  method, r15 = the state.  `JIT_CALL` loads them.  They are
+  write-through mirrors: each store of the state field also sets the
+  register, and each C helper call (`emitCallCHelper_x86`) reloads them
+  from the state.  The call and the return no longer write the state's
+  method and literals (`x86LazyMethod()`).
+- `fc539c72`: pushes and pops address rbx directly.  Arithmetic slow
+  paths and the conditional jump of a fused compare go to a cold
+  section at the end of the method.
+- `96dfe9ab`: native `perform:`, and a per-site cache for the special
+  sends that the inline code refuses.
+
+Results (x86 under Rosetta, the machine loaded by a sweep):
+
+    lexicon            563 -> 485 G instructions, wall 35 -> 27 s (Cog 11.9 s)
+    zzFib per call     377 -> about 210 translated instructions (Cog 145)
+    1 to: 2e7 do: [s := s + i]    133 -> 92 ms
+
+Opt-outs (diag builds only): `PHARO_X86_NO_SHORT_PUSH`, `PHARO_X86_NO_COLD`,
+`PHARO_X86_NO_COLD_JUMP`, `PHARO_X86_NO_COMPACT_RECORD`,
+`PHARO_X86_NO_LAZY_CLOSURE`, `PHARO_X86_NO_PIN_REGS`,
+`PHARO_X86_NO_LAZY_METHOD`.
+
+The next x86 levers:
+
+- The operand stack is still in memory (no simStack and no TOS
+  register, unlike arm64).
+- The inline cache of a send is a linear six-entry probe, followed by a
+  call-cache lookup.
+- The native call code is inline at each send site.
