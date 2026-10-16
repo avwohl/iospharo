@@ -133,9 +133,9 @@ The scenario scripts in `scripts/cogdiff/` found three more:
   Cog kills them (`797efdc0`).
 
 Process scheduling (16 scenarios), exceptions (24) and immutability,
-pinning and reflection (31) agree with Cog.  One difference is kept on
-purpose: a dead context's temp that was assigned before `thisContext`
-answers its value; Cog answers nil, because its context never received
+pinning and reflection (31) agree with Cog.  We keep one difference on
+purpose.  A dead context gives the value of a temp that the method set
+before `thisContext`.  Cog gives nil, because its context never got the
 temps from the frame.
 
 Two differences are Cog defects, not ours:
