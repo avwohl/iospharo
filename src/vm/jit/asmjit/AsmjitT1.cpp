@@ -8715,6 +8715,57 @@ static void emitMcfBlockStub(asmjit::a64::Assembler& a) {
         a.ldr(x10, ptr(x7, 24));
         a.tst(x10, asmjit::Imm(kMcfBlockNLR));
         a.b_eq(noNLR);
+        if (g_mcfNlrMemoBlockAddr && !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_MEMO_INLINE)) {
+            // The interpreter's block-home memo first (the x86 block call's
+            // test): a do: loop calls the same block per element, and the
+            // memo frame still holding the closure's outer context and the
+            // home method is the answer (mcfSetBlockHome's first test).
+            // x12/x13 are free here: the record is written.
+            const McfFrameLayout& L = g_mcfLayout;
+            asmjit::Label slowHome = a.new_label();
+            a.mov(x16, asmjit::Imm((uint64_t)g_mcfNlrMemoBlockAddr));
+            a.ldr(x16, ptr(x16));
+            a.ldr(x17, ptr(x1, 16));                       // the closure's CompiledBlock
+            a.cmp(x16, x17);
+            a.b_ne(slowHome);
+            a.mov(x16, asmjit::Imm((uint64_t)g_mcfNlrMemoFrameAddr));
+            a.ldr(x16, ptr(x16));                          // the memo frame
+            mcfFieldLdr(a, x11, L.dirDepth, OFF_MCF_DEPTH_PTR, x17);   // frameDepth_
+            a.cmp(x16, x11);
+            a.b_hs(slowHome);
+            a.ldr(x17, ptr(x1, 8));                        // the closure's outer context
+            a.tst(x17, asmjit::Imm(7));
+            a.b_ne(slowHome);
+            if (mcfShortcuts()) {
+                a.cmp(x17, x27);
+            } else {
+                a.ldr(x12, ptr(x0, OFF_MCF_NIL));
+                a.cmp(x17, x12);
+            }
+            a.b_eq(slowHome);
+            if (mcfPinnedRegs() && L.size == 128) {
+                a.mov(x13, x24);
+            } else {
+                a.ldr(x13, ptr(x0, OFF_MCF_FRAMES));
+            }
+            a.mov(x12, asmjit::Imm(L.size));
+            a.madd(x10, x16, x12, x13);                    // &savedFrames_[memo]
+            a.ldr(x12, ptr(x10, L.materializedContext));
+            a.cmp(x17, x12);
+            a.b_ne(slowHome);
+            a.mov(x17, asmjit::Imm((uint64_t)g_mcfNlrMemoHomeAddr));
+            a.ldr(x17, ptr(x17));
+            a.ldr(x12, ptr(x10, L.savedMethod));
+            a.cmp(x17, x12);
+            a.b_ne(slowHome);
+            a.sub(x11, x11, asmjit::Imm(1));
+            a.mov(x12, asmjit::Imm(L.size));
+            a.madd(x10, x11, x12, x13);                    // the block's record
+            a.add(w16, w16, asmjit::Imm(1));
+            a.str(w16, ptr(x10, L.homeFramePlus1));
+            a.b(noNLR);
+            a.bind(slowHome);
+        }
         emitSyncSpToState(a);
         a.stp(x0, x30, ptr_pre(sp, -32));
         a.str(x9, ptr(sp, 16));
