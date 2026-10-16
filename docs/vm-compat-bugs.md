@@ -1,6 +1,22 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
-## OPEN 2026-10-14 — ProcessSpecificTest>>testLocalVariable fails 1 run in 3-5 on a fake-GUI image
+## FIXED 2026-10-17 (`d27dd451`) — ProcessSpecificTest>>testLocalVariable fails 1 run in 3-5 on a fake-GUI image
+
+Root cause: primitive 230 (`relinquishProcessorForMicroseconds:`) hands
+the CPU down to a lower-priority runnable process.  It first handles
+events and the timer, and a timer fire switches to the Delay timer
+process (priority 80).  The primitive then read the active process again
+and handed the CPU down from the TIMER process.  The timer process stayed
+runnable but did not run while priority 40-79 code ran.  The test's main
+process then found `timingSemaphore` not waited on, so its
+`waitTimeoutMilliseconds:` Delay was "not being waited on" and answered
+"expired" at once.  The assertion on `p2stopped` then failed.  Any
+printing hid the race; an in-memory event ring (`PHARO_EVENT_RING`,
+diag builds) caught it.  The primitive now returns when event handling
+switched away from its caller.  After the fix, 0 of 12 runs fail (6 of
+12 before).
+
+The history below is the hunt before the fix.
 
 First seen in sweep L17.  The test forks two processes that set and check
 a ProcessLocalVariable around 30 ms Delays.  Measured with
