@@ -2246,10 +2246,12 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
             a.cmp(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
             a.jne(fall);
         }
-        a.cmp(byte_ptr(rcx, L.savedArgCount + 3), asmjit::Imm(1));   // recFull
-        a.jne(fall);
-        a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
-        a.jne(fall);
+        if (!::pharo::mcfX86Compact()) {
+            a.cmp(byte_ptr(rcx, L.savedArgCount + 3), asmjit::Imm(1));   // recFull
+            a.jne(fall);
+            a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
+            a.jne(fall);
+        }
     }
     // Commit: popFrame.  Widow the returning frame's context (sender and
     // pc nil, as widowReturningContext; nil needs no store barrier).
@@ -2283,13 +2285,17 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.mov(ptr(rdi, OFF_CLOSURE), rdx);
     a.mov(rdx, ptr(rcx, L.savedMethod));
     a.mov(ptr(rdi, OFF_METHOD), rdx);
-    a.mov(r8, ptr(rcx, L.savedBytecodeEnd));
-    a.sub(r8, rdx);
-    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), r8);
+    if (!::pharo::mcfX86Compact()) {
+        a.mov(r8, ptr(rcx, L.savedBytecodeEnd));
+        a.sub(r8, rdx);
+        a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), r8);
+    }
     a.add(rdx, asmjit::Imm(16));
     a.mov(ptr(rdi, OFF_LITERALS), rdx);
-    a.movzx(edx, byte_ptr(rcx, L.savedArgCount));
-    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
+    if (!::pharo::mcfX86Compact()) {
+        a.movzx(edx, byte_ptr(rcx, L.savedArgCount));
+        a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
+    }
     a.mov(rdx, ptr(rcx, L.mcJM));
     a.mov(ptr(rdi, OFF_JITMETHOD), rdx);
     a.jmp(rsi);                                  // (no ip store: see the call)
@@ -2363,18 +2369,34 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     // The caller's record.
     a.mov(rdx, ptr(rdi, OFF_METHOD));
     a.mov(ptr(rcx, L.savedMethod), rdx);
-    a.lea(r10, ptr(rdx, ipAfterOff));
-    a.mov(ptr(rcx, L.savedIP), r10);
-    a.mov(r10, rdx);
-    a.add(r10, ptr(rdi, OFF_MCF_BCEND_OFF));
-    a.mov(ptr(rcx, L.savedBytecodeEnd), r10);
-    a.mov(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
+    if (::pharo::mcfX86Compact() && ipAfterOff >= 0 && ipAfterOff <= 0xFFFF) {
+        // Compact (recFull 0): the info word is the ip's offset from the
+        // method (16 bits); the 8-byte store also zeroes ctxSynced, recFull
+        // and homeFramePlus1.  C++ derives the ip, the arg count and the
+        // bytecode end (SavedFrame::ip(), argCount(), bcEnd()).
+        a.mov(qword_ptr(rcx, L.savedArgCount), asmjit::Imm(ipAfterOff));
+    } else if (::pharo::mcfX86Compact()) {
+        // recFull 2: a raw ip and arg count, no tail fields.
+        a.lea(r10, ptr(rdx, ipAfterOff));
+        a.mov(ptr(rcx, L.savedIP), r10);
+        a.mov(r10, ptr(rdi, OFF_JITMETHOD));
+        a.movzx(r10d, byte_ptr(r10, (int)offsetof(JITMethod, argCount)));
+        a.or_(r10d, asmjit::Imm((nArgs << 8) | (2 << 24)));   // ctxSynced 0, recFull 2
+        a.mov(qword_ptr(rcx, L.savedArgCount), r10);           // homeFramePlus1 0
+    } else {
+        a.lea(r10, ptr(rdx, ipAfterOff));
+        a.mov(ptr(rcx, L.savedIP), r10);
+        a.mov(r10, rdx);
+        a.add(r10, ptr(rdi, OFF_MCF_BCEND_OFF));
+        a.mov(ptr(rcx, L.savedBytecodeEnd), r10);
+        a.mov(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
+        a.movzx(r10d, byte_ptr(rdi, OFF_ARGCOUNT));
+        a.or_(r10d, asmjit::Imm((nArgs << 8) | (1 << 24)));   // ctxSynced 0, recFull 1
+        a.mov(dword_ptr(rcx, L.savedArgCount), r10d);
+        a.mov(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
+    }
     a.mov(r10, ptr(rdi, OFF_RECEIVER));
     a.mov(ptr(rcx, L.savedReceiver), r10);
-    a.movzx(r10d, byte_ptr(rdi, OFF_ARGCOUNT));
-    a.or_(r10d, asmjit::Imm((nArgs << 8) | (1 << 24)));   // ctxSynced 0, recFull 1
-    a.mov(dword_ptr(rcx, L.savedArgCount), r10d);
-    a.mov(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
     a.mov(r10, ptr(rdi, OFF_CLOSURE));
     a.mov(ptr(rcx, L.savedClosure), r10);
     a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
@@ -3165,14 +3187,18 @@ static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAf
     a.mov(ptr(rdi, OFF_METHOD), rax);
     a.lea(r10, ptr(rax, 16));
     a.mov(ptr(rdi, OFF_LITERALS), r10);
-    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
+    if (!::pharo::mcfX86Compact())
+        a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
     a.mov(ptr(rdi, OFF_JITMETHOD), r9);
     a.mov(r10, ptr(r8, 16));
     // No ip store: every exit and helper call that reads the state's ip
     // stores its own bytecode first (as the arm64 lazy view has it).
-    a.mov(edx, r10d);
-    a.and_(edx, asmjit::Imm(0xFFFFFF));
-    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
+    // Compact: no bytecode end either (C++ derives it).
+    if (!::pharo::mcfX86Compact()) {
+        a.mov(edx, r10d);
+        a.and_(edx, asmjit::Imm(0xFFFFFF));
+        a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
+    }
     a.shr(r10, asmjit::Imm(48));
     a.and_(r10d, asmjit::Imm(0xFF));             // temp count
     emitLoadSp_x86(a, r11);
@@ -3411,14 +3437,18 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.mov(ptr(rdi, OFF_METHOD), rax);
     a.lea(r10, ptr(rax, 16));
     a.mov(ptr(rdi, OFF_LITERALS), r10);
-    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
+    if (!::pharo::mcfX86Compact())
+        a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
     a.mov(ptr(rdi, OFF_JITMETHOD), r9);
     a.mov(r10, ptr(r8, 16));
     // No ip store: every exit and helper call that reads the state's ip
     // stores its own bytecode first (as the arm64 lazy view has it).
-    a.mov(edx, r10d);
-    a.and_(edx, asmjit::Imm(0xFFFFFF));
-    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
+    // Compact: no bytecode end either (C++ derives it).
+    if (!::pharo::mcfX86Compact()) {
+        a.mov(edx, r10d);
+        a.and_(edx, asmjit::Imm(0xFFFFFF));
+        a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
+    }
     emitLoadSp_x86(a, r11);
     a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
     a.mov(ptr(rdi, OFF_TEMPBASE), rdx);

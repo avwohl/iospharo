@@ -810,7 +810,8 @@ void Interpreter::mcfVerifyPush(jit::JITState* st) {
     const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
     if (f.ip() <= bc0 || f.ip() > end) bad("savedIP outside caller");
     // The lazy view leaves savedBytecodeEnd null (derived when read).
-    if (f.bcEnd() != end && !(f.bcEnd() == nullptr && ::pharo::mcfLazyView()))
+    if (f.bcEnd() != end && !(f.bcEnd() == nullptr
+                              && (::pharo::mcfLazyView() || ::pharo::mcfX86Compact())))
         bad("savedBytecodeEnd");
     if (f.fp()[0].rawBits() != (recClosure(f).isNil() ? f.savedReceiver
                                                          : recClosure(f)).rawBits())
@@ -1158,7 +1159,7 @@ void Interpreter::mcfActivateBlock() {
 // Lazy view: machine code keeps only x19 (published to st.jitMethod at
 // every exit and helper call); the rest of the view follows from it.
 void Interpreter::mcfDeriveView(jit::JITState& st) {
-    if (!::pharo::mcfLazyView()) return;
+    if (!::pharo::mcfLazyView() && !::pharo::mcfX86Compact()) return;
     jit::JITMethod* jm = st.jitMethod;
     if (!jm || !jm->compiledMethodOop) return;
     st.method = Oop::fromRawBits(jm->compiledMethodOop);

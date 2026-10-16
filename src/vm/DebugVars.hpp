@@ -123,6 +123,20 @@ inline bool mcfLazyView() {
     return mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_LAZY_VIEW);
 }
 
+// x86 machine-code frames: compact native records (the ip in the info
+// word, recFull 0, as the arm64 trim's stage 4) and no arg count or bytecode
+// end in the state view; C++ derives both from the JIT method
+// (mcfDeriveView).  The method, literals and JIT method stay in the view.
+inline bool mcfX86Compact() {
+#if defined(__x86_64__) || defined(_M_X64)
+    // recFull 0 records need jit::g_mcfIpInInfo (PHARO_MCF_NO_IP_IN_INFO off).
+    return mcfMode() && !GET_DEBUG_BOOL(PHARO_X86_NO_COMPACT_RECORD)
+        && !GET_DEBUG_BOOL(PHARO_MCF_NO_IP_IN_INFO);
+#else
+    return false;
+#endif
+}
+
 inline bool resumeInternalJ2JEnabled() {
 #if defined(__aarch64__) || defined(__arm64__)
     if (mcfEnabled()) return false;   // MCF emits no inline J2J at all
