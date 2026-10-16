@@ -1780,6 +1780,9 @@ private:
             }
         }
         extCallCache_.fill(ExtCallCacheEntry{});
+#if PHARO_JIT_ENABLED
+        jit::mcfClearPerformCache();   // it caches lookups too
+#endif
         for (auto& entry : methodCache_) {
             entry.selector = Oop::nil();
             entry.classOop = Oop::nil();

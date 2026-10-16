@@ -302,9 +302,28 @@ inline void mcfPurgeCallCacheRange(uint64_t lo, uint64_t hi) {
         if (e.methodBits >= lo && e.methodBits < hi) e = McfCallEntry{};
     }
 }
+// The perform: cache: (selector, receiver class key | argument count << 32)
+// -> the performed method and its call-cache entry, filled by
+// mcfPerformTarget, probed by T1's perform: site before it calls C.  Only
+// old selectors and methods go in (a scavenge cannot reuse their
+// addresses); the entry's methodBits is checked at each hit.
+struct McfPerformEntry {
+    uint64_t selector;
+    uint64_t key;
+    uint64_t method;
+    McfCallEntry* entry;
+};
+static_assert(sizeof(McfPerformEntry) == 32, "T1 indexes McfPerformEntry with lsl #5");
+constexpr size_t kMcfPerformCacheSize = 256;
+inline McfPerformEntry* g_mcfPerformCache = nullptr;
+inline void mcfClearPerformCache() {
+    if (g_mcfPerformCache)
+        std::memset(g_mcfPerformCache, 0, sizeof(McfPerformEntry) * kMcfPerformCacheSize);
+}
 inline void mcfClearCallCache() {
     if (g_mcfCallCache)
         std::memset(g_mcfCallCache, 0, sizeof(McfCallEntry) * kMcfCallCacheSize);
+    mcfClearPerformCache();
 }
 // Set by the interpreter: clear the return memos of the live frames.  The
 // native return trusts a non-null memo, so memos into changed code must go.

@@ -246,6 +246,7 @@ struct JITState {
     uint64_t  mcfPrimStubAddr[3]; // offset 448: g_mcfPrimStub[0..2]
     uint64_t  mcfTinyStubAddr;    // offset 472: g_mcfTinyStub
     uint64_t  mcfBlockCreateStubAddr; // offset 480: g_mcfBlockCreateStub
+    uint64_t  mcfPerformCache;    // offset 488: g_mcfPerformCache (McfPerformEntry[256])
 };
 static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
 static_assert(offsetof(JITState, closure) == 320, "JITState.closure offset (JS_CLOSURE in asm)");
@@ -259,6 +260,7 @@ static_assert(offsetof(JITState, mcfBlockStubAddr) == 440, "JITState.mcfBlockStu
 static_assert(offsetof(JITState, mcfPrimStubAddr) == 448, "JITState.mcfPrimStubAddr offset");
 static_assert(offsetof(JITState, mcfTinyStubAddr) == 472, "JITState.mcfTinyStubAddr offset");
 static_assert(offsetof(JITState, mcfBlockCreateStubAddr) == 480, "JITState.mcfBlockCreateStubAddr offset");
+static_assert(offsetof(JITState, mcfPerformCache) == 488, "JITState.mcfPerformCache offset");
 
 // Verify expected offsets (stencils depend on these)
 static_assert(offsetof(JITState, sp)        == 0,  "sp offset");

@@ -5162,6 +5162,7 @@ constexpr int OFF_MCF_MATCTX_PTR   = 360;
 constexpr int OFF_MCF_ACTCTX_PTR   = 368;
 constexpr int OFF_MCF_CTDN_PTR     = 376;
 constexpr int OFF_MCF_DEPTH_LIMIT  = 384;
+constexpr int OFF_MCF_PERFORM_CACHE = 488;
 constexpr int OFF_MCF_NIL          = 392;
 constexpr int OFF_MCF_EPOCH_PTR    = 400;
 constexpr int OFF_MCF_CALL_CACHE   = 408;
@@ -5178,6 +5179,7 @@ static_assert(OFF_MCF_MATCTX_PTR == offsetof(JITState, mcfMatCtxPtr), "OFF_MCF_M
 static_assert(OFF_MCF_ACTCTX_PTR == offsetof(JITState, mcfActiveCtxPtr), "OFF_MCF_ACTCTX_PTR");
 static_assert(OFF_MCF_CTDN_PTR == offsetof(JITState, mcfCheckCountdownPtr), "OFF_MCF_CTDN_PTR");
 static_assert(OFF_MCF_DEPTH_LIMIT == offsetof(JITState, mcfDepthLimit), "OFF_MCF_DEPTH_LIMIT");
+static_assert(OFF_MCF_PERFORM_CACHE == offsetof(JITState, mcfPerformCache), "OFF_MCF_PERFORM_CACHE");
 static_assert(OFF_MCF_NIL == offsetof(JITState, mcfNil), "OFF_MCF_NIL");
 // JIT_CALL / JIT_RESUME_CALL (JITState.hpp) and pharo_jit_osr_resume
 // (TrampolineAsm.S) load the pinned x24/x27 with these offsets as literals.
@@ -12793,6 +12795,59 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(x11, asmjit::Imm(kMcfPerformMethod));
                     a.cmp(x10, x11);
                     a.b_ne(notPerform);
+                    // The perform: cache (McfPerformEntry): a hit drops the
+                    // selector and calls the target here, with no C call
+                    // (pharo_mcf_perform was ~250 of a perform's ~330
+                    // instructions).  Checks as pharo_mcf_perform's: the
+                    // entry still holds the method, and the call stub will
+                    // not refuse (depth not 0, not near the limit).
+                    asmjit::Label perfC = a.new_label(), perfHit = a.new_label();
+                    const bool perfCache = jit::g_mcfPerformCache != nullptr
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CACHE);
+                    if (perfCache) {
+                        const McfFrameLayout& PL = g_mcfLayout;
+                        emitLoadSp(a, x3);
+                        a.ldur(x1, ptr(x3, -8 * (nArgs + 1)));        // receiver
+                        a.ldur(x2, ptr(x3, -8 * nArgs));              // selector
+                        asmjit::Label immKey = a.new_label(), haveKey = a.new_label();
+                        a.ands(x4, x1, asmjit::Imm(7));
+                        a.b_ne(immKey);
+                        a.ldr(w4, ptr(x1));
+                        a.and_(w4, w4, asmjit::Imm(0x3FFFFF));        // class index
+                        a.b(haveKey);
+                        a.bind(immKey);
+                        a.orr(w4, w4, asmjit::Imm(0x80000000));       // tag | 0x80000000
+                        a.bind(haveKey);
+                        a.mov(x16, asmjit::Imm((uint64_t)nArgs << 32));
+                        a.orr(x4, x4, x16);
+                        a.eor(x16, x4, x2, asmjit::a64::lsr(3));
+                        a.and_(x16, x16, asmjit::Imm(jit::kMcfPerformCacheSize - 1));
+                        a.ldr(x17, ptr(x0, OFF_MCF_PERFORM_CACHE));
+                        a.add(x17, x17, x16, asmjit::a64::lsl(5));
+                        a.ldp(x6, x9, ptr(x17));                      // selector, key
+                        a.cmp(x6, x2);
+                        a.b_ne(perfC);
+                        a.cmp(x9, x4);
+                        a.b_ne(perfC);
+                        a.ldp(x6, x7, ptr(x17, 16));                  // method, call-cache entry
+                        a.ldr(x9, ptr(x7));                           // the entry's methodBits
+                        a.cmp(x9, x6);
+                        a.b_ne(perfC);
+                        mcfFieldLdr(a, x11, PL.dirDepth, OFF_MCF_DEPTH_PTR, x10);
+                        a.cbz(x11, perfC);
+                        a.ldr(x16, ptr(x0, OFF_MCF_DEPTH_LIMIT));
+                        a.add(x11, x11, asmjit::Imm(2));
+                        a.cmp(x11, x16);
+                        a.b_hs(perfC);
+                        for (int i = nArgs - 1; i >= 1; i--) {        // drop the selector
+                            a.ldur(x16, ptr(x3, -8 * i));
+                            a.stur(x16, ptr(x3, -8 * (i + 1)));
+                        }
+                        a.sub(x3, x3, asmjit::Imm(8));
+                        emitStoreSp(a, x3);
+                        a.b(perfHit);
+                    }
+                    a.bind(perfC);
                     emitSyncSpToState(a);
                     const bool perfInPlace = !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM);
                     if (perfInPlace) {
@@ -12820,6 +12875,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(x7, asmjit::Imm(2));
                         a.b_ls(performInPlace);
                     }
+                    a.bind(perfHit);
                     a.ldp(x6, x9, ptr(x7));
                     a.adr(x14, mcfCont);
                     a.adr(x15, mcfSlow);                     // not taken (see above)

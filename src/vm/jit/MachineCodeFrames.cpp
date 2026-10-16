@@ -1250,6 +1250,19 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
         return nullptr;
     for (int i = nArgs - 1; i >= 1; i--) sp[-(i + 1)] = sp[-i];   // drop the selector
     st->sp = sp - 1;
+    // Remember it for T1's perform: site (McfPerformEntry).  mcfReceiverOk
+    // is a property of the class when the method reads no receiver field
+    // or the receiver is not indexable.
+    if (jit::g_mcfPerformCache && memory_.isOld(selector) && memory_.isOld(target)
+            && (!e->jm->hasRecvFieldAccess
+                || (rcv.isObject() && rcv.asObjectPtr()->format() == ObjectFormat::FixedSize))) {
+        uint64_t key = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                      : (0x80000000ull | (rcv.rawBits() & 7));
+        key |= (uint64_t)nArgs << 32;
+        jit::McfPerformEntry& pe = jit::g_mcfPerformCache[
+            ((selector.rawBits() >> 3) ^ key) & (jit::kMcfPerformCacheSize - 1)];
+        pe = jit::McfPerformEntry{selector.rawBits(), key, target.rawBits(), e};
+    }
     return e;
 }
 
@@ -1887,6 +1900,8 @@ void Interpreter::mcfInit() {
     // a 128 KB memset the default mode must not pay.
     if (::pharo::mcfEnabled() && !jit::g_mcfCallCache) {
         jit::g_mcfCallCache = new jit::McfCallEntry[jit::kMcfCallCacheSize];
+        if (!GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CACHE))
+            jit::g_mcfPerformCache = new jit::McfPerformEntry[jit::kMcfPerformCacheSize];
         jit::mcfClearCallCache();
     }
 }
@@ -2430,6 +2445,7 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         for (int k = 0; k < 3; k++) c.mcfPrimStubAddr[k] = jit::g_mcfPrimStub[k];
         c.mcfTinyStubAddr = jit::g_mcfTinyStub;
         c.mcfBlockCreateStubAddr = jit::g_mcfBlockCreateStub;
+        c.mcfPerformCache = reinterpret_cast<uint64_t>(jit::g_mcfPerformCache);
         mcfConstEpoch_ = 0;
     }
     jit::JITState& st = *mcfState_;
