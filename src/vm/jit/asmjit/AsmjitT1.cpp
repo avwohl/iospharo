@@ -1934,6 +1934,37 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     }
 }
 
+// Machine-code frames: JITState offsets the emitted code uses (both arches).
+constexpr int OFF_MCF_FRAMES       = 344;
+constexpr int OFF_MCF_DEPTH_PTR    = 352;
+constexpr int OFF_MCF_MATCTX_PTR   = 360;
+constexpr int OFF_MCF_ACTCTX_PTR   = 368;
+constexpr int OFF_MCF_CTDN_PTR     = 376;
+constexpr int OFF_MCF_DEPTH_LIMIT  = 384;
+constexpr int OFF_MCF_PERFORM_CACHE = 488;
+constexpr int OFF_MCF_NIL          = 392;
+constexpr int OFF_MCF_EPOCH_PTR    = 400;
+constexpr int OFF_MCF_CALL_CACHE   = 408;
+constexpr int OFF_MCF_BCEND_OFF    = 416;
+constexpr int OFF_MCF_SITE_CACHE   = 424;
+constexpr int OFF_MCF_CALL_STUB    = 432;
+constexpr int OFF_MCF_BLOCK_STUB   = 440;
+constexpr int OFF_MCF_PRIM_STUB    = 448;   // + 8 * nArgs
+constexpr int OFF_MCF_TINY_STUB    = 472;
+constexpr int OFF_MCF_BLKCREATE_STUB = 480;
+static_assert(OFF_MCF_FRAMES == offsetof(JITState, mcfFrames), "OFF_MCF_FRAMES");
+static_assert(OFF_MCF_DEPTH_PTR == offsetof(JITState, mcfFrameDepthPtr), "OFF_MCF_DEPTH_PTR");
+static_assert(OFF_MCF_MATCTX_PTR == offsetof(JITState, mcfMatCtxPtr), "OFF_MCF_MATCTX_PTR");
+static_assert(OFF_MCF_ACTCTX_PTR == offsetof(JITState, mcfActiveCtxPtr), "OFF_MCF_ACTCTX_PTR");
+static_assert(OFF_MCF_CTDN_PTR == offsetof(JITState, mcfCheckCountdownPtr), "OFF_MCF_CTDN_PTR");
+static_assert(OFF_MCF_DEPTH_LIMIT == offsetof(JITState, mcfDepthLimit), "OFF_MCF_DEPTH_LIMIT");
+static_assert(OFF_MCF_PERFORM_CACHE == offsetof(JITState, mcfPerformCache), "OFF_MCF_PERFORM_CACHE");
+static_assert(OFF_MCF_NIL == offsetof(JITState, mcfNil), "OFF_MCF_NIL");
+// JIT_CALL / JIT_RESUME_CALL (JITState.hpp) and pharo_jit_osr_resume
+// (TrampolineAsm.S) load the pinned x24/x27 with these offsets as literals.
+static_assert(OFF_MCF_FRAMES == 344 && OFF_MCF_NIL == 392,
+              "update the literals in JIT_CALL, JIT_RESUME_CALL and pharo_jit_osr_resume");
+
 #if defined(__x86_64__) || defined(_M_X64)
 
 // ===== x86 sp-residency (build-time switch, mirrors arm64 PHARO_T1_SP_IN_X25)
@@ -2135,9 +2166,201 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 // rcx/rdx/r8/r9/r10/r11; rdi=state is preserved).  V1 J2JSave layout
 // (J2JSaveLayout.h, 56 bytes): [0]=sp [8]=receiver [16]=tempBase [24]=ip
 // [32]=jitMethod [40]=resumeAddr [48]=sendArgCount.
+// Machine-code frames on x86 (docs/x86-mcf-port.md, phase 2): the native
+// return.  rax = the result; rcx, rdx, rsi, r8-r11 are clobbered.  When the
+// caller's record holds a memo and nothing else needs the interpreter's
+// return (a context to widow, depth 0, a home-frame marker, a return slot),
+// do what returnValue + popFrame do and jump to the caller's code.
+// Otherwise fall through to the ExitReturn.  The info word of a record is
+// savedArgCountRaw, siteNArgs, ctxSynced, recFull, then homeFramePlus1
+// (asserted in mcfInit); every x86 record is a full one (recFull 1).
+static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
+    using namespace asmjit::x86;
+    const McfFrameLayout& L = g_mcfLayout;
+    asmjit::Label fall = a.new_label();
+    a.mov(r8, ptr(rdi, OFF_MCF_DEPTH_PTR));
+    a.mov(r9, ptr(r8));                          // frameDepth_
+    a.test(r9, r9);
+    a.jz(fall);
+    a.mov(r10, ptr(rdi, OFF_MCF_MATCTX_PTR));
+    a.mov(rdx, ptr(r10));                        // currentFrameMaterializedCtx_
+    a.cmp(rdx, ptr(rdi, OFF_MCF_NIL));
+    a.jne(fall);                                 // a context to widow
+    a.lea(r11, ptr(r9, -1));
+    a.imul(rcx, r11, asmjit::Imm((int)L.size));
+    a.add(rcx, ptr(rdi, OFF_MCF_FRAMES));        // &savedFrames_[depth-1]
+    a.mov(rsi, ptr(rcx, L.mcReturn));
+    a.test(rsi, rsi);
+    a.jz(fall);
+    a.cmp(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
+    a.jne(fall);
+    a.cmp(byte_ptr(rcx, L.savedArgCount + 3), asmjit::Imm(1));   // recFull
+    a.jne(fall);
+    a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
+    a.jne(fall);
+    // Commit: popFrame.
+    a.mov(ptr(r8), r11);                         // frameDepth_ = depth - 1
+    a.mov(rdx, ptr(rcx, L.materializedContext));
+    a.mov(ptr(r10), rdx);
+    a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
+    a.mov(rdx, ptr(rcx, L.savedActiveContext));
+    a.mov(ptr(r10), rdx);
+    // The result into the callee's receiver slot; sp just above it.
+    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+    a.mov(ptr(rdx, -8), rax);
+    emitStoreSp_x86(a, rdx);
+    // The caller's view.
+    a.mov(rdx, ptr(rcx, L.savedFP));             // savedTB under g_mcfTbRecord
+    if (!jit::g_mcfTbRecord) a.add(rdx, asmjit::Imm(8));
+    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    a.mov(rdx, ptr(rcx, L.savedReceiver));
+    a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+    a.mov(rdx, ptr(rcx, L.savedClosure));
+    a.mov(ptr(rdi, OFF_CLOSURE), rdx);
+    a.mov(rdx, ptr(rcx, L.savedMethod));
+    a.mov(ptr(rdi, OFF_METHOD), rdx);
+    a.mov(r8, ptr(rcx, L.savedBytecodeEnd));
+    a.sub(r8, rdx);
+    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), r8);
+    a.add(rdx, asmjit::Imm(16));
+    a.mov(ptr(rdi, OFF_LITERALS), rdx);
+    a.movzx(edx, byte_ptr(rcx, L.savedArgCount));
+    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
+    a.mov(rdx, ptr(rcx, L.mcJM));
+    a.mov(ptr(rdi, OFF_JITMETHOD), rdx);
+    a.mov(rdx, ptr(rcx, L.savedIP));
+    a.mov(ptr(rdi, OFF_IP), rdx);
+    a.jmp(rsi);
+    a.bind(fall);
+}
+
+// Machine-code frames on x86, phase 2: the native call at an inline-cache
+// hit.  rsi = the IC entry (kept for the refusal), icData[1] = the callee.
+// The callee must be in the MCF call cache with a JITMethod and no
+// primitive (mcfActivate fills it).  Writes the caller's record as
+// pushFrame does (a full record), sets the callee's view and nils its
+// temporaries, then jumps to its code.  Any refusal falls through to the
+// send exit after this code.  ipAfterOff = the ip after the send, as an
+// offset from the method oop; resume = the code after the send.
+static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff,
+                            const asmjit::Label& resume) {
+    using namespace asmjit::x86;
+    const McfFrameLayout& L = g_mcfLayout;
+    asmjit::Label refuse = a.new_label(), hit = a.new_label();
+    asmjit::Label tLoop = a.new_label(), tDone = a.new_label();
+    a.mov(rax, ptr(rsi, 8));                     // the callee method
+    a.mov(r8, ptr(rdi, OFF_MCF_CALL_CACHE));
+    a.mov(r9, rax);
+    a.shr(r9, asmjit::Imm(3));
+    a.and_(r9, asmjit::Imm((int)(kMcfCallCacheSize - 2)));
+    a.shl(r9, asmjit::Imm(5));
+    a.add(r8, r9);
+    a.cmp(ptr(r8), rax);
+    a.je(hit);
+    a.add(r8, asmjit::Imm(32));
+    a.cmp(ptr(r8), rax);
+    a.jne(refuse);
+    a.bind(hit);
+    a.cmp(qword_ptr(r8, 24), asmjit::Imm(0));    // prim: not callable here
+    a.jne(refuse);
+    a.mov(r9, ptr(r8, 8));                       // jm
+    a.test(r9, r9);
+    a.jz(refuse);
+    // A call spends 1 of the checkpoint countdown, as mcfRun's entry does.
+    a.mov(r10, ptr(rdi, OFF_MCF_CTDN_PTR));
+    a.mov(r11d, dword_ptr(r10));
+    a.sub(r11d, asmjit::Imm(1));
+    a.jle(refuse);
+    a.mov(dword_ptr(r10), r11d);
+    a.mov(r10, ptr(rdi, OFF_MCF_DEPTH_PTR));
+    a.mov(r11, ptr(r10));                        // frameDepth_
+    a.test(r11, r11);
+    a.jz(refuse);                                // depth 0: the caller is a context
+    a.cmp(r11, ptr(rdi, OFF_MCF_DEPTH_LIMIT));
+    a.jae(refuse);
+    a.imul(rcx, r11, asmjit::Imm((int)L.size));
+    a.add(rcx, ptr(rdi, OFF_MCF_FRAMES));        // &savedFrames_[depth]
+    a.add(r11, asmjit::Imm(1));
+    a.mov(ptr(r10), r11);                        // frameDepth_++
+    // The caller's record.
+    a.mov(rdx, ptr(rdi, OFF_METHOD));
+    a.mov(ptr(rcx, L.savedMethod), rdx);
+    a.lea(r10, ptr(rdx, ipAfterOff));
+    a.mov(ptr(rcx, L.savedIP), r10);
+    a.mov(r10, rdx);
+    a.add(r10, ptr(rdi, OFF_MCF_BCEND_OFF));
+    a.mov(ptr(rcx, L.savedBytecodeEnd), r10);
+    a.mov(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
+    a.mov(r10, ptr(rdi, OFF_RECEIVER));
+    a.mov(ptr(rcx, L.savedReceiver), r10);
+    a.movzx(r10d, byte_ptr(rdi, OFF_ARGCOUNT));
+    a.or_(r10d, asmjit::Imm((nArgs << 8) | (1 << 24)));   // ctxSynced 0, recFull 1
+    a.mov(dword_ptr(rcx, L.savedArgCount), r10d);
+    a.mov(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
+    a.mov(r10, ptr(rdi, OFF_CLOSURE));
+    a.mov(ptr(rcx, L.savedClosure), r10);
+    a.mov(r10, ptr(rdi, OFF_MCF_ACTCTX_PTR));
+    a.mov(r10, ptr(r10));
+    a.mov(ptr(rcx, L.savedActiveContext), r10);
+    a.mov(r10, ptr(rdi, OFF_JITMETHOD));
+    a.mov(ptr(rcx, L.mcJM), r10);
+    a.mov(r10, ptr(rdi, OFF_MCF_MATCTX_PTR));
+    a.mov(r11, ptr(r10));
+    a.mov(ptr(rcx, L.materializedContext), r11);
+    a.mov(r11, ptr(rdi, OFF_MCF_NIL));
+    a.mov(ptr(r10), r11);                        // the callee has no context
+    a.mov(r10, ptr(rdi, OFF_TEMPBASE));
+    if (!jit::g_mcfTbRecord) a.sub(r10, asmjit::Imm(8));
+    a.mov(ptr(rcx, L.savedFP), r10);
+    a.lea(r10, ptr(resume));
+    a.mov(ptr(rcx, L.mcReturn), r10);
+    // The callee's view.  entry.bcEndOff packs the bytecode end (bits
+    // 0-23), start (24-47) and temp count (48-55) (mcfPackBcInfo).
+    a.mov(ptr(rdi, OFF_METHOD), rax);
+    a.lea(r10, ptr(rax, 16));
+    a.mov(ptr(rdi, OFF_LITERALS), r10);
+    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
+    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
+    a.mov(r10, ptr(r8, 16));
+    a.mov(rdx, r10);
+    a.shr(rdx, asmjit::Imm(24));
+    a.and_(edx, asmjit::Imm(0xFFFFFF));
+    a.add(rdx, rax);
+    a.mov(ptr(rdi, OFF_IP), rdx);
+    a.mov(edx, r10d);
+    a.and_(edx, asmjit::Imm(0xFFFFFF));
+    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
+    a.shr(r10, asmjit::Imm(48));
+    a.and_(r10d, asmjit::Imm(0xFF));             // temp count
+    emitLoadSp_x86(a, r11);
+    a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
+    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    a.mov(rdx, ptr(rdx, -8));
+    a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+    a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
+    a.mov(ptr(rdi, OFF_CLOSURE), rdx);           // a method frame
+    a.sub(r10d, asmjit::Imm(nArgs));
+    a.jle(tDone);
+    a.bind(tLoop);
+    a.mov(ptr(r11), rdx);
+    a.add(r11, asmjit::Imm(8));
+    a.sub(r10d, asmjit::Imm(1));
+    a.jg(tLoop);
+    a.bind(tDone);
+    emitStoreSp_x86(a, r11);
+    a.lea(r10, ptr(r9, (int)sizeof(JITMethod)));
+    a.jmp(r10);
+    a.bind(refuse);
+}
+
 static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
                                      asmjit::x86::Gp retval) {
     using namespace asmjit::x86;
+    if (::pharo::mcfMode()) {
+        (void)retval;   // rax
+        if (!g_emitIsBlock && !GET_DEBUG_BOOL(PHARO_MCF_NO_RET)) emitMcfReturn_x86(a);
+        return;
+    }
     if (!g_emitX86J2JOk) return;
 #if PHARO_J2J_SAVE_V2
     // V2 prelude (mirror arm64 emitJ2JReturnPrelude_arm64 V2 tail, 4216-4226):
@@ -4009,6 +4232,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // === Plain cached dispatch (no inline opt) ===
             // Emit deferred state setup here (chain loop reads it).
             a.bind(dispatchCached);
+            if (::pharo::mcfMode() && !g_emitIsBlock && !GET_DEBUG_BOOL(PHARO_MCF_NO_CALL))
+                emitMcfCall_x86(a, nArgs,
+                                bcOffsetFromMethObj + (extSendEmit ? 2 : 1), endOfSend);
             a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
             a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
             a.mov(rax, ptr(rdi, OFF_METHOD));
@@ -5157,35 +5383,6 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
 // view, store the result in the callee's receiver slot -- and branch to the
 // caller's code.  Otherwise fall through to the normal ExitReturn, and the
 // interpreter returns (widowing a materialized context, depth 0, ...).
-constexpr int OFF_MCF_FRAMES       = 344;
-constexpr int OFF_MCF_DEPTH_PTR    = 352;
-constexpr int OFF_MCF_MATCTX_PTR   = 360;
-constexpr int OFF_MCF_ACTCTX_PTR   = 368;
-constexpr int OFF_MCF_CTDN_PTR     = 376;
-constexpr int OFF_MCF_DEPTH_LIMIT  = 384;
-constexpr int OFF_MCF_PERFORM_CACHE = 488;
-constexpr int OFF_MCF_NIL          = 392;
-constexpr int OFF_MCF_EPOCH_PTR    = 400;
-constexpr int OFF_MCF_CALL_CACHE   = 408;
-constexpr int OFF_MCF_BCEND_OFF    = 416;
-constexpr int OFF_MCF_SITE_CACHE   = 424;
-constexpr int OFF_MCF_CALL_STUB    = 432;
-constexpr int OFF_MCF_BLOCK_STUB   = 440;
-constexpr int OFF_MCF_PRIM_STUB    = 448;   // + 8 * nArgs
-constexpr int OFF_MCF_TINY_STUB    = 472;
-constexpr int OFF_MCF_BLKCREATE_STUB = 480;
-static_assert(OFF_MCF_FRAMES == offsetof(JITState, mcfFrames), "OFF_MCF_FRAMES");
-static_assert(OFF_MCF_DEPTH_PTR == offsetof(JITState, mcfFrameDepthPtr), "OFF_MCF_DEPTH_PTR");
-static_assert(OFF_MCF_MATCTX_PTR == offsetof(JITState, mcfMatCtxPtr), "OFF_MCF_MATCTX_PTR");
-static_assert(OFF_MCF_ACTCTX_PTR == offsetof(JITState, mcfActiveCtxPtr), "OFF_MCF_ACTCTX_PTR");
-static_assert(OFF_MCF_CTDN_PTR == offsetof(JITState, mcfCheckCountdownPtr), "OFF_MCF_CTDN_PTR");
-static_assert(OFF_MCF_DEPTH_LIMIT == offsetof(JITState, mcfDepthLimit), "OFF_MCF_DEPTH_LIMIT");
-static_assert(OFF_MCF_PERFORM_CACHE == offsetof(JITState, mcfPerformCache), "OFF_MCF_PERFORM_CACHE");
-static_assert(OFF_MCF_NIL == offsetof(JITState, mcfNil), "OFF_MCF_NIL");
-// JIT_CALL / JIT_RESUME_CALL (JITState.hpp) and pharo_jit_osr_resume
-// (TrampolineAsm.S) load the pinned x24/x27 with these offsets as literals.
-static_assert(OFF_MCF_FRAMES == 344 && OFF_MCF_NIL == 392,
-              "update the literals in JIT_CALL, JIT_RESUME_CALL and pharo_jit_osr_resume");
 
 // Machine-code frames' pinned registers (plan step 7): x24 = savedFrames_
 // base, x27 = nil, loaded at every C++ -> T1 entry (JIT_CALL,

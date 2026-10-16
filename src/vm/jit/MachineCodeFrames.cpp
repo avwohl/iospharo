@@ -1281,7 +1281,14 @@ bool Interpreter::mcfActivate(Oop method) {
         const int primIdx = hasPrim ? primitiveIndexOf(method) : 0;
         const bool markerPrim = (primIdx == 198 || primIdx == 199)
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL);
-        if (bisectOk && (!hasPrim || markerPrim || mcfPrologueIsPrimitive(method)) && mcfCacheableOop(method)
+#if defined(__x86_64__) || defined(_M_X64)
+        // x86 port phase 2: the native call jumps to codeStart, which runs
+        // no primitive protocol yet; only methods without one.
+        const bool primOk = !hasPrim;
+#else
+        const bool primOk = !hasPrim || markerPrim || mcfPrologueIsPrimitive(method);
+#endif
+        if (bisectOk && primOk && mcfCacheableOop(method)
                 && (!jm->hasRecvFieldAccess || receiver_.isObject())
                 && mcfPackBcInfo(method.rawBits(), bytecodeEnd_, jm)) {
             jit::McfCallEntry& e = *jit::mcfCallSlotForCall(method.rawBits());
@@ -1998,6 +2005,12 @@ void Interpreter::mcfInit() {
                     == (ptrdiff_t)sizeof(SavedFrame)
                 && mcfGuardFrame_.mcReturn == nullptr;
     L.mcJM = offsetof(SavedFrame, mcJM);
+    // The x86 native push and return treat these as one info word.
+    static_assert(offsetof(SavedFrame, siteNArgs) == offsetof(SavedFrame, savedArgCountRaw) + 1
+                  && offsetof(SavedFrame, ctxSynced) == offsetof(SavedFrame, savedArgCountRaw) + 2
+                  && offsetof(SavedFrame, recFull) == offsetof(SavedFrame, savedArgCountRaw) + 3
+                  && offsetof(SavedFrame, homeFramePlus1) == offsetof(SavedFrame, savedArgCountRaw) + 4,
+                  "SavedFrame info word layout (emitMcfCall_x86, emitMcfReturn_x86)");
 #pragma GCC diagnostic pop
     // The fields T1 call and return code touch, as offsets from the state
     // (mcfStateStorage_ is a member, so they are fixed): usable when a
