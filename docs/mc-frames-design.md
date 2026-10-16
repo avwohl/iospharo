@@ -454,6 +454,36 @@ Remaining cost per native call and return: about 150 instructions (call
 site, IC, call-cache probe, stub, frame record, return checks).  Stock
 Cog under Rosetta runs a send loop about 4x faster.
 
+### Speed work, 2026-10-16
+
+1. **Read-only checkpoint countdown.**  A native call only tests the
+   countdown.  The heartbeat tick, an external signal and a full eden set
+   it to 0 (`requestCheckpoint`).  The perform: call stub has no countdown
+   test: `pharo_mcf_perform` tests it before it removes the selector, and
+   the heartbeat can change it between the two tests.
+2. **Immediate literals.**  A SmallInteger, Character or SmallFloat
+   literal is a simStack constant (two loads per use before).
+3. **NLR through one ensure:** skips the image unwind protocol
+   (docs/native-nlr-plan.md, "Ensure shortcut").  Lexicon 222.5 -> 187.5.
+4. **perform: cache.**  `McfPerformEntry[256]` in `JITMethod.hpp`, keyed by
+   selector, receiver class key and argument count.  An entry holds one
+   of these:
+   - a native call: the method and its call-cache entry (checked at each
+     hit);
+   - a quick result: a constant, self, or an instance variable of a
+     non-indexable receiver;
+   - a primitive index, run through `pharo_mcf_prim` with the selector
+     dropped.  On failure the selector goes back and the C path runs.
+   `mcfPerformTarget` and `mcfPerformInPlace` fill the cache, for old
+   selectors and methods only.  The call cache and the method cache clear
+   it.  Opt-out `PHARO_MCF_NO_PERFORM_CACHE`.
+5. **Primitive 197** (`findNextHandlerOrSignalingContext`) is called
+   natively, as 195 is.
+
+Measured against Cog (Cog under Rosetta): lexicon 11.4 s vs 11.6-12 s;
+tinyBenchmarks bytecodes at parity, sends 68% of Cog; package test
+classes 714 s vs 1546 s in total.
+
 ## 5. Debugging the mode
 
 The switches below are plain `DEBUG_BOOL` / `DEBUG_INT` knobs: they work
