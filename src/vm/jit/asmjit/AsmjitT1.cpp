@@ -3335,6 +3335,7 @@ static uint64_t buildX86StubPage(void (*emit)(asmjit::x86::Assembler&)) {
 
 static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff,
                                  const asmjit::Label& resume);
+static void emitClassKey_x86(asmjit::x86::Assembler& a);
 
 // The native call proper, from a call-cache entry: rax = the callee
 // method, r8 = its entry, r9 = its JITMethod.  Pushes the caller's record,
@@ -3460,6 +3461,189 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
             asmjit::Label pNotDeopt = a.new_label(), pNever = a.new_label();
             a.cmp(r10, asmjit::Imm((int)kMcfPerformMethod));
             a.jne(notPerform);
+            asmjit::Label perfC = a.new_label();
+            if (jit::g_mcfPerformCache && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CACHE)) {
+                // The perform: cache (McfPerformEntry, the arm64 path's): a
+                // hit drops the selector and calls the target, or answers a
+                // quick method or a primitive, with no pharo_mcf_perform.
+                asmjit::Label quick = a.new_label(), notPrim = a.new_label();
+                asmjit::Label notConst = a.new_label(), notD0 = a.new_label();
+                a.mov(rcx, ptr(rbx, -8 * (nArgs + 1)));  // the receiver
+                a.mov(rdx, ptr(rbx, -8 * nArgs));        // the selector
+                emitClassKey_x86(a);                     // r9 = the class key
+                a.mov(r10, asmjit::Imm((uint64_t)nArgs << 32));
+                a.or_(r9, r10);
+                a.mov(r10, rdx);
+                a.shr(r10, asmjit::Imm(3));
+                a.xor_(r10, r9);
+                a.and_(r10, asmjit::Imm((int)(jit::kMcfPerformCacheSize - 1)));
+                a.shl(r10, asmjit::Imm(5));
+                a.add(r10, ptr(rdi, OFF_MCF_PERFORM_CACHE));
+                a.cmp(ptr(r10), rdx);
+                a.jne(perfC);
+                a.cmp(ptr(r10, 8), r9);
+                a.jne(perfC);
+                a.mov(r8, ptr(r10, 24));                 // the entry word
+                a.test(r8b, asmjit::Imm(1));
+                a.jnz(quick);
+                a.mov(rdx, ptr(r10, 16));                // the target method
+                a.cmp(ptr(r8), rdx);                     // the entry still holds it
+                a.jne(perfC);
+                a.cmp(qword_ptr(r8, 24), asmjit::Imm(0));
+                a.jne(perfC);                            // not a plain native entry
+                a.cmp(qword_ptr(r8, 8), asmjit::Imm(0));
+                a.je(perfC);
+                // The native call must not refuse once the selector is gone:
+                // test what it would (depth 0: a context to store the pc in;
+                // the depth limit).
+                a.mov(r10, ptr(rdi, OFF_MCF_DEPTH_PTR));
+                a.mov(r11, ptr(r10));
+                a.test(r11, r11);
+                a.jnz(notD0);
+                a.mov(rcx, ptr(rdi, OFF_MCF_ACTCTX_PTR));
+                a.mov(rcx, ptr(rcx));
+                a.cmp(rcx, ptr(rdi, OFF_MCF_NIL));
+                a.je(perfC);
+                a.test(cl, asmjit::Imm(7));
+                a.jnz(perfC);
+                a.bind(notD0);
+                a.add(r11, asmjit::Imm(2));
+                a.cmp(r11, ptr(rdi, OFF_MCF_DEPTH_LIMIT));
+                a.jae(perfC);
+                for (int i = nArgs - 1; i >= 1; i--) {   // drop the selector
+                    a.mov(r11, ptr(rbx, -8 * i));
+                    a.mov(ptr(rbx, -8 * (i + 1)), r11);
+                }
+                a.sub(rbx, asmjit::Imm(8));
+                a.mov(rax, rdx);
+                a.mov(r9, ptr(r8, 8));                   // the target's JM
+                {
+                    asmjit::Label never = a.new_label();
+                    emitMcfNativeCall_x86(a, nArgs - 1, ipAfterOff, resume, never, true);
+                    a.bind(never);
+                    a.ud2();
+                }
+                a.bind(quick);
+                a.mov(r11d, r8d);
+                a.and_(r11d, asmjit::Imm(7));
+                a.cmp(r11d, asmjit::Imm(1));             // a constant: methodWord
+                a.jne(notConst);
+                a.mov(rdx, ptr(r10, 16));
+                a.mov(ptr(rbx, -8 * (nArgs + 1)), rdx);  // replaces the receiver
+                a.sub(rbx, asmjit::Imm(8 * nArgs));
+                a.jmp(resume);
+                a.bind(notConst);
+                a.cmp(r8, asmjit::Imm(3));               // ^self
+                a.jne(notPrim);
+                a.sub(rbx, asmjit::Imm(8 * nArgs));
+                a.jmp(resume);
+                a.bind(notPrim);
+                if (nArgs == 1 && g_mcfContextClassIndex) {
+                    // A field ((index << 3) | 5): a pointers object, not a
+                    // Context, with the slot (pharo_mcf_perform's checks).
+                    asmjit::Label notIvar = a.new_label();
+                    a.cmp(r11d, asmjit::Imm(5));
+                    a.jne(notIvar);
+                    a.mov(rcx, ptr(rbx, -16));           // the receiver
+                    a.test(cl, asmjit::Imm(7));
+                    a.jnz(perfC);
+                    a.mov(edx, dword_ptr(rcx));
+                    a.and_(edx, asmjit::Imm(0x3FFFFF));
+                    a.cmp(edx, asmjit::Imm((int)g_mcfContextClassIndex));
+                    a.je(perfC);
+                    a.mov(edx, dword_ptr(rcx));
+                    a.shr(edx, asmjit::Imm(24));
+                    a.and_(edx, asmjit::Imm(0x1F));      // the format
+                    a.cmp(edx, asmjit::Imm(5));
+                    a.ja(perfC);                         // not pointers
+                    a.movzx(edx, byte_ptr(rcx, 7));      // the slot count
+                    a.cmp(edx, asmjit::Imm(255));
+                    a.je(perfC);
+                    a.shr(r8, asmjit::Imm(3));           // the field index
+                    a.cmp(r8, rdx);
+                    a.jae(perfC);
+                    a.mov(rdx, ptr(rcx, r8, 3, 8));
+                    a.mov(ptr(rbx, -16), rdx);           // replaces the receiver
+                    a.sub(rbx, asmjit::Imm(8));
+                    a.jmp(resume);
+                    a.bind(notIvar);
+                }
+                a.cmp(r11d, asmjit::Imm(7));             // a primitive (else: C)
+                a.jne(perfC);
+                if (!GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM)) {
+                    // Drop the selector and run it; on failure the stack is
+                    // unchanged: put the selector back and take the C path.
+                    asmjit::Label primFail = a.new_label(), primC = a.new_label();
+                    asmjit::Label primOk = a.new_label();
+                    a.mov(rcx, ptr(rbx, -8 * nArgs));    // the selector, kept in rcx/stack
+                    a.push(rcx);
+                    a.push(rcx);                         // 2 pushes: rsp stays aligned
+                    for (int i = nArgs - 1; i >= 1; i--) {
+                        a.mov(r11, ptr(rbx, -8 * i));
+                        a.mov(ptr(rbx, -8 * (i + 1)), r11);
+                    }
+                    a.sub(rbx, asmjit::Imm(8));
+                    a.mov(rdx, ptr(r10, 16));            // the target (for the C path)
+                    a.push(rdx);
+                    a.push(rdx);
+                    a.shr(r8, asmjit::Imm(3));
+                    a.mov(r10, r8);                      // the primitive index
+                    if (g_x86PrimStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)) {
+                        a.push(r10);
+                        a.push(r10);
+                        a.mov(r9d, asmjit::Imm(nArgs - 1));
+                        a.mov(rcx, asmjit::Imm(g_x86PrimStub));
+                        a.call(rcx);
+                        a.pop(r10);
+                        a.pop(r10);
+                        a.test(r11d, r11d);
+                        a.jnz(primOk);
+                    }
+                    a.pop(rdx);
+                    a.pop(rdx);
+                    emitSyncSpToState_x86(a);
+                    a.mov(ptr(rdi, OFF_CACHED_TARGET), rdx);
+                    emitLoadMethod_x86(a, rdx);
+                    a.add(rdx, asmjit::Imm(ipAfterOff));
+                    a.mov(ptr(rdi, OFF_IP), rdx);
+                    a.push(rdi);
+                    a.push(rsi);
+                    a.push(rax);                         // 3 pushes + 2 above: aligned
+                    a.or_(r10d, asmjit::Imm((nArgs - 1) << 16));
+                    a.mov(kCArg1, r10);
+                    emitCArg0State_x86(a);
+                    emitCallCHelper_x86(a, (const void*)&pharo_mcf_prim);
+                    a.mov(r9d, eax);
+                    a.pop(rax);
+                    a.pop(rsi);
+                    a.pop(rdi);
+                    emitReloadSpFromState_x86(a);
+                    a.cmp(r9d, asmjit::Imm(1));
+                    a.je(primC);
+                    a.cmp(r9d, asmjit::Imm(2));
+                    a.jne(primFail);
+                    a.add(rsp, asmjit::Imm(16));
+                    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm((int)ExitDeopt));
+                    a.ret();
+                    a.bind(primOk);                      // (the stub path: the target pair is on the stack)
+                    a.add(rsp, asmjit::Imm(16));
+                    a.bind(primC);
+                    a.add(rsp, asmjit::Imm(16));         // the selector pair
+                    a.jmp(resume);
+                    a.bind(primFail);
+                    a.pop(rcx);                          // the selector
+                    a.pop(rcx);
+                    a.add(rbx, asmjit::Imm(8));          // arguments up one
+                    for (int i = 1; i <= nArgs - 1; i++) {
+                        a.mov(r11, ptr(rbx, -8 * (i + 1)));
+                        a.mov(ptr(rbx, -8 * i), r11);
+                    }
+                    a.mov(ptr(rbx, -8 * nArgs), rcx);    // the selector back
+                } else {
+                    a.jmp(perfC);
+                }
+            }
+            a.bind(perfC);
             emitSyncSpToState_x86(a);
             a.push(rdi);                             // 3 pushes: rsp 16-aligned
             a.push(rsi);

@@ -500,7 +500,7 @@ bool Interpreter::mcfPrologueIsPrimitive(Oop method) {
 // (mcfCallPrimitive's leaf path).  Allocation is fine: it never collects
 // here (a full eden falls back to old space).
 static bool mcfLeafPrim(int p) {
-    if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
+    if (p >= 1 && p <= 18) return true;          // SmallInteger arithmetic, @
     if (p >= 40 && p <= 59) return true;         // Float
     if (p >= 541 && p <= 559) return true;       // SmallFloat64
     switch (p) {
@@ -517,6 +517,7 @@ static bool mcfLeafPrim(int p) {
 
 static bool mcfPrimCallable(int p) {
     if (p >= 1 && p <= 17) return true;          // SmallInteger arithmetic
+    if (p == 18) return true;                    // @ (makePoint: only allocates)
     if (p >= 20 && p <= 37)                      // LargeInteger arithmetic: they only allocate
         return !GET_DEBUG_BOOL(PHARO_MCF_NO_LARGEINT_PRIMS);
     if (p >= 40 && p <= 59) return true;         // Float
