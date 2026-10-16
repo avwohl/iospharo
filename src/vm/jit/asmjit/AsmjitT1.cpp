@@ -1985,6 +1985,9 @@ static_assert(OFF_MCF_FRAMES == 344 && OFF_MCF_NIL == 392,
 #endif
 #if PHARO_T1_X86_SP_IN_REG
 #define X86_SP_REG asmjit::x86::rbx
+#define X86_SP_REG_OR_RAX asmjit::x86::rbx
+#else
+#define X86_SP_REG_OR_RAX asmjit::x86::rax
 #endif
 
 // sp-residency helpers.  At =0 these emit the exact ldr/str-equivalent the raw
@@ -2062,6 +2065,25 @@ static inline void emitReloadSpFromState_x86(asmjit::x86::Assembler& a) {
     (void)a;
 #endif
 }
+
+// The cold section of an x86 method compile: slow paths go after all the
+// method's fast code, so a fast path falls through instead of jumping over
+// its slow path (three taken jumps per iteration of a loop of two
+// additions).  Null outside a method compile (stub pages) or with
+// PHARO_X86_NO_COLD: the code then stays inline.
+static asmjit::Section* g_x86Cold = nullptr;
+static inline bool x86ColdBegin(asmjit::x86::Assembler& a) {
+    if (!g_x86Cold) return false;
+    a.section(g_x86Cold);
+    return true;
+}
+static inline void x86ColdEnd(asmjit::x86::Assembler& a) {
+    if (g_x86Cold) a.section(a.code()->text_section());
+}
+// Set by a compare fused with the conditional jump after it when that jump
+// went to the cold section: the emit loop binds nothing and emits nothing
+// at this bytecode index (the compare did both).
+static int g_x86FusedSkipIdx = -1;
 
 // ===== C-helper call ABI: Win64 vs System V AMD64 =====
 // The JIT pins the VM state pointer in RDI and the Smalltalk sp in RBX (see
@@ -2146,6 +2168,14 @@ static inline void emitCArg0State_x86(asmjit::x86::Assembler& a) {
 // identical =0 guarantee).
 void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
     using namespace asmjit::x86;
+#if PHARO_T1_X86_SP_IN_REG
+    if (!GET_DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)) {
+        // The short form: no caller reads rcx after a push.
+        a.mov(ptr(X86_SP_REG), valReg);
+        a.add(X86_SP_REG, 8);
+        return;
+    }
+#endif
     emitLoadSp_x86(a, rcx);
     a.mov(ptr(rcx), valReg);
     a.add(rcx, 8);
@@ -4311,8 +4341,12 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // Dup: read sp[-1], push it (stack [..., v] → [..., v, v]).
     if (op == SistaV1::Dup) {
+#if PHARO_T1_X86_SP_IN_REG
+        a.mov(rax, ptr(X86_SP_REG, -8));
+#else
         emitLoadSp_x86(a, rcx);
         a.mov(rax, ptr(rcx, -8));
+#endif
         emitPushReg(a, rax);
         return true;
     }
@@ -4348,6 +4382,12 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // pop: state.sp--.
     if (op == SistaV1::Pop) {
+#if PHARO_T1_X86_SP_IN_REG
+        if (!GET_DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)) {
+            a.sub(X86_SP_REG, 8);
+            return true;
+        }
+#endif
         emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
         emitStoreSp_x86(a, rcx);
@@ -4356,6 +4396,15 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
     if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
         int n = op - SistaV1::PopStoreTempBase;
+#if PHARO_T1_X86_SP_IN_REG
+        if (!GET_DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)) {
+            a.sub(X86_SP_REG, 8);
+            a.mov(rax, ptr(X86_SP_REG));
+            a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+            a.mov(ptr(rdx, n * 8), rax);
+            return true;
+        }
+#endif
         emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
         emitStoreSp_x86(a, rcx);
@@ -4502,9 +4551,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
 
-        emitLoadSp_x86(a, rax);
-        a.mov(rcx, ptr(rax, -16));   // a
-        a.mov(rdx, ptr(rax, -8));    // b
+        // spR: the sp register itself (rbx), or rax loaded from the state.
+#if PHARO_T1_X86_SP_IN_REG
+        const bool spDirect = !GET_DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH);
+#else
+        const bool spDirect = false;
+#endif
+        const Gp spR = spDirect ? X86_SP_REG_OR_RAX : rax;
+        // A fused compare whose jump goes to the cold section (see below).
+        int fNext = -1, fTgt = -1, fPost = -1, fLen = 0;
+        bool fJt = false;
+        if (!spDirect) emitLoadSp_x86(a, rax);
+        a.mov(rcx, ptr(spR, -16));   // a
+        a.mov(rdx, ptr(spR, -8));    // b
         // SmI tag check (both SmI): 5 instructions, replaces the older
         // 7-instr XOR-pair-OR sequence.
         //   r8 = a^b   — low 3 = 0 iff same tag
@@ -4529,9 +4588,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.add(rcx, rdx);
             a.jo(bail);
             a.sub(rcx, asmjit::Imm(1));
-            a.mov(ptr(rax, -16), rcx);
-            a.sub(rax, 8);
-            emitStoreSp_x86(a, rax);
+            a.mov(ptr(spR, -16), rcx);
+            a.sub(spR, 8);
+            if (!spDirect) emitStoreSp_x86(a, rax);
         } else if (op == 0x61) {     // -
             // Tagged-sub: a_bits - b_bits = (a-b)*8.
             // jo catches SmI overflow (same reasoning as +).
@@ -4539,9 +4598,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.sub(rcx, rdx);
             a.jo(bail);
             a.add(rcx, asmjit::Imm(1));
-            a.mov(ptr(rax, -16), rcx);
-            a.sub(rax, 8);
-            emitStoreSp_x86(a, rax);
+            a.mov(ptr(spR, -16), rcx);
+            a.sub(spR, 8);
+            if (!spDirect) emitStoreSp_x86(a, rax);
         } else if (op == 0x68) {     // *  (isPhase3ArithOp includes 0x68 so the
             // dedicated isPhase3MulOp emit below is dead for arith dispatch;
             // arm64's arith emit has a 0x68 mul case (AsmjitT1 ~3884) but the
@@ -4558,9 +4617,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.add(rcx, rcx); a.jo(bail);  // *2 } step jo-checks the 61-bit
             a.add(rcx, rcx); a.jo(bail);  // *2 } SmI range
             a.or_(rcx, asmjit::Imm(SMI_TAG));
-            a.mov(ptr(rax, -16), rcx);
-            a.sub(rax, 8);
-            emitStoreSp_x86(a, rax);
+            a.mov(ptr(spR, -16), rcx);
+            a.sub(spR, 8);
+            if (!spDirect) emitStoreSp_x86(a, rax);
         } else {
             // Comparison ops.  cmp tagged bits directly — the map
             // x → 8x+1 is monotonic for signed values, so cmp(a_bits,
@@ -4589,8 +4648,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                                                    : nop == SistaV1::ExtJumpTrue;
                             const asmjit::Label tgt = bcLabels[targetIdx];
                             a.cmp(rcx, rdx);
-                            a.lea(rax, ptr(rax, -16));
-                            emitStoreSp_x86(a, rax);
+                            a.lea(spR, ptr(spR, -16));
+                            if (!spDirect) emitStoreSp_x86(a, rax);
                             switch (op) {
                             case 0x62: if (jt) a.jl(tgt);  else a.jge(tgt); break;
                             case 0x63: if (jt) a.jg(tgt);  else a.jle(tgt); break;
@@ -4599,7 +4658,15 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                             case 0x66: if (jt) a.je(tgt);  else a.jne(tgt); break;
                             default:   if (jt) a.jne(tgt); else a.je(tgt);  break;
                             }
-                            a.jmp(bcLabels[postIdx]);
+                            if (g_x86Cold && spDirect && !GET_DEBUG_BOOL(PHARO_X86_NO_COLD_JUMP)) {
+                                // The jump itself only runs after the slow
+                                // path's send: it goes to the cold section
+                                // and the hot path falls into postIdx.
+                                fNext = nextIdx; fTgt = targetIdx; fPost = postIdx;
+                                fLen = shortJ ? 1 : 2; fJt = jt;
+                            } else {
+                                a.jmp(bcLabels[postIdx]);
+                            }
                             goto x86FusedCmpDone;
                         }
                     }
@@ -4615,12 +4682,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 case 0x66: a.cmove(rsi, ptr(rdi, OFF_TRUEOOP)); break;   // =
                 case 0x67: a.cmovne(rsi, ptr(rdi, OFF_TRUEOOP)); break;  // ~=
             }
-            a.mov(ptr(rax, -16), rsi);
-            a.sub(rax, 8);
-            emitStoreSp_x86(a, rax);
+            a.mov(ptr(spR, -16), rsi);
+            a.sub(spR, 8);
+            if (!spDirect) emitStoreSp_x86(a, rax);
             x86FusedCmpDone: ;
         }
-        a.jmp(end);
+        const bool cold = x86ColdBegin(a);   // the fast path falls into end
+        if (!cold) a.jmp(end);
 
         a.bind(bail);
         // Machine-code frames: `=` with a Character receiver is identity
@@ -4700,6 +4768,34 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
         emitSyncSpToState_x86(a); a.ret();
+        if (fNext >= 0) {
+            // The fused jump, for the slow path's Boolean (and as the
+            // bytecode's re-entry point): the conditional jump's own code.
+            asmjit::Label take = a.new_label(), notBool = a.new_label();
+            a.bind(end);
+            a.bind(bcLabels[fNext]);
+            if (fLen == 2) a.bind(bcLabels[fNext + 1]);
+            a.mov(rax, ptr(X86_SP_REG_OR_RAX, -8));
+            a.cmp(rax, ptr(rdi, fJt ? OFF_TRUEOOP : OFF_FALSEOOP));
+            a.je(take);
+            a.cmp(rax, ptr(rdi, fJt ? OFF_FALSEOOP : OFF_TRUEOOP));
+            a.jne(notBool);
+            a.sub(X86_SP_REG_OR_RAX, 8);
+            a.jmp(bcLabels[fPost]);
+            a.bind(take);
+            a.sub(X86_SP_REG_OR_RAX, 8);
+            a.jmp(bcLabels[fTgt]);
+            a.bind(notBool);                         // the interpreter sends mustBeBoolean
+            a.mov(r8, ptr(rdi, OFF_METHOD));
+            a.add(r8, asmjit::Imm(bcOffsetFromMethObj + 1));
+            a.mov(ptr(rdi, OFF_IP), r8);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
+            emitSyncSpToState_x86(a); a.ret();
+            x86ColdEnd(a);
+            g_x86FusedSkipIdx = fNext;
+            return true;
+        }
+        if (cold) x86ColdEnd(a);
 
         a.bind(end);
         return true;
@@ -15529,6 +15625,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
 
 #if defined(__x86_64__) || defined(_M_X64)
     x86::Assembler a(&code);
+    g_x86Cold = nullptr;
+    if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_X86_NO_COLD)) {
+        Section* coldSec = nullptr;
+        if (code.new_section(Out<Section*>(coldSec), ".cold", SIZE_MAX, SectionFlags::kExecutable, 1) == kErrorOk)
+            g_x86Cold = coldSec;
+    }
     // V2 self-identification anchor: bind g_codeStartLabel at code offset 0
     // (STEP 1 of the V2 save port, docs/x86-v2-save-port.md; mirrors arm64
     // 9417-9418).  The V2 resumeAfterCall continuation self-identifies the
@@ -15563,8 +15665,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         // its offset in extB and must keep bailing to interp.  This flag is
         // true iff the immediately-preceding op was an ExtendA/B prefix bail.
         bool prevExtPrefix = false;
+        g_x86FusedSkipIdx = -1;
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
+            if (globalIdx == g_x86FusedSkipIdx) {
+                // The fused compare emitted this jump (cold) and bound its
+                // labels.
+                g_x86FusedSkipIdx = -1;
+                const uint8_t jop = bcReal[i];
+                if (jop == SistaV1::ExtJumpTrue || jop == SistaV1::ExtJumpFalse) i += 1;
+                prevExtPrefix = false;
+                continue;
+            }
             a.bind(bcLabels[globalIdx]);
             bool wasExtPrefix = prevExtPrefix;
             prevExtPrefix = false;
@@ -17600,6 +17712,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     if (encErr.failed) return false;  // an instruction was silently dropped
     err = code.flatten();
     if (err != kErrorOk) return false;
+#if defined(__x86_64__) || defined(_M_X64)
+    if (g_x86Cold) {
+        // Jumps between the hot and the cold section.
+        g_x86Cold = nullptr;
+        err = code.resolve_cross_section_fixups();
+        if (err != kErrorOk || code.has_unresolved_fixups() || code.has_reloc_entries()) {
+            std::fprintf(stderr, "[asmjit-t1] x86 cold section: unresolved fixups\n");
+            return false;
+        }
+    }
+#endif
 #if defined(__aarch64__) || defined(_M_ARM64)
     g_mcfEntryOff = g_emitMcfEntry
         ? (uint32_t)code.label_offset_from_base(mcfEntryLabel) : 0;
