@@ -5197,10 +5197,44 @@ void ObjectMemory::markAndTrace(Oop oop) {
 }
 
 void ObjectMemory::processMarkStack() {
+    // The diagnostic modes (parent recording, heap watch, hot-path diag)
+    // keep scanPointerFields; the common case scans inline: its prologue
+    // and the call into markAndTrace for the (almost always marked) class
+    // were a third of the mark loop's instructions.
+#if PHARO_HOT_PATH_DIAG
+    const bool diag = true;
+#else
+    static const bool watch = GET_DEBUG_INT(PHARO_WATCH_HEAP_CLASSIDX) != 0
+        || GET_DEBUG_STR(PHARO_WATCH_HEAP_CLASS) != nullptr;
+    const bool diag = watch || recordMarkParents_;
+#endif
+    if (__builtin_expect(diag, 0)) {
+        while (!markStack_.empty()) {
+            ObjectHeader* obj = markStack_.back();
+            markStack_.pop_back();
+            scanPointerFields(obj);
+        }
+        return;
+    }
+    auto needsMark = [this](Oop v) {
+        if (!v.isObject()) return false;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(v.asObjectPtr());
+        return !(p >= oldSpaceStart_ && p < oldSpaceFree_ && v.asObjectPtr()->isMarked());
+    };
     while (!markStack_.empty()) {
         ObjectHeader* obj = markStack_.back();
         markStack_.pop_back();
-        scanPointerFields(obj);
+        uint32_t classIdx = obj->classIndex();
+        if (classIdx > 0 && classIdx < classTable_.size()) {
+            Oop cls = classTable_[classIdx];
+            if (needsMark(cls)) markAndTrace(cls);
+        }
+        size_t numPointers = pointerSlotsOf(obj);
+        Oop* slots = obj->slots();
+        for (size_t i = 0; i < numPointers; ++i) {
+            Oop v = slots[i];
+            if (needsMark(v)) markAndTrace(v);
+        }
     }
 }
 
@@ -5354,7 +5388,14 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
 #if PHARO_HOT_PATH_DIAG
         currentScanSlot_ = i;
 #endif
-        markAndTrace(slots[i]);
+        // Immediates and old objects already marked -- most slots -- end
+        // here instead of in a call: markAndTrace makes the same tests
+        // first (its isMarked test precedes its validity checks).
+        Oop v = slots[i];
+        if (!v.isObject()) continue;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(v.asObjectPtr());
+        if (p >= oldSpaceStart_ && p < oldSpaceFree_ && v.asObjectPtr()->isMarked()) continue;
+        markAndTrace(v);
     }
 #if PHARO_HOT_PATH_DIAG
     currentScanParent_ = nullptr;
