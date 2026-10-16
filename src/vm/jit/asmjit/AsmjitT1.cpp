@@ -12802,6 +12802,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // entry still holds the method, and the call stub will
                     // not refuse (depth not 0, not near the limit).
                     asmjit::Label perfC = a.new_label(), perfHit = a.new_label();
+                    asmjit::Label performInPlace = a.new_label();
+                    const bool perfInPlace = !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM);
                     const bool perfCache = jit::g_mcfPerformCache != nullptr
                         && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CACHE);
                     if (perfCache) {
@@ -12852,6 +12854,55 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // replaces the receiver; the selector and arguments go.
                         a.bind(perfQuick);
                         asmjit::Label qConst = a.new_label(), qIvar = a.new_label(), qDone = a.new_label();
+                        if (perfInPlace) {
+                            // A primitive (tag 7): run it with the selector
+                            // dropped, as pharo_mcf_perform's in-place path
+                            // does.  On failure the stack is unchanged: put
+                            // the selector back and take the C path.
+                            asmjit::Label notPrim = a.new_label(), qPrimOk = a.new_label();
+                            a.and_(x16, x7, asmjit::Imm(7));
+                            a.cmp(x16, asmjit::Imm(7));
+                            a.b_ne(notPrim);
+                            for (int i = nArgs - 1; i >= 1; i--) {
+                                a.ldur(x16, ptr(x3, -8 * i));
+                                a.stur(x16, ptr(x3, -8 * (i + 1)));
+                            }
+                            a.sub(x3, x3, asmjit::Imm(8));
+                            emitStoreSp(a, x3);
+                            emitSyncSpToState(a);
+                            a.str(x6, ptr(x0, OFF_CACHED_TARGET));
+                            a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                            a.add(x16, x16, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta + 1));
+                            a.str(x16, ptr(x0, OFF_IP));               // the ip after the perform
+                            a.lsr(x1, x7, asmjit::Imm(3));
+                            a.mov(x16, asmjit::Imm((uint64_t)(nArgs - 1) << 16));
+                            a.orr(w1, w1, w16);                        // prim | argCount << 16
+                            a.sub(sp, sp, asmjit::Imm(32));
+                            a.stp(x0, x30, ptr(sp, 0));
+                            a.stp(x5, x2, ptr(sp, 16));                // IC entry, selector
+                            a.mov(x16, asmjit::Imm((uint64_t)&pharo_mcf_prim));
+                            a.blr(x16);
+                            a.mov(x7, x0);
+                            a.ldp(x5, x2, ptr(sp, 16));
+                            a.ldp(x0, x30, ptr(sp, 0));
+                            a.add(sp, sp, asmjit::Imm(32));
+                            a.cbnz(w7, qPrimOk);
+                            emitReloadSpFromState(a);
+                            emitLoadSp(a, x3);
+                            a.add(x3, x3, asmjit::Imm(8));
+                            for (int i = 1; i <= nArgs - 1; i++) {     // arguments up one
+                                a.ldur(x16, ptr(x3, -8 * (i + 1)));
+                                a.stur(x16, ptr(x3, -8 * i));
+                            }
+                            a.stur(x2, ptr(x3, -8 * nArgs));           // the selector back
+                            emitStoreSp(a, x3);
+                            a.b(perfC);
+                            a.bind(qPrimOk);
+                            emitReloadSpFromState(a);
+                            a.cmp(x7, asmjit::Imm(2));
+                            a.b(performInPlace);                       // 1 done, 2 deopt
+                            a.bind(notPrim);
+                        }
                         a.tst(x7, asmjit::Imm(6));
                         a.b_eq(qConst);
                         a.tbz(x7, asmjit::Imm(1), qIvar);
@@ -12872,7 +12923,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     a.bind(perfC);
                     emitSyncSpToState(a);
-                    const bool perfInPlace = !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM);
                     if (perfInPlace) {
                         // x2 = the ip after the send, for a performed primitive
                         // run in place (as the primitive path below stores it).
@@ -12893,7 +12943,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     emitReloadSpFromState(a);
                     // 1: a primitive or constant answered in place; 2: the
                     // primitive switched process or pushed a frame.
-                    asmjit::Label performInPlace = a.new_label();
                     if (perfInPlace) {
                         a.cmp(x7, asmjit::Imm(2));
                         a.b_ls(performInPlace);

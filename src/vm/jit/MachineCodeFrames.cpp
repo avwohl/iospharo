@@ -1352,7 +1352,11 @@ void Interpreter::mcfPerformCachePut(Oop selector, Oop rcv, int nArgs, uint64_t 
     st->cachedTarget = target;
     st->ip = ipAfter;
     switch (mcfCallPrimitive(st, (int)e->prim, nArgs - 1)) {
-    case 1: return kMcfExtDone;
+    case 1:
+        // The perform: cache runs it from machine code next time (tag 7).
+        if (memory_.isOld(target))
+            mcfPerformCachePut(selector, rcv, nArgs, target.rawBits(), (e->prim << 3) | 7);
+        return kMcfExtDone;
     case 2: return kMcfExtDeopt;
     default:
         for (int i = 1; i <= nArgs - 1; i++) sp[-i] = sp[-(i + 1)];

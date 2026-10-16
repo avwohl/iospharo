@@ -2117,7 +2117,7 @@ public:
                             Oop rcv, jit::McfCallEntry*& e);
     // McfPerformEntry fill: entryWord is a call-cache entry pointer, or a
     // quick result: 1 = the constant in methodWord, 3 = self, idx << 3 | 5 =
-    // instance variable idx.
+    // instance variable idx; or prim << 3 | 7 = run primitive prim.
     void mcfPerformCachePut(Oop selector, Oop rcv, int nArgs, uint64_t methodWord, uint64_t entryWord);
     Oop mcfThisContext(jit::JITState* st);
     void* mcfNonLocalReturn(jit::JITState* st);
