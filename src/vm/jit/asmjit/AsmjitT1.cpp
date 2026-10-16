@@ -2085,6 +2085,39 @@ static inline void x86ColdEnd(asmjit::x86::Assembler& a) {
 // at this bytecode index (the compare did both).
 static int g_x86FusedSkipIdx = -1;
 
+
+// Machine-code frames on x86: the temp base in r12 and the receiver in r13
+// (callee-saved), loaded at JIT_CALL entry, as arm64 keeps them in x22 and
+// x21.  Write-through mirrors: every store to the state's field also sets
+// the register, and every C helper call reloads both from the state (r15 =
+// the state, callee-saved; a GC or a frame change in C++ updates the state
+// copies), so C++ always sees current state fields and machine code reads
+// registers.  PHARO_X86_NO_PIN_REGS (diag builds) reads the state.
+static inline bool x86PinRegs() {
+#if PHARO_T1_X86_SP_IN_REG && !defined(_WIN32)
+    static const bool on = ::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_X86_NO_PIN_REGS);
+    return on;
+#else
+    return false;
+#endif
+}
+static inline void emitSetTempBase_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp src) {
+    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_TEMPBASE), src);
+    if (x86PinRegs() && src.id() != asmjit::x86::r12.id()) a.mov(asmjit::x86::r12, src);
+}
+static inline void emitSetReceiver_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp src) {
+    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_RECEIVER), src);
+    if (x86PinRegs() && src.id() != asmjit::x86::r13.id()) a.mov(asmjit::x86::r13, src);
+}
+static inline void emitLoadTempBase_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
+    if (x86PinRegs()) a.mov(dst, asmjit::x86::r12);
+    else a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_TEMPBASE));
+}
+static inline void emitLoadReceiver_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
+    if (x86PinRegs()) a.mov(dst, asmjit::x86::r13);
+    else a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_RECEIVER));
+}
+
 // ===== C-helper call ABI: Win64 vs System V AMD64 =====
 // The JIT pins the VM state pointer in RDI and the Smalltalk sp in RBX (see
 // X86_SP_REG / the JIT_CALL entry macro in JITState.hpp).  When emitted JIT
@@ -2139,6 +2172,11 @@ static inline void emitCallCHelper_x86(asmjit::x86::Assembler& a,
     a.add(asmjit::x86::rsp, asmjit::Imm(kWin64ShadowSpace));
 #else
     a.call(asmjit::x86::rax);
+    if (x86PinRegs()) {
+        // The C side may have moved the receiver (GC) or changed frames.
+        a.mov(asmjit::x86::r12, asmjit::x86::ptr(asmjit::x86::r15, OFF_TEMPBASE));
+        a.mov(asmjit::x86::r13, asmjit::x86::ptr(asmjit::x86::r15, OFF_RECEIVER));
+    }
 #endif
 }
 
@@ -2275,15 +2313,15 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
         a.mov(ptr(r10), rdx);
     }
     // The result into the callee's receiver slot; sp just above it.
-    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+    emitLoadTempBase_x86(a, rdx);
     a.mov(ptr(rdx, -8), rax);
     emitStoreSp_x86(a, rdx);
     // The caller's view.
     a.mov(rdx, ptr(rcx, L.savedFP));             // savedTB under g_mcfTbRecord
     if (!jit::g_mcfTbRecord) a.add(rdx, asmjit::Imm(8));
-    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    emitSetTempBase_x86(a, rdx);
     a.mov(rdx, ptr(rcx, L.savedReceiver));
-    a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+    emitSetReceiver_x86(a, rdx);
     if (!jit::g_mcfLazyCloAct) {
         // (Lazy: C++ derives the closure, fp[0] of block code.)
         a.mov(rdx, ptr(rcx, L.savedClosure));
@@ -2401,7 +2439,7 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
         a.mov(dword_ptr(rcx, L.savedArgCount), r10d);
         a.mov(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
     }
-    a.mov(r10, ptr(rdi, OFF_RECEIVER));
+    emitLoadReceiver_x86(a, r10);
     a.mov(ptr(rcx, L.savedReceiver), r10);
     if (!jit::g_mcfLazyCloAct) {
         // Lazy (trim steps 7-8): C++ derives both (recClosure, recActiveCtx).
@@ -2418,7 +2456,7 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     a.mov(ptr(rcx, L.materializedContext), r11);
     a.mov(r11, ptr(rdi, OFF_MCF_NIL));
     a.mov(ptr(r10), r11);                        // the callee has no context
-    a.mov(r10, ptr(rdi, OFF_TEMPBASE));
+    emitLoadTempBase_x86(a, r10);
     if (!jit::g_mcfTbRecord) a.sub(r10, asmjit::Imm(8));
     a.mov(ptr(rcx, L.savedFP), r10);
     a.lea(r10, ptr(resume));
@@ -3212,9 +3250,9 @@ static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAf
     a.and_(r10d, asmjit::Imm(0xFF));             // temp count
     emitLoadSp_x86(a, r11);
     a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
-    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    emitSetTempBase_x86(a, rdx);
     a.mov(rdx, ptr(rdx, -8));
-    a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+    emitSetReceiver_x86(a, rdx);
     a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
     if (!jit::g_mcfLazyCloAct)
         a.mov(ptr(rdi, OFF_CLOSURE), rdx);       // a method frame
@@ -3461,11 +3499,11 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     }
     emitLoadSp_x86(a, r11);
     a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
-    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    emitSetTempBase_x86(a, rdx);
     a.mov(rcx, ptr(rdx, -8));                    // the closure (fp[0])
     if (!jit::g_mcfLazyCloAct) a.mov(ptr(rdi, OFF_CLOSURE), rcx);
     a.mov(r10, ptr(rcx, 32));                    // slot 3: the outer receiver
-    a.mov(ptr(rdi, OFF_RECEIVER), r10);
+    emitSetReceiver_x86(a, r10);
     // Copied values (closure slots 4..) after the arguments, then nil.
     a.movzx(r10d, byte_ptr(rcx, 7));
     a.sub(r10d, asmjit::Imm(4));
@@ -3481,7 +3519,7 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.jmp(copyLoop);
     a.bind(copyDone);
     a.movzx(r10d, byte_ptr(r9, (int)offsetof(JITMethod, tempCount)));
-    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+    emitLoadTempBase_x86(a, rdx);
     a.lea(r10, ptr(rdx, r10, 3));                // tempBase + tempCount
     a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
     a.bind(nilLoop);
@@ -3707,8 +3745,8 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.mov(rcx, ptr(r9, JSV_RECEIVER));      // savedReceiver
     a.mov(rdx, ptr(r9, JSV_TEMPBASE));      // savedTempBase
     a.mov(r11, ptr(r9, JSV_RESUMEADDR));    // packed resumeAddr
-    a.mov(ptr(rdi, OFF_RECEIVER), rcx);
-    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    emitSetReceiver_x86(a, rcx);
+    emitSetTempBase_x86(a, rdx);
     emitStoreSp_x86(a, r10);           // restore caller sp = savedSp
     a.mov(rcx, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
     a.and_(r11, rcx);                       // mask off the packed bcOff/nArgs
@@ -3758,8 +3796,8 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.mov(rdx, ptr(r9, 16));                // savedTempBase
     a.mov(r11, ptr(r9, 40));                // resumeAddr (code address)
     a.mov(r8d, dword_ptr(r9, 48));          // sendArgCount (zero-extends to r8)
-    a.mov(ptr(rdi, OFF_RECEIVER), rcx);
-    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    emitSetReceiver_x86(a, rcx);
+    emitSetTempBase_x86(a, rdx);
     // newSp = savedSp - 8*nArgs ; result becomes caller's TOS at newSp-8.
     a.mov(rcx, r8);
     a.shl(rcx, asmjit::Imm(3));             // 8*nArgs
@@ -3799,8 +3837,8 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
 
     // prim 110 (#==): no type check — compare raw oop bits.
     if (primIndex == 110) {
-        a.mov(rcx, ptr(rdi, OFF_RECEIVER));
-        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+        emitLoadReceiver_x86(a, rcx);
+        emitLoadTempBase_x86(a, rdx);
         a.mov(rdx, ptr(rdx));
         a.mov(rax, ptr(rdi, OFF_FALSEOOP));
         a.cmp(rcx, rdx);
@@ -3823,8 +3861,8 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         asmjit::Label viaC = full ? a.new_label() : fail;
         asmjit::Label argInt = a.new_label(), argDone = a.new_label();
 
-        a.mov(rcx, ptr(rdi, OFF_RECEIVER));      // rcx = receiver oop
-        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+        emitLoadReceiver_x86(a, rcx);      // rcx = receiver oop
+        emitLoadTempBase_x86(a, rdx);
         a.mov(rdx, ptr(rdx));                    // rdx = tempBase[0] = arg oop
         // rcx/rdx stay intact: the C path below passes the original oops.
 
@@ -3944,7 +3982,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         asmjit::Label fail = a.new_label();
 
         // rcx = receiver; must be a heap pointer (low 3 bits == 0).
-        a.mov(rcx, ptr(rdi, OFF_RECEIVER));
+        emitLoadReceiver_x86(a, rcx);
         a.test(rcx.r8(), asmjit::Imm(7));
         a.jne(fail);
 
@@ -4069,7 +4107,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     asmjit::Label fail = a.new_label();
 
     // rcx = receiver (must be heap pointer: low 3 bits == 0).
-    a.mov(rcx, ptr(rdi, OFF_RECEIVER));
+    emitLoadReceiver_x86(a, rcx);
     a.test(rcx.r8(), asmjit::Imm(7));   // tst x1,#7 ; b_ne fail
     a.jne(fail);
 
@@ -4095,7 +4133,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     }
 
     // Load idx (tagged) from first temp; must be SmI.
-    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+    emitLoadTempBase_x86(a, rdx);
     a.mov(rdx, ptr(rdx));                // rdx = idx (tagged)
     a.mov(rax, rdx);
     a.and_(rax, asmjit::Imm(0x7));
@@ -4208,8 +4246,8 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     asmjit::Label fail = a.new_label();
 
     // Shared SmI check: (a^b) | (a-1) low 3 bits = 0 iff both SmI.
-    a.mov(rcx, ptr(rdi, OFF_RECEIVER));   // rcx = receiver
-    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+    emitLoadReceiver_x86(a, rcx);   // rcx = receiver
+    emitLoadTempBase_x86(a, rdx);
     a.mov(rdx, ptr(rdx));                 // rdx = tempBase[0] = arg
     a.mov(r8,  rcx);
     a.xor_(r8, rdx);
@@ -4342,7 +4380,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
         int n = op & 0x0F;
-        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        emitLoadReceiver_x86(a, rax);
         a.mov(rax, ptr(rax, OBJ_SLOT_0 + n * 8));
         emitPushReg(a, rax);
         return true;
@@ -4368,14 +4406,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // pushTemp N: push tempBase[N].
     if (op >= 0x40 && op <= 0x4B) {
         int n = op - 0x40;
-        a.mov(rax, ptr(rdi, OFF_TEMPBASE));
+        emitLoadTempBase_x86(a, rax);
         a.mov(rax, ptr(rax, n * 8));
         emitPushReg(a, rax);
         return true;
     }
     // pushReceiver: push state.receiver.
     if (op == SistaV1::PushReceiver) {
-        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        emitLoadReceiver_x86(a, rax);
         emitPushReg(a, rax);
         return true;
     }
@@ -4440,7 +4478,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         if (!GET_DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)) {
             a.sub(X86_SP_REG, 8);
             a.mov(rax, ptr(X86_SP_REG));
-            a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+            emitLoadTempBase_x86(a, rdx);
             a.mov(ptr(rdx, n * 8), rax);
             return true;
         }
@@ -4449,7 +4487,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.sub(rcx, 8);
         emitStoreSp_x86(a, rcx);
         a.mov(rax, ptr(rcx));
-        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+        emitLoadTempBase_x86(a, rdx);
         a.mov(ptr(rdx, n * 8), rax);
         return true;
     }
@@ -4465,7 +4503,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         int n = op - SistaV1::PopStoreRecvBase;
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
-        a.mov(rdx, ptr(rdi, OFF_RECEIVER));
+        emitLoadReceiver_x86(a, rdx);
         // Test bit 23 of the 64-bit header.  test r/m32, imm32 reads
         // the low 4 bytes and ANDs against imm32; ImmutableBit lives
         // in that half so a 32-bit test is sufficient.
@@ -4525,7 +4563,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
     if (op == SistaV1::ReturnReceiver) {
-        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        emitLoadReceiver_x86(a, rax);
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
@@ -5450,8 +5488,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 //     NOT stored (re-derived PC-relatively in resumeAfterCall);
                 //     resumeAddr is packed (addr | bcOff<<48 | nArgs<<60). ---
                 a.mov(ptr(r9, JSV_SP), rcx);             // sp
-                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, JSV_RECEIVER), rdx);
-                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
+                emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, JSV_RECEIVER), rdx);
+                emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
                 a.lea(rdx, ptr(resumeAfterCall));
                 a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
                                        | ((uint64_t)j2jResumeBcOff << 48)));
@@ -5462,8 +5500,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 #else
                 // --- push V1 J2JSave (56B): CALLER resume state (save[32]=callerJM) ---
                 a.mov(ptr(r9, 0), rcx);                  // sp
-                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
-                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
+                emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, 8), rdx);
+                emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, 16), rdx);
                 a.mov(rdx, ptr(rdi, OFF_METHOD));
                 a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
                                        + (extSendEmit ? 2 : 1)));
@@ -5509,9 +5547,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs)); // state.argCount = nArgs
                 // receiver / tempBase
                 a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver = sp[-1-nArgs]
-                a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+                emitSetReceiver_x86(a, rdx);
                 a.lea(rdx, ptr(rcx, -8 * nArgs));        // newTempBase = sp - 8*nArgs (kept in rdx)
-                a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+                emitSetTempBase_x86(a, rdx);
                 // state.ip = calleeJM->bcStartCache (callee's first bytecode)
                 a.mov(r9, ptr(r10, (int)offsetof(JITMethod, bcStartCache)));
                 a.mov(ptr(rdi, OFF_IP), r9);
@@ -5547,8 +5585,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.ja(notJ2J);
 #if PHARO_J2J_SAVE_V2
                 a.mov(ptr(r9, JSV_SP), rcx);             // sp
-                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, JSV_RECEIVER), rdx);
-                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
+                emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, JSV_RECEIVER), rdx);
+                emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
                 a.lea(rdx, ptr(resumeAfterCall));
                 a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
                                        | ((uint64_t)j2jResumeBcOff << 48)));
@@ -5558,8 +5596,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.add(r9, asmjit::Imm(JSV_SIZE));
 #else
                 a.mov(ptr(r9, 0), rcx);                  // sp
-                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
-                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
+                emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, 8), rdx);
+                emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, 16), rdx);
                 a.mov(rdx, ptr(rdi, OFF_METHOD));
                 a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
                                        + (extSendEmit ? 2 : 1)));
@@ -5573,9 +5611,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
                 a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
                 a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver
-                a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+                emitSetReceiver_x86(a, rdx);
                 a.lea(rdx, ptr(rcx, -8 * nArgs));        // newTempBase
-                a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+                emitSetTempBase_x86(a, rdx);
                 a.mov(r10, asmjit::Imm(nilBits));        // nil locals (static count)
                 for (int t = nArgs; t < callerTempCount; t++)
                     a.mov(ptr(rdx, t * 8), r10);
@@ -5604,8 +5642,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 #if PHARO_J2J_SAVE_V2
                 // --- push V2 J2JSave (40B) at r9: caller resume state ---
                 a.mov(ptr(r9, JSV_SP), rcx);             // sp
-                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, JSV_RECEIVER), rdx);
-                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
+                emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, JSV_RECEIVER), rdx);
+                emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
                 a.lea(rdx, ptr(resumeAfterCall));
                 a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
                                        | ((uint64_t)j2jResumeBcOff << 48)));
@@ -5616,8 +5654,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 #else
                 // --- push V1 J2JSave (56B) at r9: caller resume state ---
                 a.mov(ptr(r9, 0), rcx);                  // sp
-                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);   // receiver
-                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);  // tempBase
+                emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, 8), rdx);   // receiver
+                emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, 16), rdx);  // tempBase
                 a.mov(rdx, ptr(rdi, OFF_METHOD));
                 a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
                                        + (extSendEmit ? 2 : 1)));
@@ -5637,9 +5675,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // --- set up callee frame (self-rec: method/literals/jitMethod/
                 //     argCount unchanged) ---
                 a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver = sp[-1-nArgs]
-                a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+                emitSetReceiver_x86(a, rdx);
                 a.lea(rdx, ptr(rcx, -8 * nArgs));        // newTempBase = sp - 8*nArgs
-                a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+                emitSetTempBase_x86(a, rdx);
                 a.mov(r10, asmjit::Imm(nilBits));        // nil the locals
                 for (int t = nArgs; t < callerTempCount; t++)
                     a.mov(ptr(rdx, t * 8), r10);
@@ -15858,7 +15896,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     asmjit::Label rend = a.new_label();
                     if (g_emitCtxMethod && g_lazyCtxPendingAddr != 0 && idx <= 5)
                         emitMcfCtxSync_x86(a, false, bcOffsetBase + globalIdx);
-                    a.mov(rdx, ptr(rdi, OFF_RECEIVER));
+                    emitLoadReceiver_x86(a, rdx);
                     a.test(dword_ptr(rdx), asmjit::Imm(static_cast<int32_t>(0x800000)));
                     a.jne(rbail);                            // immutable receiver
                     emitLoadSp_x86(a, rcx);
@@ -15899,7 +15937,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             emitMcfCtxSync_x86(a, (idx == 1 || idx == 2)
                                                    && !GET_DEBUG_BOOL(PHARO_NO_LIVE_CTX_FIELDS),
                                                bcOffsetBase + globalIdx);
-                        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+                        emitLoadReceiver_x86(a, rax);
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + idx * 8));
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushLitConst) {
@@ -15912,7 +15950,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8)); // slot[1] = value
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushTemp) {
-                        a.mov(rax, ptr(rdi, OFF_TEMPBASE));
+                        emitLoadTempBase_x86(a, rax);
                         a.mov(rax, ptr(rax, idx * 8));
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPopStoreTemp) {
@@ -15920,12 +15958,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.sub(rcx, 8);
                         emitStoreSp_x86(a, rcx);
                         a.mov(rax, ptr(rcx));
-                        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+                        emitLoadTempBase_x86(a, rdx);
                         a.mov(ptr(rdx, idx * 8), rax);
                     } else if (op == SistaV1::ExtStoreTemp) {
                         emitLoadSp_x86(a, rcx);
                         a.mov(rax, ptr(rcx, -8));            // TOS (don't pop)
-                        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+                        emitLoadTempBase_x86(a, rdx);
                         a.mov(ptr(rdx, idx * 8), rax);
                     } else { // ExtPopStoreLitVar || ExtStoreLitVar
                         if (op == SistaV1::ExtPopStoreLitVar) {
@@ -15968,7 +16006,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     if (op == SistaV1::PushTempAtInVec) {
                         asmjit::Label vecObj  = a.new_label();
                         asmjit::Label pushDone = a.new_label();
-                        a.mov(rcx, ptr(rdi, OFF_TEMPBASE));
+                        emitLoadTempBase_x86(a, rcx);
                         a.mov(rdx, ptr(rcx, vecIdx * 8));        // vec = temps[vecIdx]
                         a.test(rdx, asmjit::Imm(0x7));
                         a.je(vecObj);                            // tag==0 → object
@@ -15986,7 +16024,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             a.sub(rcx, asmjit::Imm(8));
                             emitStoreSp_x86(a, rcx);        // pop
                         }
-                        a.mov(rcx, ptr(rdi, OFF_TEMPBASE));
+                        emitLoadTempBase_x86(a, rcx);
                         a.mov(rdx, ptr(rcx, vecIdx * 8));        // vec
                         a.test(rdx, asmjit::Imm(0x7));
                         a.jne(vecNotObj);                        // non-object → skip

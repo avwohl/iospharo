@@ -530,13 +530,19 @@ typedef void (*StencilFunc)(JITState*);
     void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
     void* _jit_s = reinterpret_cast<void*>(state_ptr); \
     asm volatile( \
-        "movq %[s], %%rdi\n\t"           /* rdi = state (SysV arg0) */ \
+        /* rdi = state (SysV arg0; the "+D" operand), the entry in  */ \
+        /* memory: the pinned registers leave no register free.      */ \
         "movq (%%rdi), %%rbx\n\t"        /* rbx = state.sp live-in (OFF_SP==0) */ \
+        /* machine-code frames' pinned registers (x86PinRegs): r15 =  */ \
+        /* the state, r12 = tempBase (offset 24), r13 = receiver (8). */ \
+        "movq %%rdi, %%r15\n\t" \
+        "movq 24(%%rdi), %%r12\n\t" \
+        "movq 8(%%rdi), %%r13\n\t" \
         "callq *%[e]\n\t" \
-        : \
-        : [s] "r"(_jit_s), [e] "r"(_jit_e) \
-        : "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11","rbx", \
-          "memory","cc" \
+        : "+D"(_jit_s) \
+        : [e] "m"(_jit_e) \
+        : "rax","rcx","rdx","rsi","r8","r9","r10","r11","rbx", \
+          "r12","r13","r15","memory","cc" \
     ); \
 } while(0)
 // x86 resume call: the V2 resumeAfterCall continuation reads the return value
@@ -552,14 +558,16 @@ typedef void (*StencilFunc)(JITState*);
     void* _jit_s = reinterpret_cast<void*>(state_ptr); \
     uint64_t _jit_rv = (retval_bits); \
     asm volatile( \
-        "movq %[s], %%rdi\n\t"           /* rdi = state */ \
+        /* rdi = state ("+D"), rax = retval for resumeAfterCall ("+a") */ \
         "movq (%%rdi), %%rbx\n\t"        /* rbx = state.sp live-in */ \
-        "movq %[rv], %%rax\n\t"          /* rax = retval for resumeAfterCall */ \
+        "movq %%rdi, %%r15\n\t"          /* pinned registers, as JIT_CALL */ \
+        "movq 24(%%rdi), %%r12\n\t" \
+        "movq 8(%%rdi), %%r13\n\t" \
         "callq *%[e]\n\t" \
-        : \
-        : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
-        : "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11","rbx", \
-          "memory","cc" \
+        : "+D"(_jit_s), "+a"(_jit_rv) \
+        : [e] "m"(_jit_e) \
+        : "rcx","rdx","rsi","r8","r9","r10","r11","rbx", \
+          "r12","r13","r15","memory","cc" \
     ); \
 } while(0)
 #else
