@@ -2363,7 +2363,8 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     // r9d = the send's argument count: a primitive can serve several
     // arities (170 is Character class>>value: and Integer>>asCharacter), so
     // every path checks the one it handles.
-    asmjit::Label p170v = a.new_label();
+    asmjit::Label p170v = a.new_label(), p111 = a.new_label(), p75 = a.new_label();
+    asmjit::Label pQuick = a.new_label();
     a.push(r8);
     a.push(r10);
     auto dispatch = [&](int prim, int nArgs, const asmjit::Label& path) {
@@ -2382,6 +2383,17 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     dispatch(171, 0, p171);
     dispatch(170, 1, p170v);
     dispatch(170, 0, p170);
+    dispatch(111, 0, p111);
+    dispatch(75, 0, p75);
+    {
+        // Quick primitives 256-519 (^self, constants, a field), any arity.
+        asmjit::Label notQuick = a.new_label();
+        a.cmp(r10d, asmjit::Imm(256));
+        a.jb(notQuick);
+        a.cmp(r10d, asmjit::Imm(519));
+        a.jbe(pQuick);
+        a.bind(notQuick);
+    }
     a.bind(fail);
     a.xor_(r11d, r11d);
     a.pop(r10);
@@ -2415,6 +2427,26 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.shl(r10, asmjit::Imm(8));
         a.shr(r10, asmjit::Imm(8));
         a.bind(noOverflow);
+    };
+    // r8 = the class's fixed field count (its format word & 0xFFFF), from
+    // the class index in the header in r8.  Clobbers r9.
+    auto fixedFields = [&]() {
+        a.mov(r9d, r8d);
+        a.and_(r9d, asmjit::Imm(0x3FFFFF));
+        a.mov(r8, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.mov(r8, ptr(r8));
+        a.mov(r8, ptr(r8, r9, 3));               // the class
+        a.test(r8, r8);
+        a.jz(fail);
+        a.test(r8b, asmjit::Imm(7));
+        a.jnz(fail);
+        a.mov(r8, ptr(r8, 8 + 2 * 8));           // slot 2: the format SmallInteger
+        a.mov(r9d, r8d);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);
+        a.sar(r8, asmjit::Imm(3));
+        a.and_(r8d, asmjit::Imm(0xFFFF));
     };
     // r11 = the untagged index in rdx (a SmallInteger, 1-based), checked
     // against the element count in r10.
@@ -2467,7 +2499,15 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.sub(r10, r11);
         a.jmp(have);
         a.bind(notWords);
-        a.jmp(fail);
+        // Formats 3 and 4 (pointers with fixed fields, weak): the slots
+        // past the class's fixed fields.
+        a.cmp(r9d, asmjit::Imm(3));
+        a.jb(fail);
+        a.cmp(r9d, asmjit::Imm(4));
+        a.ja(fail);
+        fixedFields();
+        a.sub(r10, r8);
+        a.jl(fail);
         a.bind(have);
         a.shl(r10, asmjit::Imm(3));
         a.or_(r10, asmjit::Imm(1));
@@ -2475,9 +2515,11 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.jmp(done);
     }
     // 60 at:: pointers without fixed fields, bytes or 32-bit words as
-    // SmallIntegers.
+    // SmallIntegers; pointers past fixed fields (formats 3 and 4:
+    // MethodDictionary, WeakArray).
     {
         asmjit::Label notPtr = a.new_label(), notBytes = a.new_label();
+        asmjit::Label notWords60 = a.new_label();
         a.bind(p60);
         a.mov(rcx, ptr(rbx, -16));
         a.mov(rdx, ptr(rbx, -8));
@@ -2504,13 +2546,27 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.bind(notBytes);
         a.lea(r11d, ptr(r9, -10));
         a.cmp(r11d, asmjit::Imm(2));
-        a.jae(fail);
+        a.jae(notWords60);
         a.shl(r10, asmjit::Imm(1));
         a.sub(r10, r11);
         index();
         a.mov(edx, dword_ptr(rcx, r11, 2, 4));
         a.shl(rdx, asmjit::Imm(3));
         a.or_(rdx, asmjit::Imm(1));
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+        a.bind(notWords60);
+        a.cmp(r9d, asmjit::Imm(3));
+        a.jb(fail);
+        a.cmp(r9d, asmjit::Imm(4));
+        a.ja(fail);
+        fixedFields();
+        a.sub(r10, r8);
+        a.jl(fail);
+        index();
+        a.add(r11, r8);                          // past the fixed fields
+        a.mov(rdx, ptr(rcx, r11, 3));
         a.mov(ptr(rbx, -16), rdx);
         a.sub(rbx, asmjit::Imm(8));
         a.jmp(done);
@@ -2603,6 +2659,150 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.shl(rcx, asmjit::Imm(3));
         a.or_(rcx, asmjit::Imm(1));
         a.mov(ptr(rbx, -8), rcx);
+        a.jmp(done);
+    }
+    // 111 class: an immediate's class index is (tag + 1) / 2, and the class
+    // registered there must have that index as its identity hash; a heap
+    // object's class index is in its header.  A forwarder, a missing or a
+    // nil class take the C call.
+    {
+        asmjit::Label heap = a.new_label(), have = a.new_label();
+        a.bind(p111);
+        a.mov(rcx, ptr(rbx, -8));
+        a.mov(r9d, ecx);
+        a.and_(r9d, asmjit::Imm(7));
+        a.jz(heap);
+        a.add(r9d, asmjit::Imm(1));
+        a.shr(r9d, asmjit::Imm(1));
+        a.mov(r8, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.mov(r8, ptr(r8));
+        a.mov(rdx, ptr(r8, r9, 3));
+        a.test(rdx, rdx);
+        a.jz(fail);
+        a.test(dl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.mov(r8, ptr(rdx));
+        a.shr(r8, asmjit::Imm(32));
+        a.and_(r8d, asmjit::Imm(0x3FFFFF));     // its identity hash
+        a.cmp(r8d, r9d);
+        a.jne(fail);
+        a.jmp(have);
+        a.bind(heap);
+        a.mov(r9d, dword_ptr(rcx));
+        a.and_(r9d, asmjit::Imm(0x3FFFFF));
+        a.cmp(r9d, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+        a.je(fail);
+        a.mov(r8, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.mov(r8, ptr(r8));
+        a.mov(rdx, ptr(r8, r9, 3));
+        a.test(rdx, rdx);
+        a.jz(fail);
+        a.test(dl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.cmp(rdx, ptr(rdi, OFF_MCF_NIL));
+        a.je(fail);
+        a.bind(have);
+        a.mov(ptr(rbx, -8), rdx);
+        a.jmp(done);
+    }
+    // 75 identityHash: a heap object's assigned hash (0: the C call assigns
+    // one), a SmallInteger's or Character's low 22 bits.
+    {
+        asmjit::Label heap = a.new_label(), have = a.new_label();
+        a.bind(p75);
+        a.mov(rcx, ptr(rbx, -8));
+        a.mov(r9d, ecx);
+        a.and_(r9d, asmjit::Imm(7));
+        a.jz(heap);
+        a.cmp(r9d, asmjit::Imm(1));
+        a.je(have);                              // SmallInteger: the value
+        a.cmp(r9d, asmjit::Imm((int)(Oop::fromCharacter(0).rawBits() & 7)));
+        a.jne(fail);                             // a SmallFloat: the C call
+        a.bind(have);
+        a.mov(rdx, rcx);
+        a.sar(rdx, asmjit::Imm(3));
+        a.and_(edx, asmjit::Imm(0x3FFFFF));
+        asmjit::Label tag = a.new_label();
+        a.jmp(tag);
+        a.bind(heap);
+        a.mov(r8, ptr(rcx));
+        a.mov(r9d, r8d);
+        a.and_(r9d, asmjit::Imm(0x3FFFFF));
+        a.cmp(r9d, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+        a.je(fail);
+        a.mov(rdx, r8);
+        a.shr(rdx, asmjit::Imm(32));
+        a.and_(edx, asmjit::Imm(0x3FFFFF));
+        a.test(edx, edx);
+        a.jz(fail);
+        a.bind(tag);
+        a.shl(rdx, asmjit::Imm(3));
+        a.or_(rdx, asmjit::Imm(1));
+        a.mov(ptr(rbx, -8), rdx);
+        a.jmp(done);
+    }
+    // Quick primitives: 256 ^self, 257 true, 258 false, 259 nil, 260-263
+    // the SmallIntegers -1..2, 264+ the receiver's field (qp - 264) of a
+    // fixed-size object (a Context's fields need the lazy-context sync).
+    // r9d = the argument count: the receiver slot is below the arguments.
+    {
+        asmjit::Label notSelf = a.new_label(), notTrue = a.new_label();
+        asmjit::Label notFalse = a.new_label(), notNil = a.new_label();
+        asmjit::Label notConst = a.new_label(), store = a.new_label();
+        a.bind(pQuick);
+        a.lea(r11, ptr(r9, 1));
+        a.shl(r11, asmjit::Imm(3));
+        a.neg(r11);                              // r11 = -(nArgs+1)*8
+        a.mov(rcx, ptr(rbx, r11));               // the receiver
+        a.cmp(r10d, asmjit::Imm(256));
+        a.jne(notSelf);
+        a.mov(rdx, rcx);
+        a.jmp(store);
+        a.bind(notSelf);
+        a.cmp(r10d, asmjit::Imm(257));
+        a.jne(notTrue);
+        a.mov(rdx, ptr(rdi, OFF_TRUEOOP));
+        a.jmp(store);
+        a.bind(notTrue);
+        a.cmp(r10d, asmjit::Imm(258));
+        a.jne(notFalse);
+        a.mov(rdx, ptr(rdi, OFF_FALSEOOP));
+        a.jmp(store);
+        a.bind(notFalse);
+        a.cmp(r10d, asmjit::Imm(259));
+        a.jne(notNil);
+        a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
+        a.jmp(store);
+        a.bind(notNil);
+        a.cmp(r10d, asmjit::Imm(263));
+        a.ja(notConst);
+        a.lea(rdx, ptr(r10, -261));
+        a.shl(rdx, asmjit::Imm(3));
+        a.or_(rdx, asmjit::Imm(1));
+        a.jmp(store);
+        a.bind(notConst);
+        a.test(cl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.mov(r8, ptr(rcx));
+        a.mov(rdx, r8);
+        a.shr(rdx, asmjit::Imm(24));
+        a.and_(edx, asmjit::Imm(0x1F));
+        a.cmp(edx, asmjit::Imm(1));
+        a.jne(fail);                             // fixed-size objects only
+        a.mov(edx, r8d);
+        a.and_(edx, asmjit::Imm(0x3FFFFF));
+        a.cmp(edx, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+        a.je(fail);
+        a.shr(r8, asmjit::Imm(56));              // slot count (fixed size < 255)
+        a.lea(rdx, ptr(r10, -264));              // the field index
+        a.cmp(rdx, r8);
+        a.jae(fail);
+        a.mov(rdx, ptr(rcx, rdx, 3, 8));
+        a.bind(store);
+        a.mov(ptr(rbx, r11), rdx);
+        a.lea(r11, ptr(r9, 0));
+        a.shl(r11, asmjit::Imm(3));
+        a.sub(rbx, r11);                         // pop the arguments
         a.jmp(done);
     }
     // 170 Character class>>value: (one argument) and Integer>>asCharacter
