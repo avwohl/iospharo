@@ -549,7 +549,7 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
         // No frame or register may hold one.  Bound forwarding chains
         // (repeated swaps of the same objects) with an unforward pass.
         followForwardersInRoots();
-        if (memory_.lazyPairsSinceUnforward() >= 256) memory_.unforwardAll();
+        if (memory_.lazyPairsSinceUnforward() >= ObjectMemory::kLazyPairsPerUnforward) memory_.unforwardAll();
     } else if (!heapScanPairs.empty() && !GET_DEBUG_BOOL(PHARO_BECOME_TWOWAY_SERIAL)
             && !cachesAffected && memory_.becomeTwoWayYoung(heapScanPairs)) {
         // Young pairs (ReStore: a fresh proxy and its new object): copies
@@ -16638,7 +16638,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
             if (!lazyBecomeEligible(f) || !t.isObject() || t.isNil()) { eligible = false; break; }
         if (eligible && memory_.becomeForwardLazy(pairs)) {
             followForwardersInRoots();
-            if (memory_.lazyPairsSinceUnforward() >= 256) memory_.unforwardAll();
+            if (memory_.lazyPairsSinceUnforward() >= ObjectMemory::kLazyPairsPerUnforward) memory_.unforwardAll();
             lazyDone = true;
         }
     }

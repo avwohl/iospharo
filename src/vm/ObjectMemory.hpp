@@ -326,15 +326,24 @@ public:
     Oop followForwarded(Oop oop) const {
         if (!oop.isObject()) return oop;
         ObjectHeader* hdr = oop.asObjectPtr();
+        ObjectHeader* const first = hdr;
         // Follow chain of forwarding pointers (usually just one level)
-        // Prevent infinite loops on a corrupt heap.  Lazy become chains
-        // stay under 256 hops (an unforward pass every 256 pairs).
+        // Prevent infinite loops on a corrupt heap.  Lazy become chains stay
+        // short: each follow points the first forwarder at the end of the
+        // chain, and an unforward pass runs every kLazyPairsPerUnforward pairs.
         int limit = 512;
+        int hops = 0;
         while (hdr->isForwarded() && limit-- > 0) {
             oop = hdr->slotAt(0);  // Forwarding target is in first slot
             if (!oop.isObject()) return oop;
             hdr = oop.asObjectPtr();
+            hops++;
         }
+        // Path compression (Cog shortens chains as it follows them).  Only to
+        // an old target: an old forwarder pointing at a young object would
+        // need the remembered set, and this is const.
+        if (hops > 1 && !hdr->isForwarded() && isOld(oop))
+            first->slots()[0] = oop;
         if (hdr->isForwarded()) {
             // Cap hit with the chain still forwarded: either a >10-deep
             // legitimate chained-become: (raise the cap) or a forwarding
@@ -738,6 +747,11 @@ public:
     // with its target; clears g_lazyForwarders.  Run by markPhase.
     void unforwardAll();
     size_t lazyPairsSinceUnforward() const { return lazyPairsSinceUnforward_; }
+    // Lazy become pairs between unforward passes (each walks the heap).  Was
+    // 256: ReStore swaps proxies so often that the walks were half its time
+    // (SSWReStoreSpeedTest 5.3 s, Cog 2.3).  Path compression in
+    // followForwarded keeps chains short meanwhile.
+    static constexpr size_t kLazyPairsPerUnforward = 4096;
 
     // Hash-copying become onto a CLASS (Spur prim 72/249, copyHash: true).
     // A class's identity hash IS its class-table index, so copying obj1's
