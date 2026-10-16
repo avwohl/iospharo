@@ -125,3 +125,26 @@ with primitive 198 or 199 (`ensure:`, `on:do:`) advertised no bytecode
 map unless arm64 MCF was on, so every return into them left machine code;
 and the IC patch set `kXGateOkBit` (bit 57, which arm64 MCF reads as the
 multi-slot getter) whenever arm64 MCF was off.
+
+## Status (2026-10-18, later)
+
+- `a5bc50f1`: the checkpoint countdown is read-only at native calls (as on
+  arm64), and native calls and returns no longer store the state's ip.
+- `c46f8864`: ExtendA + ExtSend (sends to literals 32-255) go through
+  `pharo_mcf_extsend`; they were two thirds of lexicon's remaining exits.
+
+x86 lexicon 38-39 s (Cog 11.9 s).  Per call (30 zzFib, translated
+instructions): x86 377, our arm64 build 101, Cog x86 145.
+
+Where x86 time goes now (sample, inclusive): machine code about 45%,
+primitive C calls 14%, `mcfRun`'s own C++ entry and exit handling about
+17%, the interpreter's send path the rest.  Bytecodes interpreted: 33M
+(arm64: 24M), so the interpreter itself is cheap; the cost is per
+machine-code entry.  The next levers: fewer `mcfRun` entries (exits and
+interpreter activations), more primitives in the x86 stub, and a cheaper
+native call and return (state in registers, a compact frame record, the
+arm64 lazy view).
+
+Trait-heavy tests time out once per x86 sweep (a different test each
+time, never alone): the watchdog's 30 s expiry is genuine, the test is
+compiling (Opal, trait method copies) about 4x slower than on arm64.
