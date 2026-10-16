@@ -209,3 +209,33 @@ Expected total: Steps 1-5 give about 0.6-1.2%. With the segment, the total is ab
 3. Do the 408K case (b) restores mostly succeed today, or does restoreFail 2 kill most of them? The answer decides between Step 5b and the full segment.
 4. Does any path outside the listed mediation points read a Context's sender raw (T1 format-3 `at:` / `size`, the inline getters, Fuel)? The marker rule needs the complete list before Step 10.
 5. Under `PHARO_DET_SCHED`, A/B arms are not byte-comparable, because the native NLR skips `mcfRun`'s countdown charge. Is a fixed charge at the native NLR acceptable, or should arms be compared only by statistics?
+
+## Ensure shortcut (2026-10-16, the default)
+
+A non-local return through exactly one `ensure:` frame E does not use the
+image unwind protocol (`aboutToReturn:through:`, `return:through:`,
+`resume:through:`).  `mcfNonLocalReturn` does these steps instead:
+
+1. It unwinds the frames above E's callee, as a plain non-local return does.
+2. E's callee (the protected block) returns the value to E.  E then runs as
+   if `self valueNoContextSwitch` answered the value: `ensure:` sets
+   `complete` and runs the handler itself.
+3. It removes the frames from the home H up to E (their contexts die) and
+   moves E's frame down over H's.  E's `^ returnValue` then returns to H's
+   sender.
+
+The protocol has the same effect, but the frames from H up to E stay alive
+until the handler returns.  The shortcut runs only when nothing can see
+that difference:
+
+- E runs `BlockClosure>>ensure:`, stopped after its `valueNoContextSwitch`
+  send, with `complete` nil and no context.
+- No frame from H up to E is a handler (primitive 199) or unwind
+  (primitive 198) frame.
+- The handler block has no `^`, no `thisContext` and no nested block.
+
+Otherwise the protocol runs as before.  Lexicon (one such return per
+`Symbol class>>intern:`, through `Semaphore>>critical:`, 1.7 million per
+run) went from 222.5 to 187.5 billion instructions, 13.4 to 11.4 s.  A
+return through ensure: took about 12000 instructions before.
+Opt-out: `PHARO_MCF_NO_ENSURE_SHORTCUT`.

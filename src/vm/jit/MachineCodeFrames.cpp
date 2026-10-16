@@ -159,6 +159,8 @@ extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
     return st->interp->mcfBlockCreate(st, packed);
 }
 
+uint64_t g_mcfEnsureShortcuts = 0;   // NLRs through ensure: taken by the shortcut
+
 // PHARO_MCF_CALL_CENSUS: native calls by callee method (printed with the
 // JIT stats by mcfCallCensusDump).
 static Interpreter* g_mcfInterp = nullptr;
@@ -1927,11 +1929,25 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
     Oop expected = nlrHomeCMOf(method_);
     if (expected.isNil()) return refuse(kNoCM);
     if (validateNLRHomeFrame(h, expected) != h) return refuse(kValidate);
+    size_t ensureAt = SIZE_MAX, nEnsure = 0;
     for (size_t i = h; i < d; i++) {
         Oop m = savedFrames_[i].savedMethod;
-        if (m.isObject() && !m.isNil() && primitiveIndexOf(m) == 198) return refuse(kEnsure);
+        if (m.isObject() && !m.isNil() && primitiveIndexOf(m) == 198) { nEnsure++; ensureAt = i; }
     }
     if (savedFrames_[h - 1].retSlot()) return refuse(kRetSlot);
+    if (nEnsure != 0) {
+        static const bool shortcut = !GET_DEBUG_BOOL(PHARO_MCF_NO_ENSURE_SHORTCUT);
+        if (!shortcut || nEnsure != 1 || !mcfEnsureShortcutOk(h, d, ensureAt)) return refuse(kEnsure);
+        Oop value;
+        switch (*instructionPointer_) {
+            case jit::SistaV1::ReturnReceiver: value = receiver_; break;
+            case jit::SistaV1::ReturnTrue:     value = memory_.trueObject(); break;
+            case jit::SistaV1::ReturnFalse:    value = memory_.falseObject(); break;
+            case jit::SistaV1::ReturnNil:      value = memory_.nil(); break;
+            default:                           value = pop(); break;   // ReturnTop
+        }
+        return mcfEnsureShortcutCommit(st, h, ensureAt, value);
+    }
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_MCF_NLR_VERIFY), 0)) {
         Oop hm = expected;
         Oop outer = closure_.isObject() && !closure_.isNil()
@@ -2006,6 +2022,156 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
     st->cachedTarget = Oop::fromRawBits(0);
     st->mcfBcEndOff = static_cast<uint64_t>(
         bytecodeEnd_ - reinterpret_cast<uint8_t*>(m.rawBits()));
+    return entry;
+}
+
+// The ensure shortcut.  Context>>resume:through: (from aboutToReturn:through:)
+// with one unwind context E between the returning block and its home H:
+// marks E complete, runs E's handler, then returns the value to H's sender
+// S and kills every frame from the block down to H.  The shortcut does the
+// same with live frames: it resumes E as if `self valueNoContextSwitch`
+// answered the value (ensure:'s own code then sets complete and runs the
+// handler), and removes the frames H..E-1 first, so E's `^ returnValue`
+// returns to S.  Each such return went through the image protocol: ~12000
+// instructions, two full frame materializations (Symbol class>>intern:
+// does it 1.7M times per lexicon run, via Semaphore>>critical:).
+//
+// The frames H..E-1 die early (in the protocol they live until the handler
+// returns).  Nothing can tell: none of them is a handler (primitive 199) or
+// unwind (198) frame, and the handler block has no ^, thisContext or nested
+// block.  E must be BlockClosure>>ensure: itself, stopped at its
+// valueNoContextSwitch send with complete still nil, and have no context.
+static bool mcfSymbolIs(Oop o, const char* s) {
+    if (!o.isObject() || o.rawBits() < 0x10000) return false;
+    ObjectHeader* h = o.asObjectPtr();
+    if (!h->isBytesObject()) return false;
+    const size_t n = strlen(s);
+    return h->byteSize() == n && memcmp(h->bytes(), s, n) == 0;
+}
+
+bool Interpreter::mcfEnsureShortcutOk(size_t h, size_t d, size_t e) {
+    if (e <= h || e >= d || h == 0 || seg_.armed || collapsed_.armed) return false;
+    const SavedFrame& E = savedFrames_[e];
+    if (!E.materializedContext.isNil() || !E.fp()) return false;
+    // E runs BlockClosure>>ensure: (1 argument, 4 temporaries, the selector).
+    Oop m = E.savedMethod;
+    if (!m.isObject() || m.rawBits() < 0x10000) return false;
+    ObjectHeader* mo = m.asObjectPtr();
+    if (!mo->isCompiledMethod()) return false;
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return false;
+    const int64_t hb = hdr.asSmallInteger();
+    const int numLits = (int)(hb & 0x7FFF);
+    if (((hb >> 24) & 0xF) != 1 || ((hb >> 18) & 0x3F) != 4 || numLits < 2) return false;
+    {
+        // The penultimate literal: the selector, or an AdditionalMethodState
+        // holding it in slot 1.
+        Oop sel = mo->slotAt((size_t)numLits - 1);
+        if (!mcfSymbolIs(sel, "ensure:")) {
+            if (!sel.isObject() || sel.rawBits() < 0x10000 || sel.asObjectPtr()->isBytesObject()
+                    || sel.asObjectPtr()->slotCount() < 2
+                    || !mcfSymbolIs(sel.asObjectPtr()->slotAt(1), "ensure:"))
+                return false;
+        }
+    }
+    // Stopped right after its `self valueNoContextSwitch` (a short send).
+    const uint8_t* bc = mo->bytes() + (1 + numLits) * 8;
+    const uint8_t* end = mo->bytes() + mo->compiledCodeByteSize();
+    const uint8_t* after = nullptr;
+    for (const uint8_t* p = bc; p < end && p < bc + 24; p += jit::SistaV1::bytecodeLength(*p)) {
+        if (jit::SistaV1::isSend0(*p)
+                && mcfSymbolIs(mo->slotAt(1 + (size_t)(*p - jit::SistaV1::Send0Base)), "valueNoContextSwitch")) {
+            after = p + 1;
+            break;
+        }
+    }
+    if (!after || E.ip() != after) return false;
+    // aBlock (temp 0) a 0-argument block whose code has no ^, thisContext or
+    // block; complete (temp 2) nil.
+    Oop* tb = E.fp() + 1;
+    if (!tb[2].isNil()) return false;
+    Oop blk = tb[0];
+    if (!blk.isObject() || blk.rawBits() < 0x10000) return false;
+    ObjectHeader* bo = blk.asObjectPtr();
+    if (bo->isForwarded() || bo->slotCount() < 3 || !bo->isPointersObject()) return false;
+    Oop cb = bo->slotAt(1);
+    if (!cb.isObject() || cb.rawBits() < 0x10000) return false;
+    ObjectHeader* cbo = cb.asObjectPtr();
+    if (!cbo->isCompiledMethod() || cbo->classIndex() != compiledBlockClassIndex_) return false;
+    Oop bh = cbo->slotAt(0);
+    if (!bh.isSmallInteger() || ((bh.asSmallInteger() >> 24) & 0xF) != 0) return false;
+    const int bLits = (int)(bh.asSmallInteger() & 0x7FFF);
+    const uint8_t* bp = cbo->bytes() + (1 + bLits) * 8;
+    const uint8_t* bend = cbo->bytes() + cbo->compiledCodeByteSize();
+    for (const uint8_t* p = bp; p < bend; ) {
+        const uint8_t op = *p;
+        if (op == jit::SistaV1::PushThisContext || jit::SistaV1::isReturn(op)
+                || op == jit::SistaV1::PushFullBlock)
+            return false;
+        const int len = jit::SistaV1::bytecodeLength(op);
+        if (len <= 0) return false;
+        p += len;
+    }
+    // No handler or other unwind frame from H up to E.
+    for (size_t i = h; i < e; i++) {
+        Oop fm = savedFrames_[i].savedMethod;
+        if (fm.isObject() && !fm.isNil()) {
+            const int p = primitiveIndexOf(fm);
+            if (p == 198 || p == 199) return false;
+        }
+    }
+    return true;
+}
+
+void* Interpreter::mcfEnsureShortcutCommit(jit::JITState* st, size_t h, size_t e, Oop value) {
+    // The frames above E+1 are unwound, as the plain non-local return
+    // unwinds them; E+1 (the protected block) then answers the value to E.
+    while (frameDepth_ > e + 1) {
+        widowUnwoundContext();
+        if (!popFrame()) return reinterpret_cast<void*>(1);
+    }
+    returnValue(value);
+    if (!running_ || frameDepth_ != e) return reinterpret_cast<void*>(1);
+    void* pjm = nullptr;
+    void* entry = mcfPoppedMemo(&savedFrames_[e], &pjm);
+    // Remove H..E-1: their contexts die, and E's frame moves down over H's,
+    // so E's return lands where H's would have.
+    for (size_t i = h; i < e; i++) {
+        Oop c = savedFrames_[i].materializedContext;
+        if (c.isObject() && !c.isNil()) {
+            memory_.storePointer(0, c, memory_.nil());
+            memory_.storePointer(1, c, memory_.nil());
+        }
+    }
+    Oop* hfp = savedFrames_[h].fp();
+    Oop* efp = framePointer_;
+    const ptrdiff_t n = stackPointer_ - efp;
+    if (!hfp || hfp >= efp || n < 1) return reinterpret_cast<void*>(1);
+    std::memmove(hfp, efp, (size_t)n * sizeof(Oop));
+    framePointer_ = hfp;
+    stackPointer_ = hfp + n;
+    frameDepth_ = h;
+    g_mcfEnsureShortcuts++;
+    nlrHomeMethod_ = Oop::nil();
+    nlrValue_ = Oop::nil();
+    if (checkCountdown_ <= 0 || !entry) return reinterpret_cast<void*>(1);
+    jit::JITMethod* jm = static_cast<jit::JITMethod*>(pjm);
+    Oop mm = method_;
+    ObjectHeader* mmo = mm.asObjectPtr();
+    st->sp = stackPointer_;
+    st->receiver = receiver_;
+    st->closure = closure_;
+    st->literals = mmo->slots() + 1;
+    st->tempBase = framePointer_ + 1;
+    st->ip = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(jm->bcStart()));
+    st->jitMethod = jm;
+    st->method = mm;
+    st->argCount = argCount_;
+    st->exitReason = jit::ExitNone;
+    st->returnValue = Oop::fromRawBits(0);
+    st->cachedTarget = Oop::fromRawBits(0);
+    st->mcfBcEndOff = static_cast<uint64_t>(
+        bytecodeEnd_ - reinterpret_cast<uint8_t*>(mm.rawBits()));
     return entry;
 }
 

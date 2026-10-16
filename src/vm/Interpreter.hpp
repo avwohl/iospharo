@@ -2115,6 +2115,11 @@ public:
     Oop mcfThisContext(jit::JITState* st);
     void* mcfNonLocalReturn(jit::JITState* st);
     void followForwardersDeep(Oop o, int depth);
+    // The NLR through one ensure: frame without the image's unwind protocol
+    // (docs/native-nlr-plan.md, "ensure shortcut").  e = the ensure: frame's
+    // depth.  ensureShortcutOk is check-only; the commit runs after it.
+    bool mcfEnsureShortcutOk(size_t h, size_t d, size_t e);
+    void* mcfEnsureShortcutCommit(jit::JITState* st, size_t h, size_t e, Oop value);
     // Trim steps 7-8 (docs/mcf-call-trim-plan.md): a record's closure is
     // fp[0] of a block frame (INV-FP0), nil for a method frame; its active
     // context is activeContext_ (INV-AC).  Native pushes no longer write
