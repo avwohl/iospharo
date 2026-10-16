@@ -113,7 +113,7 @@ inline bool mcfMode() {
 // interleaving stays a function of the call count.  Opt-out
 // PHARO_MCF_CTDN_SPEND.
 inline bool mcfCtdnReadOnly() {
-    return mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_CTDN_SPEND)
+    return mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_CTDN_SPEND)
         && !GET_DEBUG_BOOL(PHARO_DET_SCHED);
 }
 

@@ -2254,9 +2254,7 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
     a.mov(rdx, ptr(rcx, L.mcJM));
     a.mov(ptr(rdi, OFF_JITMETHOD), rdx);
-    a.mov(rdx, ptr(rcx, L.savedIP));
-    a.mov(ptr(rdi, OFF_IP), rdx);
-    a.jmp(rsi);
+    a.jmp(rsi);                                  // (no ip store: see the call)
     a.bind(fall);
 }
 
@@ -2268,12 +2266,20 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
                                   int nArgs, int ipAfterOff, const asmjit::Label& resume) {
     using namespace asmjit::x86;
     const McfFrameLayout& L = g_mcfLayout;
-    // A call spends 1 of the checkpoint countdown, as mcfRun's entry does.
+    // The checkpoint countdown.  By default a call only reads it: whatever
+    // needs a checkpoint sets it to 0 (mcfCtdnReadOnly, as on arm64; the
+    // per-call load-subtract-store chain made each call wait for the
+    // previous one's store).  Otherwise a call spends 1, as mcfRun's entry.
     a.mov(r10, ptr(rdi, OFF_MCF_CTDN_PTR));
-    a.mov(r11d, dword_ptr(r10));
-    a.sub(r11d, asmjit::Imm(1));
-    a.jle(refuse);
-    a.mov(dword_ptr(r10), r11d);
+    if (::pharo::mcfCtdnReadOnly()) {
+        a.cmp(dword_ptr(r10), asmjit::Imm(1));
+        a.jle(refuse);
+    } else {
+        a.mov(r11d, dword_ptr(r10));
+        a.sub(r11d, asmjit::Imm(1));
+        a.jle(refuse);
+        a.mov(dword_ptr(r10), r11d);
+    }
     a.mov(r10, ptr(rdi, OFF_MCF_DEPTH_PTR));
     a.mov(r11, ptr(r10));                        // frameDepth_
     if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
@@ -2684,11 +2690,8 @@ static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAf
     a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
     a.mov(ptr(rdi, OFF_JITMETHOD), r9);
     a.mov(r10, ptr(r8, 16));
-    a.mov(rdx, r10);
-    a.shr(rdx, asmjit::Imm(24));
-    a.and_(edx, asmjit::Imm(0xFFFFFF));
-    a.add(rdx, rax);
-    a.mov(ptr(rdi, OFF_IP), rdx);
+    // No ip store: every exit and helper call that reads the state's ip
+    // stores its own bytecode first (as the arm64 lazy view has it).
     a.mov(edx, r10d);
     a.and_(edx, asmjit::Imm(0xFFFFFF));
     a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
@@ -2888,11 +2891,8 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
     a.mov(ptr(rdi, OFF_JITMETHOD), r9);
     a.mov(r10, ptr(r8, 16));
-    a.mov(rdx, r10);
-    a.shr(rdx, asmjit::Imm(24));
-    a.and_(edx, asmjit::Imm(0xFFFFFF));
-    a.add(rdx, rax);
-    a.mov(ptr(rdi, OFF_IP), rdx);
+    // No ip store: every exit and helper call that reads the state's ip
+    // stores its own bytecode first (as the arm64 lazy view has it).
     a.mov(edx, r10d);
     a.and_(edx, asmjit::Imm(0xFFFFFF));
     a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
