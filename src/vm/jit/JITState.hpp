@@ -538,11 +538,12 @@ typedef void (*StencilFunc)(JITState*);
         "movq %%rdi, %%r15\n\t" \
         "movq 24(%%rdi), %%r12\n\t" \
         "movq 8(%%rdi), %%r13\n\t" \
+        "movq 56(%%rdi), %%r14\n\t"      /* r14 = state.jitMethod */ \
         "callq *%[e]\n\t" \
         : "+D"(_jit_s) \
         : [e] "m"(_jit_e) \
         : "rax","rcx","rdx","rsi","r8","r9","r10","r11","rbx", \
-          "r12","r13","r15","memory","cc" \
+          "r12","r13","r14","r15","memory","cc" \
     ); \
 } while(0)
 // x86 resume call: the V2 resumeAfterCall continuation reads the return value
@@ -563,11 +564,12 @@ typedef void (*StencilFunc)(JITState*);
         "movq %%rdi, %%r15\n\t"          /* pinned registers, as JIT_CALL */ \
         "movq 24(%%rdi), %%r12\n\t" \
         "movq 8(%%rdi), %%r13\n\t" \
+        "movq 56(%%rdi), %%r14\n\t"      /* r14 = state.jitMethod */ \
         "callq *%[e]\n\t" \
         : "+D"(_jit_s), "+a"(_jit_rv) \
         : [e] "m"(_jit_e) \
         : "rcx","rdx","rsi","r8","r9","r10","r11","rbx", \
-          "r12","r13","r15","memory","cc" \
+          "r12","r13","r14","r15","memory","cc" \
     ); \
 } while(0)
 #else

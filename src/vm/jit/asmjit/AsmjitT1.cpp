@@ -2130,6 +2130,46 @@ static inline asmjit::x86::Gp x86RcvrReg(asmjit::x86::Assembler& a, asmjit::x86:
     return scratch;
 }
 
+
+// The JIT method pinned in r14 (write-through, as r12/r13): with the lazy
+// method view the call and the return no longer write the state's method
+// and literals (mcfDeriveView derives them on x86 too); machine code reads
+// them from the JIT method.  PHARO_X86_NO_LAZY_METHOD (diag builds) keeps
+// the eager view.
+static inline bool x86LazyMethod() {
+    static const bool on = x86PinRegs() && ::pharo::mcfX86Compact()
+        && !GET_DEBUG_BOOL(PHARO_X86_NO_LAZY_METHOD);
+    return on;
+}
+static inline void emitSetJM_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp src) {
+    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_JITMETHOD), src);
+    if (x86PinRegs() && src.id() != asmjit::x86::r14.id()) a.mov(asmjit::x86::r14, src);
+}
+static inline void emitLoadJM_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
+    if (x86PinRegs()) a.mov(dst, asmjit::x86::r14);
+    else a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_JITMETHOD));
+}
+static inline void emitLoadMethod_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
+    if (x86LazyMethod())
+        a.mov(dst, asmjit::x86::ptr(asmjit::x86::r14, (int)offsetof(JITMethod, compiledMethodOop)));
+    else
+        a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_METHOD));
+}
+static inline void emitLoadLiterals_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
+    if (x86LazyMethod()) {
+        a.mov(dst, asmjit::x86::ptr(asmjit::x86::r14, (int)offsetof(JITMethod, compiledMethodOop)));
+        a.add(dst, asmjit::Imm(16));
+    } else {
+        a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_LITERALS));
+    }
+}
+static inline void emitCmpMethod_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp r) {
+    if (x86LazyMethod())
+        a.cmp(r, asmjit::x86::ptr(asmjit::x86::r14, (int)offsetof(JITMethod, compiledMethodOop)));
+    else
+        a.cmp(r, asmjit::x86::ptr(asmjit::x86::rdi, OFF_METHOD));
+}
+
 // ===== C-helper call ABI: Win64 vs System V AMD64 =====
 // The JIT pins the VM state pointer in RDI and the Smalltalk sp in RBX (see
 // X86_SP_REG / the JIT_CALL entry macro in JITState.hpp).  When emitted JIT
@@ -2188,6 +2228,7 @@ static inline void emitCallCHelper_x86(asmjit::x86::Assembler& a,
         // The C side may have moved the receiver (GC) or changed frames.
         a.mov(asmjit::x86::r12, asmjit::x86::ptr(asmjit::x86::r15, OFF_TEMPBASE));
         a.mov(asmjit::x86::r13, asmjit::x86::ptr(asmjit::x86::r15, OFF_RECEIVER));
+        a.mov(asmjit::x86::r14, asmjit::x86::ptr(asmjit::x86::r15, OFF_JITMETHOD));
     }
 #endif
 }
@@ -2339,21 +2380,23 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
         a.mov(rdx, ptr(rcx, L.savedClosure));
         a.mov(ptr(rdi, OFF_CLOSURE), rdx);
     }
-    a.mov(rdx, ptr(rcx, L.savedMethod));
-    a.mov(ptr(rdi, OFF_METHOD), rdx);
-    if (!::pharo::mcfX86Compact()) {
-        a.mov(r8, ptr(rcx, L.savedBytecodeEnd));
-        a.sub(r8, rdx);
-        a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), r8);
+    if (!x86LazyMethod()) {
+        a.mov(rdx, ptr(rcx, L.savedMethod));
+        a.mov(ptr(rdi, OFF_METHOD), rdx);
+        if (!::pharo::mcfX86Compact()) {
+            a.mov(r8, ptr(rcx, L.savedBytecodeEnd));
+            a.sub(r8, rdx);
+            a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), r8);
+        }
+        a.add(rdx, asmjit::Imm(16));
+        a.mov(ptr(rdi, OFF_LITERALS), rdx);
     }
-    a.add(rdx, asmjit::Imm(16));
-    a.mov(ptr(rdi, OFF_LITERALS), rdx);
     if (!::pharo::mcfX86Compact()) {
         a.movzx(edx, byte_ptr(rcx, L.savedArgCount));
         a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
     }
     a.mov(rdx, ptr(rcx, L.mcJM));
-    a.mov(ptr(rdi, OFF_JITMETHOD), rdx);
+    emitSetJM_x86(a, rdx);
     a.jmp(rsi);                                  // (no ip store: see the call)
     a.bind(fall);
 }
@@ -2423,7 +2466,7 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     a.add(r11, asmjit::Imm(1));
     a.mov(ptr(r10), r11);                        // frameDepth_++
     // The caller's record.
-    a.mov(rdx, ptr(rdi, OFF_METHOD));
+    emitLoadMethod_x86(a, rdx);
     a.mov(ptr(rcx, L.savedMethod), rdx);
     if (::pharo::mcfX86Compact() && ipAfterOff >= 0 && ipAfterOff <= 0xFFFF) {
         // Compact (recFull 0): the info word is the ip's offset from the
@@ -2435,7 +2478,7 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
         // recFull 2: a raw ip and arg count, no tail fields.
         a.lea(r10, ptr(rdx, ipAfterOff));
         a.mov(ptr(rcx, L.savedIP), r10);
-        a.mov(r10, ptr(rdi, OFF_JITMETHOD));
+        emitLoadJM_x86(a, r10);
         a.movzx(r10d, byte_ptr(r10, (int)offsetof(JITMethod, argCount)));
         a.or_(r10d, asmjit::Imm((nArgs << 8) | (2 << 24)));   // ctxSynced 0, recFull 2
         a.mov(qword_ptr(rcx, L.savedArgCount), r10);           // homeFramePlus1 0
@@ -2461,7 +2504,7 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
         a.mov(r10, ptr(r10));
         a.mov(ptr(rcx, L.savedActiveContext), r10);
     }
-    a.mov(r10, ptr(rdi, OFF_JITMETHOD));
+    emitLoadJM_x86(a, r10);
     a.mov(ptr(rcx, L.mcJM), r10);
     a.mov(r10, ptr(rdi, OFF_MCF_MATCTX_PTR));
     a.mov(r11, ptr(r10));
@@ -3243,12 +3286,14 @@ static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAf
     emitMcfPushRecord_x86(a, refuse, nArgs, ipAfterOff, resume, skipCtdn);
     // The callee's view.  entry.bcEndOff packs the bytecode end (bits
     // 0-23), start (24-47) and temp count (48-55) (mcfPackBcInfo).
-    a.mov(ptr(rdi, OFF_METHOD), rax);
-    a.lea(r10, ptr(rax, 16));
-    a.mov(ptr(rdi, OFF_LITERALS), r10);
+    if (!x86LazyMethod()) {
+        a.mov(ptr(rdi, OFF_METHOD), rax);
+        a.lea(r10, ptr(rax, 16));
+        a.mov(ptr(rdi, OFF_LITERALS), r10);
+    }
     if (!::pharo::mcfX86Compact())
         a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
-    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
+    emitSetJM_x86(a, r9);
     a.mov(r10, ptr(r8, 16));
     // No ip store: every exit and helper call that reads the state's ip
     // stores its own bytecode first (as the arm64 lazy view has it).
@@ -3352,7 +3397,7 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
             a.push(rdi);                             // 3 pushes: rsp 16-aligned
             a.push(rsi);
             a.push(rax);
-            a.mov(rdx, ptr(rdi, OFF_METHOD));
+            emitLoadMethod_x86(a, rdx);
             a.add(rdx, asmjit::Imm(ipAfterOff));     // the ip past the perform
             a.mov(kCArg2, rdx);
             a.mov(kCArg1, asmjit::Imm(nArgs));
@@ -3401,7 +3446,7 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
             }
             emitSyncSpToState_x86(a);
             a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
-            a.mov(rdx, ptr(rdi, OFF_METHOD));
+            emitLoadMethod_x86(a, rdx);
             a.add(rdx, asmjit::Imm(ipAfterOff));
             a.mov(ptr(rdi, OFF_IP), rdx);
             a.push(rdi);                             // 3 pushes: rsp 16-aligned
@@ -3494,12 +3539,14 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.jb(notBlock);
     emitMcfPushRecord_x86(a, notBlock, nArgs, ipAfterOff, resume);
     // The block's view.
-    a.mov(ptr(rdi, OFF_METHOD), rax);
-    a.lea(r10, ptr(rax, 16));
-    a.mov(ptr(rdi, OFF_LITERALS), r10);
+    if (!x86LazyMethod()) {
+        a.mov(ptr(rdi, OFF_METHOD), rax);
+        a.lea(r10, ptr(rax, 16));
+        a.mov(ptr(rdi, OFF_LITERALS), r10);
+    }
     if (!::pharo::mcfX86Compact())
         a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
-    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
+    emitSetJM_x86(a, r9);
     a.mov(r10, ptr(r8, 16));
     // No ip store: every exit and helper call that reads the state's ip
     // stores its own bytecode first (as the arm64 lazy view has it).
@@ -3613,7 +3660,7 @@ static void emitMcfCtxSync_x86(asmjit::x86::Assembler& a, bool liveField, int ip
         a.cmp(byte_ptr(r10), asmjit::Imm(0));
         a.je(noSync);
     }
-    a.mov(r8, ptr(rdi, OFF_METHOD));
+    emitLoadMethod_x86(a, r8);
     a.add(r8, asmjit::Imm(ipOff));
     a.mov(ptr(rdi, OFF_IP), r8);
     emitSyncSpToState_x86(a);
@@ -3697,7 +3744,7 @@ static void emitMcfHelperSend_x86(asmjit::x86::Assembler& a, uint32_t desc, int 
         a.mov(r10, asmjit::Imm((uint64_t)siteSlot));
         a.mov(ptr(rdi, OFF_MCF_SITE_CACHE), r10);
     }
-    a.mov(r8, ptr(rdi, OFF_METHOD));
+    emitLoadMethod_x86(a, r8);
     a.add(r8, asmjit::Imm(ipOff));
     a.mov(ptr(rdi, OFF_IP), r8);                 // the send (the helper's contract)
     emitSyncSpToState_x86(a);
@@ -3795,7 +3842,7 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     // rax=retval survive.  argCount is uint8_t -> BYTE load (not dword).
     if (g_emitX86Xmethod) {
         a.mov(rcx, ptr(r9, 32));                            // callerJM
-        a.mov(ptr(rdi, OFF_JITMETHOD), rcx);
+        emitSetJM_x86(a, rcx);
         a.mov(rdx, ptr(rcx, (int)offsetof(JITMethod, compiledMethodOop)));
         a.mov(ptr(rdi, OFF_METHOD), rdx);
         a.mov(rdx, ptr(rcx, (int)offsetof(JITMethod, literalsCache)));
@@ -4399,7 +4446,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // pushLitConst N: push literals[N].
     if (op >= 0x20 && op <= 0x3F) {
         int n = op - 0x20;
-        a.mov(rax, ptr(rdi, OFF_LITERALS));
+        emitLoadLiterals_x86(a, rax);
         a.mov(rax, ptr(rax, n * 8));
         emitPushReg(a, rax);
         return true;
@@ -4408,7 +4455,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // push Association.value (slot 1).
     if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
         int n = op - SistaV1::PushLitVarBase;
-        a.mov(rax, ptr(rdi, OFF_LITERALS));
+        emitLoadLiterals_x86(a, rax);
         a.mov(rax, ptr(rax, n * 8));                     // Association oop
         a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8));            // slot[1] = value
         emitPushReg(a, rax);
@@ -4526,7 +4573,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitRememberBarrierX86(a, rdx, rax, r10, r11);
         a.jmp(end);
         a.bind(bail);
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -4539,7 +4586,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // the HOME method, not the block — bail to interp (mirrors the
     // arm64 gate; see g_emitIsBlock).
     if (g_emitIsBlock && SistaV1::isReturn(op)) {
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_NATIVE_NLR)) {
@@ -4848,7 +4895,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         // r8 = state.method.rawBits + bcOffsetFromMethObj
         // (state.method is GC-tracked Oop; this is the post-GC-safe
         // address of the failing bytecode.)
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -4872,7 +4919,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.sub(X86_SP_REG_OR_RAX, 8);
             a.jmp(bcLabels[fTgt]);
             a.bind(notBool);                         // the interpreter sends mustBeBoolean
-            a.mov(r8, ptr(rdi, OFF_METHOD));
+            emitLoadMethod_x86(a, r8);
             a.add(r8, asmjit::Imm(bcOffsetFromMethObj + 1));
             a.mov(ptr(rdi, OFF_IP), r8);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
@@ -4913,7 +4960,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.jmp(end);
 
         a.bind(bail);
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -4957,7 +5004,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.jmp(end);
 
         a.bind(bail);
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -5037,7 +5084,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.jmp(end);
 
         a.bind(bail);
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -5062,7 +5109,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         // control flow that skipped sp-balancing emits -> the
         // "Corrupt stackPointer_ in push()" miscompile.
         if (targetIdx < 0 || targetIdx >= (int)bcLabels.size()) {
-            a.mov(r8, ptr(rdi, OFF_METHOD));
+            emitLoadMethod_x86(a, r8);
             a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
             a.mov(ptr(rdi, OFF_IP), r8);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
@@ -5111,7 +5158,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 
         a.bind(notBoolean);
         // Don't pop — interp re-runs and sends mustBeBoolean.
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
@@ -5160,7 +5207,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitStoreSp_x86(a, rcx);
         a.jmp(done);
         a.bind(slow);
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -5172,7 +5219,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         int nArgs = (sendNArgsOverride >= 0) ? sendNArgsOverride : sendNArgs(op);
 
         // Per-site icData address: jm->icBuffer + siteIdx*IC_BYTES_PER_SITE.
-        a.mov(rdx, ptr(rdi, OFF_JITMETHOD));
+        emitLoadJM_x86(a, rdx);
         a.mov(rsi, ptr(rdx, (int)offsetof(JITMethod, icBuffer)));
         a.add(rsi, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
 
@@ -5341,7 +5388,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     a.inc(qword_ptr(r10));               // J2J_ENTRY_BIT was set
                 }
                 a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
-                a.cmp(r9, ptr(rdi, OFF_METHOD));         // self-rec?
+                emitCmpMethod_x86(a, r9);         // self-rec?
                 a.je(selfRecAdmit);
                 // nArgs>0 cross-method corrupts the caller's receiver at startup
                 // scale (box 2026-06-15) -> admit nArgs==0 (unary) only by default;
@@ -5510,11 +5557,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(r9, 0), rcx);                  // sp
                 emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, 8), rdx);
                 emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, 16), rdx);
-                a.mov(rdx, ptr(rdi, OFF_METHOD));
+                emitLoadMethod_x86(a, rdx);
                 a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
                                        + (extSendEmit ? 2 : 1)));
                 a.mov(ptr(r9, 24), rdx);                 // ip (CALLER resume, for materialize)
-                a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // CALLER jitMethod
+                emitLoadJM_x86(a, rdx); a.mov(ptr(r9, 32), rdx); // CALLER jitMethod
                 a.lea(rdx, ptr(bcLabels[j2jResumeBcOff]));
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
@@ -5539,7 +5586,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(r10, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
                 a.and_(r11, r10);                        // r11 = entryAddr (kept for jmp)
                 a.lea(r10, ptr(r11, -(int)sizeof(JITMethod)));  // r10 = calleeJM
-                a.mov(ptr(rdi, OFF_JITMETHOD), r10);             // state.jitMethod = calleeJM
+                emitSetJM_x86(a, r10);             // state.jitMethod = calleeJM
                 a.mov(rdx, ptr(r10, (int)offsetof(JITMethod, compiledMethodOop)));
                 a.mov(ptr(rdi, OFF_METHOD), rdx);                // state.method = calleeCM
                 // state.literals = calleeCM + 16 — computed FRESH from the (GC-
@@ -5606,11 +5653,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(r9, 0), rcx);                  // sp
                 emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, 8), rdx);
                 emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, 16), rdx);
-                a.mov(rdx, ptr(rdi, OFF_METHOD));
+                emitLoadMethod_x86(a, rdx);
                 a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
                                        + (extSendEmit ? 2 : 1)));
                 a.mov(ptr(r9, 24), rdx);                 // ip
-                a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // jitMethod
+                emitLoadJM_x86(a, rdx); a.mov(ptr(r9, 32), rdx); // jitMethod
                 a.lea(rdx, ptr(bcLabels[j2jResumeBcOff]));
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
@@ -5639,7 +5686,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
                 a.jnc(notJ2J);
                 a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
-                a.cmp(r9, ptr(rdi, OFF_METHOD));         // == this method? (self-rec)
+                emitCmpMethod_x86(a, r9);         // == this method? (self-rec)
                 a.jne(notJ2J);
                 // Save-stack room (also guards a null cursor: 0+56 > limit(0)).
                 a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
@@ -5664,11 +5711,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(r9, 0), rcx);                  // sp
                 emitLoadReceiver_x86(a, rdx); a.mov(ptr(r9, 8), rdx);   // receiver
                 emitLoadTempBase_x86(a, rdx); a.mov(ptr(r9, 16), rdx);  // tempBase
-                a.mov(rdx, ptr(rdi, OFF_METHOD));
+                emitLoadMethod_x86(a, rdx);
                 a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
                                        + (extSendEmit ? 2 : 1)));
                 a.mov(ptr(r9, 24), rdx);                 // ip (resume bytecode, for materialize)
-                a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // jitMethod
+                emitLoadJM_x86(a, rdx); a.mov(ptr(r9, 32), rdx); // jitMethod
                 a.lea(rdx, ptr(bcLabels[j2jResumeBcOff]));
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr (post-send code)
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));   // sendArgCount
@@ -5868,7 +5915,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                                 bcOffsetFromMethObj + (extSendEmit ? 2 : 1), endOfSend);
             a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
             a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
-            a.mov(rax, ptr(rdi, OFF_METHOD));
+            emitLoadMethod_x86(a, rax);
             a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
             a.mov(ptr(rdi, OFF_IP), rax);
             if (GET_DEBUG_BOOL(PHARO_T1_HIT_AS_MISS)) {
@@ -5938,7 +5985,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             }
             a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
             a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
-            a.mov(rax, ptr(rdi, OFF_METHOD));
+            emitLoadMethod_x86(a, rax);
             a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
             a.mov(ptr(rdi, OFF_IP), rax);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
@@ -5964,7 +6011,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     // Caller JITMethod = codeStart(offset 0) - sizeof(JITMethod).
                     a.lea(r9, ptr(g_codeStartLabel));    // RIP-relative
                     a.sub(r9, asmjit::Imm((int)sizeof(JITMethod)));
-                    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
+                    emitSetJM_x86(a, r9);
                     a.mov(r10, ptr(r9, (int)offsetof(JITMethod, compiledMethodOop)));
                     a.mov(ptr(rdi, OFF_METHOD), r10);
                     a.add(r10, asmjit::Imm(16));         // literals = method + 16 (arm64 8828)
@@ -5984,7 +6031,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         // do the full lookup).
         a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
         a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
-        a.mov(rax, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, rax);
         a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
@@ -5995,7 +6042,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // complex; the interp does it and continues the rest of the method).
     // Mirrors arm64 emitOne_arm64 ~3530.
     if (op == SistaV1::PushThisContext) {
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -6025,7 +6072,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             emitSyncSpToState_x86(a); a.ret();
             return true;
         }
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -6084,7 +6131,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitStoreSp_x86(a, rsi);
         a.jmp(mdone);
         a.bind(mbail);
-        a.mov(r8, ptr(rdi, OFF_METHOD));
+        emitLoadMethod_x86(a, r8);
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
@@ -15789,7 +15836,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // bytecode + the rest of the method (x86 keeps sp in OFF_SP
                 // always, so no sp-resync is needed — unlike arm64's x25).
                 auto loopBail = [&](int exitCode) {
-                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    emitLoadMethod_x86(a, r8);
                     a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                     a.mov(ptr(rdi, OFF_IP), r8);
                     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(exitCode));
@@ -15866,7 +15913,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         emitStoreSp_x86(a, rcx);
                         a.jmp(bcLabels[(size_t)target]);
                         a.bind(notBoolean);                  // mustBeBoolean bail
-                        a.mov(r8, ptr(rdi, OFF_METHOD));
+                        emitLoadMethod_x86(a, r8);
                         a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                         a.mov(ptr(rdi, OFF_IP), r8);
                         a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -15919,7 +15966,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     emitRememberBarrierX86(a, rdx, rax, r10, r11);
                     a.jmp(rend);
                     a.bind(rbail);
-                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    emitLoadMethod_x86(a, r8);
                     a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                     a.mov(ptr(rdi, OFF_IP), r8);
                     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -15949,11 +15996,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + idx * 8));
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushLitConst) {
-                        a.mov(rax, ptr(rdi, OFF_LITERALS));
+                        emitLoadLiterals_x86(a, rax);
                         a.mov(rax, ptr(rax, idx * 8));
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushLitVar) {
-                        a.mov(rax, ptr(rdi, OFF_LITERALS));
+                        emitLoadLiterals_x86(a, rax);
                         a.mov(rax, ptr(rax, idx * 8));       // Association oop
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8)); // slot[1] = value
                         emitPushReg(a, rax);
@@ -15983,7 +16030,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             emitLoadSp_x86(a, rcx);
                             a.mov(rax, ptr(rcx, -8));        // TOS (don't pop)
                         }
-                        a.mov(rdx, ptr(rdi, OFF_LITERALS));
+                        emitLoadLiterals_x86(a, rdx);
                         a.mov(rdx, ptr(rdx, idx * 8));       // Association oop
                         a.mov(ptr(rdx, OBJ_SLOT_0 + 8), rax); // slot[1] = value
                         emitRememberBarrierX86(a, rdx, rax, r10, r11);
@@ -16075,7 +16122,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             a.jnz(yieldBail);
                             a.jmp(bcLabels[(size_t)target]);
                             a.bind(yieldBail);
-                            a.mov(r8, ptr(rdi, OFF_METHOD));
+                            emitLoadMethod_x86(a, r8);
                             a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                             a.mov(ptr(rdi, OFF_IP), r8);
                             a.mov(dword_ptr(rdi, OFF_EXIT),
@@ -16181,7 +16228,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     emitReloadSpFromState_x86(a);
                     a.jmp(arrDone);
                     a.bind(arrFail);
-                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    emitLoadMethod_x86(a, r8);
                     a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                     a.mov(ptr(rdi, OFF_IP), r8);
                     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -16197,7 +16244,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         && (size_t)(i + 2) < bcRealLen) {
                     const uint64_t litIdx = bcReal[i + 1];
                     const uint64_t flags = bcReal[i + 2];
-                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    emitLoadMethod_x86(a, r8);
                     a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                     a.mov(ptr(rdi, OFF_IP), r8);             // the PushFullBlock
                     emitSyncSpToState_x86(a);

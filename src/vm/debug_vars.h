@@ -193,6 +193,7 @@ DEBUG_BOOL(PHARO_X86_NO_COLD_JUMP)              // x86 T1 bisect: a fused compar
 DEBUG_BOOL(PHARO_X86_NO_COMPACT_RECORD)         // x86 MCF bisect: full native records (recFull 1) and the arg count / bytecode end in the state view
 DEBUG_BOOL(PHARO_X86_NO_LAZY_CLOSURE)           // x86 MCF bisect: native records and returns save/restore the closure and the active context
 DEBUG_BOOL(PHARO_X86_NO_PIN_REGS)               // x86 MCF bisect: read the temp base and receiver from the state, not r12/r13
+DEBUG_BOOL(PHARO_X86_NO_LAZY_METHOD)            // x86 MCF bisect: native calls and returns write the state method and literals; machine code reads them there
 DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)             // x86 T1 bisect: push/pop through rcx (load sp, add, store) as before the short form
 DEBUG_BOOL(PHARO_MCF_NO_NLR_MEMO_INLINE)        // x86 MCF bisect: a native call of a block with ^ always calls pharo_mcf_block_home
 DEBUG_BOOL(PHARO_MCF_ONE_ENTRY_PROBE)          // x86 MCF bisect: probe only IC entry 0, as before the six-entry probe
