@@ -15275,6 +15275,34 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // continue.  The exit ran the rest of the method interpreted,
                 // so its sends had no return memo either (lexicon: each block
                 // creation cost an exit and a chain of memo-less returns).
+                // Machine-code frames: ExtendA + ExtSend (a send to literal
+                // 32-255) asks pharo_mcf_extsend for its target, as a super
+                // send does; the state's ip is the prefix, so the fallback
+                // exit and the return memo (mcfPastSend) skip it.  It exited
+                // at every execution: two thirds of lexicon's exits were
+                // one parser method's four such sends.
+                if (op == SistaV1::ExtendA && !wasExtPrefix && ::pharo::mcfMode()
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_HELPER_SEND)
+                        && (size_t)(i + 3) < bcRealLen && bcReal[i + 2] == SistaV1::ExtSend
+                        && (size_t)(globalIdx + 4) < bcLabels.size()) {
+                    const uint32_t extA = bcReal[i + 1];
+                    const uint8_t d = bcReal[i + 3];
+                    const uint32_t litIdx = (extA << 5) | (d >> 3);
+                    const int sNArgs = d & 0x07;
+                    if (litIdx <= 0xFF) {
+                        asmjit::Label noSend = a.new_label();
+                        emitMcfHelperSend_x86(a, litIdx | ((uint32_t)sNArgs << 8), sNArgs,
+                                              bcOffsetBase + globalIdx, 4,
+                                              bcLabels[globalIdx + 4], noSend);
+                        a.bind(noSend);
+                        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
+                        emitSyncSpToState_x86(a); a.ret();
+                        for (int k = 1; k <= 3; k++)
+                            a.bind(bcLabels[globalIdx + k]);
+                        i += 3;
+                        continue;
+                    }
+                }
                 // PushArray the same way (pharo_mcf_array_create; 0 = the
                 // allocation failed: the generic exit below).
                 if (op == SistaV1::PushArray && !wasExtPrefix && ::pharo::mcfMode()
