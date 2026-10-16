@@ -1808,6 +1808,10 @@ private:
             jitRuntime_.flushCaches();
         }
         jit::mcfClearSiteCaches();
+        // It caches lookups (selector, class -> method): the selective
+        // flushes (primitives 116, 119, 120) after a method changes come
+        // through here, not through flushMethodCache.
+        jit::mcfClearPerformCache();
 #endif
     }
 
