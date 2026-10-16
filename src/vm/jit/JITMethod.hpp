@@ -320,7 +320,9 @@ inline void mcfClearPerformCache() {
     if (g_mcfPerformCache)
         std::memset(g_mcfPerformCache, 0, sizeof(McfPerformEntry) * kMcfPerformCacheSize);
 }
+inline uint64_t g_mcfCallCacheClears = 0;   // census (PHARO_MCF_CENSUS prints it)
 inline void mcfClearCallCache() {
+    ++g_mcfCallCacheClears;
     if (g_mcfCallCache)
         std::memset(g_mcfCallCache, 0, sizeof(McfCallEntry) * kMcfCallCacheSize);
     mcfClearPerformCache();

@@ -1776,12 +1776,12 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 // Under machine-code frames the arm64 emit exits to the
                 // interpreter for the super send and resumes after it
                 // (a send exit with a return memo).
-#if defined(__aarch64__) || defined(_M_ARM64)
-                const bool superOk = ::pharo::mcfEnabled()
+                // x86 under PHARO_X86_MCF does the same: the emit bails at
+                // the super send with EXIT_SEND, which mcfRun turns into a
+                // return memo.  Refusing made every method with a super send
+                // (each `super initialize`) a stub that exits on entry.
+                const bool superOk = ::pharo::mcfMode()
                     && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXTSEND_EXIT);
-#else
-                const bool superOk = false;
-#endif
                 if (!superOk && !GET_DEBUG_BOOL(PHARO_T1_ACCEPT_EXTSUPERSEND)) {
                     traceFail(i, op, "ext-super-send-disabled");
                     return false;
@@ -2192,8 +2192,14 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.mov(rsi, ptr(rcx, L.mcReturn));
     a.test(rsi, rsi);
     a.jz(fall);
-    a.cmp(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
-    a.jne(fall);
+    // A method frame whose record has a home frame index is the ensure:
+    // continuation of a non-local return: the interpreter's.  A block
+    // frame's own local return is an ordinary pop, whatever its index
+    // (the index is the block's home, set by pharo_mcf_block_home).
+    if (!g_emitIsBlock) {
+        a.cmp(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
+        a.jne(fall);
+    }
     a.cmp(byte_ptr(rcx, L.savedArgCount + 3), asmjit::Imm(1));   // recFull
     a.jne(fall);
     a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
@@ -14775,12 +14781,43 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     i += 1;
                     continue;
                 }
+                // Machine-code frames: create the closure through
+                // pharo_mcf_block_create (mcfBlockCreate: the interpreter's
+                // createFullBlockWithLiteral, outer context included) and
+                // continue.  The exit ran the rest of the method interpreted,
+                // so its sends had no return memo either (lexicon: each block
+                // creation cost an exit and a chain of memo-less returns).
+                if (op == SistaV1::PushFullBlock && !wasExtPrefix && ::pharo::mcfMode()
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)
+                        && (size_t)(i + 2) < bcRealLen) {
+                    const uint64_t litIdx = bcReal[i + 1];
+                    const uint64_t flags = bcReal[i + 2];
+                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.mov(ptr(rdi, OFF_IP), r8);             // the PushFullBlock
+                    emitSyncSpToState_x86(a);
+                    a.push(rdi);                             // rsp 16-aligned
+                    a.mov(kCArg1, asmjit::Imm(litIdx | (flags << 32)));
+                    emitCArg0State_x86(a);
+                    emitCallCHelper_x86(a, (const void*)&pharo_mcf_block_create);
+                    a.pop(rdi);
+                    emitReloadSpFromState_x86(a);
+                    for (int k = 1; k <= 2; k++)
+                        if ((size_t)(globalIdx + k) < bcLabels.size())
+                            a.bind(bcLabels[globalIdx + k]);
+                    i += 2;
+                    continue;
+                }
                 if (op >= SistaV1::ExtendA) {   // 0xE0..0xFD
                     int len = SistaV1::bytecodeLength(op);
                     if (len < 1) len = 1;
                     // BISECT: was EXIT_ARITH_OVERFLOW (arith-specific name);
                     // EXIT_SEND is the generic "resume interp at this ip" code.
-                    loopBail(GET_DEBUG_BOOL(PHARO_T1_EXTBAIL_SEND)
+                    // A super send under machine-code frames exits as a send:
+                    // mcfRun records the return memo for the bytecode after it.
+                    const bool superExit = op == SistaV1::ExtSuperSend && !wasExtPrefix
+                        && ::pharo::mcfMode();
+                    loopBail(GET_DEBUG_BOOL(PHARO_T1_EXTBAIL_SEND) || superExit
                              ? EXIT_SEND : EXIT_ARITH_OVERFLOW);
                     for (int k = 1; k < len; k++) {
                         if ((size_t)(globalIdx + k) < bcLabels.size())

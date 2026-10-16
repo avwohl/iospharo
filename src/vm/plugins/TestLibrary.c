@@ -65,6 +65,17 @@ EXPORT int multipleArgumentCallout(int a1, int a2, int a3, int a4, int a5,
     return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10;
 }
 
+#if defined(__x86_64__) && defined(__APPLE__)
+/* TFUFFIDifferentCallingConventionFunctionCallTest and TFFunctionCallTest
+   call this with the Win64 calling convention on x86_64 macOS (the
+   upstream testlib/callout.c defines it the same way). */
+__attribute__((ms_abi)) EXPORT int w64Convention(int arg1, int arg2, int arg3, int arg4,
+                                                 int arg5, int arg6, int arg7, int arg8,
+                                                 int arg9, int arg10) {
+    return arg1 + arg2 + arg3 + arg4 + arg5 + arg6 + arg7 + arg8 + arg9 + arg10;
+}
+#endif
+
 EXPORT int longCallout(int seconds) {
     sleepSeconds(seconds);
     return 42;

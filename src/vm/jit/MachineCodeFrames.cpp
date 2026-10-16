@@ -2541,6 +2541,8 @@ void Interpreter::mcfCensus(const jit::JITState& st) {
         }
     }
     if ((n & 0x3FFFFF) == 0)
+        fprintf(stderr, "[MCF-CENSUS] callCacheClears=%llu epoch=%llu\n",
+                (unsigned long long)jit::g_mcfCallCacheClears, (unsigned long long)jit::g_mcCodeEpoch);
         fprintf(stderr, "[MCF-CENSUS] exits=%llu icMiss=%llu compiled=%llu "
                 "compiledWithPrim=%llu primNotCompiled=%llu notCompiled=%llu notMethod=%llu\n",
                 (unsigned long long)n, (unsigned long long)miss,
@@ -2941,6 +2943,23 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
                         continue;
                     }
                     break;
+                }
+                // Not a primitive (Symbol>>#= is Smalltalk code): the
+                // interpreter sends it.  Record the return memo for the
+                // bytecode after the send, as a send exit does, so the
+                // callee's return continues this method in machine code
+                // (lexicon: 124K memo-less returns from Symbol>>#= per 2M
+                // exits).
+                const uint8_t op = *st.ip;
+                if (op >= jit::SistaV1::ArithBase && op <= jit::SistaV1::ArithBase + 15
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_MEMO)) {
+                    const uint8_t* after = st.ip + 1;
+                    if (void* c = mcfEntryFor(jm, after)) {
+                        pendingMcReturn_ = c;
+                        pendingMcKeyIP_ = after;
+                        pendingMcJM_ = jm;
+                        pendingMcEpoch_ = jit::g_mcCodeEpoch;
+                    }
                 }
             }
             [[fallthrough]];
