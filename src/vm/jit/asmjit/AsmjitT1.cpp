@@ -6716,7 +6716,10 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             a.b_ne(slow);                              // not two SmallIntegers: C
             a.asr(x3, x1, asmjit::Imm(3));
             a.asr(x4, x2, asmjit::Imm(3));
-            a.cmp(x3, x4);                             // flags for 3-8
+            a.cmp(w10, asmjit::Imm(1));                // + and - first: perform: #+ with:
+            a.b_eq(lAdd);
+            a.cmp(w10, asmjit::Imm(2));
+            a.b_eq(lSub);
             a.ldp(x7, x8, ptr(x0, OFF_TRUEOOP));       // true, false
             const struct { int prim; CondCode cc; } cmps[] = {
                 {3, CondCode::kLT}, {4, CondCode::kGT}, {5, CondCode::kLE},
