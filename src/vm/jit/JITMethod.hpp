@@ -431,6 +431,11 @@ inline uint8_t g_blockValueOverridden = 0;
 // `=` with a Character receiver inline.  recheckBlockValueOverride keeps it
 // current (every cache flush, which method installation makes).
 inline uint8_t g_charEqualsIdentity = 0;
+// The interpreter's block-home memo (mcfSetBlockHome): x86 T1 block calls
+// test it before they call pharo_mcf_block_home.  Set by mcfInit.
+inline const uint64_t* g_mcfNlrMemoBlockAddr = nullptr;
+inline const uint64_t* g_mcfNlrMemoHomeAddr = nullptr;
+inline const size_t* g_mcfNlrMemoFrameAddr = nullptr;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
 // MCF: shared inline fast paths for IC-site primitives, by arity 0-2.

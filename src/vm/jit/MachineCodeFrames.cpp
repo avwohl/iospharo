@@ -2042,6 +2042,9 @@ void Interpreter::mcfInit() {
     jit::g_mcfSpecialObjectsAddr = memory_.specialObjectsArrayAddr();
     jit::g_mcfFinalizationFlagAddr = &finalizationCheckAfterGC_;
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;   // the stubs bake it
+    jit::g_mcfNlrMemoBlockAddr = reinterpret_cast<const uint64_t*>(&nlrMemoBlock_);
+    jit::g_mcfNlrMemoHomeAddr = reinterpret_cast<const uint64_t*>(&nlrMemoHome_);
+    jit::g_mcfNlrMemoFrameAddr = &nlrMemoFrame_;
     if (::pharo::mcfMode()) jit::mcfBuildStubs();
     jit::g_mcfContextClassIndex = contextClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),

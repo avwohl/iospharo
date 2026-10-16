@@ -2196,23 +2196,31 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
         a.jne(fall);                             // a context to widow
     }
     a.lea(r11, ptr(r9, -1));
-    a.imul(rcx, r11, asmjit::Imm((int)L.size));
+    if (L.size == 128) {
+        a.mov(rcx, r11);
+        a.shl(rcx, asmjit::Imm(7));
+    } else {
+        a.imul(rcx, r11, asmjit::Imm((int)L.size));
+    }
     a.add(rcx, ptr(rdi, OFF_MCF_FRAMES));        // &savedFrames_[depth-1]
     a.mov(rsi, ptr(rcx, L.mcReturn));
     a.test(rsi, rsi);
     a.jz(fall);
-    // A method frame whose record has a home frame index is the ensure:
-    // continuation of a non-local return: the interpreter's.  A block
-    // frame's own local return is an ordinary pop, whatever its index
-    // (the index is the block's home, set by pharo_mcf_block_home).
-    if (!g_emitIsBlock) {
-        a.cmp(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
+    // Folded (as the arm64 return): a record whose return is the
+    // interpreter's -- the ensure: continuation of a non-local return, a
+    // materialize-bail return slot, an ip that moved -- has a null memo,
+    // so the memo test decides; every x86 record is a full one.  A block
+    // frame's own home index never makes its return the interpreter's.
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_RET_FOLD)) {
+        if (!g_emitIsBlock) {
+            a.cmp(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
+            a.jne(fall);
+        }
+        a.cmp(byte_ptr(rcx, L.savedArgCount + 3), asmjit::Imm(1));   // recFull
+        a.jne(fall);
+        a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
         a.jne(fall);
     }
-    a.cmp(byte_ptr(rcx, L.savedArgCount + 3), asmjit::Imm(1));   // recFull
-    a.jne(fall);
-    a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
-    a.jne(fall);
     // Commit: popFrame.  Widow the returning frame's context (sender and
     // pc nil, as widowReturningContext; nil needs no store barrier).
     if (widowInline) {
@@ -2313,7 +2321,12 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     }
     a.cmp(r11, ptr(rdi, OFF_MCF_DEPTH_LIMIT));
     a.jae(refuse);
-    a.imul(rcx, r11, asmjit::Imm((int)L.size));
+    if (L.size == 128) {
+        a.mov(rcx, r11);
+        a.shl(rcx, asmjit::Imm(7));
+    } else {
+        a.imul(rcx, r11, asmjit::Imm((int)L.size));
+    }
     a.add(rcx, ptr(rdi, OFF_MCF_FRAMES));        // &savedFrames_[depth]
     a.add(r11, asmjit::Imm(1));
     a.mov(ptr(r10), r11);                        // frameDepth_++
@@ -3410,9 +3423,46 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.bind(nilDone);
     emitStoreSp_x86(a, r11);
     // A block with ^: its record needs the home frame index, which
-    // pharo_mcf_block_home computes as activateBlock does.
+    // pharo_mcf_block_home computes as activateBlock does.  Its memo is
+    // tested here first (a do: loop calls the same block per element): the
+    // memo frame still holds the closure's outer context and the home
+    // method, so it is the answer (mcfSetBlockHome's first test).
     a.test(qword_ptr(r8, 24), asmjit::Imm((int)kMcfBlockNLR));
     a.jz(noNLR);
+    if (g_mcfNlrMemoBlockAddr && !GET_DEBUG_BOOL(PHARO_MCF_NO_NLR_MEMO_INLINE)) {
+        const McfFrameLayout& L = g_mcfLayout;
+        asmjit::Label slowHome = a.new_label();
+        a.mov(r10, asmjit::Imm((uint64_t)g_mcfNlrMemoBlockAddr));
+        a.mov(r10, ptr(r10));
+        a.cmp(r10, ptr(rcx, 16));                // the closure's CompiledBlock
+        a.jne(slowHome);
+        a.mov(r10, asmjit::Imm((uint64_t)g_mcfNlrMemoFrameAddr));
+        a.mov(r10, ptr(r10));                    // the memo frame
+        a.mov(r11, ptr(rdi, OFF_MCF_DEPTH_PTR));
+        a.mov(r11, ptr(r11));                    // frameDepth_ (the block's pushed)
+        a.cmp(r10, r11);
+        a.jae(slowHome);
+        a.mov(rdx, ptr(rcx, 8));                 // the closure's outer context
+        a.test(dl, asmjit::Imm(7));
+        a.jnz(slowHome);
+        a.cmp(rdx, ptr(rdi, OFF_MCF_NIL));
+        a.je(slowHome);
+        a.imul(rax, r10, asmjit::Imm((int)L.size));
+        a.add(rax, ptr(rdi, OFF_MCF_FRAMES));    // &savedFrames_[memo]
+        a.cmp(rdx, ptr(rax, L.materializedContext));
+        a.jne(slowHome);
+        a.mov(rdx, asmjit::Imm((uint64_t)g_mcfNlrMemoHomeAddr));
+        a.mov(rdx, ptr(rdx));
+        a.cmp(rdx, ptr(rax, L.savedMethod));
+        a.jne(slowHome);
+        a.sub(r11, asmjit::Imm(1));
+        a.imul(rax, r11, asmjit::Imm((int)L.size));
+        a.add(rax, ptr(rdi, OFF_MCF_FRAMES));    // the block's record
+        a.add(r10d, asmjit::Imm(1));
+        a.mov(dword_ptr(rax, L.homeFramePlus1), r10d);
+        a.jmp(noNLR);
+        a.bind(slowHome);
+    }
     emitSyncSpToState_x86(a);
     a.push(rdi);                                 // 3 pushes: rsp 16-aligned
     a.push(r9);
