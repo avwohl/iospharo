@@ -15,7 +15,31 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-17, 01:00) -- sweeps L63-L66 clean; perform cache complete
+## Right now (2026-10-17, 08:00) -- sweeps L67-L69 clean, exception returns at Cog speed
+
+- Pushed through `aa9d98c8`.  Sweeps L67, L68 and L69 are clean.  L69:
+  27812 of 27996 pass.  The two non-passes are SpAthensAdapterTest (UI
+  race) and ZnClientTest testQueryGoogle (live network, Cog fails it too).
+  Sweep L70 runs on `797efdc0`.
+- `963006ad`: an FFI callback ends with a return status, not a C++
+  exception (90.7 to 83.1 us per callback).
+- `4d445bc9`: the resume shortcut.  `Context>>resume:` with no unwind
+  frame before its receiver resumes the receiver directly, with no
+  thisContext materialization (docs/native-nlr-plan.md).  Exception
+  signal + return: 100 ms per 100000, Cog 191-242 cold and 45 warm.
+- `797efdc0`: a non-local return over heap contexts now kills each
+  context it unwinds (sender and pc nil), as Cog does.  Before, a context
+  captured in a `do:` block stayed alive after `^`.  The same commit
+  trims the machine-code non-local return (detect: -11% instructions).
+- FreeTypeCacheTest testGlyphAccessIsThreadSafeWhenAskingWidth timed out
+  once in L67 and passed in L68 and L69.  The test says it "breaks 95% of
+  times".  Alone, it fails about half the runs on several builds.
+- Micro set vs Cog (warm, machine loaded by a sweep): writeStream 13 vs
+  11 ms (an earlier 38 was a one-off).  Left: perform: of a primitive 3x,
+  detect: 1.7x (a closure creation marries a context, and the non-local
+  return goes through C++), symbol compare 1.6x.
+
+## Earlier (2026-10-17, 01:00) -- sweeps L63-L66 clean; perform cache complete
 
 - Pushed through `411004ba`.  Sweeps L63, L64, L65, L66 clean (L65:
   27812 of 27996 pass; the non-passes are SpAthensAdapterTest's UI race,
