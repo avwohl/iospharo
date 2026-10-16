@@ -439,6 +439,7 @@ static bool mcfPrimCallable(int p) {
     case 158:                                    // compareWith:collated: (every String/Symbol <, sorting)
     case 159:                                    // hashMultiply (every Dictionary at: with an integer key)
     case 195:                                    // findNextUnwindContextUpTo:
+    case 197:                                    // findNextHandlerOrSignalingContext (every signal)
     case 196:                                    // terminateTo: (depth 0 only: mcfCallPrimitive)
     case 210: case 211: case 212:                // Context tempAt: tempAt:put: size
     case 169: case 170: case 171:                // ~~ and immediate conversions
