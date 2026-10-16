@@ -2364,7 +2364,7 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     // arities (170 is Character class>>value: and Integer>>asCharacter), so
     // every path checks the one it handles.
     asmjit::Label p170v = a.new_label(), p111 = a.new_label(), p75 = a.new_label();
-    asmjit::Label pQuick = a.new_label();
+    asmjit::Label pQuick = a.new_label(), p70 = a.new_label();
     a.push(r8);
     a.push(r10);
     auto dispatch = [&](int prim, int nArgs, const asmjit::Label& path) {
@@ -2385,6 +2385,8 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     dispatch(170, 0, p170);
     dispatch(111, 0, p111);
     dispatch(75, 0, p75);
+    if (g_jitEdenFreeCell && g_jitSurvivorStartCell && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW))
+        dispatch(70, 0, p70);
     {
         // Quick primitives 256-519 (^self, constants, a field), any arity.
         asmjit::Label notQuick = a.new_label();
@@ -2702,6 +2704,74 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.cmp(rdx, ptr(rdi, OFF_MCF_NIL));
         a.je(fail);
         a.bind(have);
+        a.mov(ptr(rbx, -8), rdx);
+        a.jmp(done);
+    }
+    // 70 basicNew of a fixed-size class: an eden allocation (the arm64
+    // stub's path).  The class must be registered at its identity hash
+    // (its class index); eden full, another format or a large instance
+    // takes the C call.
+    {
+        asmjit::Label szOk = a.new_label(), fill = a.new_label(), filled = a.new_label();
+        a.bind(p70);
+        a.mov(rcx, ptr(rbx, -8));                // the class
+        a.test(cl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.movzx(r9d, byte_ptr(rcx, 7));
+        a.cmp(r9d, asmjit::Imm(3));
+        a.jb(fail);                              // not a class shape
+        a.mov(r8, ptr(rcx, 8 + 2 * 8));          // slot 2: the format word
+        a.mov(r9d, r8d);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);
+        a.sar(r8, asmjit::Imm(3));
+        a.mov(r9, r8);
+        a.shr(r9, asmjit::Imm(16));
+        a.and_(r9d, asmjit::Imm(0x1F));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);                             // FixedSize only
+        a.and_(r8d, asmjit::Imm(0xFFFF));        // the instance size
+        a.cmp(r8d, asmjit::Imm(254));
+        a.ja(fail);
+        a.mov(r9, ptr(rcx));
+        a.shr(r9, asmjit::Imm(32));
+        a.and_(r9d, asmjit::Imm(0x3FFFFF));     // its hash = its class index
+        a.jz(fail);
+        a.mov(rdx, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.mov(rdx, ptr(rdx));
+        a.cmp(ptr(rdx, r9, 3), rcx);
+        a.jne(fail);                             // not registered at its hash
+        a.mov(r10, r8);
+        a.shl(r10, asmjit::Imm(3));
+        a.add(r10, asmjit::Imm(8));              // header + fields
+        a.cmp(r10, asmjit::Imm(16));
+        a.jae(szOk);
+        a.mov(r10d, asmjit::Imm(16));            // the minimum object
+        a.bind(szOk);
+        a.mov(r11, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+        a.mov(rdx, ptr(r11));                    // the new object
+        a.lea(rcx, ptr(rdx, r10));               // the new eden free pointer
+        a.mov(r11, asmjit::Imm((uint64_t)g_jitSurvivorStartCell));
+        a.cmp(rcx, ptr(r11));
+        a.ja(fail);                              // eden full: the C call
+        a.mov(r11, r8);
+        a.shl(r11, asmjit::Imm(56));
+        a.or_(r11, asmjit::Imm(1 << 24));        // FixedSize
+        a.or_(r11, r9);
+        a.mov(ptr(rdx), r11);                    // header, before the commit
+        a.mov(r11, ptr(rdi, OFF_MCF_NIL));
+        a.lea(r9, ptr(rdx, 8));
+        a.bind(fill);
+        a.test(r8d, r8d);
+        a.jz(filled);
+        a.mov(ptr(r9), r11);
+        a.add(r9, asmjit::Imm(8));
+        a.sub(r8d, asmjit::Imm(1));
+        a.jmp(fill);
+        a.bind(filled);
+        a.mov(r11, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+        a.mov(ptr(r11), rcx);                    // commit edenFree_
         a.mov(ptr(rbx, -8), rdx);
         a.jmp(done);
     }
