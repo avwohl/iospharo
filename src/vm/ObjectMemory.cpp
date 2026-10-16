@@ -2026,7 +2026,7 @@ bool ObjectMemory::becomeForwardLazy(const std::vector<std::pair<Oop, Oop>>& pai
     if (pairs.empty() || !pendingClassIndexRemap_.empty()) return false;
     for (const auto& pr : pairs) {
         ObjectHeader* h = pr.first.asObjectPtr();
-        if (h->slotCount() < 1 || h->hasOverflowSlots() || h->isForwarded() || h->isPinned()
+        if (h->slotCount() < 1 || h->isForwarded() || h->isPinned()
                 || h->isImmutable() || pr.first.rawBits() == pr.second.rawBits())
             return false;
     }

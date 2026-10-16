@@ -11756,7 +11756,11 @@ bool Interpreter::lazyBecomeEligible(Oop o) {
     ObjectHeader* h = o.asObjectPtr();
     const uint8_t fmt = static_cast<uint8_t>(h->format());
     if (fmt == 0 || fmt == 4 || fmt == 5 || (fmt >= 6 && fmt <= 8) || fmt >= 24) return false;
-    if (h->isForwarded() || h->isPinned() || h->isImmutable() || h->hasOverflowSlots()) return false;
+    // An overflow header (more than 254 slots) is fine: the forwarder keeps
+    // the overflow word, so the heap walk still sizes it.  Excluding them
+    // sent every promotion of a String over 2 KB to a WideString through a
+    // full heap scan (microdown's HTML tests, 2.4x Cog).
+    if (h->isForwarded() || h->isPinned() || h->isImmutable()) return false;
     static std::vector<uint32_t> excluded;
     static bool ready = false;
     if (!ready) {
@@ -16640,6 +16644,17 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
             followForwardersInRoots();
             if (memory_.lazyPairsSinceUnforward() >= ObjectMemory::kLazyPairsPerUnforward) memory_.unforwardAll();
             lazyDone = true;
+        }
+    }
+    if (!lazyDone && GET_DEBUG_BOOL(PHARO_BECOME_CENSUS)) {
+        static int nl = 0;
+        if (++nl <= 12 && !pairs.empty()) {
+            Oop f = pairs[0].first;
+            ObjectHeader* h = f.isObject() ? f.asObjectPtr() : nullptr;
+            fprintf(stderr, "[BECOME-NOLAZY] pairs=%zu caches=%d eligible=%d cls=%s fmt=%d slots=%zu pinned=%d imm=%d young=%d\n",
+                    pairs.size(), (int)cachesAffected, (int)lazyBecomeEligible(f),
+                    memory_.classNameOf(f).c_str(), h ? (int)h->format() : -1, h ? h->slotCount() : 0,
+                    h ? (int)h->isPinned() : -1, h ? (int)h->isImmutable() : -1, (int)memory_.isYoung(f));
         }
     }
     if (!lazyDone) {
