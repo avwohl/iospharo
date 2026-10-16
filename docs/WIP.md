@@ -15,7 +15,31 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-17, 08:00) -- sweeps L67-L69 clean, exception returns at Cog speed
+## Right now (2026-10-17, 15:00) -- Cog differential checks, two flakes fixed
+
+- Pushed through `09c030db` (sweep L73 clean).  Sweep L74 runs on
+  `d27dd451`.
+- Speed: perform: of a primitive runs in machine code, also at frame
+  depth 0 (`3ba27cc7`, 106 to 66 ms per 10M, Cog 45).  compareWith: runs
+  in the primitive stub (`c8c7fef1`).  The non-local return path is
+  shorter (`797efdc0`, detect: -11% instructions).
+- Cog fidelity: scripted diffs against Cog (`scripts/cogdiff/`, see
+  docs/vm-compat-bugs.md 2026-10-17) found and fixed compareWith:'s
+  answer, SmallFloat64 identity hash, exponent of 0.0, become error
+  codes, perform: of a non-symbol, dead contexts after a non-local
+  return, and stale pc/stackp reads of a live context.  Primitives
+  (58345 calls), processes, exceptions, objects, files and clock queries
+  now agree with Cog.
+- Flakes: ProcessSpecificTest>>testLocalVariable was a VM race in
+  primitive 230 (`d27dd451`, 0 of 12 fail, 6 of 12 before).  The
+  in-memory event ring `PHARO_EVENT_RING` caught it.  Next:
+  FreeTypeCacheTest, with the same tool.
+- Harness: test_load_image eval doubles `!` (chunk format) and prints the
+  result as UTF-8 (`e9f2fd0d`).
+- Not done: `thisContext` in Exception>>signal materializes every frame
+  (13% of a signal); Cog marries only the top frame.
+
+## Earlier (2026-10-17, 08:00) -- sweeps L67-L69 clean, exception returns at Cog speed
 
 - Pushed through `aa9d98c8`.  Sweeps L67, L68 and L69 are clean.  L69:
   27812 of 27996 pass.  The two non-passes are SpAthensAdapterTest (UI
