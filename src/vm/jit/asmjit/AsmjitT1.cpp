@@ -4407,6 +4407,45 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // x → 8x+1 is monotonic for signed values, so cmp(a_bits,
             // b_bits) gives the same flags as cmp(a, b).  Saves 2× sar.
             // cmov takes a memory operand directly — saves a load.
+            //
+            // Fusion (the arm64 emit's B4): when the next bytecode is a
+            // forward conditional jump that is no jump target, compare and
+            // branch with no Boolean in between.  The jump keeps its own
+            // emit at its label for every other arrival.  The pop is an lea
+            // (no flags); the bail path above is unchanged.
+            if (!GET_DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ) && g_tosBc && g_tosJumpTargetsPtr
+                    && op >= 0x62 && op <= 0x67) {
+                const int nextIdx = globalIdx + 1;
+                if ((size_t)nextIdx + 1 < g_tosBcLen) {
+                    const uint8_t nop = g_tosBc[nextIdx];
+                    const bool shortJ = SistaV1::isConditionalShortJump(nop);
+                    const bool extJ = nop == SistaV1::ExtJumpTrue || nop == SistaV1::ExtJumpFalse;
+                    if ((shortJ || extJ) && !(*g_tosJumpTargetsPtr)[nextIdx]) {
+                        const int targetIdx = shortJ ? SistaV1::shortJumpTarget(nop, nextIdx)
+                                                     : nextIdx + 2 + g_tosBc[nextIdx + 1];
+                        const int postIdx = nextIdx + (shortJ ? 1 : 2);
+                        if (targetIdx > nextIdx && (size_t)targetIdx < bcLabels.size()
+                                && (size_t)postIdx < bcLabels.size()) {
+                            const bool jt = shortJ ? SistaV1::isShortJumpTrue(nop)
+                                                   : nop == SistaV1::ExtJumpTrue;
+                            const asmjit::Label tgt = bcLabels[targetIdx];
+                            a.cmp(rcx, rdx);
+                            a.lea(rax, ptr(rax, -16));
+                            emitStoreSp_x86(a, rax);
+                            switch (op) {
+                            case 0x62: if (jt) a.jl(tgt);  else a.jge(tgt); break;
+                            case 0x63: if (jt) a.jg(tgt);  else a.jle(tgt); break;
+                            case 0x64: if (jt) a.jle(tgt); else a.jg(tgt);  break;
+                            case 0x65: if (jt) a.jge(tgt); else a.jl(tgt);  break;
+                            case 0x66: if (jt) a.je(tgt);  else a.jne(tgt); break;
+                            default:   if (jt) a.jne(tgt); else a.je(tgt);  break;
+                            }
+                            a.jmp(bcLabels[postIdx]);
+                            goto x86FusedCmpDone;
+                        }
+                    }
+                }
+            }
             a.cmp(rcx, rdx);
             a.mov(rsi, ptr(rdi, OFF_FALSEOOP));   // default: false
             switch (op) {
@@ -4420,6 +4459,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(ptr(rax, -16), rsi);
             a.sub(rax, 8);
             emitStoreSp_x86(a, rax);
+            x86FusedCmpDone: ;
         }
         a.jmp(end);
 
