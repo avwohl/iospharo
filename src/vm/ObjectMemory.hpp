@@ -1127,12 +1127,16 @@ private:
     size_t classTableUsedEnd_ = 0;
     void noteClassTableWrite(size_t index) {
         if (index + 1 > classTableUsedEnd_) classTableUsedEnd_ = index + 1;
-        classTableMayHoldYoung_ = true;
+        if (classTableDirty_.size() < kClassTableDirtyMax) classTableDirty_.push_back((uint32_t)index);
+        else classTableMayHoldYoung_ = true;
     }
-    // Set by every class-table write; a scavenge walks the class table only
-    // when it is set (classes are nearly always old), then clears it.  The
-    // walk was ~80% of a small scavenge: Soil pins 46k young buffers, each
-    // pin a scavenge.
+    // A scavenge visits only the class-table entries written since the
+    // last one (classTableDirty_), or the whole table when
+    // classTableMayHoldYoung_ is set (too many writes, a page, a become
+    // swap).  The full walk was ~80% of a small scavenge: Soil pins 46k
+    // young buffers, each pin a scavenge, and its tests add classes.
+    static constexpr size_t kClassTableDirtyMax = 256;
+    std::vector<uint32_t> classTableDirty_;
     bool classTableMayHoldYoung_ = true;
     size_t classTableUsedEnd() const {
         return std::min(classTableUsedEnd_, classTable_.size());

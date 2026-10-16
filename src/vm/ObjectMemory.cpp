@@ -2937,14 +2937,21 @@ GCResult ObjectMemory::scavenge() {
         for (size_t i = 1, end = classTableUsedEnd(); i < end; ++i) {
             if (!classTable_[i].isObject()) continue;
             const uint8_t* p = reinterpret_cast<const uint8_t*>(classTable_[i].asObjectPtr());
-            if (p >= edenAllocBase_ && p < edenFree_) {
+            if (p >= edenAllocBase_ && p < edenFree_
+                    && std::find(classTableDirty_.begin(), classTableDirty_.end(), (uint32_t)i)
+                           == classTableDirty_.end()) {
                 fprintf(stderr, "[SCAV-CT-VERIFY] class table entry %zu is young and the walk was skipped\n", i);
                 abort();
             }
         }
     }
     forEachMemoryRoot(visitRoot, walkClassTable);
-    if (walkClassTable) classTableMayHoldYoung_ = false;
+    if (!walkClassTable) {
+        for (uint32_t i : classTableDirty_)
+            if (i < classTable_.size() && classTable_[i].isObject()) visitRoot(classTable_[i]);
+    }
+    classTableDirty_.clear();
+    classTableMayHoldYoung_ = false;
     if (scavStats) {
         scavT1 = ScavClock::now();
         uint8_t* rs = (oldFreeAtLastScavenge_ && oldFreeAtLastScavenge_ > oldSpaceStart_)
