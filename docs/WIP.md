@@ -27,8 +27,32 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 - arm64: primitive 18 (@) is callable; the block stub tests the
   block-home memo inline.
 - Sweeps X10, X11, X12 (x86): 27810-27811 of 27996, the only extra a
-  LinkInstallerTest or TraitTestCase timeout under load.  Running: the
-  arm64 sweep L82, then x86 X13 and the x86 package run pc6; push after.
+  LinkInstallerTest or TraitTestCase timeout under load.
+
+### State at reboot (HEAD `96356a7c`, 23 commits not pushed since `5bae4280`)
+
+- The working tree is clean.  Do NOT push yet: the commits after X12
+  (`27694737` arm64 block-home memo in the block stub, `d663bb02` x86 no
+  key-0 test) have no full sweep.  The arm64 sweep L82 was running and the
+  reboot kills it.
+- To do, in order: rebuild build-rel and build-x86; the arm64 sweep (the
+  last clean arm64 sweep is L81 on `8a799eef`, before every arm64-visible
+  change of this session: prim 18 callable, the block-stub memo, the
+  mcfDeriveView gate); the x86 sweep X13; the x86 package run (93 package
+  images, compare with the arm64 results); then push origin jit.
+- The reboot empties /private/tmp, so the session scratchpad is gone:
+  sweep images (work/sunit8.image), package images, the Cog harness
+  (/tmp/harness-x86), the battery baseline, probes.sh, cbench.sh,
+  fibcnt.sh, microcnt.sh.  Rebuild them as CLAUDE.md "Running Pharo test
+  suites" says (prep a fresh image with our VM; the stock x86 Cog under
+  Rosetta).  The sweep script is scripts/sunit-sweep.sh; the battery is
+  scripts/run_vm_fix_battery.st (its x86 and arm64 outputs must be
+  identical to each other).
+- Next perf levers: x86 per call is about 165 translated instructions
+  against Cog's 75 (record, depth and countdown checks, call-cache lookup;
+  docs/x86-mcf-port.md, last section).  arm64 outliers against Cog:
+  exception (materializeFrameStackImpl, context allocation), perform,
+  charTests (machine-code quality in SparseLargeTable>>noCheckAt:).
 
 ## Earlier (2026-10-16) -- x86 at 2.3x Cog
 
