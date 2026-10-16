@@ -6931,7 +6931,7 @@ bool Interpreter::abandonCallback(VMCallbackContext* vmcc) {
     return false;
 }
 
-void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
+int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     if (seg_.armed) nlrSegmentDeopt();   // the frames leave this process: no frozen segment
     // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
     //    This may trigger GC — vmcc is on C heap, so it's safe.
@@ -7199,7 +7199,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // executable).  See pharo::CallbackComplete declaration.
             // timedOut=true: Smalltalk never wrote the return value — the
             // handler must zero the C return buffer.
-            throw pharo::CallbackComplete{true};
+            return 2;
         }
 
         // Check for deferred callback return AFTER the batch completes.
@@ -7334,7 +7334,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // Return to C (callbackClosureHandler).  Same rationale as
             // the other callsite — exception runs RAII destructors so
             // asmjit's W^X scope (if active higher up) cleans up.
-            throw pharo::CallbackComplete{};
+            return 1;
         }
 
         if (hasPendingSignals() && !inExtension_) {
@@ -7394,6 +7394,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 (int)running_, nestedStepCount, (void*)vmcc);
         fflush(stderr);
     }
+    return 0;
 }
 
 bool Interpreter::step() {

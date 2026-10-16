@@ -4311,7 +4311,11 @@ public:
     // sigsetjmp/siglongjmp mechanism for C-to-Smalltalk callbacks
 
     /// Enter interpreter from a C callback (called from callbackClosureHandler)
-    void enterInterpreterFromCallback(VMCallbackContext* vmcc);
+    /// Answers 1 when the callback returned, 2 when it timed out (no return
+    /// value written), 0 when the interpreter stopped first.  (Was a C++
+    /// exception thrown from the loop below: ~5% of a callback was the
+    /// unwinder parsing load commands.)
+    int enterInterpreterFromCallback(VMCallbackContext* vmcc);
 
     /// Drop @a vmcc from the active-callback stack without returning a value.
     /// Only for the path where enterInterpreterFromCallback returns instead of

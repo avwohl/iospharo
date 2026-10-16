@@ -35196,7 +35196,13 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         // enterInterpreterFromCallback enters the interpreter loop;
         // it returns here only via the CallbackComplete exception
         // thrown from primitiveCallbackReturn.
-        g_interpreter->enterInterpreterFromCallback(vmcc);
+        const int cbStatus = g_interpreter->enterInterpreterFromCallback(vmcc);
+        if (cbStatus != 0) {
+            // Returned (1) or timed out (2): as the CallbackComplete catch.
+            if (cbStatus == 2 && ret && retSize > 0) memset(ret, 0, retSize);
+            free(vmcc);
+            return;
+        }
 
         if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
             fprintf(stderr, "[CALLBACK-HANDLER-FELL-OUT] vmcc=%p (enterInterpreterFromCallback returned normally)\n",
