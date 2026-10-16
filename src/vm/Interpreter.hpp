@@ -1266,6 +1266,8 @@ private:
     bool resolverResultValid_ = false;
     int resolverSemaIndex_ = 0;            // Semaphore to signal when lookup completes
     std::atomic<int> resolverStatus_{0};   // 0=Uninit, 1=Ready, 2=Busy, 3=Error
+    std::string resolverAddressName_;      // reverse lookup result (StartAddressLookup)
+    std::atomic<int> resolverErrorCode_{0};
     // vmParameterAt: 49 (maxExternalSemaphores) — pure bookkeeping for us:
     // the MPSC pendingSignals ring is index-agnostic (stock sizes a C-side
     // request table here); the image grows its own ExternalObjectsArray.
@@ -4136,6 +4138,9 @@ private:
     PrimitiveResult primitiveResolverHostNameResult(int argCount);    // Named: SocketPlugin
     PrimitiveResult primitiveResolverStartNameLookup(int argCount);   // Named: SocketPlugin
     PrimitiveResult primitiveResolverNameLookupResult(int argCount);  // Named: SocketPlugin
+    PrimitiveResult primitiveResolverStartAddressLookup(int argCount);
+    PrimitiveResult primitiveResolverAddressLookupResult(int argCount);
+    PrimitiveResult primitiveResolverError(int argCount);
     PrimitiveResult primitiveResolverAbortLookup(int argCount);       // Named: SocketPlugin
 
     // UUIDPlugin

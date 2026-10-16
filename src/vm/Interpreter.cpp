@@ -25230,6 +25230,9 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SocketPlugin", "primitiveResolverHostNameResult", &Interpreter::primitiveResolverHostNameResult);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverStartNameLookup", &Interpreter::primitiveResolverStartNameLookup);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverNameLookupResult", &Interpreter::primitiveResolverNameLookupResult);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverStartAddressLookup", &Interpreter::primitiveResolverStartAddressLookup);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverAddressLookupResult", &Interpreter::primitiveResolverAddressLookupResult);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverError", &Interpreter::primitiveResolverError);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverAbortLookup", &Interpreter::primitiveResolverAbortLookup);
 
     // UUIDPlugin

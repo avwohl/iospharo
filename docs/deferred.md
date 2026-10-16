@@ -529,10 +529,13 @@ builds, prints every registered module:name) against the 249 pairs the
 Pharo 13 image names.  Added then: FilePlugin primitiveDirectoryEntry,
 primitiveFileSync (File class>>sync: always raised primitiveFailed),
 primitiveConnectToFileDescriptor, FileAttributesPlugin
-primitiveVersionString, primitiveDisableModuleLoading; directory entries
-now have Cog's 7 fields.  Still missing and present in Cog:
+primitiveVersionString, primitiveDisableModuleLoading, and the SocketPlugin
+reverse lookup (primitiveResolverStartAddressLookup,
+primitiveResolverAddressLookupResult, primitiveResolverError: before,
+`NetNameResolver nameForAddress:timeout:` failed).  Directory entries now
+have Cog's 7 fields.  Still missing and present in Cog:
 
-  * **SocketPlugin address-info API** (22 functions:
+  * **SocketPlugin address-info API** (19 functions:
     primitiveResolverGetAddressInfo*, primitiveResolverGetNameInfo*,
     primitiveSocketCreate, primitiveSocketBindTo, primitiveSocketConnectTo,
     primitiveSocketAccept, primitiveSocketLocal/RemoteAddress*).  This is

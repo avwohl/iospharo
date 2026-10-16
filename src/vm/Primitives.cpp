@@ -33635,6 +33635,70 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primitiveResolverStartAddressLookup: a 4-byte IPv4 address -> receiver.
+// Reverse lookup on a thread, as the forward lookup; the result is read by
+// primitiveResolverAddressLookupResult once the status is Ready.  Missing
+// before 2026-10-17: NetNameResolver nameForAddress:timeout: failed with
+// PrimitiveFailed (Cog answers 'localhost' for 127.0.0.1).
+PrimitiveResult Interpreter::primitiveResolverStartAddressLookup(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop addrOop = stackTop();
+    if (!addrOop.isObject() || !addrOop.asObjectPtr()->isBytesObject()
+            || addrOop.asObjectPtr()->byteSize() != 4)
+        return PrimitiveResult::Failure;
+    uint8_t addr[4];
+    memcpy(addr, addrOop.asObjectPtr()->bytes(), 4);
+    resolverStatus_.store(2);                         // Busy
+    resolverErrorCode_.store(0);
+    const int semaIndex = resolverSemaIndex_;
+    auto* interp = this;
+    g_dnsLookupsInflight.fetch_add(1, std::memory_order_acq_rel);
+    std::thread([addr0 = addr[0], addr1 = addr[1], addr2 = addr[2], addr3 = addr[3], semaIndex, interp]() {
+        struct sockaddr_in sa = {};
+        sa.sin_family = AF_INET;
+#ifdef __APPLE__
+        sa.sin_len = sizeof(sa);
+#endif
+        uint8_t* p = reinterpret_cast<uint8_t*>(&sa.sin_addr.s_addr);
+        p[0] = addr0; p[1] = addr1; p[2] = addr2; p[3] = addr3;
+        char host[NI_MAXHOST] = {};
+        int err = getnameinfo(reinterpret_cast<struct sockaddr*>(&sa), sizeof(sa),
+                              host, sizeof(host), nullptr, 0, NI_NAMEREQD);
+        if (err == 0) {
+            interp->resolverAddressName_ = host;
+            interp->resolverStatus_.store(1);         // Ready
+        } else {
+            interp->resolverAddressName_.clear();
+            interp->resolverErrorCode_.store(err);
+            interp->resolverStatus_.store(3);         // Error
+        }
+        if (semaIndex > 0) interp->signalExternalSemaphore(semaIndex);
+        g_dnsLookupsInflight.fetch_sub(1, std::memory_order_acq_rel);
+    }).detach();
+    popN(1);
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverAddressLookupResult -> the host name of the last
+// reverse lookup (empty if it failed).
+PrimitiveResult Interpreter::primitiveResolverAddressLookupResult(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    if (resolverStatus_.load() == 2) return PrimitiveResult::Failure;   // still busy
+    Oop s = createStringObject(memory_, resolverAddressName_);
+    if (s.isNil()) return PrimitiveResult::Failure;
+    pop();
+    push(s);
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverError -> the last lookup's error code (0 = none).
+PrimitiveResult Interpreter::primitiveResolverError(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    pop();
+    push(Oop::fromSmallInteger(resolverErrorCode_.load()));
+    return PrimitiveResult::Success;
+}
+
 // primitiveResolverNameLookupResult
 // Stack: receiver -> ByteArray (4 bytes IPv4 address)
 // NetNameResolver>>primNameLookupResult
