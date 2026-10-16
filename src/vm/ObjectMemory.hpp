@@ -1127,7 +1127,13 @@ private:
     size_t classTableUsedEnd_ = 0;
     void noteClassTableWrite(size_t index) {
         if (index + 1 > classTableUsedEnd_) classTableUsedEnd_ = index + 1;
+        classTableMayHoldYoung_ = true;
     }
+    // Set by every class-table write; a scavenge walks the class table only
+    // when it is set (classes are nearly always old), then clears it.  The
+    // walk was ~80% of a small scavenge: Soil pins 46k young buffers, each
+    // pin a scavenge.
+    bool classTableMayHoldYoung_ = true;
     size_t classTableUsedEnd() const {
         return std::min(classTableUsedEnd_, classTable_.size());
     }
@@ -1164,6 +1170,7 @@ public:
         if (pageNum >= classTablePages_.size())
             classTablePages_.resize(pageNum + 1);
         classTablePages_[pageNum] = pageOop;
+        classTableMayHoldYoung_ = true;
     }
     const std::vector<Oop>& classTablePages() const { return classTablePages_; }
 private:

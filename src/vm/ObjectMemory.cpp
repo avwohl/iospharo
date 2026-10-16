@@ -1716,6 +1716,7 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
     // classTable_ — a C++ vector the heap scan above cannot see.  Swap any
     // table entries so instances whose headers carry those class indices
     // dispatch through the exchanged objects (Spur parity).
+    classTableMayHoldYoung_ = true;
     for (size_t i = 0; i < classTableUsedEnd(); ++i) {
         if (classTable_[i] == obj1) classTable_[i] = obj2;
         else if (classTable_[i] == obj2) classTable_[i] = obj1;
@@ -1801,6 +1802,7 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     // keeps dispatching into the empty helper and stubs silently never
     // intercept (gitlab/bitbucket API suites, 90 tests, jitpkg 2026-07-06).
     size_t classTableHits = 0;
+    classTableMayHoldYoung_ = true;
     for (size_t i = 0; i < classTableUsedEnd(); ++i) {
         if (classTable_[i] == obj1) { classTable_[i] = obj2; classTableHits++; }
     }
@@ -2411,6 +2413,7 @@ bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map
     // become's cost.
     size_t classTableHits = 0;
     const size_t ctEnd = classTableUsedEnd();
+    classTableMayHoldYoung_ = true;
     for (size_t i = 0; i < ctEnd; ++i) {
         if (!classTable_[i].isObject()) continue;
         Oop target;
@@ -2925,8 +2928,23 @@ GCResult ObjectMemory::scavenge() {
 #endif  // PHARO_JIT_ENABLED — Sista cache rekey (scavenge)
     }
 
-    // Roots: memory (class table, special objects, etc.)
-    forEachMemoryRoot(visitRoot, /*includeClassTable*/ true);
+    // Roots: memory (class table, special objects, etc.).  The class table
+    // only when a write since the last scavenge may have put a young
+    // object there (or a become by scavenge needs every reference).
+    const bool walkClassTable = classTableMayHoldYoung_ || becomeForwardersPending_
+        || GET_DEBUG_BOOL(PHARO_SCAV_ALWAYS_CLASS_TABLE);
+    if (!walkClassTable && GET_DEBUG_BOOL(PHARO_SCAV_CT_VERIFY)) {
+        for (size_t i = 1, end = classTableUsedEnd(); i < end; ++i) {
+            if (!classTable_[i].isObject()) continue;
+            const uint8_t* p = reinterpret_cast<const uint8_t*>(classTable_[i].asObjectPtr());
+            if (p >= edenAllocBase_ && p < edenFree_) {
+                fprintf(stderr, "[SCAV-CT-VERIFY] class table entry %zu is young and the walk was skipped\n", i);
+                abort();
+            }
+        }
+    }
+    forEachMemoryRoot(visitRoot, walkClassTable);
+    if (walkClassTable) classTableMayHoldYoung_ = false;
     if (scavStats) {
         scavT1 = ScavClock::now();
         uint8_t* rs = (oldFreeAtLastScavenge_ && oldFreeAtLastScavenge_ > oldSpaceStart_)
