@@ -159,13 +159,17 @@ The history lives in `docs/history/`; nothing was deleted.
   both its branch report and its unpushed-commits report.  A green
   `sync-repos.sh --status` does not mean the tree is fully pushed.
 
-- **A full GC is 1.5x Cog (measured 2026-10-16).**  `Smalltalk
-  garbageCollect` on the 60 MB test image: 50-54 ms on ours, 32-36 on Cog.
-  About 60% is marking (`markAndTrace`, `markPhase`, `scanPointerFields`),
-  single-threaded; each reference also pays a class-table check and an
-  object-start bitmap test (defensive, against interior pointers).  The rest
-  is `updatePointersAfterCompact`, `copyAndUnmark` and the compaction plan.
-  Allocation-heavy loops are at parity.
+- **A full GC is about 1.4x Cog (measured 2026-10-17).**  `Smalltalk
+  garbageCollect` on the stock image: 32 ms on ours (42 before that day's
+  work), 23 ms on Cog under Rosetta, so a native Cog is faster still.  The
+  work that day: the compaction's pointer update rejects pointers below the
+  first moving object and is skipped when nothing moves (`7e501f7b`), and
+  the mark loop filters immediates and marked objects inline and marks
+  ordinary old objects without a call (`8b456c5e`, `fd13c3b7`): 30 GCs
+  14.5 to 11.7 billion instructions.  What is left in marking: each object
+  still pays a class-table check and an object-start bitmap test (defensive,
+  against interior pointers); the bitmap is rebuilt by a whole-heap walk
+  every GC, about 40 instructions an object, 6% of a GC.
 
 ## Known structural costs, not yet measured
 
