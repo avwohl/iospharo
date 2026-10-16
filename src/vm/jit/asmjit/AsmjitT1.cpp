@@ -12830,6 +12830,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(x9, x4);
                         a.b_ne(perfC);
                         a.ldp(x6, x7, ptr(x17, 16));                  // method, call-cache entry
+                        asmjit::Label perfQuick = a.new_label();
+                        a.tbnz(x7, asmjit::Imm(0), perfQuick);        // a quick result
                         a.ldr(x9, ptr(x7));                           // the entry's methodBits
                         a.cmp(x9, x6);
                         a.b_ne(perfC);
@@ -12846,6 +12848,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.sub(x3, x3, asmjit::Imm(8));
                         emitStoreSp(a, x3);
                         a.b(perfHit);
+                        // A quick method (mcfPerformCachePut): its result
+                        // replaces the receiver; the selector and arguments go.
+                        a.bind(perfQuick);
+                        asmjit::Label qConst = a.new_label(), qIvar = a.new_label(), qDone = a.new_label();
+                        a.tst(x7, asmjit::Imm(6));
+                        a.b_eq(qConst);
+                        a.tbz(x7, asmjit::Imm(1), qIvar);
+                        a.b(qDone);                                   // self: x1
+                        a.bind(qConst);
+                        a.mov(x1, x6);
+                        a.b(qDone);
+                        a.bind(qIvar);
+                        a.lsr(x16, x7, asmjit::Imm(3));
+                        a.add(x16, x1, x16, asmjit::a64::lsl(3));
+                        a.ldr(x1, ptr(x16, OBJ_SLOT_0));
+                        a.bind(qDone);
+                        a.stur(x1, ptr(x3, -8 * (nArgs + 1)));
+                        if (nArgs > 0) a.sub(x3, x3, asmjit::Imm(8 * nArgs));
+                        emitStoreSp(a, x3);
+                        if (tosMirrorLive()) a.mov(x26, x1);
+                        a.b(mcfCont);
                     }
                     a.bind(perfC);
                     emitSyncSpToState(a);

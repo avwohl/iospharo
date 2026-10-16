@@ -1238,7 +1238,7 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
     jit::McfCallEntry* e = jit::mcfCallFind(target.rawBits());
     if ((!e || !e->jm || e->prim == jit::kMcfReturnsValue)
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM)) {
-        if (void* done = mcfPerformInPlace(st, nArgs, ipAfter, target, rcv, e)) return done;
+        if (void* done = mcfPerformInPlace(st, nArgs, ipAfter, selector, target, rcv, e)) return done;
     }
     if (!e || !e->jm || (e->prim && (e->prim & 0xFFFFFF) != jit::kMcfTinyShape)
             || !mcfReceiverOk(e->jm, rcv))
@@ -1254,16 +1254,10 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
     // Remember it for T1's perform: site (McfPerformEntry).  mcfReceiverOk
     // is a property of the class when the method reads no receiver field
     // or the receiver is not indexable.
-    if (jit::g_mcfPerformCache && memory_.isOld(selector) && memory_.isOld(target)
+    if (memory_.isOld(target)
             && (!e->jm->hasRecvFieldAccess
-                || (rcv.isObject() && rcv.asObjectPtr()->format() == ObjectFormat::FixedSize))) {
-        uint64_t key = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
-                                      : (0x80000000ull | (rcv.rawBits() & 7));
-        key |= (uint64_t)nArgs << 32;
-        jit::McfPerformEntry& pe = jit::g_mcfPerformCache[
-            ((selector.rawBits() >> 3) ^ key) & (jit::kMcfPerformCacheSize - 1)];
-        pe = jit::McfPerformEntry{selector.rawBits(), key, target.rawBits(), e};
-    }
+                || (rcv.isObject() && rcv.asObjectPtr()->format() == ObjectFormat::FixedSize)))
+        mcfPerformCachePut(selector, rcv, nArgs, target.rawBits(), reinterpret_cast<uint64_t>(e));
     return e;
 }
 
@@ -1271,8 +1265,21 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
 // when it is a primitive or a constant, else nullptr (stack untouched; `e`
 // is the entry found or made, for the native-call test that follows).  Out
 // of line: inlined, its spills cost every native perform ~25 instructions.
+void Interpreter::mcfPerformCachePut(Oop selector, Oop rcv, int nArgs, uint64_t methodWord,
+                                     uint64_t entryWord) {
+    if (!jit::g_mcfPerformCache || !memory_.isOld(selector)) return;
+    uint64_t key = rcv.isObject() ? (uint64_t)rcv.asObjectPtr()->classIndex()
+                                  : (0x80000000ull | (rcv.rawBits() & 7));
+    key |= (uint64_t)nArgs << 32;
+    jit::McfPerformEntry& pe = jit::g_mcfPerformCache[
+        ((selector.rawBits() >> 3) ^ key) & (jit::kMcfPerformCacheSize - 1)];
+    pe = jit::McfPerformEntry{selector.rawBits(), key, methodWord,
+                              reinterpret_cast<jit::McfCallEntry*>(entryWord)};
+}
+
 [[gnu::noinline]] void* Interpreter::mcfPerformInPlace(jit::JITState* st, int nArgs, uint8_t* ipAfter,
-                                                       Oop target, Oop rcv, jit::McfCallEntry*& e) {
+                                                       Oop selector, Oop target, Oop rcv,
+                                                       jit::McfCallEntry*& e) {
     Oop* const sp = st->sp;
     if (!e) {
         // A target only ever performed is never sent from an inline cache,
@@ -1285,8 +1292,10 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
     if (e->prim == jit::kMcfReturnsValue && !GET_DEBUG_BOOL(PHARO_MCF_NO_CONSTANT_RETURN)) {
         // A method answering one constant: it replaces the receiver; the
         // selector and the arguments go.
-        sp[-(nArgs + 1)] = Oop::fromRawBits(e->bcEndOff);
+        const Oop v = Oop::fromRawBits(e->bcEndOff);
+        sp[-(nArgs + 1)] = v;
         st->sp = sp - nArgs;
+        if (!v.isObject() || memory_.isOld(v)) mcfPerformCachePut(selector, rcv, nArgs, v.rawBits(), 1);
         return kMcfExtDone;
     }
     if (e->jm || !e->prim || e->prim >= 1024) return nullptr;
@@ -1319,6 +1328,16 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
         if (ok) {
             sp[-2] = v;
             st->sp = sp - 1;
+            // The machine-code perform cache answers these too: an instance
+            // variable only of a non-indexable receiver (the index is then in
+            // range for every instance of the class).
+            if (qp == 256) mcfPerformCachePut(selector, rcv, nArgs, 0, 3);
+            else if (qp >= 264) {
+                if (rcv.asObjectPtr()->format() == ObjectFormat::FixedSize)
+                    mcfPerformCachePut(selector, rcv, nArgs, 0, ((uint64_t)(qp - 264) << 3) | 5);
+            } else if (!v.isObject() || memory_.isOld(v)) {
+                mcfPerformCachePut(selector, rcv, nArgs, v.rawBits(), 1);
+            }
             return kMcfExtDone;
         }
     }
@@ -1328,7 +1347,6 @@ void* Interpreter::mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAft
     // interpreter (~45 ns against Cog's 4).  A failure puts the selector back
     // and exits as before; the interpreter's perform then runs the primitive
     // and the method body.
-    const Oop selector = sp[-nArgs];
     for (int i = nArgs - 1; i >= 1; i--) sp[-(i + 1)] = sp[-i];
     st->sp = sp - 1;
     st->cachedTarget = target;

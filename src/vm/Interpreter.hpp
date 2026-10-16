@@ -2113,8 +2113,12 @@ public:
     jit::McfCallEntry* mcfPrimFailBodyEntry(Oop method, Oop rcv);
     bool mcfFastReplace(jit::JITState* st);
     bool mcfFastClone(jit::JITState* st);
-    void* mcfPerformInPlace(jit::JITState* st, int nArgs, uint8_t* ipAfter, Oop target,
+    void* mcfPerformInPlace(jit::JITState* st, int nArgs, uint8_t* ipAfter, Oop selector, Oop target,
                             Oop rcv, jit::McfCallEntry*& e);
+    // McfPerformEntry fill: entryWord is a call-cache entry pointer, or a
+    // quick result: 1 = the constant in methodWord, 3 = self, idx << 3 | 5 =
+    // instance variable idx.
+    void mcfPerformCachePut(Oop selector, Oop rcv, int nArgs, uint64_t methodWord, uint64_t entryWord);
     Oop mcfThisContext(jit::JITState* st);
     void* mcfNonLocalReturn(jit::JITState* st);
     void followForwardersDeep(Oop o, int depth);
