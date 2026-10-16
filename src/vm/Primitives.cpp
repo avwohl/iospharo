@@ -2897,6 +2897,7 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
 PrimitiveResult Interpreter::primitiveInstVarAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
+    if (__builtin_expect(isContextObject(rcvr), 0)) syncMarriedContextFields(rcvr);
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         return PrimitiveResult::Failure;
@@ -3986,6 +3987,28 @@ bool Interpreter::performArityMatches(Oop receiver, Oop selector, int numArgs) {
     Oop header = memory_.fetchPointer(0, method);
     if (!header.isSmallInteger()) return true;
     return static_cast<int>((header.asSmallInteger() >> 24) & 0x0F) == numArgs;
+}
+
+// A context married to a live frame keeps the pc and stackp it had when it
+// was made: the frame then pushes operands (stackp) and, for the depth-0
+// frame read by a primitive running in it, moves on (pc).  Cog computes both
+// from the frame at every read.  Store the live values before a read of
+// the raw fields (a Context method's ^stackp, instVarAt:).  Each depth-0
+// send already stores the caller's pc (pushFrame, the MCF call stub).
+void Interpreter::syncMarriedContextFields(Oop ctx) {
+    if (!isContextObject(ctx) || ctx.asObjectPtr()->slotCount() < 3) return;
+    Oop* frameBase = nullptr;
+    const int64_t sp = contextStackp(ctx, &frameBase);
+    if (!frameBase) return;                          // not married to a live frame
+    memory_.storePointer(2, ctx, Oop::fromSmallInteger(sp));
+    if (frameDepth_ == 0 && ctx.rawBits() == activeContext_.rawBits()
+            && instructionPointer_ && method_.isObject()
+            && memory_.fetchPointer(3, ctx).rawBits() == method_.rawBits()) {
+        ObjectHeader* mh = method_.asObjectPtr();
+        const uint8_t* base = mh->bytes();
+        if (instructionPointer_ >= base && instructionPointer_ <= base + mh->byteSize())
+            memory_.storePointer(1, ctx, Oop::fromSmallInteger(instructionPointer_ - base + 1));
+    }
 }
 
 int64_t Interpreter::contextStackp(Oop ctx, Oop** frameBase) {
@@ -11184,6 +11207,7 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
     if (!rcvr.isObject() || !indexOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
+    if (__builtin_expect(isContextObject(rcvr), 0)) syncMarriedContextFields(rcvr);
 
     rcvr = memory_.followForwarded(rcvr);
 

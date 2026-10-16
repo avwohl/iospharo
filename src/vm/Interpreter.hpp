@@ -2100,6 +2100,7 @@ public:
     Oop blockHomeMethodForNLR(Oop compiledBlock);
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
+    void mcfCtxFields(jit::JITState* st);
     uint64_t mcfBlockCreate(jit::JITState* st, uint64_t packed);
     void* mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAfter);
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
@@ -2993,6 +2994,7 @@ private:
     PrimitiveResult primitiveDeferDisplayUpdates(int argCount);
     PrimitiveResult primitiveArrayBecome(int argCount);
     int becomeFailCode(Oop a1, Oop a2, bool twoWay, bool copyHash);
+    void syncMarriedContextFields(Oop ctx);
     PrimitiveResult primitiveIncrementalGC(int argCount);
     PrimitiveResult primitiveSetInterruptKey(int argCount);
     PrimitiveResult primitiveClone(int argCount);

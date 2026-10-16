@@ -104,7 +104,7 @@ values than Cog.  A differential check found them: it calls each pure
 primitive (arithmetic, comparison, `at:`, float, character, identity) of
 20 core classes with 34 edge-case receivers and arguments, on both VMs,
 and compares the answers (17526 calls).  The script is
-`scripts/primdiff.st`.  `scripts/primdiff2.st` does the same for
+`scripts/cogdiff/primdiff.st`.  `scripts/cogdiff/primdiff2.st` does the same for
 primitives with up to four arguments and for the LargeIntegers and
 MiscPrimitivePlugin named primitives: 124 methods, 40819 calls, all
 equal to Cog.
@@ -116,6 +116,27 @@ equal to Cog.
   sign bit (bit 3) is set.
 - Primitives 53 and 553 `exponent` answered 0 for 0.0.  Cog answers -1
   (frexp gives 0, minus 1).
+
+The scenario scripts in `scripts/cogdiff/` found three more:
+
+- `3 become: 4` failed with no error code, so the image answered a bare
+  PrimitiveFailed.  Primitives 72, 128, 248 and 249 now fail with Cog's
+  codes (bad receiver, bad argument, inappropriate operation, object is
+  pinned, no modification).
+- `3 perform: 42` failed the primitive.  Cog looks up any object as a
+  selector, finds nothing and sends doesNotUnderstand:.  Ours does too.
+- A context married to a live frame answered the `stackp` it had when it
+  was made, and `instVarAt: 2` answered an old `pc`.  Cog computes both
+  from the frame.  `syncMarriedContextFields` stores the live values
+  before a Context method reads them and before primitives 73 and 173.
+- A non-local return over heap contexts left the unwound contexts alive.
+  Cog kills them (`797efdc0`).
+
+Process scheduling (16 scenarios), exceptions (24) and immutability,
+pinning and reflection (31) agree with Cog.  One difference is kept on
+purpose: a dead context's temp that was assigned before `thisContext`
+answers its value; Cog answers nil, because its context never received
+temps from the frame.
 
 Two differences are Cog defects, not ours:
 

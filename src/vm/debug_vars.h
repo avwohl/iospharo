@@ -271,6 +271,7 @@ DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_ARITH)             // opt-out: the shared one-ar
 DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_STRCMP)            // opt-out: the shared one-argument primitive stub does not run primitive 158 (byte string compareWith:)
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_PRIM_STUB)      // opt-out: a perform: cache primitive hit calls pharo_mcf_prim directly, not the shared primitive stub first
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_DEPTH0)         // opt-out: a T1 perform: site refuses its cache hit at frame depth 0 (C path) instead of calling with the depth-0 caller context
+DEBUG_BOOL_RT(PHARO_NO_LIVE_CTX_FIELDS)            // opt-out (JIT): a compiled Context method reading pc/stackp calls the lazy sync only when pending, not syncMarriedContextFields
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_CACHE)          // opt-out: T1 perform: sites always call pharo_mcf_perform (no machine-code perform cache)
 DEBUG_BOOL_RT(PHARO_MCF_NO_ENSURE_SHORTCUT)        // opt-out: a non-local return through one ensure: frame takes the image unwind protocol again (docs/native-nlr-plan.md)
 DEBUG_BOOL_RT(PHARO_SCAV_ALWAYS_CLASS_TABLE)       // opt-out: every scavenge walks the class table again

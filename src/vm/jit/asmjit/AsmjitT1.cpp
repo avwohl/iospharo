@@ -56,6 +56,7 @@ extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
 extern "C" void* pharo_mcf_nlr(pharo::jit::JITState* st);
 extern "C" void pharo_mcf_ctx_sync(pharo::jit::JITState* st);
+extern "C" void pharo_mcf_ctx_fields(pharo::jit::JITState* st);
 extern "C" uint64_t pharo_mcf_block_create(pharo::jit::JITState* st, uint64_t packed);
 extern "C" void* pharo_mcf_perform(pharo::jit::JITState* st, uint32_t nArgs, uint8_t* ipAfter);
 extern "C" void* pharo_mcf_prim_fail(pharo::jit::JITState* st, uint32_t nArgs);
@@ -15427,16 +15428,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     // A Context method reading sender/pc/stackp or storing a
                     // field: with lazy context stubs pending, sync them first,
                     // as the interpreter's handlers do.
+                    // pc and stackp also come from the receiver's frame when
+                    // it is married to one (syncMarriedContextFields): no
+                    // pending test for those.
+                    const bool liveField = op == SistaV1::ExtPushRecvVar && (idx == 1 || idx == 2)
+                        && !GET_DEBUG_BOOL(PHARO_NO_LIVE_CTX_FIELDS);
                     asmjit::Label noSync = a.new_label();
-                    a.mov(a64::x16, asmjit::Imm(g_lazyCtxPendingAddr));
-                    a.ldrb(a64::w16, a64::ptr(a64::x16));
-                    a.cbz(a64::w16, noSync);
+                    if (!liveField) {
+                        a.mov(a64::x16, asmjit::Imm(g_lazyCtxPendingAddr));
+                        a.ldrb(a64::w16, a64::ptr(a64::x16));
+                        a.cbz(a64::w16, noSync);
+                    }
                     a.ldr(a64::x5, a64::ptr(a64::x19, (int)offsetof(JITMethod, bcStartCache)));
                     a.add(a64::x5, a64::x5, asmjit::Imm(globalIdx));
                     a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                     emitSyncSpToState(a);
                     a.stp(a64::x0, a64::x30, a64::ptr_pre(a64::sp, -16));
-                    a.mov(a64::x16, asmjit::Imm((uint64_t)&pharo_mcf_ctx_sync));
+                    a.mov(a64::x16, asmjit::Imm(liveField ? (uint64_t)&pharo_mcf_ctx_fields
+                                                          : (uint64_t)&pharo_mcf_ctx_sync));
                     a.blr(a64::x16);
                     a.ldp(a64::x0, a64::x30, a64::ptr_post(a64::sp, 16));
                     a.bind(noSync);

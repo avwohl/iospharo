@@ -8176,6 +8176,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
+        if ((fullIndex == 1 || fullIndex == 2) && isContextObject(receiver_))
+            syncMarriedContextFields(receiver_);   // pc, stackp: from the frame, as Cog
         pushReceiverVariable(fullIndex);
         break;
     }

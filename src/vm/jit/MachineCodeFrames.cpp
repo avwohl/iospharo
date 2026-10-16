@@ -1493,6 +1493,21 @@ uint64_t Interpreter::mcfArrayCreate(jit::JITState* st, uint32_t desc) {
     return 1;
 }
 
+// A compiled Context method reading pc or stackp (ExtPushRecvVar 1, 2):
+// the lazy-stub sync if pending, then the receiver's live fields
+// (syncMarriedContextFields).  st->ip is the bytecode.
+void Interpreter::mcfCtxFields(jit::JITState* st) {
+    mcfCtxSync(st);
+    stackPointer_ = st->sp;
+    mcfSyncRegisters(*st);
+    instructionPointer_ = st->ip;
+    syncMarriedContextFields(receiver_);
+}
+
+extern "C" void pharo_mcf_ctx_fields(jit::JITState* st) {
+    st->interp->mcfCtxFields(st);
+}
+
 void Interpreter::mcfCtxSync(jit::JITState* st) {
     if (!lazyCtxPending_) return;
     stackPointer_ = st->sp;
