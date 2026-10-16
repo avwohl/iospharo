@@ -17,8 +17,11 @@ does not support them.
 - The full Pharo 13 SUnit suite (2042 classes, 27996 tests): 27812 pass.
   The tests that do not pass are a live network query, a UI timing race and
   two timing-dependent tests (docs/WIP.md).
-- Package tests (93 package images): the same results as the Cog VM, in
-  less than half the time.
+- Package tests (93 package images, 2535 test classes): 650 s, against
+  1546 s on the Cog VM.  Every class passes at least as much as on Cog,
+  except pharo-cig: its own FFI binding defect stops the run when libclang
+  loads, and Cog cannot load libclang on the test machine
+  (docs/vm-compat-bugs.md).
 - Speed: about the same as Cog on large programs.  See
   [docs/benchmarking.md](docs/benchmarking.md).
 - GUI: Metal rendering, menus, touch-to-mouse events, hardware keyboard,
