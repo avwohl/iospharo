@@ -3894,7 +3894,7 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
                             else
                                 extra = (extra & ~(kJ2JAddrMask | kXGateOkBit))
                                       | (newEntryAddr & kJ2JAddrMask)
-                                      | (newGateOk && !::pharo::mcfEnabled() ? kXGateOkBit : 0);
+                                      | (newGateOk && !::pharo::mcfMode() ? kXGateOkBit : 0);
                             slots[e * 3 + 2] = extra;
                             slotsRewritten++;
                             if (e == 0) slot0Rewritten = true;

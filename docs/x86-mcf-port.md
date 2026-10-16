@@ -1,6 +1,8 @@
 # Machine-code frames on x86-64
 
-Status: started 2026-10-17.  Design: docs/mc-frames-design.md (arm64).
+Status: the default on x86-64 macOS and Linux since 2026-10-18 (opt out
+with `PHARO_NO_X86_MCF=1`).  Windows: opt-in (`PHARO_X86_MCF=1`), not
+built or tested there yet.  Design: docs/mc-frames-design.md (arm64).
 
 ## Why
 
@@ -117,3 +119,9 @@ x86 lexicon: 742 billion instructions, 43.6 s (117.5 s at the start; Cog
 A primitive can serve several arities: 170 is both `Character
 class>>value:` and `Integer>>asCharacter`.  The stub checks the send's
 argument count for every primitive (the arm64 stubs are built per arity).
+
+Two more arch gates in shared code turned up after `de4b0e07`: methods
+with primitive 198 or 199 (`ensure:`, `on:do:`) advertised no bytecode
+map unless arm64 MCF was on, so every return into them left machine code;
+and the IC patch set `kXGateOkBit` (bit 57, which arm64 MCF reads as the
+multi-slot getter) whenever arm64 MCF was off.

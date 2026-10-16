@@ -17,7 +17,7 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 
 ## Right now (2026-10-18, 01:00) -- machine-code frames on x86
 
-- Machine-code frames are ported to x86-64 (opt-in `PHARO_X86_MCF=1`;
+- Machine-code frames are ported to x86-64 (the default on macOS and Linux, opt-out `PHARO_NO_X86_MCF=1`;
   docs/x86-mcf-port.md).  x86 lexicon instructions (Rosetta): 1468 to
   1138 billion; zzFib 4x and the send loop 4.5x faster than the x86
   interpreter.  Sweep X2 (x86, the mode on): 27808 of 27996, the arm64

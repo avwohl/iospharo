@@ -30454,7 +30454,7 @@ void Interpreter::patchJITICAfterSendSlow(Oop resolvedMethod, Oop receiver, Oop 
                 // Preserve primKind bits (52:48) already set above
                 extra |= (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 // XGATE fold: precomputed cross-method gate verdict.
-                if (!::pharo::mcfEnabled() && jit::xmethodGateOk(target)) extra |= jit::kXGateOkBit;
+                if (!::pharo::mcfMode() && jit::xmethodGateOk(target)) extra |= jit::kXGateOkBit;
                 // SELF_REC_BIT (bit 56): pendingICOwnerMethod_ holds the
                 // caller's CM oop at this point.  See upgradeICToJ2J for
                 // the asmjit-T1 inline-J2J use.
@@ -30973,7 +30973,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                     newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                     // XGATE fold: precomputed cross-method gate verdict.
-                    if (!::pharo::mcfEnabled() && jit::xmethodGateOk(target)) newExtra |= jit::kXGateOkBit;
+                    if (!::pharo::mcfMode() && jit::xmethodGateOk(target)) newExtra |= jit::kXGateOkBit;
                     int primIdx = primitiveIndexOf(cachedMethod);
                     if (target->hasPrimPrologue) {
                         uint8_t pk = inlinePrimKind(primIdx,
@@ -31106,7 +31106,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 // XGATE fold: precomputed cross-method gate verdict.
-                if (!::pharo::mcfEnabled() && jit::xmethodGateOk(target)) newExtra |= jit::kXGateOkBit;
+                if (!::pharo::mcfMode() && jit::xmethodGateOk(target)) newExtra |= jit::kXGateOkBit;
                 int primIdx = primitiveIndexOf(cachedMethod);
                 if (target->hasPrimPrologue) {
                     uint8_t pk = inlinePrimKind(primIdx,
