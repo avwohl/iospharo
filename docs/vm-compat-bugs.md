@@ -154,7 +154,9 @@ pinning and reflection (31), file-system operations (23) and weak
 references and finalization (14) agree with Cog.  FFI callouts into libc
 (`scripts/cogdiff/ffidiff.st`: integer, long, double, float, string and
 ByteArray arguments, and variadic `snprintf` with `fixedArgumentCount:`)
-agree with Cog, on our arm64 build and on our x86-64 build.  A variadic
+agree with Cog, on our arm64 build and on our x86-64 build.  So do struct
+returns, struct pointers, out-pointers and `qsort` callbacks
+(`scripts/cogdiff/ffidiff2.st`).  A variadic
 function declared without `fixedArgumentCount:` works on x86-64 only.  On
 arm64 Darwin, variadic arguments go on the stack, so the call gives
 garbage on any VM; this is a platform rule, not a VM defect.  We keep one difference on
