@@ -15,7 +15,33 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, 06:00) -- read-only countdown, perform fixes; sweep L58
+## Right now (2026-10-16, 12:00) -- lexicon faster than Cog; package tests 2x faster than Cog
+
+- Pushed through `af483604`; sweeps L59, L60, L61 clean (L61: 27996
+  tests, 27810 pass, 4 known failures).
+- `9e929309`: a non-local return through one `ensure:` frame skips the
+  image unwind protocol (docs/native-nlr-plan.md, "Ensure shortcut").
+  Lexicon does 1.7M of them (Symbol class>>intern: via critical:):
+  222.5 -> 187.5 billion instructions, 13.4 -> 11.4 s.  Cog: 11.6-12 s.
+- `8c0b1283`: immediate literals are code constants (benchFib -9%
+  instructions).
+- `8348ea18`, `89006f0f`: a scavenge visits only the class-table entries
+  written since the last one.  The full walk was ~80% of a small
+  scavenge; Soil pins 46k buffers (one scavenge each with 4a4fd340) and
+  went 4 s -> 236 s with 15 failures in package order.  Found by the
+  per-class timing run (scratchpad pc2/).
+- `374ec1b7`: pin of a young object by forwarding (Spur), not a scavenge
+  in the primitive.  The scavenge hung ReStore's SQLite tests since
+  4a4fd340.  Named primitives and the FFI callouts follow forwarders.
+- Per-class package timing (93 package images, Cog side from the 10-15
+  run): ours 740.7 s, Cog 1545.5 s on the same classes.  Remaining
+  pass-count differences: pharo-cig (a package binding bug, see
+  docs/vm-compat-bugs.md), PropertyManagerTest (finalization timing after
+  a test that fails on Cog too), StSpotterTest (not yet looked at).
+- Memory notes: async-writer-breaks-check-then-act,
+  fix-that-adds-gcs-needs-a-gc-heavy-timing.
+
+## Earlier (2026-10-16, 06:00) -- read-only countdown, perform fixes; sweep L58
 
 - Pushed through `42440da8` (sweep L56 clean; its one new entry,
   StPlaygroundPageTest, passes 3 of 3 alone).  Since L55: MCF record trim
