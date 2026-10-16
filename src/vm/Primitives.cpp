@@ -5547,6 +5547,10 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
     // Check excessSignals (slot 2 of Semaphore)
     Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+    if (__builtin_expect(g_eventRing != nullptr, 0)) eventRecMethods();
+    if (__builtin_expect(g_eventRing != nullptr, 0))
+        eventRec('W', memory_.identityHashOf(semaphore), memory_.identityHashOf(getActiveProcess()),
+                 excessOop.isSmallInteger() ? (uint32_t)excessOop.asSmallInteger() : 0xFFFFFFFF);
 
     // PHARO_SEM_SIGNAL_TRACE: wait-entry identity trace (which semaphore,
     // excess state, waiting process) — pairs with [SEM-SIGNAL] to close
@@ -16948,10 +16952,24 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // new process's stack.
     pop();  // pop microseconds argument, leave receiver
 
+    // The process that asked to relinquish.  Event, signal or timer handling
+    // below may switch to a higher-priority process (the Delay timer
+    // process): then the caller is already off the CPU and this primitive
+    // is done.  The hand-down loop further on read the active process
+    // again and put the TIMER process to sleep in favour of a lower one --
+    // the timer process stayed runnable while priority 40-79 code ran, a
+    // Delay's schedule: handshake found it not waiting, and a
+    // waitTimeoutMilliseconds: answered "expired" at once
+    // (ProcessSpecificTest>>testLocalVariable, 1 run in 2 under the runner).
+    const Oop caller = getActiveProcess();
+
     // Process any pending events first
     processInputEvents();
     processPendingSignals();
     checkTimerSemaphore();
+    if (getActiveProcess().rawBits() != caller.rawBits()
+            && !GET_DEBUG_BOOL(PHARO_RELINQUISH_HANDS_DOWN_SWITCHED))
+        return PrimitiveResult::Success;
 
     // Profiler sample tick: the bytecode-paced periodic checkpoint runs
     // ~once per 500 ms while the image idles in this primitive's loop
@@ -19600,6 +19618,7 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         schedulerDeathLogged_ = false;
     } else {
         // Schedule the timer
+        eventRec('A', memory_.identityHashOf(sema), (uint64_t)usecs, 0);
         timerSemaphore_ = sema;
         lastKnownTimerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;

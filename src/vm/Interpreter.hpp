@@ -101,6 +101,26 @@ extern "C" void jit_rt_j2j_call(pharo::jit::JITState* state);
 
 namespace pharo {
 
+// PHARO_EVENT_RING=<path> (diag builds): an in-memory record of timer arms
+// and fires, semaphore signals and waits, and process switches, written to
+// <path> at exit.  Recording costs a few stores, so a timing bug that any
+// printing hides can still be caught (the ProcessSpecificTest lost Delay).
+// Objects are named by identity hash: a scavenge moves them.
+struct EventRec { uint64_t t; uint64_t a; uint64_t b; uint32_t kind; uint32_t c; };
+constexpr uint64_t kEventRingSize = 1ull << 22;
+extern EventRec* g_eventRing;
+extern uint64_t g_eventN;
+extern std::string (*g_eventResolveMethod)(uint64_t methodBits);
+void eventRingDump();
+inline void eventRec(char kind, uint64_t a, uint64_t b, uint32_t c) {
+    if (__builtin_expect(g_eventRing != nullptr, 0)) {
+        EventRec& r = g_eventRing[g_eventN++ & (kEventRingSize - 1)];
+        r.t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000;
+        r.a = a; r.b = b; r.kind = (uint32_t)kind; r.c = c;
+    }
+}
+
+
 // Widow-site tallies for docs/vm-compat-bugs.md #28: how many materialized
 // Contexts each RETURN path marked dead.  [0] popFrame, [1] popFrameForJIT,
 // [2] the fd==0 context-return path.
@@ -2101,6 +2121,8 @@ public:
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
     void mcfCtxFields(jit::JITState* st);
+    std::string eventMethodName(Oop m);
+    void eventRecMethods();
     uint64_t mcfBlockCreate(jit::JITState* st, uint64_t packed);
     void* mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAfter);
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
@@ -2995,6 +3017,7 @@ private:
     PrimitiveResult primitiveArrayBecome(int argCount);
     int becomeFailCode(Oop a1, Oop a2, bool twoWay, bool copyHash);
     void syncMarriedContextFields(Oop ctx);
+
     PrimitiveResult primitiveIncrementalGC(int argCount);
     PrimitiveResult primitiveSetInterruptKey(int argCount);
     PrimitiveResult primitiveClone(int argCount);

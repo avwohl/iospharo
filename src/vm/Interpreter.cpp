@@ -6328,6 +6328,39 @@ void Interpreter::handleForceYield() {
     }
 }
 
+EventRec* g_eventRing = nullptr;
+uint64_t g_eventN = 0;
+std::string (*g_eventResolveMethod)(uint64_t methodBits) = nullptr;
+static Interpreter* g_eventInterp = nullptr;
+static std::string eventResolve(uint64_t m) {
+    if (!g_eventInterp || m < 0x10000) return "?";
+    return g_eventInterp->eventMethodName(Oop::fromRawBits(m));
+}
+static const bool g_eventRingInit = [] {
+    if (GET_DEBUG_STR(PHARO_EVENT_RING))
+        g_eventRing = static_cast<EventRec*>(calloc(kEventRingSize, sizeof(EventRec)));
+    return true;
+}();
+void eventRingDump() {
+    const char* path = GET_DEBUG_STR(PHARO_EVENT_RING);
+    if (!g_eventRing || !path) return;
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    uint64_t n = g_eventN, start = n > kEventRingSize ? n - kEventRingSize : 0;
+    for (uint64_t k = start; k < n; k++) {
+        const EventRec& r = g_eventRing[k & (kEventRingSize - 1)];
+        if (r.kind == 'M') {   // the method running at the record before
+            fprintf(f, "%llu M %s %s\n", (unsigned long long)r.t, eventResolve(r.a).c_str(),
+                    eventResolve(r.b).c_str());
+            continue;
+        }
+        fprintf(f, "%llu %c %llx %llx %u\n", (unsigned long long)r.t, (char)r.kind,
+                (unsigned long long)r.a, (unsigned long long)r.b, r.c);
+    }
+    fclose(f);
+    (void)g_eventRingInit;
+}
+
 void Interpreter::checkTimerSemaphore() {
     // Check microsecond timer (primitive 242 - used by DelaySemaphoreScheduler)
     if (nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil()) {
@@ -6352,6 +6385,8 @@ void Interpreter::checkTimerSemaphore() {
                         (long long)(currentUsec - firedDeadline),
                         (unsigned long long)semaphore.rawBits());
             }
+            eventRec('F', memory_.identityHashOf(semaphore),
+                     (uint64_t)(currentUsec - firedDeadline), 0);
             synchronousSignal(semaphore);
             return;
         }
@@ -6521,8 +6556,27 @@ void Interpreter::unblockStuckSnapshotCallers() {
     }
 }
 
+std::string Interpreter::eventMethodName(Oop m) {
+    if (!m.isObject() || !memory_.isValidPointer(m)) return "?";
+    return classNameOfMethod(m) + ">>" + memory_.selectorOf(m);
+}
+
+void Interpreter::eventRecMethods() {
+    g_eventInterp = this;
+    Oop caller = frameDepth_ > 0 ? savedFrames_[frameDepth_ - 1].savedMethod : Oop::nil();
+    eventRec('M', method_.rawBits(), caller.isObject() ? caller.rawBits() : 0, 0);
+}
+
 void Interpreter::synchronousSignal(Oop semaphore) {
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+    if (__builtin_expect(g_eventRing != nullptr, 0)) {
+        eventRecMethods();
+        const bool w = firstLink.isObject() && !firstLink.isNil();
+        Oop sx = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+        eventRec('S', memory_.identityHashOf(semaphore), w ? memory_.identityHashOf(firstLink) : 0,
+                 (uint32_t)((memory_.identityHashOf(getActiveProcess()) & 0xFFFFFF)
+                            | ((sx.isSmallInteger() ? (uint32_t)sx.asSmallInteger() & 0xFF : 0xFF) << 24)));
+    }
 
     // PHARO_SEM_SIGNAL_TRACE=1 — log every synchronousSignal with a waiter.
     // Default logs first 50 only; flag raises to 5000 for scheduler-hang
@@ -22893,6 +22947,14 @@ void Interpreter::transferTo(Oop newProcess) {
 
     if (oldProcess.rawBits() == newProcess.rawBits()) {
         return;  // Already running this process
+    }
+    if (__builtin_expect(g_eventRing != nullptr, 0)) {
+        // Switches to and from the idle process (priority 10) are left out:
+        // the runner's idle handshake makes millions a second.
+        const int np = safeProcessPriority(newProcess), op = safeProcessPriority(oldProcess);
+        if (np > 10 && op > 10)
+            eventRec('T', memory_.identityHashOf(oldProcess), memory_.identityHashOf(newProcess),
+                     (uint32_t)np | ((uint32_t)op << 8));
     }
 
     static int xferLog = 0;

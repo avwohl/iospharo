@@ -1517,6 +1517,7 @@ int main(int argc, char* argv[]) {
 
         activeSteps = g_watchdogSteps.load(std::memory_order_relaxed);
 
+        pharo::eventRingDump();
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
         interpreter.dumpJITStats();
