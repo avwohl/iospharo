@@ -24962,6 +24962,10 @@ void Interpreter::initializePrimitives() {
 
     // Initialize SocketPlugin (TCP sockets with I/O monitor thread)
     initializeSocketPlugin(this);
+    if (GET_DEBUG_BOOL(PHARO_DUMP_NAMED_PRIMS)) {
+        for (const auto& kv : namedPrimitives_) fprintf(stderr, "[NAMED-PRIM] %s\n", kv.first.c_str());
+        for (const auto& kv : externalPrimitives_) fprintf(stderr, "[NAMED-PRIM] %s\n", kv.first.c_str());
+    }
 }
 
 void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func) {
@@ -25121,6 +25125,11 @@ void Interpreter::initializeNamedPrimitives() {
     // FileAttributesPlugin
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileMasks", &Interpreter::primitiveFileMasks);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileAttribute", &Interpreter::primitiveFileAttribute);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveVersionString", &Interpreter::primitiveFileAttributesVersionString);
+    registerNamedPrimitive("FilePlugin", "primitiveDirectoryEntry", &Interpreter::primitiveDirectoryEntry);
+    registerNamedPrimitive("FilePlugin", "primitiveFileSync", &Interpreter::primitiveFileSync);
+    registerNamedPrimitive("FilePlugin", "primitiveConnectToFileDescriptor", &Interpreter::primitiveConnectToFileDescriptor);
+    registerNamedPrimitive("", "primitiveDisableModuleLoading", &Interpreter::primitiveDisableModuleLoading);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileExists", &Interpreter::primitiveFileExists);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveOpendir", &Interpreter::primitiveOpendir);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveReaddir", &Interpreter::primitiveReaddir);

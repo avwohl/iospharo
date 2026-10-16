@@ -268,6 +268,7 @@ DEBUG_BOOL_RT(PHARO_MCF_CTDN_SPEND)               // opt-out: native calls spend
 DEBUG_BOOL_RT(PHARO_MCF_NO_RESUME_SHORTCUT)        // opt-out: Context>>resume: materializes thisContext and runs resume:through: again (docs/native-nlr-plan.md)
 DEBUG_BOOL(PHARO_MCF_NLR_FULL_POPS)                // MCF non-local return pops every frame with popFrame (no register-skipping drop of the frames above the home one)
 DEBUG_STR(PHARO_EVENT_RING)                        // path: record timer/semaphore/process-switch events in memory, write them there at exit (Interpreter.hpp EventRec)
+DEBUG_BOOL(PHARO_DUMP_NAMED_PRIMS)                 // print every registered named primitive (module:name) at startup
 DEBUG_BOOL(PHARO_RELINQUISH_HANDS_DOWN_SWITCHED)   // old behavior: primitive 230 goes on to hand the CPU down even after an event switched to a higher-priority process
 DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_ARITH)             // opt-out: the shared one-argument primitive stub does not run SmallInteger primitives 1-17 (C call)
 DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_STRCMP)            // opt-out: the shared one-argument primitive stub does not run primitive 158 (byte string compareWith:)

@@ -16119,6 +16119,14 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     }
     fullPath += entryName;
 
+    {
+        Oop entryArray = directoryEntryArray(entryName, fullPath);
+        if (entryArray.isNil()) return PrimitiveResult::Failure;
+        popN(argCount + 1);
+        push(entryArray);
+        return PrimitiveResult::Success;
+    }
+
     struct stat statBuf;
     bool isDir = false;
     int64_t fileSize = 0;
@@ -16181,6 +16189,141 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
 
 // Primitive 126: Delete a directory
 // pathString primitiveDirectoryDelete -> boolean
+// A directory entry as FilePlugin answers it (File class>>lookupDirectory:
+// filename:): name, creation and modification time in seconds since the
+// Smalltalk epoch (1901, local time), directory flag, size (0 for a
+// directory), POSIX permissions, symlink flag.  The entries had 5 elements
+// with raw Unix times, which the image read as dates in 1956.
+Oop Interpreter::directoryEntryArray(const std::string& name, const std::string& fullPath) {
+    struct stat st;
+    bool isDir = false, isLink = false;
+    int64_t size = 0, mtime = 0, ctime = 0, perms = 0;
+    if (stat(winLongPath(fullPath).c_str(), &st) == 0) {
+        isDir = S_ISDIR(st.st_mode);
+        size = isDir ? 0 : (int64_t)st.st_size;
+        mtime = st.st_mtime;
+#ifdef __APPLE__
+        ctime = st.st_birthtime;
+#else
+        ctime = st.st_ctime;
+#endif
+        perms = st.st_mode & 07777;
+    }
+#ifndef _WIN32
+    struct stat lst;
+    if (lstat(fullPath.c_str(), &lst) == 0) isLink = S_ISLNK(lst.st_mode);
+#endif
+    auto toSqueak = [](int64_t unixSecs) -> int64_t {
+        time_t t = (time_t)unixSecs;
+        struct tm local;
+        int64_t off = 0;
+        if (localtime_r(&t, &local)) off = pharo_tm_gmtoff(&local);
+        return unixSecs + 2177452800LL + off;
+    };
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    if (arrayClass.isNil()) return Oop::nil();
+    Oop nameString = createStringObject(memory_, name.c_str());
+    if (nameString.isNil()) return Oop::nil();
+    push(nameString);                                   // across the allocation
+    Oop a = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 7, ObjectFormat::Indexable);
+    nameString = pop();
+    if (a.isNil()) return Oop::nil();
+    memory_.storePointer(0, a, nameString);
+    memory_.storePointer(1, a, Oop::fromSmallInteger(toSqueak(ctime)));
+    memory_.storePointer(2, a, Oop::fromSmallInteger(toSqueak(mtime)));
+    memory_.storePointer(3, a, isDir ? memory_.trueObject() : memory_.falseObject());
+    memory_.storePointer(4, a, Oop::fromSmallInteger(size));
+    memory_.storePointer(5, a, Oop::fromSmallInteger(perms));
+    memory_.storePointer(6, a, isLink ? memory_.trueObject() : memory_.falseObject());
+    return a;
+}
+
+// FilePlugin primitiveDirectoryEntry: dirPath fileName -> entry array, nil
+// when the directory has no such entry; fails for a bad directory.
+PrimitiveResult Interpreter::primitiveDirectoryEntry(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    std::string name = extractString(memory_, stackValue(0));
+    std::string dir = extractString(memory_, stackValue(1));
+    if (name.empty()) return PrimitiveResult::Failure;
+    if (dir.empty()) dir = "/";
+    struct stat dst;
+    if (stat(winLongPath(dir).c_str(), &dst) != 0 || !S_ISDIR(dst.st_mode))
+        return PrimitiveResult::Failure;
+    std::string full = dir;
+    if (full.back() != '/' && full.back() != '\\') full += '/';
+    full += name;
+    struct stat st;
+    Oop result = memory_.nil();
+    if (stat(winLongPath(full).c_str(), &st) == 0) {
+        result = directoryEntryArray(name, full);
+        if (result.isNil()) return PrimitiveResult::Failure;
+    }
+    popN(argCount + 1);
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// FilePlugin primitiveFileSync: fileHandle -> receiver.  Flushes the stdio
+// buffer and fsyncs the descriptor (File class>>sync: raised
+// primitiveFailed for every file, the primitive was missing).
+PrimitiveResult Interpreter::primitiveFileSync(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    FILE* file = fileFromHandle(stackTop());
+    if (!file) return PrimitiveResult::Failure;
+    fflush(file);
+#ifndef _WIN32
+    if (fsync(fileno(file)) != 0) return PrimitiveResult::Failure;
+#endif
+    popN(argCount);
+    return PrimitiveResult::Success;
+}
+
+// FilePlugin primitiveConnectToFileDescriptor: fd writableFlag -> handle,
+// for a descriptor the image got elsewhere (a pipe of a subprocess).  The
+// caller closes the descriptor; closing the handle closes the FILE only.
+PrimitiveResult Interpreter::primitiveConnectToFileDescriptor(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    Oop fdOop = stackValue(1), wOop = stackValue(0);
+    if (!fdOop.isSmallInteger() || (wOop != memory_.trueObject() && wOop != memory_.falseObject())) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
+    const bool writable = wOop == memory_.trueObject();
+#ifndef _WIN32
+    const int fd = dup((int)fdOop.asSmallInteger());     // fclose must not close the caller's fd
+    if (fd < 0) return PrimitiveResult::Failure;
+    FILE* file = fdopen(fd, writable ? "r+" : "r");
+    if (!file && writable) file = fdopen(fd, "w");
+    if (!file) { close(fd); return PrimitiveResult::Failure; }
+    int fileId = nextFileId_++;
+    openFiles_[fileId] = file;
+    Oop handle = makeFileHandle(fileId, file, writable);
+    if (handle.isNil()) { openFiles_.erase(fileId); fclose(file); return PrimitiveResult::Failure; }
+    popN(argCount + 1);
+    push(handle);
+    return PrimitiveResult::Success;
+#else
+    return PrimitiveResult::Failure;
+#endif
+}
+
+// FileAttributesPlugin primitiveVersionString: Cog's plugin answers '2.0.8'.
+PrimitiveResult Interpreter::primitiveFileAttributesVersionString(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    Oop s = createStringObject(memory_, "2.0.8");
+    if (s.isNil()) return PrimitiveResult::Failure;
+    pop();
+    push(s);
+    return PrimitiveResult::Success;
+}
+
+// primitiveDisableModuleLoading (module ''): plugins are built in, so there is
+// nothing to load later; answer the receiver, as a VM that disabled it.
+PrimitiveResult Interpreter::primitiveDisableModuleLoading(int argCount) {
+    popN(argCount);
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveDirectoryDelete(int argCount) {
     Oop pathOop = stackTop();
 

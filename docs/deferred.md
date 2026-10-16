@@ -524,6 +524,25 @@ cached, so it costs only the fallback.  Missing pairs that Cog HAS (its
     are translated to the image's format language (Cog passes raw ICU
     patterns such as `y-MM-dd HH:mm`).  `scripts/cogdiff/locdiff.st`.
 
+Re-audited 2026-10-17 by asking the VM (`PHARO_DUMP_NAMED_PRIMS`, diag
+builds, prints every registered module:name) against the 249 pairs the
+Pharo 13 image names.  Added then: FilePlugin primitiveDirectoryEntry,
+primitiveFileSync (File class>>sync: always raised primitiveFailed),
+primitiveConnectToFileDescriptor, FileAttributesPlugin
+primitiveVersionString, primitiveDisableModuleLoading; directory entries
+now have Cog's 7 fields.  Still missing and present in Cog:
+
+  * **SocketPlugin address-info API** (22 functions:
+    primitiveResolverGetAddressInfo*, primitiveResolverGetNameInfo*,
+    primitiveSocketCreate, primitiveSocketBindTo, primitiveSocketConnectTo,
+    primitiveSocketAccept, primitiveSocketLocal/RemoteAddress*).  This is
+    the IPv6-capable resolver and socket setup.  The image falls back to
+    the old IPv4 API, which every network test uses and passes.
+  * FilePlugin primitiveConnectToFile (a FILE* from FFI) and
+    primitiveWaitForDataWithSemaphore (asynchronous stdin);
+    BitBltPlugin primitiveDisplayString (the image draws the glyphs
+    itself, slower).
+
 Missing pairs Cog does NOT have either (not a gap): ZipPlugin, MD5Plugin,
 Matrix2x3Plugin, FontPlugin, BMPReadWriterPlugin, AsynchFilePlugin,
 InternetConfigPlugin, KedamaPlugin.  SocketPlugin and SqueakSSL register

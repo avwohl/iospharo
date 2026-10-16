@@ -3153,6 +3153,12 @@ private:
     PrimitiveResult primitiveDirectoryCreate(int argCount);        // 122
     PrimitiveResult primitiveDirectoryDelimitor(int argCount);     // 123
     PrimitiveResult primitiveDirectoryLookup(int argCount);        // 124
+    Oop directoryEntryArray(const std::string& name, const std::string& fullPath);
+    PrimitiveResult primitiveDirectoryEntry(int argCount);
+    PrimitiveResult primitiveFileSync(int argCount);
+    PrimitiveResult primitiveConnectToFileDescriptor(int argCount);
+    PrimitiveResult primitiveFileAttributesVersionString(int argCount);
+    PrimitiveResult primitiveDisableModuleLoading(int argCount);
     PrimitiveResult primitiveDirectoryDelete(int argCount);        // 126
     PrimitiveResult primitiveDirectoryGetMacTypeAndCreator(int argCount); // 127
     PrimitiveResult primitiveGetCurrentWorkingDirectory(int argCount);  // named primitive
