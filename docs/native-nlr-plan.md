@@ -239,3 +239,27 @@ Otherwise the protocol runs as before.  Lexicon (one such return per
 run) went from 222.5 to 187.5 billion instructions, 13.4 to 11.4 s.  A
 return through ensure: took about 12000 instructions before.
 Opt-out: `PHARO_MCF_NO_ENSURE_SHORTCUT`.
+
+## Resume shortcut (2026-10-16, the default)
+
+Every exception return runs `handlerContext return: value`, then `sender
+resume: value`.  `Context>>resume:` is `self resume: value through:
+(thisContext findNextUnwindContextUpTo: self)`: it materializes every
+frame for `thisContext`, then `resume:through:` terminates the chain and
+returns the value to the receiver C.
+
+When `thisContext` runs in `Context>>resume:` (`mcfResumeShortcut`), the VM
+does the same work itself if these conditions are true:
+
+- C is a heap context on the chain of the running frames, and C is not
+  dead.
+- No frame or context between the current frame and C is an unwind
+  (primitive 198) frame.
+
+The steps are: pop the live frames, terminate the contexts between the
+depth-0 frame's context and C, and return the value from that context into
+C.  Machine code then exits, and the interpreter continues in C.  This is
+what `resume:through:` does when the unwind list is empty.
+
+An exception signal + return went from 30 to 20 ms per 30000 (Cog 20-24);
+instructions -26%.  Opt-out: `PHARO_MCF_NO_RESUME_SHORTCUT`.

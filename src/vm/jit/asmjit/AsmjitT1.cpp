@@ -7578,6 +7578,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.blr(x16);
         a.mov(x1, x0);
         a.ldp(x0, x30, ptr_post(sp, 16));
+        {
+            // 0: the resume shortcut resumed another context; the
+            // interpreter owns the state (mcfResumeShortcut).
+            asmjit::Label haveCtx = a.new_label();
+            a.cbnz(x1, haveCtx);
+            a.mov(w3, asmjit::Imm((int)ExitDeopt));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(haveCtx);
+        }
         emitPushReg(a, x1);
         return true;
     }

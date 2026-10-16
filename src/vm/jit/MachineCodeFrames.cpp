@@ -118,10 +118,105 @@ extern "C" void* pharo_mcf_nlr(jit::JITState* st) {
     return st->interp->mcfNonLocalReturn(st);
 }
 
+extern uint64_t g_mcfResumeShortcuts;
+
+// Is m Context>>resume: (selector #resume:, class Context)?  The last
+// positive answer is remembered by oop.
+bool Interpreter::isContextResumeMethod(Oop m) {
+    static uint64_t known = 0;
+    if (m.rawBits() == known && known != 0) return true;
+    if (!m.isObject() || m.rawBits() < 0x10000 || contextClassIndex_ == 0) return false;
+    ObjectHeader* mo = m.asObjectPtr();
+    if (!mo->isCompiledMethod() || mo->classIndex() != compiledMethodClassIndex_) return false;
+    Oop hdr = mo->slotAt(0);
+    if (!hdr.isSmallInteger()) return false;
+    const int64_t hb = hdr.asSmallInteger();
+    const int numLits = (int)(hb & 0x7FFF);
+    if (((hb >> 24) & 0xF) != 1 || numLits < 2) return false;
+    Oop sel = mo->slotAt((size_t)numLits - 1);
+    if (!sel.isObject() || !sel.asObjectPtr()->isBytesObject()) {
+        if (!sel.isObject() || sel.asObjectPtr()->slotCount() < 2) return false;
+        sel = sel.asObjectPtr()->slotAt(1);          // AdditionalMethodState
+    }
+    if (!sel.isObject() || !sel.asObjectPtr()->isBytesObject()) return false;
+    ObjectHeader* sh = sel.asObjectPtr();
+    if (sh->byteSize() != 7 || memcmp(sh->bytes(), "resume:", 7) != 0) return false;
+    Oop binding = mo->slotAt((size_t)numLits);
+    if (!binding.isObject() || binding.asObjectPtr()->slotCount() < 2) return false;
+    if (binding.asObjectPtr()->slotAt(1).rawBits() != memory_.classAtIndex(contextClassIndex_).rawBits())
+        return false;
+    known = m.rawBits();
+    return true;
+}
+
+// The resume shortcut.  `thisContext` in Context>>resume: (self resume:
+// value through: (thisContext findNextUnwindContextUpTo: self)) materialized
+// every frame, then resume:through: walked for unwind contexts, terminated
+// the chain and returned (every exception return: handlerContext return: ->
+// sender resume:).  When no frame or context between this one and the
+// receiver C is an unwind (198) frame, C is not dead and is a heap context
+// on the chain, the effect is: every frame and context above C dies and C
+// resumes with the value as the answer of its last send.  Answers true when
+// done (the interpreter then owns the state).
+bool Interpreter::mcfResumeShortcut() {
+    static const bool on = !GET_DEBUG_BOOL(PHARO_MCF_NO_RESUME_SHORTCUT);
+    if (!on || seg_.armed || collapsed_.armed || !isContextResumeMethod(method_)) return false;
+    Oop C = receiver_;
+    if (!C.isObject() || C.rawBits() < 0x10000 || C.asObjectPtr()->classIndex() != contextClassIndex_)
+        return false;
+    if (C.asObjectPtr()->slotCount() < 6 || C.asObjectPtr()->slotAt(1).isNil()) return false;   // dead
+    // The live frames: no unwind frame, none whose context is C.
+    for (size_t i = 0; i < frameDepth_; i++) {
+        const SavedFrame& f = savedFrames_[i];
+        if (f.materializedContext.rawBits() == C.rawBits()) return false;
+        Oop fm = f.savedMethod;
+        if (fm.isObject() && !fm.isNil() && primitiveIndexOf(fm) == 198) return false;
+    }
+    // Then the contexts from the depth-0 frame's up to C.
+    Oop X = activeContext_;
+    if (!X.isObject() || X.isNil() || X.rawBits() == C.rawBits()) return false;
+    Oop s = memory_.fetchPointer(0, X);
+    for (int n = 0; ; n++) {
+        if (n > 100000 || !s.isObject() || s.isNil() || s.asObjectPtr()->classIndex() != contextClassIndex_)
+            return false;
+        if (s.rawBits() == C.rawBits()) break;
+        Oop sm = memory_.fetchPointer(3, s);
+        if (sm.isObject() && !sm.isNil() && primitiveIndexOf(sm) == 198) return false;
+        s = memory_.fetchPointer(0, s);
+    }
+    {   // the depth-0 frame's own method
+        Oop xm = memory_.fetchPointer(3, X);
+        if (xm.isObject() && !xm.isNil() && primitiveIndexOf(xm) == 198) return false;
+    }
+    const Oop value = framePointer_[1];
+    // Commit.  The frames above the depth-0 one go as a non-local return
+    // takes them; then the contexts strictly between X and C die
+    // (terminateTo:), and X returns the value into C.
+    while (frameDepth_ > 0) {
+        widowUnwoundContext();
+        if (!popFrame()) return false;
+    }
+    X = activeContext_;
+    s = memory_.fetchPointer(0, X);
+    while (s.isObject() && !s.isNil() && s.rawBits() != C.rawBits()) {
+        Oop next = memory_.fetchPointer(0, s);
+        memory_.storePointer(0, s, memory_.nil());
+        memory_.storePointer(1, s, memory_.nil());
+        s = next;
+    }
+    memory_.storePointer(0, X, C);
+    nlrHomeMethod_ = Oop::nil();
+    nlrValue_ = Oop::nil();
+    returnValue(value);
+    g_mcfResumeShortcuts++;
+    return true;
+}
+
 Oop Interpreter::mcfThisContext(jit::JITState* st) {
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);
     instructionPointer_ = st->ip;
+    if (mcfResumeShortcut()) return Oop::fromRawBits(0);   // the interpreter owns the state
     Oop ctx = activeContext_;
     if (frameDepth_ > 0) {
         ctx = materializeFrameStack();
@@ -159,6 +254,7 @@ extern "C" uint64_t pharo_mcf_block_create(jit::JITState* st, uint64_t packed) {
     return st->interp->mcfBlockCreate(st, packed);
 }
 
+uint64_t g_mcfResumeShortcuts = 0;   // Context>>resume: done by mcfResumeShortcut
 uint64_t g_mcfEnsureShortcuts = 0;   // NLRs through ensure: taken by the shortcut
 
 // PHARO_MCF_CALL_CENSUS: native calls by callee method (printed with the

@@ -2124,6 +2124,8 @@ public:
     // instance variable idx; or prim << 3 | 7 = run primitive prim.
     void mcfPerformCachePut(Oop selector, Oop rcv, int nArgs, uint64_t methodWord, uint64_t entryWord);
     Oop mcfThisContext(jit::JITState* st);
+    bool isContextResumeMethod(Oop m);
+    bool mcfResumeShortcut();
     void* mcfNonLocalReturn(jit::JITState* st);
     void followForwardersDeep(Oop o, int depth);
     // The NLR through one ensure: frame without the image's unwind protocol
