@@ -151,7 +151,13 @@ The scenario scripts in `scripts/cogdiff/` found three more:
 
 Process scheduling (16 scenarios), exceptions (24), immutability,
 pinning and reflection (31), file-system operations (23) and weak
-references and finalization (14) agree with Cog.  We keep one difference on
+references and finalization (14) agree with Cog.  FFI callouts into libc
+(`scripts/cogdiff/ffidiff.st`: integer, long, double, float, string and
+ByteArray arguments, and variadic `snprintf` with `fixedArgumentCount:`)
+agree with Cog, on our arm64 build and on our x86-64 build.  A variadic
+function declared without `fixedArgumentCount:` works on x86-64 only.  On
+arm64 Darwin, variadic arguments go on the stack, so the call gives
+garbage on any VM; this is a platform rule, not a VM defect.  We keep one difference on
 purpose.  A dead context gives the value of a temp that the method set
 before `thisContext`.  Cog gives nil, because its context never got the
 temps from the frame.
