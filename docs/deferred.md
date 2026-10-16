@@ -360,6 +360,17 @@ The history lives in `docs/history/`; nothing was deleted.
   IS delivered from this loop as of `3c75aca5`, which matters more here than
   on the main path precisely because everything allocated here is tenured.
 
+  **Re-measured 2026-10-16:** 85 us per callback on ours, 9.0 on Cog
+  (qsort of 5000 doubles, 63551 callbacks).  Profile: `step()` +
+  `dispatchBytecode` 38%, C++ exception unwinding at callback end ~5%
+  (mach_o load-command parsing in the unwinder), the rest sends, process
+  switches and the full materialization at entry.  Running the handler
+  through `interpret()` would remove most of the 38% (an inner
+  `interpret()` exits when primitiveCallbackReturn clears `running_` with a
+  callback-exit flag); machine code stays off there because `mcfActivate`
+  refuses while the outer machine code is active, so reaching Cog needs
+  nested machine-code frames.
+
   **And the window is not one callback long.**  `callbackDepth_` is decremented
   only by `primitiveCallbackReturn` and the two worker-timeout
   `[XTCB-DEAD-POP]` paths, so an invocation the image abandons is never popped
