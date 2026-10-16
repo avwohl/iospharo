@@ -2047,11 +2047,17 @@ static inline void emitStoreSp_x86(asmjit::x86::Assembler& a,
     a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_SP), src);
 #endif
 }
+static inline bool x86PinRegs();
+static inline bool x86RegsTruth();
+static inline void emitSyncPinnedToState_x86(asmjit::x86::Assembler& a,
+                                             const asmjit::x86::Gp& base);
 // At exits (ret to C++) and before sp-reading helper calls, sp must be visible
-// in memory regardless of mode.
+// in memory regardless of mode.  With x86RegsTruth the pinned registers'
+// state copies are written here too.
 static inline void emitSyncSpToState_x86(asmjit::x86::Assembler& a) {
 #if PHARO_T1_X86_SP_IN_REG
     a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_SP), X86_SP_REG);
+    if (x86RegsTruth()) emitSyncPinnedToState_x86(a, asmjit::x86::rdi);
 #else
     (void)a;
 #endif
@@ -2101,12 +2107,26 @@ static inline bool x86PinRegs() {
     return false;
 #endif
 }
+// The registers are the truth (as arm64's x21/x22 under mcfLazyRT): the
+// state copies are written only at the JIT -> C++ edges, the exits
+// (emitSyncSpToState_x86) and the C helper calls (emitCallCHelper_x86).
+// PHARO_X86_PIN_WRITE_THROUGH (diag builds) keeps every store.
+static inline bool x86RegsTruth() {
+    static const bool on = x86PinRegs() && !GET_DEBUG_BOOL(PHARO_X86_PIN_WRITE_THROUGH);
+    return on;
+}
+static inline void emitSyncPinnedToState_x86(asmjit::x86::Assembler& a,
+                                             const asmjit::x86::Gp& base) {
+    a.mov(asmjit::x86::ptr(base, OFF_TEMPBASE), asmjit::x86::r12);
+    a.mov(asmjit::x86::ptr(base, OFF_RECEIVER), asmjit::x86::r13);
+    a.mov(asmjit::x86::ptr(base, OFF_JITMETHOD), asmjit::x86::r14);
+}
 static inline void emitSetTempBase_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp src) {
-    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_TEMPBASE), src);
+    if (!x86RegsTruth()) a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_TEMPBASE), src);
     if (x86PinRegs() && src.id() != asmjit::x86::r12.id()) a.mov(asmjit::x86::r12, src);
 }
 static inline void emitSetReceiver_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp src) {
-    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_RECEIVER), src);
+    if (!x86RegsTruth()) a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_RECEIVER), src);
     if (x86PinRegs() && src.id() != asmjit::x86::r13.id()) a.mov(asmjit::x86::r13, src);
 }
 static inline void emitLoadTempBase_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
@@ -2142,7 +2162,7 @@ static inline bool x86LazyMethod() {
     return on;
 }
 static inline void emitSetJM_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp src) {
-    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_JITMETHOD), src);
+    if (!x86RegsTruth()) a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_JITMETHOD), src);
     if (x86PinRegs() && src.id() != asmjit::x86::r14.id()) a.mov(asmjit::x86::r14, src);
 }
 static inline void emitLoadJM_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst) {
@@ -2223,6 +2243,7 @@ static inline void emitCallCHelper_x86(asmjit::x86::Assembler& a,
     a.call(asmjit::x86::rax);
     a.add(asmjit::x86::rsp, asmjit::Imm(kWin64ShadowSpace));
 #else
+    if (x86RegsTruth()) emitSyncPinnedToState_x86(a, asmjit::x86::r15);
     a.call(asmjit::x86::rax);
     if (x86PinRegs()) {
         // The C side may have moved the receiver (GC) or changed frames.
@@ -2366,6 +2387,13 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
         a.mov(ptr(r10), rdx);
     }
     // The result into the callee's receiver slot; sp just above it.
+    if (x86RegsTruth() && jit::g_mcfTbRecord) {
+        // The registers are the view: load them straight from the record.
+        a.mov(ptr(r12, -8), rax);
+        emitStoreSp_x86(a, r12);
+        a.mov(r12, ptr(rcx, L.savedFP));         // savedTB
+        a.mov(r13, ptr(rcx, L.savedReceiver));
+    } else {
     emitLoadTempBase_x86(a, rdx);
     a.mov(ptr(rdx, -8), rax);
     emitStoreSp_x86(a, rdx);
@@ -2375,6 +2403,7 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     emitSetTempBase_x86(a, rdx);
     a.mov(rdx, ptr(rcx, L.savedReceiver));
     emitSetReceiver_x86(a, rdx);
+    }
     if (!jit::g_mcfLazyCloAct) {
         // (Lazy: C++ derives the closure, fp[0] of block code.)
         a.mov(rdx, ptr(rcx, L.savedClosure));
@@ -2395,8 +2424,12 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
         a.movzx(edx, byte_ptr(rcx, L.savedArgCount));
         a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
     }
-    a.mov(rdx, ptr(rcx, L.mcJM));
-    emitSetJM_x86(a, rdx);
+    if (x86RegsTruth()) {
+        a.mov(r14, ptr(rcx, L.mcJM));
+    } else {
+        a.mov(rdx, ptr(rcx, L.mcJM));
+        emitSetJM_x86(a, rdx);
+    }
     a.jmp(rsi);                                  // (no ip store: see the call)
     a.bind(fall);
 }
@@ -2494,8 +2527,7 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
         a.mov(dword_ptr(rcx, L.savedArgCount), r10d);
         a.mov(dword_ptr(rcx, L.homeFramePlus1), asmjit::Imm(0));
     }
-    emitLoadReceiver_x86(a, r10);
-    a.mov(ptr(rcx, L.savedReceiver), r10);
+    a.mov(ptr(rcx, L.savedReceiver), x86RcvrReg(a, r10));
     if (!jit::g_mcfLazyCloAct) {
         // Lazy (trim steps 7-8): C++ derives both (recClosure, recActiveCtx).
         a.mov(r10, ptr(rdi, OFF_CLOSURE));
@@ -2504,16 +2536,24 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
         a.mov(r10, ptr(r10));
         a.mov(ptr(rcx, L.savedActiveContext), r10);
     }
-    emitLoadJM_x86(a, r10);
-    a.mov(ptr(rcx, L.mcJM), r10);
+    if (x86PinRegs()) {
+        a.mov(ptr(rcx, L.mcJM), r14);
+    } else {
+        emitLoadJM_x86(a, r10);
+        a.mov(ptr(rcx, L.mcJM), r10);
+    }
     a.mov(r10, ptr(rdi, OFF_MCF_MATCTX_PTR));
     a.mov(r11, ptr(r10));
     a.mov(ptr(rcx, L.materializedContext), r11);
     a.mov(r11, ptr(rdi, OFF_MCF_NIL));
     a.mov(ptr(r10), r11);                        // the callee has no context
-    emitLoadTempBase_x86(a, r10);
-    if (!jit::g_mcfTbRecord) a.sub(r10, asmjit::Imm(8));
-    a.mov(ptr(rcx, L.savedFP), r10);
+    if (x86PinRegs() && jit::g_mcfTbRecord) {
+        a.mov(ptr(rcx, L.savedFP), r12);
+    } else {
+        emitLoadTempBase_x86(a, r10);
+        if (!jit::g_mcfTbRecord) a.sub(r10, asmjit::Imm(8));
+        a.mov(ptr(rcx, L.savedFP), r10);
+    }
     a.lea(r10, ptr(resume));
     a.mov(ptr(rcx, L.mcReturn), r10);
 }
@@ -3306,10 +3346,15 @@ static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAf
     a.shr(r10, asmjit::Imm(48));
     a.and_(r10d, asmjit::Imm(0xFF));             // temp count
     emitLoadSp_x86(a, r11);
+    if (x86RegsTruth()) {
+        a.lea(r12, ptr(r11, -8 * nArgs));        // tempBase (first argument)
+        a.mov(r13, ptr(r12, -8));                // the receiver
+    } else {
     a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
     emitSetTempBase_x86(a, rdx);
     a.mov(rdx, ptr(rdx, -8));
     emitSetReceiver_x86(a, rdx);
+    }
     a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
     if (!jit::g_mcfLazyCloAct)
         a.mov(ptr(rdi, OFF_CLOSURE), rdx);       // a method frame
@@ -5219,9 +5264,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         int nArgs = (sendNArgsOverride >= 0) ? sendNArgsOverride : sendNArgs(op);
 
         // Per-site icData address: jm->icBuffer + siteIdx*IC_BYTES_PER_SITE.
+        if (x86PinRegs()) {
+            a.mov(rsi, ptr(r14, (int)offsetof(JITMethod, icBuffer)));
+            if (siteIdx) a.add(rsi, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+        } else {
         emitLoadJM_x86(a, rdx);
         a.mov(rsi, ptr(rdx, (int)offsetof(JITMethod, icBuffer)));
         a.add(rsi, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+        }
 
         // Deferred state setup: inline-spec paths (getter/setter/
         // returnsSelf) continue inline and don't need state.icDataPtr,
