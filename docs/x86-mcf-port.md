@@ -148,3 +148,23 @@ arm64 lazy view).
 Trait-heavy tests time out once per x86 sweep (a different test each
 time, never alone): the watchdog's 30 s expiry is genuine, the test is
 compiling (Opal, trait method copies) about 4x slower than on arm64.
+
+## Status (2026-10-18, evening)
+
+The x86 primitive stub answers, on the caller's stack: at: (formats 2, 3,
+4, bytes, 32-bit words), at:put:, size, String>>at: and at:put:,
+Character asInteger/value:, Integer>>asCharacter, class, identityHash,
+the quick primitives 256-519, basicNew (fixed size), basicNew: (pointers,
+bytes) and Semaphore signal/wait without a process switch.  Primitive C
+calls in lexicon: 323M -> 46M -> less.  SmallInteger comparisons fuse
+with the conditional jump after them.
+
+x86 lexicon: 563 billion instructions (from 1468 at the start of the
+port).  Sweeps X6/X7: 27810 of 27996 pass; the extra non-passes are
+timeouts of compile-heavy tests that pass alone.
+
+The next x86 lever is the call itself: x86 T1 code keeps the receiver,
+the temporaries' base and the literals in the state, not in registers,
+and every native call writes a full 13-field frame record and an
+8-field view.  The arm64 trims (pinned registers, the lazy view, the
+compact record) would need the same change in the x86 emitter.
