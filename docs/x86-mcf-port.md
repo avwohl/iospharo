@@ -201,10 +201,26 @@ Opt-outs (diag builds only): `PHARO_X86_NO_SHORT_PUSH`, `PHARO_X86_NO_COLD`,
 `PHARO_X86_NO_LAZY_CLOSURE`, `PHARO_X86_NO_PIN_REGS`,
 `PHARO_X86_NO_LAZY_METHOD`.
 
-The next x86 levers:
+Later the same day:
 
-- The operand stack is still in memory (no simStack and no TOS
-  register, unlike arm64).
+- `c992bbef`: the pinned registers are the truth.  The state copies are
+  written only at exits and before C helper calls.
+- `a2a5cd0c`, `0a4f1824`: an x86 simStack.  Pushes of temps, the
+  receiver, constants, literals, fields, true, false and literal
+  variables are deferred.  popStoreTemp, returnTop (methods only), + -,
+  the comparisons, == and ~~ and the conditional jumps take their
+  operands from the sources.  Slow paths re-emit the bytecode's own code
+  in the cold section.
+- `ef8bc87d`: a failed primitive at an IC hit runs the method body
+  natively (`pharo_mcf_prim_fail`).
+- `bedcb1a4`: the perform: cache in machine code; primitive 18 (@) is
+  callable.
+
+    lexicon                      451 G instructions
+    1 to: 2e7 do: [s := s + i]   20 ms (Cog loopArith 32 ms)
+    Famix testMediumSizeSources  14.6 s (limit 15 s; it passes now)
+
+The next x86 levers:
 - The inline cache of a send is a linear six-entry probe, followed by a
   call-cache lookup.
 - The native call code is inline at each send site.
