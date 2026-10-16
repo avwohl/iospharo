@@ -5748,11 +5748,13 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             case 1:  // Total heap size (old space)
                 return Oop::fromSmallInteger(
                     memory_.oldSpaceEnd() - memory_.oldSpaceStart());
-            case 2:  // Free space in young generation
-                return Oop::fromSmallInteger(0);  // Simplified
-            case 3:  // Total memory size
+            case 2:  // Size of new space (eden and survivors), as Cog
                 return Oop::fromSmallInteger(
-                    memory_.oldSpaceEnd() - memory_.oldSpaceStart());
+                    memory_.newSpaceEnd() - memory_.newSpaceStart());
+            case 3:  // Size of the heap: old space and new space
+                return Oop::fromSmallInteger(
+                    (memory_.oldSpaceEnd() - memory_.oldSpaceStart())
+                    + (memory_.newSpaceEnd() - memory_.newSpaceStart()));
             case 7:  // Full GC count
                 return Oop::fromSmallInteger(memory_.statistics().gcCount);
             case 8:  // Full GC time (ms)
@@ -5785,8 +5787,13 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 return Oop::fromSmallInteger(1);
             case 44: // Eden size
                 return Oop::fromSmallInteger(22003584);
-            case 46: // Cog code size
-                return Oop::fromSmallInteger(0);  // No JIT
+            case 46: // Machine code zone size; VirtualMachine>>isRunningCogit
+                     // tests it > 0.  0 only when the JIT is not running.
+                return Oop::fromSmallInteger(jitInitialized_
+                    ? static_cast<int64_t>(jitRuntime_.codeZone().totalBytes()) : 0);
+            case 54: // Free bytes in old space (Cog's totalFreeOldSpace)
+                return Oop::fromSmallInteger(
+                    static_cast<int64_t>(memory_.freeOldSpaceBytes()));
             case 79: // Image version stored in the image header (word 92):
                      // SystemVersion asks for it via `vm imageVersionInImageHeader`
                      // and ReleaseTest asserts it matches (e.g. 130 for Pharo 13).
@@ -5796,7 +5803,6 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 for (const auto& p : vmParameters_) {
                     if (p == "--headless") flags |= 2;
                 }
-                fprintf(stderr, "[DIAG] vmParam 48 → %d (headless=%d)\n", flags, !!(flags & 2));
                 return Oop::fromSmallInteger(flags);
             }
             case 49: { // Max external semaphores table size
