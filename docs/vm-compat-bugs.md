@@ -97,6 +97,32 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 `docs/deferred.md`, which is now only that. Fixed work is recorded in
 `docs/changes.md` and `docs/history/`.
 
+## FIXED 2026-10-17 — primitive answers that differed from Cog (differential check)
+
+The sweep passes every test, but some primitives still answered other
+values than Cog.  A differential check found them: it calls each pure
+primitive (arithmetic, comparison, `at:`, float, character, identity) of
+20 core classes with 34 edge-case receivers and arguments, on both VMs,
+and compares the answers (17526 calls).  The script is
+`primdiff.st` in the session scratchpad; it is short to write again.
+
+- Primitive 158 `compareWith:` answered -1, 0 or 1.  Cog answers the
+  first differing characters' difference, else the length difference.
+- Primitive 171 `basicIdentityHash` of a SmallFloat64 answered the
+  encoding shifted by 3.  Cog answers `oop >> 4`, made negative when the
+  sign bit (bit 3) is set.
+- Primitives 53 and 553 `exponent` answered 0 for 0.0.  Cog answers -1
+  (frexp gives 0, minus 1).
+
+Two differences are Cog defects, not ours:
+
+- `BoxedFloat64>>sqrt` of negative infinity: Cog's machine code answers
+  NaN.  Cog's interpreter and ours fail the primitive, and the image code
+  signals DomainError.
+- `'abc' compareWith: 1` crashes Cog (segmentation fault) after its JIT
+  compiles `ByteString>>compareWith:`.  The machine-code primitive does
+  not check that the argument is a byte object.  Ours fails the primitive.
+
 ## FIXED 2026-10-14 — ReStore: 20 *WithExclusion tests fail (two-way become moved identity hashes)
 
 `141818ec`.  ReStore swaps proxies with `become:` and keeps the objects

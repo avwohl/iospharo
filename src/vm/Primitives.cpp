@@ -7537,12 +7537,8 @@ PrimitiveResult Interpreter::primitiveExponent(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (value == 0.0) {
-        // Exponent of zero is conventionally 0 or undefined
-        pop();
-        push(Oop::fromSmallInteger(0));
-        return PrimitiveResult::Success;
-    }
+    // No zero case: frexp gives 0 there, so 0.0 exponent is -1, as Cog's
+    // primitiveExponent and primitiveSmallFloatExponent answer.
 
     // Get the exponent using frexp (returns value in range [0.5, 1) and exponent)
     int exponent;
@@ -18556,16 +18552,14 @@ PrimitiveResult Interpreter::primitiveImmediateAsInteger(int argCount) {
     }
 
     if (receiver.isSmallFloat()) {
-        // Return the SmallFloat encoding as a signed integer
-        // In our low-bit tag scheme: value = oop >> 3 (arithmetic shift)
-        int64_t value = static_cast<int64_t>(receiver.rawBits()) >> 3;
-        if (Oop::canBeSmallInteger(value)) {
-            pop();
-            push(Oop::fromSmallInteger(value));
-            return PrimitiveResult::Success;
-        }
-        // Extremely large/small SmallFloat encodings - fail to Smalltalk
-        return PrimitiveResult::Failure;
+        // As Cog's primitiveImmediateAsInteger: the encoding without its tag
+        // and sign bit (oop >> 4), negative when the sign bit (bit 3) is set.
+        // Always a SmallInteger (60 bits plus the sign).
+        const uint64_t oop = receiver.rawBits();
+        uint64_t value = (oop >> 4) + ((oop & 8) ? (~0ull << 60) : 0);
+        pop();
+        push(Oop::fromSmallInteger(static_cast<int64_t>(value)));
+        return PrimitiveResult::Success;
     }
 
     // Non-immediate objects fail
