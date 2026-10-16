@@ -2250,8 +2250,29 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     a.mov(dword_ptr(r10), r11d);
     a.mov(r10, ptr(rdi, OFF_MCF_DEPTH_PTR));
     a.mov(r11, ptr(r10));                        // frameDepth_
-    a.test(r11, r11);
-    a.jz(refuse);                                // depth 0: the caller is a context
+    if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
+        a.test(r11, r11);
+        a.jz(refuse);
+    } else {
+        // Depth 0: the caller lives in activeContext_.  Store the caller's
+        // pc into it, as pushFrame does on its 0 -> 1 push (the arm64 push
+        // does the same).  Refusing sent every call of a frame resumed at
+        // depth 0 -- after a process switch or a thisContext collapse --
+        // through the interpreter for the rest of its run.
+        asmjit::Label notDepth0 = a.new_label();
+        a.test(r11, r11);
+        a.jnz(notDepth0);
+        a.mov(rcx, ptr(rdi, OFF_MCF_ACTCTX_PTR));
+        a.mov(rcx, ptr(rcx));                    // activeContext_
+        a.cmp(rcx, ptr(rdi, OFF_MCF_NIL));
+        a.je(refuse);
+        a.test(cl, asmjit::Imm(7));
+        a.jnz(refuse);
+        // The 1-based pc of the ip after the send: (ipAfterOff - 8) + 1.
+        a.mov(rdx, asmjit::Imm((int64_t)((((uint64_t)(ipAfterOff - 7)) << 3) | 1)));
+        a.mov(ptr(rcx, OBJ_SLOT_0 + 8), rdx);
+        a.bind(notDepth0);
+    }
     a.cmp(r11, ptr(rdi, OFF_MCF_DEPTH_LIMIT));
     a.jae(refuse);
     a.imul(rcx, r11, asmjit::Imm((int)L.size));
@@ -3497,6 +3518,30 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.jmp(end);
 
         a.bind(bail);
+        // Machine-code frames: `=` with a Character receiver is identity
+        // while Character>>#= is primitive 110 (g_charEqualsIdentity); the
+        // exit here was a third of lexicon's scanner exits.
+        if (op == 0x66 && ::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_CHAR_EQ)) {
+            asmjit::Label notChar = a.new_label();
+            a.mov(r10, asmjit::Imm((uint64_t)&g_charEqualsIdentity));
+            a.cmp(byte_ptr(r10), asmjit::Imm(0));
+            a.je(notChar);
+            emitLoadSp_x86(a, rax);
+            a.mov(rcx, ptr(rax, -16));
+            a.mov(rdx, ptr(rax, -8));
+            a.mov(r8d, ecx);
+            a.and_(r8d, asmjit::Imm(0x7));               // the tag
+            a.cmp(r8d, asmjit::Imm((int)(Oop::fromCharacter(0).rawBits() & 0x7)));
+            a.jne(notChar);
+            a.cmp(rcx, rdx);
+            a.mov(rsi, ptr(rdi, OFF_FALSEOOP));
+            a.cmove(rsi, ptr(rdi, OFF_TRUEOOP));
+            a.mov(ptr(rax, -16), rsi);
+            a.sub(rax, 8);
+            emitStoreSp_x86(a, rax);
+            a.jmp(end);
+            a.bind(notChar);
+        }
         // r8 = state.method.rawBits + bcOffsetFromMethObj
         // (state.method is GC-tracked Oop; this is the post-GC-safe
         // address of the failing bytecode.)
@@ -4509,6 +4554,57 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // === Miss — chain loop does the IC fill ===
             // Emit deferred state setup here too.
             a.bind(miss);
+            if (::pharo::mcfMode() && g_mcfMegaCache && !GET_DEBUG_BOOL(PHARO_MCF_NO_POLY)) {
+                // Machine-code frames: a megamorphic site misses all six
+                // entries every time.  Look (selector, class) up in the mega
+                // cache the interpreter fills, install the method in entry 5
+                // and dispatch it as a hit (the arm64 miss path's probe).
+                // rdx = the class key, rsi = the site base.  Only a full
+                // site: one with room takes the normal miss, whose patch
+                // fills the next entry with its inline-spec extras.
+                asmjit::Label noMega = a.new_label();
+                asmjit::Label megaHit = a.new_label();
+                asmjit::Label megaTry2 = a.new_label();
+                a.cmp(qword_ptr(rsi, 120), asmjit::Imm(0));
+                a.je(noMega);
+                a.mov(r9, ptr(rsi, (int)(IC_SELBITS_SLOT * 8)));   // the site's selector
+                a.test(r9, r9);
+                a.jz(noMega);
+                a.mov(r10, asmjit::Imm((uint64_t)g_mcfMegaCache));
+                a.mov(r8, r9);
+                a.xor_(r8, rdx);
+                a.and_(r8, asmjit::Imm((int)(MegaCacheSize - 1)));
+                a.shl(r8, asmjit::Imm(5));
+                a.add(r8, r10);
+                a.cmp(ptr(r8), r9);
+                a.jne(megaTry2);
+                a.cmp(ptr(r8, 8), rdx);
+                a.je(megaHit);
+                a.bind(megaTry2);                        // JITRuntime::megaCacheAdd h2
+                a.mov(r8, r9);
+                a.shr(r8, asmjit::Imm(3));
+                a.mov(r11, rdx);
+                a.shl(r11, asmjit::Imm(2));
+                a.xor_(r8, r11);
+                a.xor_(r8, rdx);
+                a.and_(r8, asmjit::Imm((int)(MegaCacheSize - 1)));
+                a.shl(r8, asmjit::Imm(5));
+                a.add(r8, r10);
+                a.cmp(ptr(r8), r9);
+                a.jne(noMega);
+                a.cmp(ptr(r8, 8), rdx);
+                a.jne(noMega);
+                a.bind(megaHit);
+                a.mov(r11, ptr(r8, 16));                 // methodBits
+                a.test(r11, r11);
+                a.jz(noMega);
+                a.mov(ptr(rsi, 120), rdx);
+                a.mov(ptr(rsi, 128), r11);
+                a.mov(qword_ptr(rsi, 136), asmjit::Imm(0));
+                a.add(rsi, asmjit::Imm(120));
+                a.jmp(dispatchCached);
+                a.bind(noMega);
+            }
             a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
             a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
             a.mov(rax, ptr(rdi, OFF_METHOD));
@@ -14448,6 +14544,43 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // their immutable-bit bail is a mid-method exit, kept on the
                 // generic interp bail to avoid expanding the canBailMidMethod
                 // surface.  Mirrors arm64 (~9594) + the x86 short push/store.
+                // Machine-code frames: the receiver stores too.  Their
+                // immutable-bit bail is a general exit, which mcfRun handles
+                // at any bytecode; the bail ran the rest of the method
+                // interpreted (lexicon: 137K exits per 2M at
+                // ZnBufferedReadStream>>next).
+                if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EXT_RECV_STORE)
+                        && (op == SistaV1::ExtPopStoreRecv || op == SistaV1::ExtStoreRecv)
+                        && !wasExtPrefix && (size_t)(i + 1) < bcRealLen) {
+                    const int idx = static_cast<int>(bcReal[i + 1]);
+                    asmjit::Label rbail = a.new_label();
+                    asmjit::Label rend = a.new_label();
+                    a.mov(rdx, ptr(rdi, OFF_RECEIVER));
+                    a.test(dword_ptr(rdx), asmjit::Imm(static_cast<int32_t>(0x800000)));
+                    a.jne(rbail);                            // immutable receiver
+                    emitLoadSp_x86(a, rcx);
+                    if (op == SistaV1::ExtPopStoreRecv) {
+                        a.sub(rcx, 8);
+                        emitStoreSp_x86(a, rcx);
+                        a.mov(rax, ptr(rcx));
+                    } else {
+                        a.mov(rax, ptr(rcx, -8));            // TOS (don't pop)
+                    }
+                    a.mov(ptr(rdx, OBJ_SLOT_0 + idx * 8), rax);
+                    emitRememberBarrierX86(a, rdx, rax, r10, r11);
+                    a.jmp(rend);
+                    a.bind(rbail);
+                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.mov(ptr(rdi, OFF_IP), r8);
+                    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
+                    emitSyncSpToState_x86(a); a.ret();
+                    a.bind(rend);
+                    if ((size_t)(globalIdx + 1) < bcLabels.size())
+                        a.bind(bcLabels[globalIdx + 1]);
+                    i += 1;
+                    continue;
+                }
                 if ((op == SistaV1::ExtPushRecvVar
                         || op == SistaV1::ExtPushLitVar
                         || op == SistaV1::ExtPushLitConst

@@ -425,6 +425,10 @@ inline uint32_t g_byteSymbolClassIndex = 0;
 // the interpreter keeps its shortcut, as Cog's interpreter does
 // (OCSpecialSelectorTest pins that).  Set by recheckBlockValueOverride.
 inline uint8_t g_blockValueOverridden = 0;
+// 1 while Character>>#= is primitive 110 (identity): x86 T1 code then answers
+// `=` with a Character receiver inline.  recheckBlockValueOverride keeps it
+// current (every cache flush, which method installation makes).
+inline uint8_t g_charEqualsIdentity = 0;
 // Shared T1 stubs for the native method / block call (AsmjitT1.cpp).
 inline uint64_t g_mcfCallStub = 0;
 // MCF: shared inline fast paths for IC-site primitives, by arity 0-2.

@@ -26817,6 +26817,14 @@ void Interpreter::recheckBlockValueOverride() {
             overridden = true;
     }
     jit::g_blockValueOverridden = overridden ? 1 : 0;
+    // Character>>#= (special selector 6): identity, primitive 110?
+    {
+        Oop ch = memory_.specialObject(SpecialObjectIndex::ClassCharacter);
+        Oop m = ch.isObject() && !ch.isNil()
+            ? lookupMethodForSend(ss.asObjectPtr()->slotAt(6 * 2), ch) : Oop::nil();
+        jit::g_charEqualsIdentity = (m.isObject() && !m.isNil() && m.asObjectPtr()->isCompiledMethod()
+                                     && primitiveIndexOf(m) == 110) ? 1 : 0;
+    }
 #endif
 }
 
