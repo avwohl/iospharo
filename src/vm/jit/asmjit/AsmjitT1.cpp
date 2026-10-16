@@ -52,7 +52,6 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
 // Machine-code frames: run a primitive from T1 code (MachineCodeFrames.cpp).
 extern "C" int pharo_mcf_prim(pharo::jit::JITState* st, uint32_t primAndArgs);
-extern "C" void* pharo_mcf_prim_body(pharo::jit::JITState* st, uint32_t nArgs);
 extern "C" void* pharo_mcf_extsend(pharo::jit::JITState* st, uint32_t desc);
 extern "C" void pharo_mcf_block_home(pharo::jit::JITState* st, uint64_t closure);
 extern "C" void* pharo_mcf_nlr(pharo::jit::JITState* st);
@@ -3536,7 +3535,7 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm((int)ExitDeopt));
             a.ret();
             a.bind(failed);
-            if (!GET_DEBUG_BOOL(PHARO_MCF_NO_PRIM_FAIL_BODY)) {
+            if (!GET_DEBUG_BOOL(PHARO_MCF_NO_IC_PRIM_FAIL_BODY)) {
                 // The primitive failed: run the method body natively (its
                 // failure code, as Cog's machine code falls into it), the
                 // stack unchanged.  Rare: in the cold section.
@@ -3549,7 +3548,7 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
                 a.push(rax);
                 a.mov(kCArg1, asmjit::Imm(nArgs));
                 emitCArg0State_x86(a);
-                emitCallCHelper_x86(a, (const void*)&pharo_mcf_prim_body);
+                emitCallCHelper_x86(a, (const void*)&pharo_mcf_prim_fail);
                 a.mov(r8, rax);
                 a.pop(rax);
                 a.pop(rsi);
