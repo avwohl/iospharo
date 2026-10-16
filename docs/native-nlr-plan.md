@@ -261,5 +261,4 @@ depth-0 frame's context and C, and return the value from that context into
 C.  Machine code then exits, and the interpreter continues in C.  This is
 what `resume:through:` does when the unwind list is empty.
 
-An exception signal + return went from 30 to 20 ms per 30000 (Cog 20-24);
-instructions -26%.  Opt-out: `PHARO_MCF_NO_RESUME_SHORTCUT`.
+An exception signal + return went from 30 to 20 ms per 30000 (Cog 20-24).  Instructions dropped 26%.  Opt-out: `PHARO_MCF_NO_RESUME_SHORTCUT`.
