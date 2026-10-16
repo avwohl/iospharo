@@ -1676,6 +1676,19 @@ extern "C" {
     sqInt sp_primitiveHasSocketAccess(void);
     sqInt sp_primitiveSocketSendUDPDataBufCount(void);
     sqInt sp_primitiveSocketReceiveUDPDataBufCount(void);
+    sqInt sp_primitiveResolverGetAddressInfo(void);
+    sqInt sp_primitiveResolverGetAddressInfoSize(void);
+    sqInt sp_primitiveResolverGetAddressInfoResult(void);
+    sqInt sp_primitiveResolverGetAddressInfoFamily(void);
+    sqInt sp_primitiveResolverGetAddressInfoType(void);
+    sqInt sp_primitiveResolverGetAddressInfoProtocol(void);
+    sqInt sp_primitiveResolverGetAddressInfoNext(void);
+    sqInt sp_primitiveSocketConnectTo(void);
+    sqInt sp_primitiveSocketBindTo(void);
+    sqInt sp_primitiveSocketLocalAddressSize(void);
+    sqInt sp_primitiveSocketRemoteAddressSize(void);
+    sqInt sp_primitiveSocketLocalAddressResult(void);
+    sqInt sp_primitiveSocketRemoteAddressResult(void);
 }
 
 void initializeSocketPlugin(Interpreter* interp) {
@@ -1709,6 +1722,19 @@ void initializeSocketPlugin(Interpreter* interp) {
         {"primitiveHasSocketAccess", sp_primitiveHasSocketAccess},
         {"primitiveSocketSendUDPDataBufCount", sp_primitiveSocketSendUDPDataBufCount},
         {"primitiveSocketReceiveUDPDataBufCount", sp_primitiveSocketReceiveUDPDataBufCount},
+        {"primitiveResolverGetAddressInfo", sp_primitiveResolverGetAddressInfo},
+        {"primitiveResolverGetAddressInfoSize", sp_primitiveResolverGetAddressInfoSize},
+        {"primitiveResolverGetAddressInfoResult", sp_primitiveResolverGetAddressInfoResult},
+        {"primitiveResolverGetAddressInfoFamily", sp_primitiveResolverGetAddressInfoFamily},
+        {"primitiveResolverGetAddressInfoType", sp_primitiveResolverGetAddressInfoType},
+        {"primitiveResolverGetAddressInfoProtocol", sp_primitiveResolverGetAddressInfoProtocol},
+        {"primitiveResolverGetAddressInfoNext", sp_primitiveResolverGetAddressInfoNext},
+        {"primitiveSocketConnectTo", sp_primitiveSocketConnectTo},
+        {"primitiveSocketBindTo", sp_primitiveSocketBindTo},
+        {"primitiveSocketLocalAddressSize", sp_primitiveSocketLocalAddressSize},
+        {"primitiveSocketRemoteAddressSize", sp_primitiveSocketRemoteAddressSize},
+        {"primitiveSocketLocalAddressResult", sp_primitiveSocketLocalAddressResult},
+        {"primitiveSocketRemoteAddressResult", sp_primitiveSocketRemoteAddressResult},
     };
 
     for (auto& p : prims) {

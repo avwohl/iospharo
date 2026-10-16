@@ -798,6 +798,215 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     return 0;
 }
 
+// =====================================================================
+// Address-info API (Cog's SocketPlugin "new" network primitives): the
+// IPv6-capable resolver and socket setup behind SocketAddressInformation
+// forHost:service:flags:addressFamily:socketType:protocol:, Socket>>bindTo:
+// and Socket>>connectTo: with a SocketAddress.  A socket address is
+// Cog's byte layout: session id (int32), sockaddr length (int32), then the
+// OS sockaddr itself.  The image's constants: family 0 unspecified,
+// 1 local, 2 inet4, 3 inet6; type 0, 1 stream, 2 dgram; protocol 0,
+// 1 tcp, 2 udp; flags 1 numeric, 2 passive.
+// =====================================================================
+
+static struct addrinfo* gAIList = nullptr;
+static struct addrinfo* gAICurrent = nullptr;
+
+static int aiFamilyToOS(sqInt f) {
+    switch (f) { case 1: return AF_UNIX; case 2: return AF_INET; case 3: return AF_INET6; default: return AF_UNSPEC; }
+}
+static sqInt aiFamilyFromOS(int f) {
+    return f == AF_UNIX ? 1 : f == AF_INET ? 2 : f == AF_INET6 ? 3 : 0;
+}
+
+// The sockaddr in a socket-address ByteArray, copied out (allocation may
+// move the object).  False if it is not one.
+static bool sockaddrFromOop(sqInt addrOop, struct sockaddr_storage* out, socklen_t* outLen) {
+    if (!vm->isBytes(addrOop)) return false;
+    sqInt n = vm->byteSizeOf(addrOop);
+    if (n < 8 + 2) return false;
+    const uint8_t* b = (const uint8_t*)vm->firstIndexableField(addrOop);
+    int32_t len;
+    memcpy(&len, b + 4, 4);
+    if (len <= 0 || 8 + (sqInt)len > n || len > (int32_t)sizeof(*out)) return false;
+    memset(out, 0, sizeof(*out));
+    memcpy(out, b + 8, (size_t)len);
+    *outLen = (socklen_t)len;
+    return true;
+}
+
+// Write sockaddr sa into a socket-address ByteArray of exactly 8 + len bytes.
+static bool sockaddrToOop(sqInt addrOop, const struct sockaddr* sa, socklen_t len) {
+    if (!vm->isBytes(addrOop) || vm->byteSizeOf(addrOop) != 8 + (sqInt)len) return false;
+    uint8_t* b = (uint8_t*)vm->firstIndexableField(addrOop);
+    int32_t sid = gSessionID, l = (int32_t)len;
+    memcpy(b, &sid, 4);
+    memcpy(b + 4, &l, 4);
+    memcpy(b + 8, sa, (size_t)len);
+    return true;
+}
+
+static std::string bytesOopString(sqInt oop) {
+    if (!vm->isBytes(oop)) return std::string();
+    return std::string((const char*)vm->firstIndexableField(oop), (size_t)vm->byteSizeOf(oop));
+}
+
+// primitiveResolverGetAddressInfo
+// Stack: receiver, hostName, serviceName, flags, family, type, protocol
+extern "C" sqInt sp_primitiveResolverGetAddressInfo(void) {
+    sqInt protocol = vm->stackIntegerValue(0);
+    sqInt type     = vm->stackIntegerValue(1);
+    sqInt family   = vm->stackIntegerValue(2);
+    sqInt flags    = vm->stackIntegerValue(3);
+    if (vm->failed()) return vm->primitiveFail();
+    std::string serv = bytesOopString(vm->stackValue(4));
+    std::string host = bytesOopString(vm->stackValue(5));
+    if (gAIList) { freeaddrinfo(gAIList); gAIList = gAICurrent = nullptr; }
+    struct addrinfo hints = {};
+    hints.ai_family = aiFamilyToOS(family);
+    hints.ai_socktype = type == 1 ? SOCK_STREAM : type == 2 ? SOCK_DGRAM : 0;
+    hints.ai_protocol = protocol == 1 ? IPPROTO_TCP : protocol == 2 ? IPPROTO_UDP : 0;
+    hints.ai_flags = ((flags & 1) ? AI_NUMERICHOST : 0) | ((flags & 2) ? AI_PASSIVE : 0);
+    int err = getaddrinfo(host.empty() ? nullptr : host.c_str(),
+                          serv.empty() ? nullptr : serv.c_str(), &hints, &gAIList);
+    if (err != 0) { gAIList = nullptr; return vm->primitiveFail(); }
+    gAICurrent = gAIList;
+    vm->pop(6);
+    return 0;
+}
+
+// primitiveResolverGetAddressInfoSize -> the current entry's address size, -1 at the end
+extern "C" sqInt sp_primitiveResolverGetAddressInfoSize(void) {
+    sqInt size = gAICurrent ? 8 + (sqInt)gAICurrent->ai_addrlen : -1;
+    vm->popthenPush(1, vm->integerObjectOf(size));
+    return 0;
+}
+
+// primitiveResolverGetAddressInfoResult: socketAddress -> receiver (fills it)
+extern "C" sqInt sp_primitiveResolverGetAddressInfoResult(void) {
+    if (!gAICurrent || !sockaddrToOop(vm->stackValue(0), gAICurrent->ai_addr, gAICurrent->ai_addrlen))
+        return vm->primitiveFail();
+    vm->pop(1);
+    return 0;
+}
+
+extern "C" sqInt sp_primitiveResolverGetAddressInfoFamily(void) {
+    if (!gAICurrent) return vm->primitiveFail();
+    vm->popthenPush(1, vm->integerObjectOf(aiFamilyFromOS(gAICurrent->ai_family)));
+    return 0;
+}
+
+extern "C" sqInt sp_primitiveResolverGetAddressInfoType(void) {
+    if (!gAICurrent) return vm->primitiveFail();
+    int t = gAICurrent->ai_socktype;
+    vm->popthenPush(1, vm->integerObjectOf(t == SOCK_STREAM ? 1 : t == SOCK_DGRAM ? 2 : 0));
+    return 0;
+}
+
+extern "C" sqInt sp_primitiveResolverGetAddressInfoProtocol(void) {
+    if (!gAICurrent) return vm->primitiveFail();
+    int p = gAICurrent->ai_protocol;
+    vm->popthenPush(1, vm->integerObjectOf(p == IPPROTO_TCP ? 1 : p == IPPROTO_UDP ? 2 : 0));
+    return 0;
+}
+
+// primitiveResolverGetAddressInfoNext -> whether another entry follows
+extern "C" sqInt sp_primitiveResolverGetAddressInfoNext(void) {
+    if (gAICurrent) gAICurrent = gAICurrent->ai_next;
+    vm->popthenPush(1, gAICurrent ? vm->trueObject() : vm->falseObject());
+    return 0;
+}
+
+// Make ps's descriptor match the address family (a socket made for the
+// default family connecting to an IPv6 address, as the NAT64 path does).
+static bool socketMatchFamily(PrivateSocket* ps, int family) {
+    struct sockaddr_storage cur;
+    socklen_t curLen = sizeof(cur);
+    if (getsockname(ps->fd, (struct sockaddr*)&cur, &curLen) == 0 && cur.ss_family == family)
+        return true;
+    SOCKET nfd = socket(family, ps->isDgram ? SOCK_DGRAM : SOCK_STREAM, 0);
+    if (nfd == INVALID_SOCKET) return false;
+    if (!setNonBlocking(nfd)) { sockClose(nfd); return false; }
+    sockClose(ps->fd);
+    ps->fd = nfd;
+    wakeIOThread();
+    return true;
+}
+
+// primitiveSocketConnectTo
+// Stack: receiver, socketHandle, socketAddress
+extern "C" sqInt sp_primitiveSocketConnectTo(void) {
+    struct sockaddr_storage ss;
+    socklen_t len;
+    if (!sockaddrFromOop(vm->stackValue(0), &ss, &len)) return vm->primitiveFail();
+    PrivateSocket* ps = privateSocketFrom(vm->stackValue(1));
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
+    if (!socketMatchFamily(ps, ss.ss_family)) return vm->primitiveFail();
+    int result = connect(ps->fd, (struct sockaddr*)&ss, len);
+    if (result == 0) {
+        ps->sockState = SOCK_CONNECTED;
+        if (ps->connSema > 0) vm->signalSemaphoreWithIndex(ps->connSema);
+    } else if (SOCK_LAST_ERROR == SOCK_EINPROGRESS) {
+        ps->sockState = SOCK_WAITING_FOR_CONNECTION;
+        wakeIOThread();
+    } else {
+        ps->sockError = SOCK_LAST_ERROR;
+        return vm->primitiveFail();
+    }
+    vm->pop(2);
+    return 0;
+}
+
+// primitiveSocketBindTo
+// Stack: receiver, socketHandle, socketAddress
+extern "C" sqInt sp_primitiveSocketBindTo(void) {
+    struct sockaddr_storage ss;
+    socklen_t len;
+    if (!sockaddrFromOop(vm->stackValue(0), &ss, &len)) return vm->primitiveFail();
+    PrivateSocket* ps = privateSocketFrom(vm->stackValue(1));
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
+    if (!socketMatchFamily(ps, ss.ss_family)) return vm->primitiveFail();
+    int one = 1;
+    setsockopt(ps->fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
+    if (bind(ps->fd, (struct sockaddr*)&ss, len) != 0) {
+        ps->sockError = SOCK_LAST_ERROR;
+        return vm->primitiveFail();
+    }
+    vm->pop(2);
+    return 0;
+}
+
+static sqInt socketAddressSize(bool remote) {
+    PrivateSocket* ps = privateSocketFrom(vm->stackValue(0));
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    int r = remote ? getpeername(ps->fd, (struct sockaddr*)&ss, &len)
+                   : getsockname(ps->fd, (struct sockaddr*)&ss, &len);
+    vm->popthenPush(2, vm->integerObjectOf(r == 0 ? 8 + (sqInt)len : -1));
+    return 0;
+}
+
+static sqInt socketAddressResult(bool remote) {
+    PrivateSocket* ps = privateSocketFrom(vm->stackValue(1));
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    int r = remote ? getpeername(ps->fd, (struct sockaddr*)&ss, &len)
+                   : getsockname(ps->fd, (struct sockaddr*)&ss, &len);
+    if (r != 0 || !sockaddrToOop(vm->stackValue(0), (struct sockaddr*)&ss, len))
+        return vm->primitiveFail();
+    vm->pop(2);
+    return 0;
+}
+
+// primitiveSocketLocalAddressSize / RemoteAddressSize: socketHandle -> size
+// primitiveSocketLocalAddressResult / RemoteAddressResult: socketHandle socketAddress
+extern "C" sqInt sp_primitiveSocketLocalAddressSize(void) { return socketAddressSize(false); }
+extern "C" sqInt sp_primitiveSocketRemoteAddressSize(void) { return socketAddressSize(true); }
+extern "C" sqInt sp_primitiveSocketLocalAddressResult(void) { return socketAddressResult(false); }
+extern "C" sqInt sp_primitiveSocketRemoteAddressResult(void) { return socketAddressResult(true); }
+
 // primitiveSocketConnectionStatus
 // Stack: receiver, socketHandle
 // Returns: SmallInteger (status code)

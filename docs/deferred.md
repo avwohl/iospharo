@@ -535,12 +535,12 @@ primitiveResolverAddressLookupResult, primitiveResolverError: before,
 `NetNameResolver nameForAddress:timeout:` failed).  Directory entries now
 have Cog's 7 fields.  Still missing and present in Cog:
 
-  * **SocketPlugin address-info API** (19 functions:
-    primitiveResolverGetAddressInfo*, primitiveResolverGetNameInfo*,
-    primitiveSocketCreate, primitiveSocketBindTo, primitiveSocketConnectTo,
-    primitiveSocketAccept, primitiveSocketLocal/RemoteAddress*).  This is
-    the IPv6-capable resolver and socket setup.  The image falls back to
-    the old IPv4 API, which every network test uses and passes.
+  * SocketPlugin name info (primitiveResolverGetNameInfo*), the old
+    one-semaphore primitiveSocketCreate and primitiveSocketAccept: no
+    method in the Pharo 13 image calls them.  The address-info API
+    (getaddrinfo, connect and bind to a SocketAddress, local and remote
+    address results) was added 2026-10-17 in Cog's byte layout; IPv6
+    listen, connect and accept work.
   * FilePlugin primitiveConnectToFile (a FILE* from FFI) and
     primitiveWaitForDataWithSemaphore (asynchronous stdin);
     BitBltPlugin primitiveDisplayString (the image draws the glyphs
