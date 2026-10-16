@@ -2365,6 +2365,7 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     // every path checks the one it handles.
     asmjit::Label p170v = a.new_label(), p111 = a.new_label(), p75 = a.new_label();
     asmjit::Label pQuick = a.new_label(), p70 = a.new_label(), p71 = a.new_label();
+    asmjit::Label pSem = a.new_label();
     a.push(r8);
     a.push(r10);
     auto dispatch = [&](int prim, int nArgs, const asmjit::Label& path) {
@@ -2389,6 +2390,11 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         dispatch(70, 0, p70);
     if (g_jitEdenFreeCell && g_jitSurvivorStartCell && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW))
         dispatch(71, 1, p71);
+    if (g_mcfSpecialObjectsAddr && g_mcfFinalizationFlagAddr
+            && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_SEMAPHORE)) {
+        dispatch(85, 0, pSem);
+        dispatch(86, 0, pSem);
+    }
     {
         // Quick primitives 256-519 (^self, constants, a field), any arity.
         asmjit::Label notQuick = a.new_label();
@@ -2874,6 +2880,51 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.mov(ptr(rcx), r9);                     // commit edenFree_
         a.mov(ptr(rbx, -16), rdx);
         a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+    }
+    // 85 signal with no waiting process, 86 wait with an excess signal: the
+    // semaphore's count, no process switch (the arm64 stub's path).
+    // Waiters, the low-space semaphore, a pending finalization signal
+    // (wait), anything odd: the C call.  Both answer the receiver.
+    {
+        asmjit::Label doWait = a.new_label();
+        a.bind(pSem);
+        a.mov(rcx, ptr(rbx, -8));
+        a.test(cl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.movzx(r9d, byte_ptr(rcx, 7));
+        a.cmp(r9d, asmjit::Imm(3));
+        a.jb(fail);
+        a.mov(r9, ptr(rcx));
+        a.shr(r9, asmjit::Imm(24));
+        a.and_(r9d, asmjit::Imm(0x1F));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);                             // fixed-size pointers
+        a.mov(r9, asmjit::Imm((uint64_t)g_mcfSpecialObjectsAddr));
+        a.mov(r9, ptr(r9));                      // the special objects array
+        a.cmp(rcx, ptr(r9, 8 + 8 * (int)SpecialObjectIndex::TheLowSpaceSemaphore));
+        a.je(fail);
+        a.mov(rdx, ptr(rcx, 8 + 16));            // excessSignals
+        a.mov(r9d, edx);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);
+        a.cmp(r10d, asmjit::Imm(86));
+        a.je(doWait);
+        a.mov(r9, ptr(rcx, 8));                  // firstLink
+        a.cmp(r9, ptr(rdi, OFF_MCF_NIL));
+        a.jne(fail);                             // a waiter to resume
+        a.add(rdx, asmjit::Imm(8));              // excessSignals + 1
+        a.mov(ptr(rcx, 8 + 16), rdx);
+        a.jmp(done);
+        a.bind(doWait);
+        a.mov(r9, asmjit::Imm((uint64_t)g_mcfFinalizationFlagAddr));
+        a.cmp(byte_ptr(r9), asmjit::Imm(0));
+        a.jne(fail);
+        a.cmp(rdx, asmjit::Imm(9));              // excessSignals >= 1
+        a.jl(fail);
+        a.sub(rdx, asmjit::Imm(8));
+        a.mov(ptr(rcx, 8 + 16), rdx);
         a.jmp(done);
     }
     // 75 identityHash: a heap object's assigned hash (0: the C call assigns
