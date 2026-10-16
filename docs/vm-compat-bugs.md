@@ -104,7 +104,7 @@ values than Cog.  A differential check found them: it calls each pure
 primitive (arithmetic, comparison, `at:`, float, character, identity) of
 20 core classes with 34 edge-case receivers and arguments, on both VMs,
 and compares the answers (17526 calls).  The script is
-`primdiff.st` in the session scratchpad; it is short to write again.
+`scripts/primdiff.st`.
 
 - Primitive 158 `compareWith:` answered -1, 0 or 1.  Cog answers the
   first differing characters' difference, else the length difference.
