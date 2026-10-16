@@ -132,8 +132,9 @@ The scenario scripts in `scripts/cogdiff/` found three more:
 - A non-local return over heap contexts left the unwound contexts alive.
   Cog kills them (`797efdc0`).
 
-Process scheduling (16 scenarios), exceptions (24) and immutability,
-pinning and reflection (31) agree with Cog.  We keep one difference on
+Process scheduling (16 scenarios), exceptions (24), immutability,
+pinning and reflection (31) and file-system operations (23) agree with
+Cog.  We keep one difference on
 purpose.  A dead context gives the value of a temp that the method set
 before `thisContext`.  Cog gives nil, because its context never got the
 temps from the frame.
