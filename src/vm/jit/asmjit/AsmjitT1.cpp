@@ -6693,6 +6693,131 @@ static void emitMcfInlinePrims(asmjit::a64::Assembler& a, int nArgs) {
             a.ret(x30);
             a.bind(notDiv);
         }
+        // 1-17 (10 above): SmallInteger arithmetic, comparison and bit
+        // operations.  Send sites inline these for two SmallIntegers, so
+        // they arrive here from perform: (3 perform: #+ with: 4 was a C
+        // call through the generic dispatcher, ~300 instructions) and from
+        // sites whose inline test failed.  A result out of SmallInteger
+        // range or a zero divisor takes the C call.
+        if (!GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_ARITH)) {
+            asmjit::Label notArith = a.new_label(), fit = a.new_label(), boolRes = a.new_label();
+            asmjit::Label lAdd = a.new_label(), lSub = a.new_label(), lMul = a.new_label();
+            asmjit::Label lMod = a.new_label(), lDiv = a.new_label(), lQuo = a.new_label();
+            asmjit::Label lAnd = a.new_label(), lOr = a.new_label(), lXor = a.new_label();
+            asmjit::Label lShift = a.new_label();
+            a.sub(w11, w10, asmjit::Imm(1));
+            a.cmp(w11, asmjit::Imm(16));
+            a.b_hi(notArith);                          // not 1..17
+            a.and_(x3, x1, asmjit::Imm(7));
+            a.and_(x4, x2, asmjit::Imm(7));
+            a.cmp(x3, asmjit::Imm(1));
+            a.ccmp(x4, asmjit::Imm(1), asmjit::Imm(0), CondCode::kEQ);
+            a.b_ne(slow);                              // not two SmallIntegers: C
+            a.asr(x3, x1, asmjit::Imm(3));
+            a.asr(x4, x2, asmjit::Imm(3));
+            a.cmp(x3, x4);                             // flags for 3-8
+            a.ldp(x7, x8, ptr(x0, OFF_TRUEOOP));       // true, false
+            const struct { int prim; CondCode cc; } cmps[] = {
+                {3, CondCode::kLT}, {4, CondCode::kGT}, {5, CondCode::kLE},
+                {6, CondCode::kGE}, {7, CondCode::kEQ}, {8, CondCode::kNE}};
+            for (const auto& c : cmps) {
+                asmjit::Label next = a.new_label();
+                a.cmp(w10, asmjit::Imm(c.prim));
+                a.b_ne(next);
+                a.cmp(x3, x4);
+                a.csel(x7, x7, x8, c.cc);
+                a.b(result);
+                a.bind(next);
+            }
+            const struct { int prim; asmjit::Label* l; } ops[] = {
+                {1, &lAdd}, {2, &lSub}, {9, &lMul}, {11, &lMod}, {12, &lDiv},
+                {13, &lQuo}, {14, &lAnd}, {15, &lOr}, {16, &lXor}, {17, &lShift}};
+            for (const auto& o : ops) {
+                a.cmp(w10, asmjit::Imm(o.prim));
+                a.b_eq(*o.l);
+            }
+            a.b(slow);
+            a.bind(lAdd);
+            a.add(x8, x3, x4);
+            a.b(fit);
+            a.bind(lSub);
+            a.sub(x8, x3, x4);
+            a.b(fit);
+            a.bind(lMul);                              // 128-bit product must be one word
+            a.mul(x8, x3, x4);
+            a.smulh(x9, x3, x4);
+            a.cmp(x9, x8, asmjit::a64::asr(63));
+            a.b_ne(slow);
+            a.b(fit);
+            a.bind(lMod);                              // \\ : floored remainder
+            a.cbz(x4, slow);
+            a.sdiv(x9, x3, x4);
+            a.msub(x8, x9, x4, x3);
+            {
+                asmjit::Label done = a.new_label();
+                a.cbz(x8, done);
+                a.eor(x9, x8, x4);
+                a.tbz(x9, asmjit::Imm(63), done);      // same sign
+                a.add(x8, x8, x4);
+                a.bind(done);
+            }
+            a.b(fit);
+            a.bind(lDiv);                              // // : floored quotient
+            a.cbz(x4, slow);
+            a.sdiv(x8, x3, x4);
+            a.msub(x9, x8, x4, x3);
+            {
+                asmjit::Label done = a.new_label();
+                a.cbz(x9, done);
+                a.eor(x9, x9, x4);
+                a.tbz(x9, asmjit::Imm(63), done);
+                a.sub(x8, x8, asmjit::Imm(1));
+                a.bind(done);
+            }
+            a.b(fit);
+            a.bind(lQuo);                              // quo: truncated quotient
+            a.cbz(x4, slow);
+            a.sdiv(x8, x3, x4);
+            a.b(fit);
+            a.bind(lAnd);                              // tags 1 & 1 = 1
+            a.and_(x7, x1, x2);
+            a.b(result);
+            a.bind(lOr);
+            a.orr(x7, x1, x2);
+            a.b(result);
+            a.bind(lXor);                              // tags 1 ^ 1 = 0
+            a.eor(x7, x1, x2);
+            a.orr(x7, x7, asmjit::Imm(1));
+            a.b(result);
+            a.bind(lShift);
+            {
+                asmjit::Label right = a.new_label();
+                a.tbnz(x4, asmjit::Imm(63), right);
+                a.cmp(x4, asmjit::Imm(62));
+                a.b_hs(slow);                          // never fits (unless 0, rare)
+                a.lsl(x8, x3, x4);
+                a.asr(x9, x8, x4);
+                a.cmp(x9, x3);
+                a.b_ne(slow);                          // bits lost
+                a.b(fit);
+                a.bind(right);
+                a.neg(x9, x4);
+                a.mov(x11, asmjit::Imm(63));
+                a.cmp(x9, x11);
+                a.csel(x9, x9, x11, CondCode::kLO);
+                a.asr(x8, x3, x9);
+                a.b(fit);
+            }
+            a.bind(fit);                               // x8 as a SmallInteger, if in range
+            a.lsl(x7, x8, asmjit::Imm(3));
+            a.asr(x9, x7, asmjit::Imm(3));
+            a.cmp(x9, x8);
+            a.b_ne(slow);
+            a.orr(x7, x7, asmjit::Imm(1));
+            a.b(result);
+            (void)boolRes;
+            a.bind(notArith);
+        }
         // 110 ==
         a.cmp(w10, asmjit::Imm(110));
         a.b_ne(p170);
@@ -12848,7 +12973,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(x9, x6);
                         a.b_ne(perfC);
                         mcfFieldLdr(a, x11, PL.dirDepth, OFF_MCF_DEPTH_PTR, x10);
-                        a.cbz(x11, perfC);
+                        if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)
+                                || GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_DEPTH0)) {
+                            a.cbz(x11, perfC);
+                        } else {
+                            // At depth 0 the call stub stores the caller's pc
+                            // into activeContext_ and refuses only when that
+                            // is nil or not an object; it must not refuse once
+                            // the selector is gone, so the test is made here.
+                            // Refusing every depth-0 caller sent each perform:
+                            // of a method resumed after a process switch
+                            // through pharo_mcf_perform for the rest of its run.
+                            asmjit::Label notD0 = a.new_label();
+                            a.cbnz(x11, notD0);
+                            mcfFieldLdr(a, x16, PL.dirActCtx, OFF_MCF_ACTCTX_PTR, x16);
+                            a.ldr(x17, ptr(x0, OFF_MCF_NIL));
+                            a.cmp(x16, x17);
+                            a.b_eq(perfC);
+                            a.tst(x16, asmjit::Imm(0x7));
+                            a.b_ne(perfC);
+                            a.bind(notD0);
+                        }
                         a.ldr(x16, ptr(x0, OFF_MCF_DEPTH_LIMIT));
                         a.add(x11, x11, asmjit::Imm(2));
                         a.cmp(x11, x16);
@@ -12879,6 +13024,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             }
                             a.sub(x3, x3, asmjit::Imm(8));
                             emitStoreSp(a, x3);
+                            if (nArgs - 1 <= 2 && g_mcfPrimStub[nArgs - 1] != 0
+                                    && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_PRIM_STUB)) {
+                                // The shared primitive stub first (no C call,
+                                // no register sync); it answers 1 when done,
+                                // with the result pushed.  It keeps x5/x6.
+                                a.lsr(x10, x7, asmjit::Imm(3));      // w10 = the primitive
+                                a.sub(sp, sp, asmjit::Imm(32));
+                                a.stp(x30, x2, ptr(sp, 0));
+                                a.str(x7, ptr(sp, 16));
+                                a.ldr(x16, ptr(x0, OFF_MCF_PRIM_STUB + 8 * (nArgs - 1)));
+                                a.blr(x16);
+                                a.mov(x9, x7);
+                                a.ldp(x30, x2, ptr(sp, 0));
+                                a.ldr(x7, ptr(sp, 16));
+                                a.add(sp, sp, asmjit::Imm(32));
+                                a.cmp(x9, asmjit::Imm(1));
+                                a.b_eq(mcfPrimDone);
+                            }
                             emitSyncSpToState(a);
                             a.str(x6, ptr(x0, OFF_CACHED_TARGET));
                             a.ldr(x16, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));

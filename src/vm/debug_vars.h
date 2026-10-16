@@ -267,6 +267,9 @@ DEBUG_BOOL_RT(PHARO_MCF_PAIR_MCRETURN)            // native push stores (mcRetur
 DEBUG_BOOL_RT(PHARO_MCF_CTDN_SPEND)               // opt-out: native calls spend the checkpoint countdown again (load, subtract, store per call)
 DEBUG_BOOL_RT(PHARO_MCF_NO_RESUME_SHORTCUT)        // opt-out: Context>>resume: materializes thisContext and runs resume:through: again (docs/native-nlr-plan.md)
 DEBUG_BOOL(PHARO_MCF_NLR_FULL_POPS)                // MCF non-local return pops every frame with popFrame (no register-skipping drop of the frames above the home one)
+DEBUG_BOOL_RT(PHARO_MCF_NO_STUB_ARITH)             // opt-out: the shared one-argument primitive stub does not run SmallInteger primitives 1-17 (C call)
+DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_PRIM_STUB)      // opt-out: a perform: cache primitive hit calls pharo_mcf_prim directly, not the shared primitive stub first
+DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_DEPTH0)         // opt-out: a T1 perform: site refuses its cache hit at frame depth 0 (C path) instead of calling with the depth-0 caller context
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_CACHE)          // opt-out: T1 perform: sites always call pharo_mcf_perform (no machine-code perform cache)
 DEBUG_BOOL_RT(PHARO_MCF_NO_ENSURE_SHORTCUT)        // opt-out: a non-local return through one ensure: frame takes the image unwind protocol again (docs/native-nlr-plan.md)
 DEBUG_BOOL_RT(PHARO_SCAV_ALWAYS_CLASS_TABLE)       // opt-out: every scavenge walks the class table again
