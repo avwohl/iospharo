@@ -102,5 +102,18 @@ x86 lexicon: 1138 billion instructions (from 1468).  Micro set (ms, x86
 MCF): doBlock 564, dictAt 1599, strEq 680, ocAddRemove 592, collect 178,
 detect 141, isKindOf 280 (Cog: 129, 308, 125, 107, 45, 41, 77).
 
-Next: the census still shows exits at returns without a memo and at
-`value:value:value:`; then the arm64 trims.
+- `d234756d`: super sends and refused arithmetic sends ask
+  `pharo_mcf_extsend` for the target (`emitMcfHelperSend_x86`);
+  `value:value:` and longer call blocks natively; `PushArray` without an
+  exit; inline widowing at the native return; `ensure:` and `on:do:` are
+  native-call targets.
+- `de4b0e07`: a shared stub answers the common primitives on the caller's
+  stack (`emitX86PrimStub`); `^` in a block returns from the home through
+  `pharo_mcf_nlr`; Context-field methods compile.
+
+x86 lexicon: 742 billion instructions, 43.6 s (117.5 s at the start; Cog
+11.9 s).  Sweep X3 (`d234756d`): 27812 of 27996 pass.
+
+A primitive can serve several arities: 170 is both `Character
+class>>value:` and `Integer>>asCharacter`.  The stub checks the send's
+argument count for every primitive (the arm64 stubs are built per arity).
