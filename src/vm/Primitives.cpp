@@ -11081,6 +11081,10 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     if (activeProcess.isNil()) {
         return PrimitiveResult::Failure;
     }
+    if (__builtin_expect(g_eventRing != nullptr, 0)) {
+        eventRecMethods();
+        eventRec('Y', memory_.identityHashOf(activeProcess), 0, 0);
+    }
 
     // Get the process priority
     Oop priorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
