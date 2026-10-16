@@ -182,6 +182,8 @@ DEBUG_BOOL(PHARO_MCF_CALL_CENSUS)             // MCF: count native calls per cal
 DEBUG_BOOL(PHARO_MCF_PRIM_CENSUS)             // MCF: count primitives called natively (mcfCallPrimitive) by index
 DEBUG_BOOL(PHARO_MCF_EXTSEND_CENSUS)           // MCF: count sends through pharo_mcf_extsend (no-IC sends) by selector and receiver class
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)          // MCF: IC-site primitives 60-64/110/170/171 always go through pharo_mcf_prim (no inline fast path)
+DEBUG_BOOL(PHARO_MCF_NO_PRIM_CALL)             // x86 MCF bisect: a send to a primitive method exits instead of calling pharo_mcf_prim
+DEBUG_BOOL(PHARO_MCF_ONE_ENTRY_PROBE)          // x86 MCF bisect: probe only IC entry 0, as before the six-entry probe
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
 DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)          // MCF native return falls back to the interpreter when the returning frame has a context to widow (before lazy outer contexts)

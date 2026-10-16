@@ -2261,8 +2261,62 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
     a.cmp(ptr(r8), rax);
     a.jne(refuse);
     a.bind(hit);
-    a.cmp(qword_ptr(r8, 24), asmjit::Imm(0));    // prim: not callable here
-    a.jne(refuse);
+    {
+        // entry.prim: 0 = a native call; a primitive index (< 1024, jm
+        // null) = run it through pharo_mcf_prim; kMcfReturnsValue = the
+        // method answers entry.bcEndOff.  Other kinds (block, perform,
+        // tiny-shape entries) are arm64 stubs: refuse.
+        asmjit::Label native = a.new_label(), notConst = a.new_label();
+        asmjit::Label notOk = a.new_label();
+        a.mov(r10, qword_ptr(r8, 24));
+        a.test(r10, r10);
+        a.jz(native);
+        a.cmp(r10, asmjit::Imm((int)kMcfReturnsValue));
+        a.jne(notConst);
+        emitLoadSp_x86(a, r11);
+        if (nArgs) a.sub(r11, asmjit::Imm(8 * nArgs));
+        a.mov(r10, ptr(r8, 16));                 // the constant
+        a.mov(ptr(r11, -8), r10);                // into the receiver slot
+        emitStoreSp_x86(a, r11);
+        a.jmp(resume);
+        a.bind(notConst);
+        a.cmp(r10, asmjit::Imm(1024));
+        a.jae(refuse);
+        if (GET_DEBUG_BOOL(PHARO_MCF_NO_PRIM_CALL)) {
+            a.jmp(refuse);
+        } else {
+            // The primitive reads sp, the target and the ip after the send
+            // (its pc if it switches process); 1 = done, 0 = failed (send
+            // it), 2 = it pushed a frame or switched process (the
+            // interpreter's state is the truth: ExitDeopt).
+            emitSyncSpToState_x86(a);
+            a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
+            a.mov(rdx, ptr(rdi, OFF_METHOD));
+            a.add(rdx, asmjit::Imm(ipAfterOff));
+            a.mov(ptr(rdi, OFF_IP), rdx);
+            a.push(rdi);                             // 3 pushes: rsp 16-aligned
+            a.push(rsi);
+            a.push(rax);
+            a.or_(r10d, asmjit::Imm(nArgs << 16));
+            a.mov(kCArg1, r10);
+            emitCArg0State_x86(a);
+            emitCallCHelper_x86(a, (const void*)&pharo_mcf_prim);
+            a.mov(r9d, eax);
+            a.pop(rax);
+            a.pop(rsi);
+            a.pop(rdi);
+            a.cmp(r9d, asmjit::Imm(1));
+            a.jne(notOk);
+            emitReloadSpFromState_x86(a);
+            a.jmp(resume);
+            a.bind(notOk);
+            a.cmp(r9d, asmjit::Imm(2));
+            a.jne(refuse);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm((int)ExitDeopt));
+            a.ret();
+        }
+        a.bind(native);
+    }
     a.mov(r9, ptr(r8, 8));                       // jm
     a.test(r9, r9);
     a.jz(refuse);
@@ -3561,6 +3615,45 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // sendNArgsOverride is -1, extSendEmit is false, and j2jResumeBcOff reduces
     // to globalIdx+1 -> byte-identical.
     bool extSendEmit = (op == SistaV1::ExtSend) && (sendNArgsOverride >= 0);
+    // Machine-code frames: == and ~~ compare identity without a lookup, as
+    // the arm64 emit and Cog's bytecodePrimIdenticalSistaV1 do.  A forwarded
+    // operand exits at this bytecode and the interpreter follows it.  The
+    // site keeps its (unused) IC slot, so the site numbering is unchanged.
+    if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ) && !extSendEmit
+            && (op == SistaV1::SpecialSendBase + 6 || op == SistaV1::SpecialSendBase + 8)) {
+        asmjit::Label slow = a.new_label();
+        asmjit::Label done = a.new_label();
+        emitLoadSp_x86(a, rcx);
+        a.mov(rax, ptr(rcx, -16));                   // receiver
+        a.mov(rdx, ptr(rcx, -8));                    // argument
+        for (const Gp& r : {rax, rdx}) {
+            asmjit::Label imm = a.new_label();
+            a.test(r, asmjit::Imm(0x7));
+            a.jnz(imm);
+            a.mov(r8d, dword_ptr(r));
+            a.and_(r8d, asmjit::Imm(0x3FFFFF));
+            a.cmp(r8d, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+            a.je(slow);
+            a.bind(imm);
+        }
+        a.cmp(rax, rdx);
+        a.mov(rax, ptr(rdi, OFF_TRUEOOP));
+        a.mov(r9, ptr(rdi, OFF_FALSEOOP));
+        if (op == SistaV1::SpecialSendBase + 6) a.cmovne(rax, r9);
+        else a.cmove(rax, r9);
+        a.mov(ptr(rcx, -16), rax);
+        a.sub(rcx, asmjit::Imm(8));
+        emitStoreSp_x86(a, rcx);
+        a.jmp(done);
+        a.bind(slow);
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        emitSyncSpToState_x86(a); a.ret();
+        a.bind(done);
+        return true;
+    }
     if (isPhase4SendOp(op) || extSendEmit) {
         int nArgs = (sendNArgsOverride >= 0) ? sendNArgsOverride : sendNArgs(op);
 
@@ -3637,9 +3730,29 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.or_(edx, asmjit::Imm(0x80000000));
             a.bind(haveKey);
 
-            // === Probe icData[0] only (slot 0 monomorphic) ===
-            a.cmp(rdx, ptr(rsi));
-            a.jne(miss);
+            // === Probe icData[0] (slot 0 monomorphic) ===
+            // Under machine-code frames all six entries: a polymorphic site
+            // otherwise left machine code at every send past its first
+            // class.  A hit leaves rsi at the matching entry (the code
+            // below reads [rsi+8] / [rsi+16]); a miss keeps the site base.
+            if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_ONE_ENTRY_PROBE)) {
+                asmjit::Label hitE = a.new_label();
+                a.cmp(rdx, ptr(rsi));
+                a.je(hitE);
+                for (uint32_t e = 1; e < IC_ENTRIES_PER_SITE; e++) {
+                    asmjit::Label next = a.new_label();
+                    a.cmp(rdx, ptr(rsi, (int)(e * IC_BYTES_PER_ENTRY)));
+                    a.jne(next);
+                    a.add(rsi, asmjit::Imm((int)(e * IC_BYTES_PER_ENTRY)));
+                    a.jmp(hitE);
+                    a.bind(next);
+                }
+                a.jmp(miss);
+                a.bind(hitE);
+            } else {
+                a.cmp(rdx, ptr(rsi));
+                a.jne(miss);
+            }
             a.cmp(rdx, asmjit::Imm(0));      // reject empty IC slot
             a.je(miss);
             if (GET_DEBUG_BOOL(PHARO_T1_PROBE_ALWAYS_MISS)) {
