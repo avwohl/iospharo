@@ -9858,6 +9858,30 @@ Oop Interpreter::nlrHomeCMOf(Oop code) {
     return Oop::nil();
 }
 
+extern uint64_t g_objectMotionEpoch;
+
+// nlrHomeCMOf, memoized by block oop for one g_objectMotionEpoch.  The
+// entry also keeps the block's last literal (its outer code), so a block
+// whose outer code is changed is decoded again.
+Oop Interpreter::nlrHomeCMOfMemo(Oop code) {
+    if (nlrHomeMemoEpoch_ != g_objectMotionEpoch) {
+        for (auto& e : nlrHomeMemo_) e.code = 0;
+        nlrHomeMemoEpoch_ = g_objectMotionEpoch;
+    }
+    if (!code.isObject() || code.rawBits() < 0x10000) return nlrHomeCMOf(code);
+    ObjectHeader* h = code.asObjectPtr();
+    Oop hdr = h->slotAt(0);
+    if (!hdr.isSmallInteger()) return nlrHomeCMOf(code);
+    const size_t nl = (size_t)(hdr.asSmallInteger() & 0x7FFF);
+    if (nl < 1 || nl >= h->slotCount()) return nlrHomeCMOf(code);
+    const uint64_t outer = h->slotAt(nl).rawBits();
+    auto& e = nlrHomeMemo_[(code.rawBits() >> 4) & (kNlrHomeMemoSize - 1)];
+    if (e.code == code.rawBits() && e.outer == outer) return Oop::fromRawBits(e.home);
+    Oop home = nlrHomeCMOf(code);
+    e = {code.rawBits(), outer, home.rawBits()};
+    return home;
+}
+
 // Validate an NLR homeFrame marker against the EXPECTED home method.
 // The marker is an absolute savedFrames_ index, which dangles when the
 // frame stack is rebuilt under it (exception materialization resets
@@ -10582,6 +10606,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
             // No unwind contexts - return FROM the home context
             Oop sender = memory_.fetchPointer(0, homeCtx);
             if (sender.isObject() && !sender.isNil()) {
+                killContextsThrough(activeContext_, homeCtx);
                 Oop stackpOop = memory_.fetchPointer(2, sender);
                 if (stackpOop.isSmallInteger()) {
                     int stackp = stackpOop.asSmallInteger();
@@ -10627,6 +10652,21 @@ void Interpreter::returnFromMethodSlow(Oop value) {
     // process-switch safety net.
 
     returnValue(value);
+}
+
+// A non-local return over heap contexts: every context from `from` up to
+// and including homeCtx dies (sender and pc nil), as the frame path does and
+// as Cog does (a context it unwinds over answers isDead).
+void Interpreter::killContextsThrough(Oop from, Oop homeCtx) {
+    Oop ctx = from;
+    const Oop nilObj = memory_.nil();
+    for (int safety = 0; ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety < 70000; safety++) {
+        Oop next = memory_.fetchPointer(0, ctx);
+        memory_.storePointer(0, ctx, nilObj);
+        memory_.storePointer(1, ctx, nilObj);
+        if (ctx.rawBits() == homeCtx.rawBits()) break;
+        ctx = next;
+    }
 }
 
 void Interpreter::returnFromBlock() {
@@ -10778,6 +10818,7 @@ void Interpreter::returnFromBlock() {
                 // No unwind contexts - return FROM the home context
                 Oop sender = memory_.fetchPointer(0, homeCtx);
                 if (sender.isObject() && !sender.isNil()) {
+                    killContextsThrough(activeContext_, homeCtx);
                     Oop stackpOop = memory_.fetchPointer(2, sender);
                     if (stackpOop.isSmallInteger()) {
                         int stackp = stackpOop.asSmallInteger();

@@ -2054,13 +2054,13 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
     if (d < 2) return refuse(kShallow);
     const size_t h = savedFrames_[d - 1].homeFrameDepth();
     if (h == SIZE_MAX || h == 0 || h >= d) return refuse(kNoHome);
-    // The interpreter's registers, as the exit would leave them.  Nothing
-    // below changes state until every check has passed.
-    mcfDeriveView(*st);
+    // The interpreter's registers, as the exit would leave them (sync
+    // derives the view).  Nothing below changes state until every check
+    // has passed.
     stackPointer_ = st->sp;
     mcfSyncRegisters(*st);
     instructionPointer_ = st->ip;
-    Oop expected = nlrHomeCMOf(method_);
+    Oop expected = nlrHomeCMOfMemo(method_);
     if (expected.isNil()) return refuse(kNoCM);
     if (validateNLRHomeFrame(h, expected) != h) return refuse(kValidate);
     size_t ensureAt = SIZE_MAX, nEnsure = 0;
@@ -2102,6 +2102,25 @@ void* Interpreter::mcfNonLocalReturn(jit::JITState* st) {
         default:                           value = pop(); break;   // ReturnTop
     }
     Oop* homeFP = savedFrames_[h].fp();
+    static const bool fullPops = GET_DEBUG_BOOL(PHARO_MCF_NLR_FULL_POPS)
+        || GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK);
+    if (!fullPops) {
+        // The frames above the home one's: widow each one's context and
+        // drop its saved frame, without restoring the registers popFrame
+        // would restore only for the next pop to overwrite.  The context
+        // of the frame at depth j is savedFrames_[j].materializedContext
+        // (the current frame's is currentFrameMaterializedCtx_).
+        while (frameDepth_ > h + 1) {
+            widowUnwoundContext();
+            SavedFrame& f = savedFrames_[--frameDepth_];
+            f.mcReturn = nullptr;
+            f.setHomeFrameDepth(SIZE_MAX);
+            if (__builtin_expect(f.retSlot() != nullptr, 0) && materializedFrameCount_ > 0)
+                materializedFrameCount_--;
+            currentFrameMaterializedCtx_ = f.materializedContext;
+            method_ = f.savedMethod;   // widowReturningContext's owner check
+        }
+    }
     while (frameDepth_ > h) {
         widowUnwoundContext();
         if (!popFrame()) return reinterpret_cast<void*>(1);

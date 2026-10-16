@@ -2189,6 +2189,12 @@ public:
     bool mcfTinyShape(Oop method, uint64_t& prim);
     void mcfFillICAtExit(jit::JITState& st);
     void mcfDeriveView(jit::JITState& st);
+    static constexpr size_t kNlrHomeMemoSize = 64;
+    struct NlrHomeMemo { uint64_t code = 0; uint64_t outer = 0; uint64_t home = 0; };
+    NlrHomeMemo nlrHomeMemo_[kNlrHomeMemoSize];
+    uint64_t nlrHomeMemoEpoch_ = ~0ULL;
+    Oop nlrHomeCMOfMemo(Oop code);
+    void killContextsThrough(Oop from, Oop homeCtx);
     static constexpr size_t kBcEndMemoSize = 256;
     struct BcEndMemo { uint64_t method = 0; uint64_t off = 0; };
     BcEndMemo bcEndMemo_[kBcEndMemoSize];

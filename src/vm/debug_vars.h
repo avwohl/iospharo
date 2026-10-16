@@ -266,6 +266,7 @@ DEBUG_BOOL(PHARO_MCF_IP_SABOTAGE)                  // stage-4 oracle proof: site
 DEBUG_BOOL_RT(PHARO_MCF_PAIR_MCRETURN)            // native push stores (mcReturn, savedIP) as one stp even when savedIP is unused (stage 4)
 DEBUG_BOOL_RT(PHARO_MCF_CTDN_SPEND)               // opt-out: native calls spend the checkpoint countdown again (load, subtract, store per call)
 DEBUG_BOOL_RT(PHARO_MCF_NO_RESUME_SHORTCUT)        // opt-out: Context>>resume: materializes thisContext and runs resume:through: again (docs/native-nlr-plan.md)
+DEBUG_BOOL(PHARO_MCF_NLR_FULL_POPS)                // MCF non-local return pops every frame with popFrame (no register-skipping drop of the frames above the home one)
 DEBUG_BOOL_RT(PHARO_MCF_NO_PERFORM_CACHE)          // opt-out: T1 perform: sites always call pharo_mcf_perform (no machine-code perform cache)
 DEBUG_BOOL_RT(PHARO_MCF_NO_ENSURE_SHORTCUT)        // opt-out: a non-local return through one ensure: frame takes the image unwind protocol again (docs/native-nlr-plan.md)
 DEBUG_BOOL_RT(PHARO_SCAV_ALWAYS_CLASS_TABLE)       // opt-out: every scavenge walks the class table again
