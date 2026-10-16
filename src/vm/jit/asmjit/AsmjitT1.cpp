@@ -2339,6 +2339,331 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     a.mov(ptr(rcx, L.mcReturn), r10);
 }
 
+// Machine-code frames on x86: inline fast paths for the primitives T1 code
+// calls most, answered on the caller's operand stack with no frame (the
+// arm64 primitive stub's idea; shared, one page, called from every send
+// site's primitive path).  In: rbx = sp, r10 = the primitive index, rdi =
+// the state.  Out: r11d = 1 when done (the result in the receiver slot, sp
+// popped), 0 to take the C call (nothing changed).  Each path checks every
+// condition the C primitive checks.  Clobbers rcx, rdx, r9, r11 and the
+// flags only (r8 and r10 are saved: the C path reads them).
+static uint64_t g_x86PrimStub = 0;
+static void emitX86PrimStub(asmjit::x86::Assembler& a) {
+    using namespace asmjit::x86;
+    asmjit::Label done = a.new_label(), fail = a.new_label();
+    asmjit::Label p60 = a.new_label(), p61 = a.new_label(), p62 = a.new_label();
+    asmjit::Label p63 = a.new_label(), p64 = a.new_label();
+    asmjit::Label p170 = a.new_label(), p171 = a.new_label();
+    // r9d = the send's argument count: a primitive can serve several
+    // arities (170 is Character class>>value: and Integer>>asCharacter), so
+    // every path checks the one it handles.
+    asmjit::Label p170v = a.new_label();
+    a.push(r8);
+    a.push(r10);
+    auto dispatch = [&](int prim, int nArgs, const asmjit::Label& path) {
+        asmjit::Label next = a.new_label();
+        a.cmp(r10d, asmjit::Imm(prim));
+        a.jne(next);
+        a.cmp(r9d, asmjit::Imm(nArgs));
+        a.je(path);
+        a.bind(next);
+    };
+    dispatch(60, 1, p60);
+    dispatch(62, 0, p62);
+    dispatch(63, 1, p63);
+    dispatch(61, 2, p61);
+    dispatch(64, 2, p64);
+    dispatch(171, 0, p171);
+    dispatch(170, 1, p170v);
+    dispatch(170, 0, p170);
+    a.bind(fail);
+    a.xor_(r11d, r11d);
+    a.pop(r10);
+    a.pop(r8);
+    a.ret();
+    a.bind(done);
+    a.mov(r11d, asmjit::Imm(1));
+    a.pop(r10);
+    a.pop(r8);
+    a.ret();
+    // Header of the heap object in rcx: r8 = header, r9 = format, r10 =
+    // slot count (the overflow word for 255).  Fails for an immediate.
+    auto header = [&]() {
+        asmjit::Label noOverflow = a.new_label();
+        a.test(cl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.mov(r8, ptr(rcx));
+        // A forwarder (lazy become): the C primitive follows it.
+        a.mov(r9d, r8d);
+        a.and_(r9d, asmjit::Imm(0x3FFFFF));
+        a.cmp(r9d, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+        a.je(fail);
+        a.mov(r9, r8);
+        a.shr(r9, asmjit::Imm(24));
+        a.and_(r9d, asmjit::Imm(0x1F));
+        a.mov(r10, r8);
+        a.shr(r10, asmjit::Imm(56));
+        a.cmp(r10d, asmjit::Imm(255));
+        a.jne(noOverflow);
+        a.mov(r10, ptr(rcx, -8));
+        a.shl(r10, asmjit::Imm(8));
+        a.shr(r10, asmjit::Imm(8));
+        a.bind(noOverflow);
+    };
+    // r11 = the untagged index in rdx (a SmallInteger, 1-based), checked
+    // against the element count in r10.
+    auto index = [&]() {
+        a.mov(r11d, edx);
+        a.and_(r11d, asmjit::Imm(7));
+        a.cmp(r11d, asmjit::Imm(1));
+        a.jne(fail);
+        a.mov(r11, rdx);
+        a.sar(r11, asmjit::Imm(3));
+        a.cmp(r11, asmjit::Imm(1));
+        a.jl(fail);
+        a.cmp(r11, r10);
+        a.jg(fail);
+    };
+    // r10 = the byte count of a byte object (format 16-23 in r9), else fail.
+    auto byteCount = [&]() {
+        a.lea(r11d, ptr(r9, -16));
+        a.cmp(r11d, asmjit::Imm(8));
+        a.jae(fail);
+        a.shl(r10, asmjit::Imm(3));
+        a.and_(r11d, asmjit::Imm(7));
+        a.sub(r10, r11);
+    };
+    // 62 size: pointers without fixed fields, bytes, 32-bit or 64-bit words.
+    {
+        asmjit::Label notPtr = a.new_label(), notBytes = a.new_label(), notWords = a.new_label();
+        asmjit::Label have = a.new_label();
+        a.bind(p62);
+        a.mov(rcx, ptr(rbx, -8));
+        header();
+        a.cmp(r9d, asmjit::Imm(2));
+        a.jne(notPtr);
+        a.jmp(have);
+        a.bind(notPtr);
+        a.cmp(r9d, asmjit::Imm(9));
+        a.je(have);                              // 64-bit words: the slot count
+        a.lea(r11d, ptr(r9, -16));
+        a.cmp(r11d, asmjit::Imm(8));
+        a.jae(notBytes);
+        a.shl(r10, asmjit::Imm(3));
+        a.and_(r11d, asmjit::Imm(7));
+        a.sub(r10, r11);
+        a.jmp(have);
+        a.bind(notBytes);
+        a.lea(r11d, ptr(r9, -10));
+        a.cmp(r11d, asmjit::Imm(2));
+        a.jae(notWords);
+        a.shl(r10, asmjit::Imm(1));
+        a.sub(r10, r11);
+        a.jmp(have);
+        a.bind(notWords);
+        a.jmp(fail);
+        a.bind(have);
+        a.shl(r10, asmjit::Imm(3));
+        a.or_(r10, asmjit::Imm(1));
+        a.mov(ptr(rbx, -8), r10);
+        a.jmp(done);
+    }
+    // 60 at:: pointers without fixed fields, bytes or 32-bit words as
+    // SmallIntegers.
+    {
+        asmjit::Label notPtr = a.new_label(), notBytes = a.new_label();
+        a.bind(p60);
+        a.mov(rcx, ptr(rbx, -16));
+        a.mov(rdx, ptr(rbx, -8));
+        header();
+        a.cmp(r9d, asmjit::Imm(2));
+        a.jne(notPtr);
+        index();
+        a.mov(rdx, ptr(rcx, r11, 3));            // slot idx-1 at [rcvr + idx*8]
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+        a.bind(notPtr);
+        a.lea(r11d, ptr(r9, -16));
+        a.cmp(r11d, asmjit::Imm(8));
+        a.jae(notBytes);
+        byteCount();
+        index();
+        a.movzx(edx, byte_ptr(rcx, r11, 0, 7));
+        a.shl(rdx, asmjit::Imm(3));
+        a.or_(rdx, asmjit::Imm(1));
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+        a.bind(notBytes);
+        a.lea(r11d, ptr(r9, -10));
+        a.cmp(r11d, asmjit::Imm(2));
+        a.jae(fail);
+        a.shl(r10, asmjit::Imm(1));
+        a.sub(r10, r11);
+        index();
+        a.mov(edx, dword_ptr(rcx, r11, 2, 4));
+        a.shl(rdx, asmjit::Imm(3));
+        a.or_(rdx, asmjit::Imm(1));
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+    }
+    // 63 String>>at:: a byte object's byte as a Character.
+    {
+        a.bind(p63);
+        a.mov(rcx, ptr(rbx, -16));
+        a.mov(rdx, ptr(rbx, -8));
+        header();
+        byteCount();
+        index();
+        a.movzx(edx, byte_ptr(rcx, r11, 0, 7));
+        a.shl(rdx, asmjit::Imm(3));
+        a.or_(rdx, asmjit::Imm((int)(Oop::fromCharacter(0).rawBits() & 7)));
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+    }
+    // 61 at:put:: pointers without fixed fields (any value, with the
+    // remember barrier), or bytes (a SmallInteger 0..255).  Not into an
+    // immutable object.
+    {
+        asmjit::Label notPtr = a.new_label();
+        a.bind(p61);
+        a.mov(rcx, ptr(rbx, -24));
+        a.mov(rdx, ptr(rbx, -16));
+        header();
+        a.test(r8d, asmjit::Imm(0x800000));     // immutable
+        a.jnz(fail);
+        a.cmp(r9d, asmjit::Imm(2));
+        a.jne(notPtr);
+        index();
+        a.mov(rdx, ptr(rbx, -8));                // the value
+        a.mov(ptr(rcx, r11, 3), rdx);
+        emitRememberBarrierX86(a, rcx, rdx, r9, r11);
+        a.mov(ptr(rbx, -24), rdx);
+        a.sub(rbx, asmjit::Imm(16));
+        a.jmp(done);
+        a.bind(notPtr);
+        byteCount();
+        index();
+        a.mov(rdx, ptr(rbx, -8));
+        a.mov(r9, rdx);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);                             // not a SmallInteger
+        a.mov(r9, rdx);
+        a.sar(r9, asmjit::Imm(3));
+        a.cmp(r9, asmjit::Imm(255));
+        a.ja(fail);                              // negative or > 255
+        a.mov(byte_ptr(rcx, r11, 0, 7), r9b);
+        a.mov(ptr(rbx, -24), rdx);
+        a.sub(rbx, asmjit::Imm(16));
+        a.jmp(done);
+    }
+    // 64 String>>at:put:: a Character below 256 into a byte object.
+    {
+        a.bind(p64);
+        a.mov(rcx, ptr(rbx, -24));
+        a.mov(rdx, ptr(rbx, -16));
+        header();
+        a.test(r8d, asmjit::Imm(0x800000));
+        a.jnz(fail);
+        byteCount();
+        index();
+        a.mov(rdx, ptr(rbx, -8));
+        a.mov(r9, rdx);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm((int)(Oop::fromCharacter(0).rawBits() & 7)));
+        a.jne(fail);
+        a.mov(r9, rdx);
+        a.shr(r9, asmjit::Imm(3));
+        a.cmp(r9, asmjit::Imm(255));
+        a.ja(fail);
+        a.mov(byte_ptr(rcx, r11, 0, 7), r9b);
+        a.mov(ptr(rbx, -24), rdx);
+        a.sub(rbx, asmjit::Imm(16));
+        a.jmp(done);
+    }
+    // 171 Character>>value: the code point as a SmallInteger.
+    {
+        a.bind(p171);
+        a.mov(rcx, ptr(rbx, -8));
+        a.mov(edx, ecx);
+        a.and_(edx, asmjit::Imm(7));
+        a.cmp(edx, asmjit::Imm((int)(Oop::fromCharacter(0).rawBits() & 7)));
+        a.jne(fail);
+        a.shr(rcx, asmjit::Imm(3));
+        a.shl(rcx, asmjit::Imm(3));
+        a.or_(rcx, asmjit::Imm(1));
+        a.mov(ptr(rbx, -8), rcx);
+        a.jmp(done);
+    }
+    // 170 Character class>>value: (one argument) and Integer>>asCharacter
+    // (none): a SmallInteger 0..2^30-1 as a Character (the arm64 stub's
+    // range).  rcx = the SmallInteger, then the Character goes into the
+    // receiver slot.
+    {
+        asmjit::Label conv = a.new_label(), store0 = a.new_label();
+        a.bind(p170v);
+        a.mov(rcx, ptr(rbx, -8));                // the argument
+        a.mov(r10d, 1);                          // one argument (r10 is restored)
+        a.jmp(conv);
+        a.bind(p170);
+        a.mov(rcx, ptr(rbx, -8));                // the receiver
+        a.xor_(r10d, r10d);
+        a.bind(conv);
+        a.mov(edx, ecx);
+        a.and_(edx, asmjit::Imm(7));
+        a.cmp(edx, asmjit::Imm(1));
+        a.jne(fail);
+        a.mov(rdx, rcx);
+        a.sar(rdx, asmjit::Imm(3));
+        a.cmp(rdx, asmjit::Imm(0x3FFFFFFF));
+        a.ja(fail);                              // negative or too big
+        a.shl(rdx, asmjit::Imm(3));
+        a.or_(rdx, asmjit::Imm((int)(Oop::fromCharacter(0).rawBits() & 7)));
+        a.test(r10d, r10d);
+        a.jz(store0);
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+        a.bind(store0);
+        a.mov(ptr(rbx, -8), rdx);
+        a.jmp(done);
+    }
+}
+
+static uint64_t buildX86StubPage(void (*emit)(asmjit::x86::Assembler&)) {
+    using namespace asmjit;
+    Environment env = Environment::host();
+    CodeHolder code;
+    if (code.init(env) != kErrorOk) return 0;
+    T1EncodingErrorHandler encErr;
+    code.set_error_handler(&encErr);
+    x86::Assembler a(&code);
+    emit(a);
+    if (encErr.failed) {
+        fprintf(stderr, "[asmjit-t1] x86 MCF stub page not installed: encoding error\n");
+        return 0;
+    }
+    if (code.flatten() != kErrorOk) return 0;
+    size_t sz = code.code_size();
+    if (sz == 0 || sz > 4096) return 0;
+    uint8_t tmp[4096];
+    std::memset(tmp, 0, sizeof(tmp));
+    if (code.copy_flattened_data(tmp, sizeof(tmp),
+            CopySectionFlags::kPadSectionBuffer) != kErrorOk)
+        return 0;
+    void* page = pharo::jit::allocateCodeMemory(4096);
+    if (!page) return 0;
+    pharo::jit::makeWritable(page, 4096);
+    std::memcpy(page, tmp, sz);
+    pharo::jit::flushICache(page, sz);
+    pharo::jit::makeExecutable(page, 4096);
+    return reinterpret_cast<uint64_t>(page);
+}
+
 static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff,
                                  const asmjit::Label& resume);
 
@@ -2455,6 +2780,13 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
             // (its pc if it switches process); 1 = done, 0 = failed (send
             // it), 2 = it pushed a frame or switched process (the
             // interpreter's state is the truth: ExitDeopt).
+            if (g_x86PrimStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS)) {
+                a.mov(r9d, asmjit::Imm(nArgs));         // the stub checks the arity
+                a.mov(rcx, asmjit::Imm(g_x86PrimStub));
+                a.call(rcx);
+                a.test(r11d, r11d);
+                a.jnz(resume);
+            }
             emitSyncSpToState_x86(a);
             a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
             a.mov(rdx, ptr(rdi, OFF_METHOD));
@@ -2615,6 +2947,33 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.lea(r10, ptr(r9, (int)sizeof(JITMethod)));
     a.jmp(r10);
     a.bind(notBlock);
+}
+
+// A Context method (g_emitCtxMethod) reading sender/pc/stackp or storing a
+// field: with lazy context stubs pending, sync them first, as the
+// interpreter's handlers do; pc and stackp also come from a married
+// receiver's frame (pharo_mcf_ctx_fields), so those reads always call.
+// The arm64 emit does the same.  ipOff = this bytecode's offset from the
+// method oop.
+static void emitMcfCtxSync_x86(asmjit::x86::Assembler& a, bool liveField, int ipOff) {
+    using namespace asmjit::x86;
+    asmjit::Label noSync = a.new_label();
+    if (!liveField) {
+        a.mov(r10, asmjit::Imm(g_lazyCtxPendingAddr));
+        a.cmp(byte_ptr(r10), asmjit::Imm(0));
+        a.je(noSync);
+    }
+    a.mov(r8, ptr(rdi, OFF_METHOD));
+    a.add(r8, asmjit::Imm(ipOff));
+    a.mov(ptr(rdi, OFF_IP), r8);
+    emitSyncSpToState_x86(a);
+    a.push(rdi);                                 // rsp 16-aligned
+    emitCArg0State_x86(a);
+    emitCallCHelper_x86(a, liveField ? (const void*)&pharo_mcf_ctx_fields
+                                     : (const void*)&pharo_mcf_ctx_sync);
+    a.pop(rdi);
+    emitReloadSpFromState_x86(a);
+    a.bind(noSync);
 }
 
 // Machine-code frames on x86: a send with no IC slot (an unprefixed super
@@ -3461,6 +3820,29 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(r8, ptr(rdi, OFF_METHOD));
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
+        if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_NATIVE_NLR)) {
+            // Machine-code frames: pharo_mcf_nlr returns from the home when
+            // it can (the arm64 NLR stub's protocol): 0 = refused, nothing
+            // changed (the exit below); 1 = the frames were popped and the
+            // interpreter's state is complete (ExitDeopt); else the code
+            // address that continues the home's caller.
+            asmjit::Label out = a.new_label(), refused = a.new_label();
+            emitSyncSpToState_x86(a);
+            a.push(rdi);                             // rsp 16-aligned
+            emitCArg0State_x86(a);
+            emitCallCHelper_x86(a, (const void*)&pharo_mcf_nlr);
+            a.pop(rdi);
+            a.cmp(rax, asmjit::Imm(1));
+            a.jbe(out);
+            emitReloadSpFromState_x86(a);
+            a.jmp(rax);
+            a.bind(out);
+            a.test(rax, rax);
+            a.jz(refused);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm((int)ExitDeopt));
+            a.ret();
+            a.bind(refused);
+        }
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
         emitSyncSpToState_x86(a); a.ret();
         return true;
@@ -14661,6 +15043,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     const int idx = static_cast<int>(bcReal[i + 1]);
                     asmjit::Label rbail = a.new_label();
                     asmjit::Label rend = a.new_label();
+                    if (g_emitCtxMethod && g_lazyCtxPendingAddr != 0 && idx <= 5)
+                        emitMcfCtxSync_x86(a, false, bcOffsetBase + globalIdx);
                     a.mov(rdx, ptr(rdi, OFF_RECEIVER));
                     a.test(dword_ptr(rdx), asmjit::Imm(static_cast<int32_t>(0x800000)));
                     a.jne(rbail);                            // immutable receiver
@@ -14698,6 +15082,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         && !wasExtPrefix && (size_t)(i + 1) < bcRealLen) {
                     int idx = static_cast<int>(bcReal[i + 1]);
                     if (op == SistaV1::ExtPushRecvVar) {
+                        if (g_emitCtxMethod && g_lazyCtxPendingAddr != 0 && idx <= 2)
+                            emitMcfCtxSync_x86(a, (idx == 1 || idx == 2)
+                                                   && !GET_DEBUG_BOOL(PHARO_NO_LIVE_CTX_FIELDS),
+                                               bcOffsetBase + globalIdx);
                         a.mov(rax, ptr(rdi, OFF_RECEIVER));
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + idx * 8));
                         emitPushReg(a, rax);
@@ -16843,11 +17231,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // a block bail to interp) and for jm->isBlock below.
     g_emitIsBlock =
         methObj->classIndex() == interp.compiledBlockClassIndex();
-#if defined(__aarch64__) || defined(_M_ARM64)
-    g_emitCtxMethod = ::pharo::mcfEnabled() && interp.isContextFieldMethod(compiledMethod);
-#else
-    g_emitCtxMethod = false;
-#endif
+    g_emitCtxMethod = ::pharo::mcfMode() && interp.isContextFieldMethod(compiledMethod);
     // x86 inline-J2J WIP: opt this method into the inline-J2J fast path only if
     // the master knob is on AND its selector matches PHARO_T1_X86_J2J_SEL.
     g_emitX86J2JOk = false;
@@ -18222,6 +18606,10 @@ static void emitMcfNlrStub(asmjit::a64::Assembler& a) {
 // Machine-code frames: called by Interpreter::mcfInit after g_mcfLayout is
 // set (the stubs bake its offsets in).
 void pharo::jit::mcfBuildStubs() {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (!g_x86PrimStub && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_PRIMS))
+        g_x86PrimStub = buildX86StubPage(emitX86PrimStub);
+#endif
 #if defined(__aarch64__) || defined(_M_ARM64)
     if (!g_mcfPrimStub[0]) {
         g_mcfPrimStub[0] = buildMcfStubPage(emitMcfInlinePrims0);

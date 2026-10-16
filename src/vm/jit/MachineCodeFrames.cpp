@@ -2042,7 +2042,7 @@ void Interpreter::mcfInit() {
     jit::g_mcfSpecialObjectsAddr = memory_.specialObjectsArrayAddr();
     jit::g_mcfFinalizationFlagAddr = &finalizationCheckAfterGC_;
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;   // the stubs bake it
-    if (::pharo::mcfEnabled()) jit::mcfBuildStubs();
+    if (::pharo::mcfMode()) jit::mcfBuildStubs();
     jit::g_mcfContextClassIndex = contextClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),
     // a 128 KB memset the default mode must not pay.

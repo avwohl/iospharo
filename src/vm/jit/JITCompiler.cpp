@@ -1968,12 +1968,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // arm64 under machine-code frames compiles them: T1 syncs before their
     // field reads and stores (g_emitCtxMethod in AsmjitT1.cpp).  x86 and the
     // stencils still leave them to the interpreter.
-#if defined(__aarch64__) || defined(_M_ARM64)
-    const bool ctxMethodsCompile = ::pharo::mcfEnabled() && jit::g_lazyCtxPendingAddr != 0
+    const bool ctxMethodsCompile = ::pharo::mcfMode() && jit::g_lazyCtxPendingAddr != 0
         && !GET_DEBUG_BOOL(PHARO_MCF_NO_CTX_JIT);
-#else
-    const bool ctxMethodsCompile = false;
-#endif
     if (!ctxMethodsCompile && !GET_DEBUG_BOOL(PHARO_JIT_CONTEXT_METHODS_UNSAFE)) {
         ObjectHeader* h = compiledMethod.asObjectPtr();
         int64_t hb = h->slotAt(0).asSmallInteger();
