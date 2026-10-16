@@ -76,6 +76,13 @@ The history lives in `docs/history/`; nothing was deleted.
   (`PHARO_XFER_TRACE=1` now names the C++ caller) shows the UI process
   calling `Processor yield` between the signal and the draw in some
   cycles.  The cause of the different interleaving is not found yet.
+  2026-10-17: an event ring (`PHARO_EVENT_RING`) of a failing run shows
+  the process that runs the deferred block signal the test's semaphore and
+  then schedule a Delay before the draw; while it waits, the scheduler
+  runs the test process.  A runner whose wait loops sleep on Delays
+  instead of `relinquishProcessorForMicroseconds:` fails the same way, so
+  the runner's relinquish loop is not the cause.  Still open: which code in
+  the fake GUI's cycle waits on that Delay, and why Cog does not.
 
 ## Tooling limitations worth knowing
 
