@@ -3970,7 +3970,10 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             // pass's source range (the destination finger never overtakes the
             // source finger), so a key already rewritten can never alias an
             // object still to be planned.
-            updatePointersAfterCompact();
+            // Nothing moves in this pass: every pointer stays (and the
+            // Sista cache keys too), so the whole-heap update is skipped.
+            if (planToMove_ != 0 || GET_DEBUG_BOOL(PHARO_GC_ALWAYS_UPDATE_POINTERS))
+                updatePointersAfterCompact();
 
             // Only a single pass covering the whole heap may clear marks as it
             // copies — the common case, and the one that avoids the extra heap
@@ -6039,6 +6042,7 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
     uint8_t* toFinger = pass.dstStart;  // Destination for next live object
     planSeen_ = planMarked_ = planUnmarked_ = planPinned_ = 0;
     planInPlace_ = planToMove_ = planMarkedBytes_ = 0;
+    firstMoverAddr_ = nullptr;
 
     // Assume the rest of the heap fits; the scratch-overflow branch below
     // overwrites these when it does not.
@@ -6122,7 +6126,7 @@ void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
 
             // Mark this object as having a forwarding address (grey bit)
             obj->setGrey(true);
-            planToMove_++;
+            if (planToMove_++ == 0) firstMoverAddr_ = objAddr;
         }
 
         toFinger += objSize;
@@ -6149,8 +6153,14 @@ void ObjectMemory::updatePointersAfterCompact() {
     // Helper to resolve a forwarding address: if the referenced object has the
     // grey bit set (meaning it's mobile and has a forwarding address in slot 0),
     // return the forwarding Oop. Otherwise return the original Oop unchanged.
-    auto resolveForward = [this](Oop ref) -> Oop {
+    // Objects below this pass's first mover stay where they are, so a
+    // pointer below it needs no lookup: one compare instead of loading the
+    // target's header and class-table entry for every slot of the heap (the
+    // update was a quarter of a full GC on a settled heap).
+    const uint8_t* firstMover = firstMoverAddr_ ? firstMoverAddr_ : oldSpaceFree_;
+    auto resolveForward = [this, firstMover](Oop ref) -> Oop {
         if (!ref.isObject()) return ref;
+        if (reinterpret_cast<const uint8_t*>(ref.asObjectPtr()) < firstMover) return ref;
         ObjectHeader* refObj = ref.asObjectPtr();
         if (isPermObject(refObj)) return ref;
         if (!isOldObject(refObj)) return ref;  // Outside heap — leave as is

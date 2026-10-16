@@ -1480,6 +1480,7 @@ private:
     /// every cache key pointed at where its method used to be.  Running it once
     /// per pass composes correctly — see the comment at the loop in fullGC.
     void updatePointersAfterCompact();
+    uint8_t* firstMoverAddr_ = nullptr;   ///< this pass's lowest moving object (planCompactSavingForwarders)
 
     /// Slide the objects planned by @a pass to their forwarding addresses and
     /// restore their first fields.  Clears mark bits only when @a clearMarks:
