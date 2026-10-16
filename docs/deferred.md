@@ -159,6 +159,14 @@ The history lives in `docs/history/`; nothing was deleted.
   both its branch report and its unpushed-commits report.  A green
   `sync-repos.sh --status` does not mean the tree is fully pushed.
 
+- **A full GC is 1.5x Cog (measured 2026-10-16).**  `Smalltalk
+  garbageCollect` on the 60 MB test image: 50-54 ms on ours, 32-36 on Cog.
+  About 60% is marking (`markAndTrace`, `markPhase`, `scanPointerFields`),
+  single-threaded; each reference also pays a class-table check and an
+  object-start bitmap test (defensive, against interior pointers).  The rest
+  is `updatePointersAfterCompact`, `copyAndUnmark` and the compaction plan.
+  Allocation-heavy loops are at parity.
+
 ## Known structural costs, not yet measured
 
 - **T1 send sites are 2.3-2.9 KB each (measured 2026-10-15).**
