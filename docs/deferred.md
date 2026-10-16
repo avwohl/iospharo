@@ -517,12 +517,12 @@ runs the image's Smalltalk fallback; since 475c32c2 the failed lookup is
 cached, so it costs only the fallback.  Missing pairs that Cog HAS (its
 `Plugins/` folder is the reference):
 
-  * **LocalePlugin** (8 functions: primDST, primLongDateFormat,
-    primShortDateFormat, primMeasurement, primCurrencyNotation, ...).  Ours
-    answers the fallbacks: DST false, `dddd, mmmm d, yyyy` and `m/d/yy`
-    formats, metric true.  Cog asks macOS: DST true, `y MMMM d HH:mm:ss z`,
-    `y-MM-dd HH:mm`, metric false.  No sweep test fails on it.  Needs
-    CFLocale on Apple platforms and a POSIX answer elsewhere.
+  * **LocalePlugin**: done 2026-10-17.  The implementations existed but
+    were registered under names the image does not use; they are now
+    registered under the image's names.  DST, metric, separators, currency
+    and zone answer what macOS says, as on Cog.  The date and time formats
+    are translated to the image's format language (Cog passes raw ICU
+    patterns such as `y-MM-dd HH:mm`).  `scripts/cogdiff/locdiff.st`.
 
 Missing pairs Cog does NOT have either (not a gap): ZipPlugin, MD5Plugin,
 Matrix2x3Plugin, FontPlugin, BMPReadWriterPlugin, AsynchFilePlugin,

@@ -25170,6 +25170,18 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("LocalePlugin", "primitiveTimezone", &Interpreter::primitiveLocaleTimezone);
     registerNamedPrimitive("LocalePlugin", "primitiveTimezoneOffset", &Interpreter::primitiveLocaleTimezoneOffset);
     registerNamedPrimitive("LocalePlugin", "primitiveDaylightSavingTimeActive", &Interpreter::primitiveLocaleDaylightSaving);
+    // The names the image's Locale and LocalTimeZone methods use (Cog's
+    // LocalePlugin).  The implementations existed, but only the names above
+    // were registered, so every one of these ran the image's fallback: DST
+    // false in summer, metric true in the US, fixed date formats.
+    registerNamedPrimitive("LocalePlugin", "primitiveDaylightSavings", &Interpreter::primitiveLocaleDaylightSaving);
+    registerNamedPrimitive("LocalePlugin", "primitiveDecimalSymbol", &Interpreter::primitiveLocaleDecimalSeparator);
+    registerNamedPrimitive("LocalePlugin", "primitiveDigitGroupingSymbol", &Interpreter::primitiveLocaleThousandsSeparator);
+    registerNamedPrimitive("LocalePlugin", "primitiveMeasurementMetric", &Interpreter::primitiveLocaleMeasurementMetric);
+    registerNamedPrimitive("LocalePlugin", "primitiveShortDateFormat", &Interpreter::primitiveLocaleDateFormat);
+    registerNamedPrimitive("LocalePlugin", "primitiveLongDateFormat", &Interpreter::primitiveLocaleLongDateFormat);
+    registerNamedPrimitive("LocalePlugin", "primitiveCurrencyNotation", &Interpreter::primitiveLocaleCurrencyNotation);
+    registerNamedPrimitive("LocalePlugin", "primitiveVMOffsetToUTC", &Interpreter::primitiveLocaleVMOffsetToUTC);
 
     // DateAndTime>>now uses this named primitive (module: '')
     registerNamedPrimitive("", "primitiveUtcWithOffset", &Interpreter::primitiveUtcWithOffset);

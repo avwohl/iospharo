@@ -26670,20 +26670,15 @@ PrimitiveResult Interpreter::primitiveLocaleLongDateFormat(int argCount) {
 
 // primitiveVMOffsetToUTC -> minutes between the VM's clock and UTC
 // Locale>>primVMOffsetToUTC: "Returns the offset in minutes between the VM and
-// UTC. If the VM does not support UTC times, this is 0." This VM reports local
-// time, so the offset is the local zone's, the same quantity
-// primitiveTimezoneOffset answers. Answering 0 -- the image's fallback -- claims
-// the VM runs on UTC, which is wrong everywhere except Britain in winter.
+// UTC. If the VM does not support UTC times, this is 0."
 PrimitiveResult Interpreter::primitiveLocaleVMOffsetToUTC(int argCount) {
+    // The VM's clocks are Cog's: the UTC microsecond clock is UTC and the
+    // local one carries the zone (scripts/cogdiff/sysdiff.st agrees with Cog
+    // on both).  So the VM is on UTC, and Cog answers 0 here.  Nothing in a
+    // Pharo 13 image sends primVMOffsetToUTC.
     if (argCount != 0) return PrimitiveResult::Failure;
-
-    time_t now = time(nullptr);
-    struct tm local;
-    localtime_r(&now, &local);
-    int64_t offsetMinutes = pharo_tm_gmtoff(&local) / 60;
-
     pop();
-    push(Oop::fromSmallInteger(offsetMinutes));
+    push(Oop::fromSmallInteger(0));
     return PrimitiveResult::Success;
 }
 
