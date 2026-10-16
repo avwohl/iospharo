@@ -12152,12 +12152,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x13, ptr(x9));           // header (before commit)
                     a.add(x15, x9, asmjit::Imm(8)); // first slot
                     a.mov(x16, x3);                // counter = slotCount
-                    a.bind(nbFill);
-                    a.cbz(x16, nbFillDone);
-                    a.str(x14, ptr(x15));          // fillVal (nil for pointers, 0 for bytes)
-                    a.add(x15, x15, asmjit::Imm(8));
-                    a.sub(x16, x16, asmjit::Imm(1));
-                    a.b(nbFill);
+                    {
+                        // Two slots per step (stp), then the odd one: the
+                        // one-slot loop was 5 instructions a slot, a third
+                        // of `Array new: 10`.
+                        asmjit::Label nbOdd = a.new_label();
+                        a.bind(nbFill);
+                        a.cmp(x16, asmjit::Imm(2));
+                        a.b_lo(nbOdd);
+                        a.stp(x14, x14, ptr_post(x15, 16));   // fillVal (nil for pointers, 0 for bytes)
+                        a.sub(x16, x16, asmjit::Imm(2));
+                        a.b(nbFill);
+                        a.bind(nbOdd);
+                        a.cbz(x16, nbFillDone);
+                        a.str(x14, ptr(x15));
+                    }
                     a.bind(nbFillDone);
                     a.str(x10, ptr(x11));          // commit edenFree_
                     a.stur(x9, ptr(x2, -16));      // result replaces class at sp[-2]
@@ -12273,12 +12282,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(x14, asmjit::Imm(nilBits));
                     a.add(x15, x9, asmjit::Imm(8)); // first slot
                     a.mov(x16, x17);                // counter = slotCount
-                    a.bind(inlFill);
-                    a.cbz(x16, inlFillDone);
-                    a.str(x14, ptr(x15));
-                    a.add(x15, x15, asmjit::Imm(8));
-                    a.sub(x16, x16, asmjit::Imm(1));
-                    a.b(inlFill);
+                    {
+                        asmjit::Label inlOdd = a.new_label();   // two slots per step, as above
+                        a.bind(inlFill);
+                        a.cmp(x16, asmjit::Imm(2));
+                        a.b_lo(inlOdd);
+                        a.stp(x14, x14, ptr_post(x15, 16));
+                        a.sub(x16, x16, asmjit::Imm(2));
+                        a.b(inlFill);
+                        a.bind(inlOdd);
+                        a.cbz(x16, inlFillDone);
+                        a.str(x14, ptr(x15));
+                    }
                     a.bind(inlFillDone);
                     a.str(x10, ptr(x11));          // commit edenFree_ = end
                     a.stur(x9, ptr(x2, -8));       // result replaces class at sp[-1]
