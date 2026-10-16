@@ -925,6 +925,15 @@ pavel-krivanek-turbo: `TbBoundsTest>>testAtRandom` (random input).
 alexandrie and pharo-cig: ours better (cig: Cog has 63 failing tests, ours 17;
 one test, `CigCTemplateCollectorTest>>testCollectionOfSpecializedType`, is a
 FAIL on ours and an ERR on Cog).  pharo-sdl-experiments: SDL2 stubs.
+2026-10-16: in a per-class run (all classes in one image) our VM stops in
+`CigFunctionTest` with SIGABRT, "pointer being freed was not allocated".
+This is a package bug, not a VM bug.  cig binds `clang_getCString` and
+`clang_disposeString` with a pointer argument, but libclang takes a
+`CXString` by value.  The callout passes the address of the CXString's
+ByteArray, and `clang_disposeString` gives that heap address to `free()`.
+Any VM that loads libclang stops there.  Cog does not stop because it
+cannot load the library on this host (`SymbolNotFoundError ...
+clang_createIndex`), so its 3 tests fail early.
 opensmock-pyramid: Cog dies in the run (exit 1, in
 `BlParallelUniverse>>pulse`), so it has no baseline.  Ours had 9 more ERRs,
 all `PrimitiveFailed: primitive #allocate: in TFFIBackend`: our
