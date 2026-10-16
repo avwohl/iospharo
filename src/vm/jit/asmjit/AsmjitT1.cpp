@@ -2263,15 +2263,21 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
 // are kept; rcx, rdx, r10, r11 are clobbered.  Branches to refuse before
 // it changes anything but the countdown.
 static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label& refuse,
-                                  int nArgs, int ipAfterOff, const asmjit::Label& resume) {
+                                  int nArgs, int ipAfterOff, const asmjit::Label& resume,
+                                  bool skipCtdn = false) {
     using namespace asmjit::x86;
     const McfFrameLayout& L = g_mcfLayout;
     // The checkpoint countdown.  By default a call only reads it: whatever
     // needs a checkpoint sets it to 0 (mcfCtdnReadOnly, as on arm64; the
     // per-call load-subtract-store chain made each call wait for the
     // previous one's store).  Otherwise a call spends 1, as mcfRun's entry.
+    // skipCtdn: the perform call (pharo_mcf_perform tested the countdown
+    // before it removed the selector; the heartbeat writes the countdown
+    // from another thread, so a second test could fail where the first
+    // passed, with the stack already shifted).
     a.mov(r10, ptr(rdi, OFF_MCF_CTDN_PTR));
-    if (::pharo::mcfCtdnReadOnly()) {
+    if (skipCtdn) {
+    } else if (::pharo::mcfCtdnReadOnly()) {
         a.cmp(dword_ptr(r10), asmjit::Imm(1));
         a.jle(refuse);
     } else {
@@ -3106,10 +3112,11 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
 // sets the callee's view, nils its temporaries and jumps to its code.
 // Branches to refuse before it changes anything but the countdown.
 static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff,
-                                  const asmjit::Label& resume, const asmjit::Label& refuse) {
+                                  const asmjit::Label& resume, const asmjit::Label& refuse,
+                                  bool skipCtdn = false) {
     using namespace asmjit::x86;
     asmjit::Label tLoop = a.new_label(), tDone = a.new_label();
-    emitMcfPushRecord_x86(a, refuse, nArgs, ipAfterOff, resume);
+    emitMcfPushRecord_x86(a, refuse, nArgs, ipAfterOff, resume, skipCtdn);
     // The callee's view.  entry.bcEndOff packs the bytecode end (bits
     // 0-23), start (24-47) and temp count (48-55) (mcfPackBcInfo).
     a.mov(ptr(rdi, OFF_METHOD), rax);
@@ -3201,6 +3208,51 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
             emitMcfBlockCall_x86(a, nArgs, ipAfterOff, resume);
             a.jmp(refuse);
             a.bind(notBV);
+        }
+        if (nArgs >= 1 && nArgs <= 4 && !GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CALL)) {
+            // perform: and perform:with:... (primitive 83): pharo_mcf_perform
+            // finds the target.  kMcfExtDone = answered in place; an entry
+            // = the selector is gone, call it with one argument fewer (the C
+            // side made the call's tests, so it cannot refuse now); null =
+            // the stack is untouched, send it.
+            asmjit::Label notPerform = a.new_label(), pNotDone = a.new_label();
+            asmjit::Label pNotDeopt = a.new_label(), pNever = a.new_label();
+            a.cmp(r10, asmjit::Imm((int)kMcfPerformMethod));
+            a.jne(notPerform);
+            emitSyncSpToState_x86(a);
+            a.push(rdi);                             // 3 pushes: rsp 16-aligned
+            a.push(rsi);
+            a.push(rax);
+            a.mov(rdx, ptr(rdi, OFF_METHOD));
+            a.add(rdx, asmjit::Imm(ipAfterOff));     // the ip past the perform
+            a.mov(kCArg2, rdx);
+            a.mov(kCArg1, asmjit::Imm(nArgs));
+            emitCArg0State_x86(a);
+            emitCallCHelper_x86(a, (const void*)&pharo_mcf_perform);
+            a.mov(r9, rax);
+            a.pop(rax);
+            a.pop(rsi);
+            a.pop(rdi);
+            a.cmp(r9, asmjit::Imm(1));               // kMcfExtDone
+            a.jne(pNotDone);
+            emitReloadSpFromState_x86(a);
+            a.jmp(resume);
+            a.bind(pNotDone);
+            a.cmp(r9, asmjit::Imm(2));               // kMcfExtDeopt
+            a.jne(pNotDeopt);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm((int)ExitDeopt));
+            a.ret();
+            a.bind(pNotDeopt);
+            a.test(r9, r9);
+            a.jz(refuse);                            // stack untouched
+            emitReloadSpFromState_x86(a);            // the selector is gone
+            a.mov(r8, r9);
+            a.mov(r9, ptr(r8, 8));                   // the target's JM
+            a.mov(rax, ptr(r8));                     // the target
+            emitMcfNativeCall_x86(a, nArgs - 1, ipAfterOff, resume, pNever, true);
+            a.bind(pNever);                          // cannot refuse: stop loudly
+            a.ud2();
+            a.bind(notPerform);
         }
         a.cmp(r10, asmjit::Imm(1024));
         a.jae(refuse);
@@ -3413,11 +3465,68 @@ static void emitMcfCtxSync_x86(asmjit::x86::Assembler& a, bool liveField, int ip
 // to call natively.  nullptr, and an entry this code does not call, go to
 // noSend with the state's ip at the send.  ipOff = the send's offset from
 // the method oop; resume = the code after the send.
+// The receiver's class key in r9 (a class index, or tag | 0x80000000 for
+// an immediate), from the receiver in rcx.  The inline cache's key.
+static void emitClassKey_x86(asmjit::x86::Assembler& a) {
+    using namespace asmjit::x86;
+    asmjit::Label imm = a.new_label(), have = a.new_label();
+    a.mov(r9d, ecx);
+    a.and_(r9d, asmjit::Imm(7));
+    a.jnz(imm);
+    a.mov(r9d, dword_ptr(rcx));
+    a.and_(r9d, asmjit::Imm(0x3FFFFF));
+    a.jmp(have);
+    a.bind(imm);
+    a.or_(r9d, asmjit::Imm((int)0x80000000u));
+    a.bind(have);
+}
+
 static void emitMcfHelperSend_x86(asmjit::x86::Assembler& a, uint32_t desc, int nArgs,
                                   int ipOff, int sendLen, const asmjit::Label& resume,
-                                  const asmjit::Label& noSend) {
+                                  const asmjit::Label& noSend, uint64_t* siteSlot = nullptr,
+                                  bool eqSiteSlot = false) {
     using namespace asmjit::x86;
     asmjit::Label notDone = a.new_label(), notDeopt = a.new_label();
+    if (siteSlot) {
+        // A monomorphic cache for this site: {receiver class key, method}
+        // (the arm64 helper send's).  A hit whose method has a native-call
+        // entry is called with no lookup; pharo_mcf_extsend fills the slot
+        // (from OFF_MCF_SITE_CACHE) on a miss.  An = site marks a method
+        // entry's key with bit 40 (its unmarked keys are Object>>='s
+        // inline answers).
+        asmjit::Label miss = a.new_label(), hit = a.new_label();
+        a.mov(r10, asmjit::Imm((uint64_t)siteSlot));
+        a.mov(r8, ptr(r10));
+        a.test(r8, r8);
+        a.jz(miss);
+        a.mov(rcx, ptr(rbx, -8 * (nArgs + 1)));  // the receiver
+        emitClassKey_x86(a);
+        if (eqSiteSlot) a.bts(r9, asmjit::Imm(40));
+        a.cmp(r9, r8);
+        a.jne(miss);
+        a.mov(rax, ptr(r10, 8));                 // the method
+        a.mov(r8, ptr(rdi, OFF_MCF_CALL_CACHE));
+        a.mov(r9, rax);
+        a.shr(r9, asmjit::Imm(3));
+        a.and_(r9, asmjit::Imm((int)(kMcfCallCacheSize - 2)));
+        a.shl(r9, asmjit::Imm(5));
+        a.add(r8, r9);
+        a.cmp(ptr(r8), rax);
+        a.je(hit);
+        a.add(r8, asmjit::Imm(32));
+        a.cmp(ptr(r8), rax);
+        a.jne(miss);
+        a.bind(hit);
+        a.cmp(qword_ptr(r8, 24), asmjit::Imm(0));
+        a.jne(miss);                             // a primitive or tiny entry
+        a.mov(r9, ptr(r8, 8));
+        a.test(r9, r9);
+        a.jz(miss);
+        emitMcfNativeCall_x86(a, nArgs, ipOff + sendLen, resume, miss);
+        a.bind(miss);
+        a.mov(r10, asmjit::Imm((uint64_t)siteSlot));
+        a.mov(ptr(rdi, OFF_MCF_SITE_CACHE), r10);
+    }
     a.mov(r8, ptr(rdi, OFF_METHOD));
     a.add(r8, asmjit::Imm(ipOff));
     a.mov(ptr(rdi, OFF_IP), r8);                 // the send (the helper's contract)
@@ -4494,8 +4603,42 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         // arithmetic selector takes one argument.
         if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_HELPER_SEND)) {
             asmjit::Label noSend = a.new_label();
+            uint64_t* slot = GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_SITE_CACHE) ? nullptr
+                                                                             : mcfAllocSiteCache();
+            const bool eqSite = op == 0x66 && slot && !GET_DEBUG_BOOL(PHARO_MCF_NO_EQ_SITE_CACHE);
+            if (eqSite) {
+                // = through the site cache (the arm64 emit's): a receiver
+                // class whose = is Object>>= is answered here, by identity,
+                // unless the argument is a forwarder (lazy become).
+                asmjit::Label noId = a.new_label(), idOk = a.new_label();
+                a.mov(r10, asmjit::Imm((uint64_t)slot));
+                a.mov(r8, ptr(r10));
+                a.test(r8, r8);
+                a.jz(noId);
+                a.mov(rcx, ptr(rbx, -16));           // receiver
+                a.mov(rdx, ptr(rbx, -8));            // argument
+                emitClassKey_x86(a);
+                a.cmp(r9, r8);
+                a.jne(noId);
+                a.cmp(rcx, rdx);
+                a.je(idOk);
+                a.test(dl, asmjit::Imm(7));
+                a.jnz(idOk);
+                a.mov(r9d, dword_ptr(rdx));
+                a.and_(r9d, asmjit::Imm(0x3FFFFF));
+                a.cmp(r9d, asmjit::Imm((int)ObjectHeader::ForwardedClassIndex));
+                a.je(noId);
+                a.bind(idOk);
+                a.cmp(rcx, rdx);
+                a.mov(rcx, ptr(rdi, OFF_FALSEOOP));
+                a.cmove(rcx, ptr(rdi, OFF_TRUEOOP));
+                a.mov(ptr(rbx, -16), rcx);
+                a.sub(rbx, asmjit::Imm(8));
+                a.jmp(end);
+                a.bind(noId);
+            }
             emitMcfHelperSend_x86(a, (uint32_t)(op - SistaV1::ArithBase) | (1u << 8) | (1u << 17),
-                                  1, bcOffsetFromMethObj, 1, end, noSend);
+                                  1, bcOffsetFromMethObj, 1, end, noSend, slot, eqSite);
             a.bind(noSend);
         }
         // r8 = state.method.rawBits + bcOffsetFromMethObj

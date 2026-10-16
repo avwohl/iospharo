@@ -4254,7 +4254,10 @@ Now the test ERRORs (library missing) instead of crashing the VM, and with
 Cog's arm64 `libcrypto.1.1.dylib` copied beside `test_load_image` (the
 executable's directory is first on our search path) all six
 Google-Auth-Tests pass, as on Cog.  Package parity therefore needs that file
-staged next to the VM, like Cog ships it.
+staged next to the VM, like Cog ships it.  The x86_64 build needs the
+x86_64 copies (`libcrypto.1.1.dylib`, `libssl.1.1.dylib` from the x86 Cog
+bundle's `Plugins`) beside its binary in the same way (2026-10-18: without
+them GoogleAuthClientTest failed on x86 only).
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
