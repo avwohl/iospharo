@@ -80,6 +80,7 @@ static std::vector<PrivateSocket*>& gDeleteQueue = *new std::vector<PrivateSocke
 // I/O monitor thread
 static std::thread gIOThread;
 static std::atomic<bool> gIORunning{false};
+static std::atomic<bool> gIOExited{false};   // set as ioMonitorLoop returns
 
 // Self-wake channel for the select() loop.  On POSIX a classic self-pipe; on
 // Windows select() can watch only sockets (not pipes), so we use a connected
@@ -194,7 +195,13 @@ static void registerSocket(PrivateSocket* ps) {
 // I/O monitor thread: select() loop with semaphore signaling
 // =====================================================================
 
+static void ioMonitorLoopBody();
 static void ioMonitorLoop() {
+    ioMonitorLoopBody();
+    gIOExited.store(true);
+}
+
+static void ioMonitorLoopBody() {
     while (gIORunning.load()) {
         // Snapshot active sockets and drain deletion queue under lock
         std::vector<PrivateSocket*> snapshot;
@@ -487,6 +494,7 @@ void socketPluginInit() {
     }
 
     gIORunning.store(true);
+    gIOExited.store(false);
     gIOThread = std::thread(ioMonitorLoop);
     // Detach so std::thread destructor won't call std::terminate() if
     // the process exits (via exit()) before socketPluginShutdown runs.
@@ -511,8 +519,10 @@ void socketPluginShutdown() {
 
     gIORunning.store(false);
     wakeIOThread();
-    // Thread is detached, so just give it a moment to notice the flag
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Thread is detached: wait until it has left its loop, at most 200 ms
+    // (a fixed 200 ms sleep was a fifth of every eval run's wall time).
+    for (int i = 0; i < 200 && !gIOExited.load(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     closeWakePair();
 

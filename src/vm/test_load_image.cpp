@@ -4,6 +4,8 @@
  * Usage: ./test_load_image <path-to-image>
  */
 
+#include <condition_variable>
+#include <mutex>
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
@@ -1427,6 +1429,11 @@ int main(int argc, char* argv[]) {
         // Monitoring thread: progress, stall detection, click injection.
         // Runs alongside interpret() which handles the fast bytecode loop.
         std::atomic<bool> monitorDone{false};
+        // The monitor ticks once a second; monitorCv wakes it at exit, so the
+        // join below does not wait out the rest of a 1 s sleep (it was up to
+        // half of an eval run's wall time).
+        std::mutex monitorMx;
+        std::condition_variable monitorCv;
         std::thread monitor([&]() {
             auto startTime = std::chrono::steady_clock::now();
             bool clickInjected = false;
@@ -1434,7 +1441,11 @@ int main(int argc, char* argv[]) {
             int stuckSeconds = 0;
 
             while (!monitorDone.load(std::memory_order_relaxed)) {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                {
+                    std::unique_lock<std::mutex> lk(monitorMx);
+                    monitorCv.wait_for(lk, std::chrono::seconds(1), [&] {
+                        return monitorDone.load(std::memory_order_relaxed); });
+                }
                 if (monitorDone.load(std::memory_order_relaxed)) break;
 
                 long long steps = g_watchdogSteps.load(std::memory_order_relaxed);
@@ -1509,7 +1520,11 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "[EXIT-TRACE] interpret() returned\n");
         }
 
-        monitorDone.store(true, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lk(monitorMx);
+            monitorDone.store(true, std::memory_order_relaxed);
+        }
+        monitorCv.notify_all();
         if (monitor.joinable()) monitor.join();
         if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
             fprintf(stderr, "[EXIT-TRACE] monitor joined\n");
