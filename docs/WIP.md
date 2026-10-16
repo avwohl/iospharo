@@ -15,7 +15,26 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, 17:00) -- sweep L62: 3 non-passes, none a VM defect
+## Right now (2026-10-16, 21:00) -- perform cache; per-class run 714 s vs Cog 1546 s
+
+- Pushed through `046bfe7c` (sweep L63 clean: 27996 tests, 27811 pass).
+  Sweep L64 runs on `e4c7e238`.
+- Since L63: `02087199` machine-code perform: cache (perform: #size 32
+  -> 15 ms, Cog 14), `a642af4f` quick methods answer from it (collect:
+  #accessor 2x faster), `e4c7e238` primitive 197 callable natively
+  (exception signal + return -6.6% instructions), `41f1738a` MethodMap
+  hash folds the high half (lexicon -0.5%).
+- Per-class revalidation of the 93 package images (pc3, build
+  `046bfe7c`): ours 714 s, Cog 1546 s.  Pass-count differences: pharo-cig
+  (package bug), StSpotterModelTest and StTranscriptPresenterTest (ours
+  better), SSWReStoreProxyNonForwardingTest 22/31 in package order (31/31
+  alone and after all 69 classes before it in one eval; a rerun of the
+  package is in progress).
+- Micro set vs Cog (machine loaded): faster on loops, streams, String =,
+  copies; perform: of a primitive 4.6x, exceptions 2.1x, the rest within
+  1.5x.
+
+## Earlier (2026-10-16, 17:00) -- sweep L62: 3 non-passes, none a VM defect
 
 - Pushed through `49ce55e5`.  Sweep L62 (image sunit8, runner
   `1bbfc99`): 27996 tests, 27811 pass.  Left: SpAthensAdapterTest (UI
