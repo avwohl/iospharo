@@ -2117,6 +2117,18 @@ static inline void emitLoadReceiver_x86(asmjit::x86::Assembler& a, asmjit::x86::
     if (x86PinRegs()) a.mov(dst, asmjit::x86::r13);
     else a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_RECEIVER));
 }
+// The register that holds the temp base (receiver): r12 (r13), or
+// `scratch` loaded from the state.
+static inline asmjit::x86::Gp x86TbReg(asmjit::x86::Assembler& a, asmjit::x86::Gp scratch) {
+    if (x86PinRegs()) return asmjit::x86::r12;
+    emitLoadTempBase_x86(a, scratch);
+    return scratch;
+}
+static inline asmjit::x86::Gp x86RcvrReg(asmjit::x86::Assembler& a, asmjit::x86::Gp scratch) {
+    if (x86PinRegs()) return asmjit::x86::r13;
+    emitLoadReceiver_x86(a, scratch);
+    return scratch;
+}
 
 // ===== C-helper call ABI: Win64 vs System V AMD64 =====
 // The JIT pins the VM state pointer in RDI and the Smalltalk sp in RBX (see
@@ -4380,8 +4392,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
         int n = op & 0x0F;
-        emitLoadReceiver_x86(a, rax);
-        a.mov(rax, ptr(rax, OBJ_SLOT_0 + n * 8));
+        a.mov(rax, ptr(x86RcvrReg(a, rax), OBJ_SLOT_0 + n * 8));
         emitPushReg(a, rax);
         return true;
     }
@@ -4406,15 +4417,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // pushTemp N: push tempBase[N].
     if (op >= 0x40 && op <= 0x4B) {
         int n = op - 0x40;
-        emitLoadTempBase_x86(a, rax);
-        a.mov(rax, ptr(rax, n * 8));
+        a.mov(rax, ptr(x86TbReg(a, rax), n * 8));
         emitPushReg(a, rax);
         return true;
     }
     // pushReceiver: push state.receiver.
     if (op == SistaV1::PushReceiver) {
-        emitLoadReceiver_x86(a, rax);
-        emitPushReg(a, rax);
+        emitPushReg(a, x86RcvrReg(a, rax));
         return true;
     }
     // Dup: read sp[-1], push it (stack [..., v] → [..., v, v]).
@@ -4478,8 +4487,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         if (!GET_DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)) {
             a.sub(X86_SP_REG, 8);
             a.mov(rax, ptr(X86_SP_REG));
-            emitLoadTempBase_x86(a, rdx);
-            a.mov(ptr(rdx, n * 8), rax);
+            a.mov(ptr(x86TbReg(a, rdx), n * 8), rax);
             return true;
         }
 #endif
