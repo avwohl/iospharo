@@ -48,3 +48,42 @@ Each phase has a binary done condition.  The knob is `PHARO_X86_MCF`
    sweep is clean.
 4. The arm64 speed work (primitive stubs, block stubs, lazy view) one
    piece at a time, each measured on lexicon.
+
+## Status (2026-10-17)
+
+Phases 1 and 2 are done, and most of the arm64 phase 2b/2c/3b work is
+ported.  The mode is still opt-in (`PHARO_X86_MCF=1`).
+
+- Phase 1 (`3d23b3a4`): MachineCodeFrames.cpp runs on x86; `mcfMode()`
+  gates the shared C++ paths.
+- Phase 2 (`7a207146`): native call at an IC hit (`emitMcfCall_x86`) and
+  native return (`emitMcfReturn_x86`).  Every x86 record is a full one
+  (`recFull` 1), the shape a C++ `pushFrame` writes.
+- `85461839`: six-entry IC probe, inline `==` and `~~`, primitive targets
+  through `pharo_mcf_prim`, constant-return methods at the call site.
+- `dd9dcc7e`: block frames, native calls from blocks, `value`/`value:`
+  block calls (`emitMcfBlockCall_x86`), unprefixed `ExtSend` sites; an
+  exit at an arithmetic special send runs the primitive in `mcfRun`
+  (both arches).
+
+Measurements, x86 under Rosetta:
+
+    benchmark            interpreter  old x86 JIT  x86 MCF  Cog
+    30 zzFib (ms)            121          122         28      5
+    3M sends (ms)            151          200         33      6
+    lexicon (s)              98.8        117.5       ~66    11.9
+
+Micro set (ms; old x86 JIT, x86 MCF, Cog): doBlock 2550, 657, 129;
+fib 37, 8, 2; isKindOf 2308, 318, 77; dictAt 3653, 2177, 308.
+
+Sweep X1 (x86, the mode on, `85461839`): 2042 classes.  All 274 extra
+non-passes were Athens/Roassal tests that could not load Cairo; the cause
+was the FFI library search, fixed in `dd9dcc7e`.
+
+Next, from the exit census on lexicon:
+
+- megamorphic sites (all six entries full): probe the mega cache;
+- `=` with Character operands inline;
+- extended receiver stores (`ExtStoreRecv`, bytecode 243) emitted;
+- block creation (`PushFullBlock`) without an exit;
+- then the arm64 trims (lazy view, pinned registers, shared stubs).
