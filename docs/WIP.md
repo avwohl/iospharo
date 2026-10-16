@@ -38,6 +38,19 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
   result as UTF-8 (`e9f2fd0d`).
 - Not done: `thisContext` in Exception>>signal materializes every frame
   (13% of a signal); Cog marries only the top frame.
+- Later the same day: LocalePlugin and FilePlugin primitives registered
+  under the image's names; reverse DNS lookup and the SocketPlugin
+  address-info API (IPv6 connect, bind, accept) added in Cog's layout;
+  exit without fixed sleeps (an eval of 1: 1.33 s to 0.34 s, Cog 1.0);
+  inline allocation fills two slots per step; full GC skips pointers below
+  the first mover (42 to 37 ms, Cog 23 under Rosetta).
+- FreeTypeCacheTest testGlyphAccessIsThreadSafe: 5 of 6 alone fail on L73,
+  3 of 6 on L74 and L75, 0 of 12 on L76.  The test races its own
+  renderers by design; faster code (L76 compiles faster) leaves fewer
+  preemption windows.  Treat it as timing, not fixed.
+- TraitFileOutTest fails in every full sweep since L73 and passes in any
+  shorter run: an IdentitySet-order dependency in the image
+  (docs/image_issues.md).
 
 ## Earlier (2026-10-17, 08:00) -- sweeps L67-L69 clean, exception returns at Cog speed
 
