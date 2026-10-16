@@ -15,7 +15,22 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16 by the machine clock) -- x86 at 2.3x Cog
+## Right now (2026-10-16, late) -- x86 at about 2x Cog
+
+- x86 since the last entry: registers are the truth (state copies at
+  exits and C calls), an x86 simStack (deferred pushes, register
+  operands for + - comparisons == ~~ and conditional jumps), the failed
+  primitive body call, the perform: cache, no key-0 test.  Lexicon 451
+  billion instructions; the 2e7 loop 20 ms (Cog 32 ms); Famix
+  testMediumSizeSources 14.6 s (it passes now, limit 15 s).  Per call
+  (zzFib, translated instructions): about 165 against Cog's 75.
+- arm64: primitive 18 (@) is callable; the block stub tests the
+  block-home memo inline.
+- Sweeps X10, X11, X12 (x86): 27810-27811 of 27996, the only extra a
+  LinkInstallerTest or TraitTestCase timeout under load.  Running: the
+  arm64 sweep L82, then x86 X13 and the x86 package run pc6; push after.
+
+## Earlier (2026-10-16) -- x86 at 2.3x Cog
 
 - The x86 call path has the arm64 trims: compact records, no closure or
   active context in records, r12/r13/r14 pinned (tempBase, receiver,
