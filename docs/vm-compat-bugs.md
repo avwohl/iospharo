@@ -10,8 +10,9 @@ and handed the CPU down from the TIMER process.  The timer process stayed
 runnable but did not run while priority 40-79 code ran.  The test's main
 process then found `timingSemaphore` not waited on, so its
 `waitTimeoutMilliseconds:` Delay was "not being waited on" and answered
-"expired" at once.  The assertion on `p2stopped` then failed.  Any
-printing hid the race; an in-memory event ring (`PHARO_EVENT_RING`,
+"expired" at once.  The assertion on `p2stopped` then failed.
+
+Any printing hid the race.  An in-memory event ring (`PHARO_EVENT_RING`,
 diag builds) caught it.  The primitive now returns when event handling
 switched away from its caller.  After the fix, 0 of 12 runs fail (6 of
 12 before).
