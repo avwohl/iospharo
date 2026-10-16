@@ -22857,10 +22857,14 @@ void Interpreter::transferTo(Oop newProcess) {
     if (xferLog < 50 || GET_DEBUG_BOOL(PHARO_XFER_TRACE)) {
         int oldPri = safeProcessPriority(oldProcess);
         int newPri = safeProcessPriority(newProcess);
-        fprintf(stderr, "[XFER-%d] old=0x%llx pri=%d -> new=0x%llx pri=%d\n",
+        Dl_info xdi{};
+        void* xra = __builtin_return_address(0);
+        dladdr(xra, &xdi);
+        fprintf(stderr, "[XFER-%d] old=0x%llx pri=%d -> new=0x%llx pri=%d from %s\n",
                 xferLog,
                 (unsigned long long)oldProcess.rawBits(), oldPri,
-                (unsigned long long)newProcess.rawBits(), newPri);
+                (unsigned long long)newProcess.rawBits(), newPri,
+                xdi.dli_sname ? xdi.dli_sname : "?");
     }
 
     // Validate newProcess

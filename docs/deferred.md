@@ -66,6 +66,17 @@ The history lives in `docs/history/`; nothing was deleted.
     shifts).  Only methods with 8193+ literals or very long jumps emit
     chained prefixes.
 
+- **SpAthensAdapterTest>>testResizeMakesCanvasResize fails on ours only
+  (2026-10-16).**  The test resizes a window, then
+  `waitUntilUIRedrawed` defers a semaphore signal to the Morphic cycle and
+  waits.  On ours the test process often resumes after the signal but
+  before the draw, so the canvas extent it reads is one redraw old (Cog:
+  18 of 18; ours: 17 of 18, every run).  Signal semantics and
+  `processPreemptionYields` match Cog (true on both).  A switch trace
+  (`PHARO_XFER_TRACE=1` now names the C++ caller) shows the UI process
+  calling `Processor yield` between the signal and the draw in some
+  cycles.  The cause of the different interleaving is not found yet.
+
 ## Tooling limitations worth knowing
 
 - **`PHARO_DET_SCHED` starves cross-thread wakes**, so it is unusable on FFI /
