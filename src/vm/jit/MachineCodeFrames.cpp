@@ -1279,9 +1279,10 @@ bool Interpreter::mcfActivate(Oop method) {
         const bool markerPrim = (primIdx == 198 || primIdx == 199)
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_MARKER_PRIM_CALL);
 #if defined(__x86_64__) || defined(_M_X64)
-        // x86 port phase 2: the native call jumps to codeStart, which runs
-        // no primitive protocol yet; only methods without one.
-        const bool primOk = !hasPrim;
+        // x86: the native call jumps to codeStart, which runs no primitive
+        // protocol; methods without a primitive, and the marker primitives
+        // (198, 199), whose x86 code starts with the body.
+        const bool primOk = !hasPrim || markerPrim;
 #else
         const bool primOk = !hasPrim || markerPrim || mcfPrologueIsPrimitive(method);
 #endif

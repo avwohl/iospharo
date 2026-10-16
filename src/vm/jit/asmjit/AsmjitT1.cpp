@@ -2183,9 +2183,18 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.test(r9, r9);
     a.jz(fall);
     a.mov(r10, ptr(rdi, OFF_MCF_MATCTX_PTR));
-    a.mov(rdx, ptr(r10));                        // currentFrameMaterializedCtx_
-    a.cmp(rdx, ptr(rdi, OFF_MCF_NIL));
-    a.jne(fall);                                 // a context to widow
+    // A frame with a context (it made a block) widows it at the commit
+    // below, as the arm64 return does, unless a widow diagnostic wants the
+    // interpreter's widowReturningContext.
+    const bool widowInline = !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_WIDOW)
+        && !GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK)
+        && !GET_DEBUG_BOOL(PHARO_LIVE_WIDOW_CHECK)
+        && !GET_DEBUG_BOOL(PHARO_RESUME_WIDOW_TRACE);
+    if (!widowInline) {
+        a.mov(rdx, ptr(r10));                    // currentFrameMaterializedCtx_
+        a.cmp(rdx, ptr(rdi, OFF_MCF_NIL));
+        a.jne(fall);                             // a context to widow
+    }
     a.lea(r11, ptr(r9, -1));
     a.imul(rcx, r11, asmjit::Imm((int)L.size));
     a.add(rcx, ptr(rdi, OFF_MCF_FRAMES));        // &savedFrames_[depth-1]
@@ -2204,7 +2213,18 @@ static void emitMcfReturn_x86(asmjit::x86::Assembler& a) {
     a.jne(fall);
     a.cmp(qword_ptr(rcx, L.materializedRetSlot), asmjit::Imm(0));
     a.jne(fall);
-    // Commit: popFrame.
+    // Commit: popFrame.  Widow the returning frame's context (sender and
+    // pc nil, as widowReturningContext; nil needs no store barrier).
+    if (widowInline) {
+        asmjit::Label noCtx = a.new_label();
+        a.mov(r9, ptr(r10));                     // currentFrameMaterializedCtx_
+        a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
+        a.cmp(r9, rdx);
+        a.je(noCtx);
+        a.mov(ptr(r9, OBJ_SLOT_0), rdx);
+        a.mov(ptr(r9, OBJ_SLOT_0 + 8), rdx);
+        a.bind(noCtx);
+    }
     a.mov(ptr(r8), r11);                         // frameDepth_ = depth - 1
     a.mov(rdx, ptr(rcx, L.materializedContext));
     a.mov(ptr(r10), rdx);
@@ -2319,6 +2339,57 @@ static void emitMcfPushRecord_x86(asmjit::x86::Assembler& a, const asmjit::Label
     a.mov(ptr(rcx, L.mcReturn), r10);
 }
 
+static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff,
+                                 const asmjit::Label& resume);
+
+// The native call proper, from a call-cache entry: rax = the callee
+// method, r8 = its entry, r9 = its JITMethod.  Pushes the caller's record,
+// sets the callee's view, nils its temporaries and jumps to its code.
+// Branches to refuse before it changes anything but the countdown.
+static void emitMcfNativeCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff,
+                                  const asmjit::Label& resume, const asmjit::Label& refuse) {
+    using namespace asmjit::x86;
+    asmjit::Label tLoop = a.new_label(), tDone = a.new_label();
+    emitMcfPushRecord_x86(a, refuse, nArgs, ipAfterOff, resume);
+    // The callee's view.  entry.bcEndOff packs the bytecode end (bits
+    // 0-23), start (24-47) and temp count (48-55) (mcfPackBcInfo).
+    a.mov(ptr(rdi, OFF_METHOD), rax);
+    a.lea(r10, ptr(rax, 16));
+    a.mov(ptr(rdi, OFF_LITERALS), r10);
+    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
+    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
+    a.mov(r10, ptr(r8, 16));
+    a.mov(rdx, r10);
+    a.shr(rdx, asmjit::Imm(24));
+    a.and_(edx, asmjit::Imm(0xFFFFFF));
+    a.add(rdx, rax);
+    a.mov(ptr(rdi, OFF_IP), rdx);
+    a.mov(edx, r10d);
+    a.and_(edx, asmjit::Imm(0xFFFFFF));
+    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
+    a.shr(r10, asmjit::Imm(48));
+    a.and_(r10d, asmjit::Imm(0xFF));             // temp count
+    emitLoadSp_x86(a, r11);
+    a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
+    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    a.mov(rdx, ptr(rdx, -8));
+    a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+    a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
+    a.mov(ptr(rdi, OFF_CLOSURE), rdx);           // a method frame
+    a.sub(r10d, asmjit::Imm(nArgs));
+    a.jle(tDone);
+    a.bind(tLoop);
+    a.mov(ptr(r11), rdx);
+    a.add(r11, asmjit::Imm(8));
+    a.sub(r10d, asmjit::Imm(1));
+    a.jg(tLoop);
+    a.bind(tDone);
+    emitStoreSp_x86(a, r11);
+    a.lea(r10, ptr(r9, (int)sizeof(JITMethod)));
+    a.jmp(r10);
+}
+
+
 // Machine-code frames on x86, phase 2: the native call at an inline-cache
 // hit.  rsi = the IC entry (kept for the refusal), icData[1] = the callee.
 // The callee must be in the MCF call cache with a JITMethod and no
@@ -2332,7 +2403,6 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
     using namespace asmjit::x86;
     const McfFrameLayout& L = g_mcfLayout;
     asmjit::Label refuse = a.new_label(), hit = a.new_label();
-    asmjit::Label tLoop = a.new_label(), tDone = a.new_label();
     a.mov(rax, ptr(rsi, 8));                     // the callee method
     a.mov(r8, ptr(rdi, OFF_MCF_CALL_CACHE));
     a.mov(r9, rax);
@@ -2365,6 +2435,17 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
         emitStoreSp_x86(a, r11);
         a.jmp(resume);
         a.bind(notConst);
+        if ((nArgs >= 2 || nArgs == 0) && !GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCK_CALL)) {
+            // value:value: and longer (a primitive-207 method), or
+            // valueNoContextSwitch (209): call the receiver closure's block
+            // natively, as at value: sites.  rsi survives for the refusal.
+            asmjit::Label notBV = a.new_label();
+            a.cmp(r10, asmjit::Imm((int)kMcfBlockValueMethod));
+            a.jne(notBV);
+            emitMcfBlockCall_x86(a, nArgs, ipAfterOff, resume);
+            a.jmp(refuse);
+            a.bind(notBV);
+        }
         a.cmp(r10, asmjit::Imm(1024));
         a.jae(refuse);
         if (GET_DEBUG_BOOL(PHARO_MCF_NO_PRIM_CALL)) {
@@ -2405,43 +2486,7 @@ static void emitMcfCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAfterOff
     a.mov(r9, ptr(r8, 8));                       // jm
     a.test(r9, r9);
     a.jz(refuse);
-    emitMcfPushRecord_x86(a, refuse, nArgs, ipAfterOff, resume);
-    // The callee's view.  entry.bcEndOff packs the bytecode end (bits
-    // 0-23), start (24-47) and temp count (48-55) (mcfPackBcInfo).
-    a.mov(ptr(rdi, OFF_METHOD), rax);
-    a.lea(r10, ptr(rax, 16));
-    a.mov(ptr(rdi, OFF_LITERALS), r10);
-    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
-    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
-    a.mov(r10, ptr(r8, 16));
-    a.mov(rdx, r10);
-    a.shr(rdx, asmjit::Imm(24));
-    a.and_(edx, asmjit::Imm(0xFFFFFF));
-    a.add(rdx, rax);
-    a.mov(ptr(rdi, OFF_IP), rdx);
-    a.mov(edx, r10d);
-    a.and_(edx, asmjit::Imm(0xFFFFFF));
-    a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
-    a.shr(r10, asmjit::Imm(48));
-    a.and_(r10d, asmjit::Imm(0xFF));             // temp count
-    emitLoadSp_x86(a, r11);
-    a.lea(rdx, ptr(r11, -8 * nArgs));            // tempBase (first argument)
-    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
-    a.mov(rdx, ptr(rdx, -8));
-    a.mov(ptr(rdi, OFF_RECEIVER), rdx);
-    a.mov(rdx, ptr(rdi, OFF_MCF_NIL));
-    a.mov(ptr(rdi, OFF_CLOSURE), rdx);           // a method frame
-    a.sub(r10d, asmjit::Imm(nArgs));
-    a.jle(tDone);
-    a.bind(tLoop);
-    a.mov(ptr(r11), rdx);
-    a.add(r11, asmjit::Imm(8));
-    a.sub(r10d, asmjit::Imm(1));
-    a.jg(tLoop);
-    a.bind(tDone);
-    emitStoreSp_x86(a, r11);
-    a.lea(r10, ptr(r9, (int)sizeof(JITMethod)));
-    a.jmp(r10);
+    emitMcfNativeCall_x86(a, nArgs, ipAfterOff, resume, refuse);
     a.bind(refuse);
 }
 
@@ -2570,6 +2615,51 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     a.lea(r10, ptr(r9, (int)sizeof(JITMethod)));
     a.jmp(r10);
     a.bind(notBlock);
+}
+
+// Machine-code frames on x86: a send with no IC slot (an unprefixed super
+// send, or an arithmetic special send the inline code did not answer)
+// asks pharo_mcf_extsend (mcfExtSendTarget) for its target.  The helper
+// runs a primitive, a constant or trivial method itself (kMcfExtDone: the
+// result is on the stack), answers kMcfExtDeopt when a primitive pushed a
+// frame or switched process, or answers the call-cache entry of a method
+// to call natively.  nullptr, and an entry this code does not call, go to
+// noSend with the state's ip at the send.  ipOff = the send's offset from
+// the method oop; resume = the code after the send.
+static void emitMcfHelperSend_x86(asmjit::x86::Assembler& a, uint32_t desc, int nArgs,
+                                  int ipOff, int sendLen, const asmjit::Label& resume,
+                                  const asmjit::Label& noSend) {
+    using namespace asmjit::x86;
+    asmjit::Label notDone = a.new_label(), notDeopt = a.new_label();
+    a.mov(r8, ptr(rdi, OFF_METHOD));
+    a.add(r8, asmjit::Imm(ipOff));
+    a.mov(ptr(rdi, OFF_IP), r8);                 // the send (the helper's contract)
+    emitSyncSpToState_x86(a);
+    a.push(rdi);                                 // rsp 16-aligned
+    a.mov(kCArg1, asmjit::Imm(desc));
+    emitCArg0State_x86(a);
+    emitCallCHelper_x86(a, (const void*)&pharo_mcf_extsend);
+    a.pop(rdi);
+    a.cmp(rax, asmjit::Imm(1));                  // kMcfExtDone
+    a.jne(notDone);
+    emitReloadSpFromState_x86(a);
+    a.jmp(resume);
+    a.bind(notDone);
+    a.cmp(rax, asmjit::Imm(2));                  // kMcfExtDeopt
+    a.jne(notDeopt);
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm((int)ExitDeopt));
+    a.ret();
+    a.bind(notDeopt);
+    a.test(rax, rax);
+    a.jz(noSend);
+    a.cmp(qword_ptr(rax, 24), asmjit::Imm(0));   // a tiny shape: not here
+    a.jne(noSend);
+    a.mov(r8, rax);                              // the entry
+    a.mov(r9, ptr(r8, 8));                       // its JM
+    a.test(r9, r9);
+    a.jz(noSend);
+    a.mov(rax, ptr(r8));                         // the method
+    emitMcfNativeCall_x86(a, nArgs, ipOff + sendLen, resume, noSend);
 }
 
 static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
@@ -3547,6 +3637,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             emitStoreSp_x86(a, rax);
             a.jmp(end);
             a.bind(notChar);
+        }
+        // Machine-code frames: send it (the operands are not SmallIntegers:
+        // Symbol =, a LargeInteger, a Float the inline code refused) through
+        // pharo_mcf_extsend instead of leaving machine code.  Every special
+        // arithmetic selector takes one argument.
+        if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_HELPER_SEND)) {
+            asmjit::Label noSend = a.new_label();
+            emitMcfHelperSend_x86(a, (uint32_t)(op - SistaV1::ArithBase) | (1u << 8) | (1u << 17),
+                                  1, bcOffsetFromMethObj, 1, end, noSend);
+            a.bind(noSend);
         }
         // r8 = state.method.rawBits + bcOffsetFromMethObj
         // (state.method is GC-tracked Oop; this is the post-GC-safe
@@ -14787,6 +14887,36 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // continue.  The exit ran the rest of the method interpreted,
                 // so its sends had no return memo either (lexicon: each block
                 // creation cost an exit and a chain of memo-less returns).
+                // PushArray the same way (pharo_mcf_array_create; 0 = the
+                // allocation failed: the generic exit below).
+                if (op == SistaV1::PushArray && !wasExtPrefix && ::pharo::mcfMode()
+                        && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_ARRAY)
+                        && (size_t)(i + 1) < bcRealLen) {
+                    asmjit::Label arrDone = a.new_label();
+                    asmjit::Label arrFail = a.new_label();
+                    const uint32_t desc = bcReal[i + 1];
+                    emitSyncSpToState_x86(a);
+                    a.push(rdi);                             // rsp 16-aligned
+                    a.mov(kCArg1, asmjit::Imm(desc));
+                    emitCArg0State_x86(a);
+                    emitCallCHelper_x86(a, (const void*)&pharo_mcf_array_create);
+                    a.pop(rdi);
+                    a.test(rax, rax);
+                    a.jz(arrFail);
+                    emitReloadSpFromState_x86(a);
+                    a.jmp(arrDone);
+                    a.bind(arrFail);
+                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.mov(ptr(rdi, OFF_IP), r8);
+                    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
+                    emitSyncSpToState_x86(a); a.ret();
+                    a.bind(arrDone);
+                    if ((size_t)(globalIdx + 1) < bcLabels.size())
+                        a.bind(bcLabels[globalIdx + 1]);
+                    i += 1;
+                    continue;
+                }
                 if (op == SistaV1::PushFullBlock && !wasExtPrefix && ::pharo::mcfMode()
                         && !GET_DEBUG_BOOL(PHARO_MCF_NO_INLINE_BLOCK_CREATE)
                         && (size_t)(i + 2) < bcRealLen) {
@@ -14817,6 +14947,19 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     // mcfRun records the return memo for the bytecode after it.
                     const bool superExit = op == SistaV1::ExtSuperSend && !wasExtPrefix
                         && ::pharo::mcfMode();
+                    if (superExit && (size_t)(i + 1) < bcRealLen
+                            && (size_t)(globalIdx + 2) < bcLabels.size()
+                            && !GET_DEBUG_BOOL(PHARO_MCF_NO_HELPER_SEND)) {
+                        // A native super send: pharo_mcf_extsend looks it up
+                        // (desc: literal index | nArgs << 8 | super << 16).
+                        const uint8_t d = bcReal[i + 1];
+                        const int sNArgs = d & 0x07;
+                        asmjit::Label noSend = a.new_label();
+                        emitMcfHelperSend_x86(a, (uint32_t)(d >> 3) | ((uint32_t)sNArgs << 8) | (1u << 16),
+                                              sNArgs, bcOffsetBase + globalIdx, 2,
+                                              bcLabels[globalIdx + 2], noSend);
+                        a.bind(noSend);
+                    }
                     loopBail(GET_DEBUG_BOOL(PHARO_T1_EXTBAIL_SEND) || superExit
                              ? EXIT_SEND : EXIT_ARITH_OVERFLOW);
                     for (int k = 1; k < len; k++) {

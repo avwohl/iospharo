@@ -187,6 +187,7 @@ DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_PRIM)          // MCF bisect: an exit at an arit
 DEBUG_BOOL(PHARO_MCF_NO_EXT_RECV_STORE)        // x86 MCF bisect: ExtStoreRecv / ExtPopStoreRecv bail to the interpreter as before
 DEBUG_BOOL(PHARO_MCF_NO_CHAR_EQ)               // x86 MCF bisect: `=` with a Character receiver exits as before
 DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_MEMO)          // MCF bisect: an arithmetic special-send exit to a non-primitive target records no return memo
+DEBUG_BOOL(PHARO_MCF_NO_HELPER_SEND)           // x86 MCF bisect: super sends and refused arithmetic sends exit instead of asking pharo_mcf_extsend
 DEBUG_BOOL(PHARO_MCF_ONE_ENTRY_PROBE)          // x86 MCF bisect: probe only IC entry 0, as before the six-entry probe
 DEBUG_BOOL(PHARO_MCF_NO_CALL)                  // MCF bisect: emit no native call at IC hits (sends exit as in phase 1)
 DEBUG_BOOL(PHARO_MCF_NO_RET)                   // MCF bisect: emit no native return (returns exit to mcfRun)
