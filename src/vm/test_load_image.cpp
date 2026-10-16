@@ -1017,11 +1017,14 @@ int main(int argc, char* argv[]) {
             if (!expr.empty()) expr += ' ';
             expr += imageArgs[i];
         }
-        // Escape single quotes for Smalltalk string literal (double them)
+        // Escape single quotes for the Smalltalk string literal (double
+        // them), and bangs for the chunk format StartupPreferencesLoader
+        // reads startup.st in: a lone ! ends the chunk, so `'a!b' size` was
+        // cut at the bang and failed as an unmatched string literal.
         std::string escaped;
         for (char c : expr) {
             escaped += c;
-            if (c == '\'') escaped += '\'';
+            if (c == '\'' || c == '!') escaped += c;
         }
         // Write startup.st into the working directory — that is where
         // StartupPreferencesHandler>>lookInImageFolder looks for it
@@ -1079,8 +1082,10 @@ int main(int argc, char* argv[]) {
             f
               << "[\n"
               << "  result := OpalCompiler new evaluate: '" << escaped << "'.\n"
-              << "  Stdio stdout nextPutAll: result printString; lf; flush.\n"
-              << "  Stdio stderr nextPutAll: 'EVAL-RESULT=', result printString; lf; flush.\n"
+              << "  Stdio stdout nextPutAll: result printString utf8Encoded asString; lf; flush.\n"
+              // UTF-8, as Cog's eval prints: nextPutAll: of a WideString
+              // wrote each character as one byte.
+              << "  Stdio stderr nextPutAll: ('EVAL-RESULT=', result printString) utf8Encoded asString; lf; flush.\n"
               << "] on: Error do: [:e |\n"
               << "  Stdio stderr nextPutAll: 'Error: ', e printString; lf; flush].\n"
               << "Smalltalk exitSuccess.\n";
