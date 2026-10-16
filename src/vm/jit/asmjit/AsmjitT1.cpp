@@ -2364,7 +2364,7 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     // arities (170 is Character class>>value: and Integer>>asCharacter), so
     // every path checks the one it handles.
     asmjit::Label p170v = a.new_label(), p111 = a.new_label(), p75 = a.new_label();
-    asmjit::Label pQuick = a.new_label(), p70 = a.new_label();
+    asmjit::Label pQuick = a.new_label(), p70 = a.new_label(), p71 = a.new_label();
     a.push(r8);
     a.push(r10);
     auto dispatch = [&](int prim, int nArgs, const asmjit::Label& path) {
@@ -2387,6 +2387,8 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
     dispatch(75, 0, p75);
     if (g_jitEdenFreeCell && g_jitSurvivorStartCell && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW))
         dispatch(70, 0, p70);
+    if (g_jitEdenFreeCell && g_jitSurvivorStartCell && !GET_DEBUG_BOOL(PHARO_MCF_NO_STUB_NEW))
+        dispatch(71, 1, p71);
     {
         // Quick primitives 256-519 (^self, constants, a field), any arity.
         asmjit::Label notQuick = a.new_label();
@@ -2775,6 +2777,105 @@ static void emitX86PrimStub(asmjit::x86::Assembler& a) {
         a.mov(ptr(rbx, -8), rdx);
         a.jmp(done);
     }
+    // 71 basicNew: of a class with no fixed fields: pointers (format 2,
+    // nil-filled) or bytes (format 16, zero-filled), up to 254 slots (no
+    // overflow header).  Anything else takes the C call.
+    {
+        asmjit::Label bytes = a.new_label(), haveSlots = a.new_label();
+        asmjit::Label szOk = a.new_label(), fill = a.new_label(), filled = a.new_label();
+        a.bind(p71);
+        a.mov(rcx, ptr(rbx, -16));               // the class
+        a.test(cl, asmjit::Imm(7));
+        a.jnz(fail);
+        a.movzx(r9d, byte_ptr(rcx, 7));
+        a.cmp(r9d, asmjit::Imm(3));
+        a.jb(fail);
+        a.mov(r8, ptr(rcx, 8 + 2 * 8));          // the format word
+        a.mov(r9d, r8d);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);
+        a.sar(r8, asmjit::Imm(3));
+        a.test(r8d, asmjit::Imm(0xFFFF));
+        a.jnz(fail);                             // fixed fields
+        a.shr(r8, asmjit::Imm(16));
+        a.and_(r8d, asmjit::Imm(0x1F));          // r8 = the instance spec
+        a.mov(rdx, ptr(rbx, -8));                // the size
+        a.mov(r9d, edx);
+        a.and_(r9d, asmjit::Imm(7));
+        a.cmp(r9d, asmjit::Imm(1));
+        a.jne(fail);
+        a.sar(rdx, asmjit::Imm(3));
+        a.cmp(r8d, asmjit::Imm(2));
+        a.jne(bytes);
+        a.cmp(rdx, asmjit::Imm(254));
+        a.ja(fail);                              // negative or large
+        a.mov(r10, rdx);                         // slots
+        a.mov(r11d, asmjit::Imm(2 << 24));
+        a.jmp(haveSlots);
+        a.bind(bytes);
+        a.cmp(r8d, asmjit::Imm(16));
+        a.jne(fail);
+        a.cmp(rdx, asmjit::Imm(254 * 8));
+        a.ja(fail);
+        a.lea(r10, ptr(rdx, 7));
+        a.shr(r10, asmjit::Imm(3));              // slots
+        a.mov(r11, r10);
+        a.shl(r11, asmjit::Imm(3));
+        a.sub(r11, rdx);                         // unused bytes 0..7
+        a.add(r11, asmjit::Imm(16));
+        a.shl(r11, asmjit::Imm(24));             // format 16 + unused
+        a.bind(haveSlots);
+        // r10 = slots, r11 = format << 24.
+        a.mov(r9, ptr(rcx));
+        a.shr(r9, asmjit::Imm(32));
+        a.and_(r9d, asmjit::Imm(0x3FFFFF));     // the class index
+        a.jz(fail);
+        a.mov(rdx, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+        a.mov(rdx, ptr(rdx));
+        a.cmp(ptr(rdx, r9, 3), rcx);
+        a.jne(fail);
+        a.or_(r11, r9);
+        a.mov(r9, r10);
+        a.shl(r9, asmjit::Imm(56));
+        a.or_(r11, r9);                          // r11 = the header
+        a.mov(r9, r10);
+        a.shl(r9, asmjit::Imm(3));
+        a.add(r9, asmjit::Imm(8));
+        a.cmp(r9, asmjit::Imm(16));
+        a.jae(szOk);
+        a.mov(r9d, asmjit::Imm(16));
+        a.bind(szOk);
+        a.mov(rcx, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+        a.mov(rdx, ptr(rcx));                    // the new object
+        a.add(r9, rdx);                          // the new eden free pointer
+        a.mov(rcx, asmjit::Imm((uint64_t)g_jitSurvivorStartCell));
+        a.cmp(r9, ptr(rcx));
+        a.ja(fail);
+        a.mov(ptr(rdx), r11);                    // header, before the commit
+        a.xor_(ecx, ecx);                        // bytes: zero
+        a.cmp(r8d, asmjit::Imm(2));
+        a.jne(fill);
+        a.mov(rcx, ptr(rdi, OFF_MCF_NIL));       // pointers: nil
+        a.bind(fill);
+        a.lea(r11, ptr(rdx, 8));
+        {
+            asmjit::Label loop = a.new_label();
+            a.bind(loop);
+            a.test(r10, r10);
+            a.jz(filled);
+            a.mov(ptr(r11), rcx);
+            a.add(r11, asmjit::Imm(8));
+            a.sub(r10, asmjit::Imm(1));
+            a.jmp(loop);
+        }
+        a.bind(filled);
+        a.mov(rcx, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+        a.mov(ptr(rcx), r9);                     // commit edenFree_
+        a.mov(ptr(rbx, -16), rdx);
+        a.sub(rbx, asmjit::Imm(8));
+        a.jmp(done);
+    }
     // 75 identityHash: a heap object's assigned hash (0: the C call assigns
     // one), a SmallInteger's or Character's low 22 bits.
     {
@@ -2924,19 +3025,25 @@ static uint64_t buildX86StubPage(void (*emit)(asmjit::x86::Assembler&)) {
         return 0;
     }
     if (code.flatten() != kErrorOk) return 0;
+    // Up to 16 KB (the primitive stub grows with each primitive it
+    // answers); a stub that does not fit is not installed and says so.
+    constexpr size_t kMax = 16384;
     size_t sz = code.code_size();
-    if (sz == 0 || sz > 4096) return 0;
-    uint8_t tmp[4096];
+    if (sz == 0 || sz > kMax) {
+        fprintf(stderr, "[asmjit-t1] x86 MCF stub page not installed: %zu bytes\n", sz);
+        return 0;
+    }
+    static uint8_t tmp[kMax];
     std::memset(tmp, 0, sizeof(tmp));
     if (code.copy_flattened_data(tmp, sizeof(tmp),
             CopySectionFlags::kPadSectionBuffer) != kErrorOk)
         return 0;
-    void* page = pharo::jit::allocateCodeMemory(4096);
+    void* page = pharo::jit::allocateCodeMemory(kMax);
     if (!page) return 0;
-    pharo::jit::makeWritable(page, 4096);
+    pharo::jit::makeWritable(page, kMax);
     std::memcpy(page, tmp, sz);
     pharo::jit::flushICache(page, sz);
-    pharo::jit::makeExecutable(page, 4096);
+    pharo::jit::makeExecutable(page, kMax);
     return reinterpret_cast<uint64_t>(page);
 }
 
