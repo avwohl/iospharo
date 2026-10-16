@@ -15,7 +15,24 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, 21:00) -- perform cache; per-class run 714 s vs Cog 1546 s
+## Right now (2026-10-17, 01:00) -- sweeps L63-L66 clean; perform cache complete
+
+- Pushed through `411004ba`.  Sweeps L63, L64, L65, L66 clean (L65:
+  27812 of 27996 pass; the non-passes are SpAthensAdapterTest's UI race,
+  ZnClientTest's live Google query, and known timing flakes).  Sweep L67
+  runs on `f4ecac2f`.
+- perform: cache: native calls, quick methods, primitives
+  (`02087199`, `a642af4f`, `3578d86a`); `f4ecac2f` clears it in
+  flushJITCaches (the selective flushes after a method change).
+  docs/mc-frames-design.md, "Speed work, 2026-10-16".
+- The ReStore package rerun passes SSWReStoreProxyNonForwardingTest 31/31
+  (the pc3 22/31 was a one-off; its Preempted tests depend on process
+  timing).  The x86_64 tree builds and passes this session's semantic
+  checks under Rosetta.
+- Measured, recorded in docs/deferred.md: FFI callbacks 85 us vs Cog 9
+  (step() loop, process switches, C++ unwind); full GC 1.5x Cog (marking).
+
+## Earlier (2026-10-16, 21:00) -- perform cache; per-class run 714 s vs Cog 1546 s
 
 - Pushed through `046bfe7c` (sweep L63 clean: 27996 tests, 27811 pass).
   Sweep L64 runs on `e4c7e238`.
