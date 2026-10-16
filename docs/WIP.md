@@ -51,6 +51,18 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 - TraitFileOutTest fails in every full sweep since L73 and passes in any
   shorter run: an IdentitySet-order dependency in the image
   (docs/image_issues.md).
+- Full GC 42 to 32 ms (Cog 23 under Rosetta): the compaction update skips
+  pointers below the first mover, the mark loop filters inline and marks
+  plain objects without a call, and the clear walk is folded into the
+  bitmap walk (30 GCs: 14.5 to 11.3 billion instructions).  The skip
+  exposed purgeDeadCacheRoots leaving the code zone writable (SIGBUS after
+  ~100 GCs), fixed in `815e03a9`.  Sweeps L75-L77 found nothing new; L78
+  runs on `fd13c3b7`.
+- Micro set vs Cog now (machine loaded): 15 of 24 at or under 1.1x.  Left
+  over 1.2x: perform: of a primitive 2.1x, detect: 1.5x, exceptions 1.4x,
+  isLetter 1.3x.  The last three come down to context creation and
+  materialization (a married context is nil-filled and gets its temps
+  copied; `thisContext` materializes every frame).
 
 ## Earlier (2026-10-17, 08:00) -- sweeps L67-L69 clean, exception returns at Cog speed
 
