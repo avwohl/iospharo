@@ -90,6 +90,18 @@ inline bool mcfEnabled() {
 #endif
 }
 
+// Machine-code frames on either arch: arm64 (mcfEnabled) or the x86_64
+// port (PHARO_X86_MCF, docs/x86-mcf-port.md).  The shared C++ paths
+// (MachineCodeFrames.cpp, activation, return, compile policy) test this;
+// mcfEnabled() stays the test for the arm64 emitter and stubs.
+inline bool mcfMode() {
+#if defined(__x86_64__) || defined(_M_X64)
+    return GET_DEBUG_BOOL(PHARO_X86_MCF) && !GET_DEBUG_BOOL(PHARO_NO_X86_JIT);
+#else
+    return mcfEnabled();
+#endif
+}
+
 // Native calls only read the checkpoint countdown (no load, subtract, store
 // chain per call: fibA 33 -> 25 ms).  Whatever needs a checkpoint sets the
 // countdown to 0 instead: the heartbeat tick, an external signal, a full

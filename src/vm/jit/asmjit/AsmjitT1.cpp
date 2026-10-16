@@ -16074,7 +16074,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // correctness-neutral A/B, ~20% faster recursion (docs/sunit-3way-comparison.md,
     // docs/x86-inline-j2j-design.md).  Opt out with PHARO_T1_X86_NO_INLINE_J2J.
     // The fast path still only FIRES for self-recursive sends (cached==OFF_METHOD).
-    if (!GET_DEBUG_BOOL(PHARO_T1_X86_NO_INLINE_J2J) && !g_emitIsBlock) {
+    // Machine-code frames (PHARO_X86_MCF): no inline J2J, as on arm64; a
+    // send leaves machine code with a return memo instead.
+    if (!GET_DEBUG_BOOL(PHARO_T1_X86_NO_INLINE_J2J) && !g_emitIsBlock && !::pharo::mcfMode()) {
         // PHARO_T1_X86_J2J_SEL set -> restrict to that selector (debug/bisect).
         // A trailing '*' means PREFIX match (e.g. "xm*" scopes inline-J2J to xm1
         // AND xm2 so a clean cross-method pair can be value-tested without

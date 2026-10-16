@@ -9246,7 +9246,7 @@ void Interpreter::returnValue(Oop value) {
             }
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_JIT_RESUME_AFTER_RETURN), 0)) {
                 // bisect: skip JIT re-entry to see if it's the trigger
-            } else if (::pharo::mcfEnabled()) {
+            } else if (::pharo::mcfMode()) {
                 mcfResumeAfterReturn(&savedFrames_[frameDepth_]);
             } else {
                 tryJITResumeInCaller();
@@ -9798,7 +9798,7 @@ void Interpreter::returnValue(Oop value) {
                         // Otherwise every caller below a non-local return
                         // through ensure: finished interpreted -- 16% of
                         // lexicon, all of it after Symbol class>>intern:.
-                        if (::pharo::mcfEnabled() && !GET_DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)) {
+                        if (::pharo::mcfMode() && !GET_DEBUG_BOOL(PHARO_MCF_NO_CTX_RESUME)) {
                             mcfReturnedIntoContext_ = true;
                             mcfResumeAfterReturn(nullptr);
                         }
@@ -15307,7 +15307,7 @@ past_sista_block:
     // (testNoDeadWeakSubscriptions) because nothing else wakes P50 on
     // JIT-resident runs (mourn-queue starvation, the 2026-07-03 fix).
     bool finArmedAtEntry = finalizationCheckAfterGC_;
-    if (::pharo::mcfEnabled()) {
+    if (::pharo::mcfMode()) {
         if (mcfActivate(method)) {
             if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
                 finalizationCheckAfterGC_ = false;
@@ -26420,9 +26420,7 @@ void Interpreter::purgeDeadCacheRoots() {
 void Interpreter::initializeJIT() {
     if (jitInitialized_) return;
     jitInitialized_ = true;
-#if defined(__aarch64__) || defined(__arm64__)
     mcfInit();
-#endif
 
     // PHARO_NO_JIT=0 is NOT treated as disable — preserves historical
     // behavior where "=0" meant "off" conceptually.  All other sites
@@ -26830,7 +26828,7 @@ void Interpreter::tryOSRAtBackwardJump() {
     if (inJITResume_) return;  // Already inside JIT resume loop
     // A checkpoint pending: stay interpreted to the next back jump, an
     // interrupt point (see mcfActivate).
-    if (checkCountdown_ <= 1 && ::pharo::mcfEnabled()
+    if (checkCountdown_ <= 1 && ::pharo::mcfMode()
             && !GET_DEBUG_BOOL(PHARO_SENDS_ARE_INTERRUPT_POINTS)) return;
 
     // Sampling: only check every 64 backward jumps to amortize overhead.
@@ -26882,7 +26880,7 @@ void Interpreter::tryOSRAtBackwardJump() {
 
     // Method is compiled — enter JIT at current IP (OSR)
     jitOSREntries_++;
-    if (::pharo::mcfEnabled()) mcfResumeAfterReturn(nullptr);
+    if (::pharo::mcfMode()) mcfResumeAfterReturn(nullptr);
     else tryJITResumeInCaller();
 }
 

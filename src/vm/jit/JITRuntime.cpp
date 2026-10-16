@@ -3978,7 +3978,7 @@ static bool compiledCodeHasLoop(Oop code) {
 
 bool JITRuntime::entryCountMatters(Oop compiledMethod) {
     return GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL) || g_debug.sistaDispatch
-        || ::pharo::mcfEnabled() || compiledCodeHasLoop(compiledMethod);
+        || ::pharo::mcfMode() || compiledCodeHasLoop(compiledMethod);
 }
 
 void JITRuntime::noteMethodEntrySlow(Oop compiledMethod) {
@@ -4220,7 +4220,7 @@ probe_again:
                 // Methods called FROM emitted code still compile through the
                 // eager-compile and block-value paths.
                 // PHARO_T1_COMPILE_ALL restores compiling every hot method.
-                if (!GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL) && !::pharo::mcfEnabled()
+                if (!GET_DEBUG_BOOL(PHARO_T1_COMPILE_ALL) && !::pharo::mcfMode()
                         && !compiledCodeHasLoop(compiledMethod)) {
                     return;
                 }

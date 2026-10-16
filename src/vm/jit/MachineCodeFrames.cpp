@@ -29,7 +29,7 @@ namespace pharo {
 extern uint64_t g_stepNum;
 extern uint64_t g_objectMotionEpoch;   // ObjectMemory.cpp
 
-#if PHARO_JIT_ENABLED && (defined(__aarch64__) || defined(__arm64__))
+#if PHARO_JIT_ENABLED && (defined(__aarch64__) || defined(__arm64__) || defined(__x86_64__) || defined(_M_X64))
 
 extern "C" void pharo_mcf_verify_eq(jit::JITState* st, uint64_t rcv, uint64_t arg,
                                     uint64_t answer, uint64_t where) {
@@ -1116,6 +1116,9 @@ bool Interpreter::mcfCacheableOop(Oop m) const {
 // activateBlock, popFrame or a native block call.
 bool Interpreter::mcfIsBlockFrame() const {
     if (GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCKS)) return false;
+#if defined(__x86_64__) || defined(_M_X64)
+    return false;   // x86 port phase 1: method frames only
+#endif
     return !closure_.isNil()
         && method_.isObject()
         && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
@@ -2032,7 +2035,7 @@ void Interpreter::mcfInit() {
     jit::g_mcfContextClassIndex = contextClassIndex_;
     // Only in this mode: every code change clears the cache (mcfCodeChanged),
     // a 128 KB memset the default mode must not pay.
-    if (::pharo::mcfEnabled() && !jit::g_mcfCallCache) {
+    if (::pharo::mcfMode() && !jit::g_mcfCallCache) {
         jit::g_mcfCallCache = new jit::McfCallEntry[jit::kMcfCallCacheSize];
         if (!GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_CACHE))
             jit::g_mcfPerformCache = new jit::McfPerformEntry[jit::kMcfPerformCacheSize];
@@ -2373,9 +2376,13 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
         // enter too.  A loop in a block run once (a test method's or a
         // DoIt's) otherwise ran interpreted, 4x slower.  (Block frames
         // elsewhere: mcfIsBlockFrame, on by default since 2026-10-15.)
+#if defined(__x86_64__) || defined(_M_X64)
+        const bool osrBlock = false;   // x86 port phase 1: method frames only
+#else
         const bool osrBlock = !popped && !GET_DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)
             && !closure_.isNil()
             && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
+#endif
         if (!(mcfIsMethodFrame() || mcfIsBlockFrame() || osrBlock)
                 || !mcfReceiverOk(jm, receiver_)) {
             if (tr) fprintf(stderr, "[OSR-R] frame m=%d b=%d rcv=%d\n", (int)mcfIsMethodFrame(),
@@ -2648,7 +2655,16 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         checkCountdown_ -= 1;
         g_stepNum += jm->numBytecodes;
 
+#if defined(__x86_64__) || defined(_M_X64)
+        // x86 code stores icDataPtr only at a send exit; a bail at any
+        // other bytecode (EXIT_SEND from the floor-mod fallback, an unsupported
+        // opcode) must not hand the previous site's cache to the IC fill.
+        st.icDataPtr = nullptr;
+        st.sendArgCount = 0;
+        JIT_CALL(entry, &st);
+#else
         pharo_jit_osr_resume(&st, entry);
+#endif
         mcfDeriveView(st);
 
         currentJITState_ = st.prevState;
