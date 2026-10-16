@@ -327,6 +327,13 @@ extern "C" uint64_t pharo_mcf_array_create(jit::JITState* st, uint32_t desc) {
     return st->interp->mcfArrayCreate(st, desc);
 }
 
+// x86 T1: the primitive of an inline-cache hit failed (pharo_mcf_prim
+// answered 0, the stack unchanged): a call entry for the method body, or
+// nullptr (the send exits and the interpreter retries the primitive).
+extern "C" void* pharo_mcf_prim_body(jit::JITState* st, uint32_t nArgs) {
+    return st->interp->mcfPrimFailBodyEntry(st->cachedTarget, st->sp[-(int)nArgs - 1]);
+}
+
 extern "C" int pharo_mcf_prim(jit::JITState* st, uint32_t primAndArgs) {
     if ((primAndArgs & 0xFFFF) == 105 && (primAndArgs >> 16) == 4
             && !GET_DEBUG_BOOL(PHARO_MCF_NO_FAST_REPLACE)
