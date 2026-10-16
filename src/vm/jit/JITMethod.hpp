@@ -1021,8 +1021,12 @@ private:
     }
 
     static size_t hash(uint64_t bits) {
-        // Fibonacci hashing (good distribution for pointer-like values)
-        return static_cast<size_t>((bits >> 3) * 11400714819323198485ULL);
+        // Fibonacci hashing, with the high half folded in: callers mask the
+        // LOW bits, and the low bits of a product depend only on the low
+        // bits of the address, which aligned methods share (long probe
+        // chains: one lookup took ~150 instructions on a return).
+        const uint64_t h = (bits >> 3) * 11400714819323198485ULL;
+        return static_cast<size_t>(h ^ (h >> 32));
     }
 };
 
