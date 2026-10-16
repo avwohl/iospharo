@@ -64,6 +64,10 @@ void setAppBundlePath(const std::string& bundlePath);
 
 // Get the app's Frameworks search path (empty if not set)
 const std::string& getAppFrameworksPath();
+// Directories searched for a library by bare name, in order: the app's
+// Frameworks, the executable's directory, the platform library dirs (Linux),
+// then Homebrew and /usr/local (macOS).
+std::vector<std::string> getLibSearchPaths();
 
 // Check if a module/function is available
 bool isModuleLoaded(const std::string& moduleName);

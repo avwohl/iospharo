@@ -6818,24 +6818,6 @@ PrimitiveResult Interpreter::primitiveStringAt(int argCount) {
     size_t arrayIndex = static_cast<size_t>(idx - 1);
     ObjectFormat format = header->format();
 
-    // Temporary debug: trace primitiveStringAt for short strings
-    static int strAtDbg = 0;
-    if (strAtDbg < 30 && format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
-        size_t bs = header->byteSize();
-        if (bs > 0 && bs <= 30) {
-            strAtDbg++;
-            std::string content;
-            for (size_t i = 0; i < bs && i < 20; i++) {
-                char c = static_cast<char>(header->byteAt(i));
-                content += (c >= 32 && c < 127) ? c : '.';
-            }
-            uint8_t result = (arrayIndex < bs) ? header->byteAt(arrayIndex) : '?';
-            fprintf(stderr, "[P63] idx=%lld arrIdx=%zu byte=0x%02x($%c) str='%s'(%zu)\n",
-                    (long long)idx, arrayIndex, result, (result >= 32 && result < 127) ? result : '.',
-                    content.c_str(), bs);
-        }
-    }
-
     // ByteString: format 16-23 (Indexable8 through Indexable8_7)
     if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
         if (arrayIndex >= header->byteSize()) {
@@ -30810,19 +30792,19 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                             moduleHandle = dlopen(full.c_str(), RTLD_NOW | RTLD_GLOBAL);
                         }
 
-#if !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
-                        // Homebrew / system paths as fallback
+                        // Then the executable's directory, the platform dirs and
+                        // Homebrew / /usr/local (ffi::getLibSearchPaths).  The
+                        // executable's directory comes first: an x86_64 VM under
+                        // Rosetta has its own x86_64 libcairo there, and the
+                        // arm64-only Homebrew copy cannot load into it, so every
+                        // Athens/Roassal test errored on x86 (270 in sweep X1).
                         if (!moduleHandle) {
-                            static const char* fallbackPaths[] = {
-                                "/opt/homebrew/lib", "/usr/local/lib", nullptr
-                            };
-                            for (const char** p = fallbackPaths; *p != nullptr; p++) {
-                                std::string full = std::string(*p) + "/" + baseName;
+                            for (const std::string& dir : ffi::getLibSearchPaths()) {
+                                std::string full = dir + "/" + baseName;
                                 moduleHandle = dlopen(full.c_str(), RTLD_NOW | RTLD_GLOBAL);
                                 if (moduleHandle) break;
                             }
                         }
-#endif
                     }
 
                     if (!moduleHandle) {

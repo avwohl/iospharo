@@ -16963,7 +16963,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // Machine-code frames: run the block's compiled code now, from the
     // frame set up above (mcfRun builds its state from these registers).
     // Every caller (the block-value primitives) answers Success right after.
-    if (::pharo::mcfEnabled()) mcfActivateBlock();
+    if (::pharo::mcfMode()) mcfActivateBlock();
 #endif
 }
 

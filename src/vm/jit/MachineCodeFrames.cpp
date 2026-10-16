@@ -1116,9 +1116,6 @@ bool Interpreter::mcfCacheableOop(Oop m) const {
 // activateBlock, popFrame or a native block call.
 bool Interpreter::mcfIsBlockFrame() const {
     if (GET_DEBUG_BOOL(PHARO_MCF_NO_BLOCKS)) return false;
-#if defined(__x86_64__) || defined(_M_X64)
-    return false;   // x86 port phase 1: method frames only
-#endif
     return !closure_.isNil()
         && method_.isObject()
         && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
@@ -2389,13 +2386,9 @@ void Interpreter::mcfResumeAfterReturn(const SavedFrame* popped) {
         // enter too.  A loop in a block run once (a test method's or a
         // DoIt's) otherwise ran interpreted, 4x slower.  (Block frames
         // elsewhere: mcfIsBlockFrame, on by default since 2026-10-15.)
-#if defined(__x86_64__) || defined(_M_X64)
-        const bool osrBlock = false;   // x86 port phase 1: method frames only
-#else
         const bool osrBlock = !popped && !GET_DEBUG_BOOL(PHARO_MCF_NO_OSR_BLOCKS)
             && !closure_.isNil()
             && method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_;
-#endif
         if (!(mcfIsMethodFrame() || mcfIsBlockFrame() || osrBlock)
                 || !mcfReceiverOk(jm, receiver_)) {
             if (tr) fprintf(stderr, "[OSR-R] frame m=%d b=%d rcv=%d\n", (int)mcfIsMethodFrame(),
@@ -2571,6 +2564,41 @@ Oop Interpreter::mcfSelectorAtSend(const uint8_t* ip, Oop method) {
     Oop hdr = mo->slotAt(0);
     if (!hdr.isSmallInteger() || lit >= (int)(hdr.asSmallInteger() & 0x7FFF)) return Oop::nil();
     return mo->slotAt(1 + lit);
+}
+
+// An exit at an arithmetic special send (0x60-0x6F) whose operands the
+// inline code does not handle (Character =, a LargeInteger, a Float the
+// inline path refuses): when the target is a primitive mcfCallPrimitive
+// may run, run it here.  1 = done, *cont = the code entry for the next
+// bytecode (or null); 2 = the primitive pushed a frame or switched
+// process; 0 = not handled (the interpreter sends it).  Before this the
+// method ran interpreted from the exit to its next activating send.
+int Interpreter::mcfSpecialSendPrim(jit::JITState& st, jit::JITMethod* jm, void** cont) {
+    const uint8_t op = *st.ip;
+    if (op < jit::SistaV1::ArithBase || op > jit::SistaV1::ArithBase + 15) return 0;
+    Oop ss = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+    if (!ss.isObject()) return 0;
+    const size_t k = (size_t)(op - jit::SistaV1::ArithBase);
+    Oop sel = ss.asObjectPtr()->slotAt(k * 2);
+    Oop na = ss.asObjectPtr()->slotAt(k * 2 + 1);
+    if (!sel.isObject() || !na.isSmallInteger()) return 0;
+    const int nArgs = (int)na.asSmallInteger();
+    Oop rcv = st.sp[-(nArgs + 1)];
+    Oop cls = memory_.classOf(rcv);
+    if (!cls.isObject() || cls.isNil()) return 0;
+    Oop m = lookupMethodForSend(sel, cls);
+    if (!m.isObject() || m.isNil() || !m.asObjectPtr()->isCompiledMethod()) return 0;
+    Oop hdr = m.asObjectPtr()->slotAt(0);
+    if (!hdr.isSmallInteger() || !((hdr.asSmallInteger() >> 16) & 1)) return 0;
+    const int p = primitiveIndexOf(m);
+    if (!mcfPrimMethodCallable(m, p)) return 0;
+    st.cachedTarget = m;
+    const uint8_t* const at = st.ip;
+    st.ip = const_cast<uint8_t*>(at + 1);      // the ip after the send (the pc if it switches)
+    const int r = mcfCallPrimitive(&st, p, nArgs);
+    if (r == 0) { st.ip = const_cast<uint8_t*>(at); return 0; }
+    if (r == 1) *cont = mcfEntryFor(jm, st.ip);
+    return r;
 }
 
 void Interpreter::mcfFillICAtExit(jit::JITState& st) {
@@ -2898,6 +2926,24 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
             continue;
         }
         case jit::ExitArithOverflow:   // general "execute this bytecode" exit
+            if (st.ip && !GET_DEBUG_BOOL(PHARO_MCF_NO_SPECIAL_PRIM)) {
+                void* cont = nullptr;
+                const int r = mcfSpecialSendPrim(st, jm, &cont);
+                if (r == 2) {
+                    mcfActive_ = false;
+                    return;
+                }
+                if (r == 1) {
+                    stackPointer_ = st.sp;
+                    instructionPointer_ = st.ip;
+                    if (cont && running_ && checkCountdown_ > 0) {
+                        entry = cont;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            [[fallthrough]];
         case jit::ExitBlockCreate:
         case jit::ExitArrayCreate:
         case jit::ExitMustBool:

@@ -369,7 +369,7 @@ const std::string& getAppFrameworksPath() {
 // Library search paths — checked in order when dlsym(RTLD_DEFAULT) fails.
 // App bundle Frameworks is checked first (bundled, re-signed libs).
 // Homebrew is tried as fallback for development (only works for non-sandboxed).
-static std::vector<std::string> getLibSearchPaths() {
+std::vector<std::string> getLibSearchPaths() {
     std::vector<std::string> paths;
     if (!sAppFrameworksPath.empty()) {
         paths.push_back(sAppFrameworksPath);

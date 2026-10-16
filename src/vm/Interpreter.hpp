@@ -2213,6 +2213,7 @@ public:
     }
     bool mcfTinyShape(Oop method, uint64_t& prim);
     void mcfFillICAtExit(jit::JITState& st);
+    int mcfSpecialSendPrim(jit::JITState& st, jit::JITMethod* jm, void** cont);
     void mcfDeriveView(jit::JITState& st);
     static constexpr size_t kNlrHomeMemoSize = 64;
     struct NlrHomeMemo { uint64_t code = 0; uint64_t outer = 0; uint64_t home = 0; };
