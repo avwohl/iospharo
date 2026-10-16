@@ -2078,13 +2078,22 @@ static inline void emitReloadSpFromState_x86(asmjit::x86::Assembler& a) {
 // additions).  Null outside a method compile (stub pages) or with
 // PHARO_X86_NO_COLD: the code then stays inline.
 static asmjit::Section* g_x86Cold = nullptr;
+// Already emitting into the cold section (a simStack slow path re-emits a
+// bytecode there): a nested begin keeps the code inline.
+static bool g_x86InCold = false;
+// Set while a simStack slow path re-emits a compare: no fusion.
+static bool g_x86NoFuse = false;
 static inline bool x86ColdBegin(asmjit::x86::Assembler& a) {
-    if (!g_x86Cold) return false;
+    if (!g_x86Cold || g_x86InCold) return false;
     a.section(g_x86Cold);
+    g_x86InCold = true;
     return true;
 }
 static inline void x86ColdEnd(asmjit::x86::Assembler& a) {
-    if (g_x86Cold) a.section(a.code()->text_section());
+    if (g_x86Cold && g_x86InCold) {
+        a.section(a.code()->text_section());
+        g_x86InCold = false;
+    }
 }
 // Set by a compare fused with the conditional jump after it when that jump
 // went to the cold section: the emit loop binds nothing and emits nothing
@@ -4464,6 +4473,72 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
 // Emit per-bytecode code on x86_64.  Returns true if the opcode was
 // handled.  The pre-scan guarantees we'll see only supported ops.
 //
+// ===================== x86 simStack (deferred operand pushes) =============
+// The arm64 simStack's idea for x86 machine-code frames (pinned r12/r13/r14
+// as the truth): pushes of temps, the receiver, constants and literals emit
+// no code; they go on a compile-time stack of items.  Consumers read them
+// straight from their sources; every other bytecode, and every jump target,
+// first FLUSHES the pending items to the real operand stack, so all other
+// code sees the memory stack it always did.  Positions with pending items
+// get no bcToCode re-entry entry.  Opt-out PHARO_X86_NO_SIMSTACK (diag).
+namespace {
+enum class XsK : uint8_t { Const, Temp, Rcvr, Lit, Reg };
+struct XsItem { XsK k; int64_t v; };
+std::vector<XsItem> g_xs;
+bool g_xsOn = false;
+std::vector<bool> g_xsDeferredAt;
+}  // namespace
+
+// dst = the item's value.  Reg items live in rcx.
+static void xsLoad(asmjit::x86::Assembler& a, const XsItem& it, const asmjit::x86::Gp& dst) {
+    using namespace asmjit::x86;
+    switch (it.k) {
+    case XsK::Const: a.mov(dst, asmjit::Imm((uint64_t)it.v)); break;
+    case XsK::Temp:  a.mov(dst, ptr(r12, (int)(it.v * 8))); break;
+    case XsK::Rcvr:  a.mov(dst, r13); break;
+    case XsK::Lit:   emitLoadLiteral_x86(a, dst, (int)it.v); break;
+    case XsK::Reg:   if (dst.id() != rcx.id()) a.mov(dst, rcx); break;
+    }
+}
+// Store the items to the real stack, in order; the compile-time stack
+// empties.  Clobbers rax.
+static void xsFlush(asmjit::x86::Assembler& a) {
+    using namespace asmjit::x86;
+    if (g_xs.empty()) return;
+    for (size_t i = 0; i < g_xs.size(); i++) {
+        const XsItem& it = g_xs[i];
+        const int off = (int)(i * 8);
+        if (it.k == XsK::Const && (int64_t)(int32_t)it.v == it.v) {
+            a.mov(qword_ptr(X86_SP_REG_OR_RAX, off), asmjit::Imm(it.v));
+        } else if (it.k == XsK::Rcvr) {
+            a.mov(ptr(X86_SP_REG_OR_RAX, off), r13);
+        } else if (it.k == XsK::Reg) {
+            a.mov(ptr(X86_SP_REG_OR_RAX, off), rcx);
+        } else {
+            xsLoad(a, it, rax);
+            a.mov(ptr(X86_SP_REG_OR_RAX, off), rax);
+        }
+    }
+    a.add(X86_SP_REG_OR_RAX, asmjit::Imm((int)(g_xs.size() * 8)));
+    g_xs.clear();
+}
+// A push the compile-time stack takes: true when deferred.
+static bool xsTryDefer(uint8_t op, uint64_t nilBits) {
+    if (op >= SistaV1::PushTempBase && op <= SistaV1::PushTempBase + 11) {
+        g_xs.push_back({XsK::Temp, op - SistaV1::PushTempBase});
+        return true;
+    }
+    if (op == SistaV1::PushReceiver) { g_xs.push_back({XsK::Rcvr, 0}); return true; }
+    if (op == SistaV1::PushNil) { g_xs.push_back({XsK::Const, (int64_t)nilBits}); return true; }
+    if (op == SistaV1::PushZero) { g_xs.push_back({XsK::Const, (int64_t)Oop::fromSmallInteger(0).rawBits()}); return true; }
+    if (op == SistaV1::PushOne) { g_xs.push_back({XsK::Const, (int64_t)Oop::fromSmallInteger(1).rawBits()}); return true; }
+    if (op >= SistaV1::PushLitConstBase && op <= SistaV1::PushLitConstBase + 31) {
+        g_xs.push_back({XsK::Lit, op - SistaV1::PushLitConstBase});
+        return true;
+    }
+    return false;
+}
+
 // `nilBits` is the raw bits of the special-objects nil — passed in
 // so push-nil can bake it as a 64-bit immediate (nil is image-local,
 // not a JITState field).
@@ -4822,7 +4897,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // branch with no Boolean in between.  The jump keeps its own
             // emit at its label for every other arrival.  The pop is an lea
             // (no flags); the bail path above is unchanged.
-            if (!GET_DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ) && g_tosBc && g_tosJumpTargetsPtr
+            if (!GET_DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ) && !g_x86NoFuse && g_tosBc && g_tosJumpTargetsPtr
                     && op >= 0x62 && op <= 0x67) {
                 const int nextIdx = globalIdx + 1;
                 if ((size_t)nextIdx + 1 < g_tosBcLen) {
@@ -6203,6 +6278,186 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         return true;
     }
     return false;  // pre-scan failed to filter — bug in allBytecodesSupported
+}
+
+// The simStack consumers (x86).  True when the bytecode was emitted here.
+static bool xsTryConsume_x86(asmjit::x86::Assembler& a, uint8_t op,
+                             uint64_t nilBits, int bcOffsetFromMethObj,
+                             int siteIdx, const std::vector<asmjit::Label>& bcLabels,
+                             int globalIdx, int callerArgCount, int callerTempCount,
+                             int staticJ2JArgCount) {
+    using namespace asmjit::x86;
+    if (g_xs.empty()) return false;
+    const size_t n = g_xs.size();
+    // Store items [0, n - keep) to the real stack; the top `keep` stay.
+    auto flushBelow = [&](size_t keep) {
+        if (n <= keep || g_xs.size() <= keep) return;
+        std::vector<XsItem> top(g_xs.end() - keep, g_xs.end());
+        g_xs.resize(g_xs.size() - keep);
+        xsFlush(a);
+        g_xs = top;
+    };
+    // popStoreTemp k: the top item straight into the temp.
+    if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast
+            && !GET_DEBUG_BOOL(PHARO_X86_NO_SIM_STORE)) {
+        const int k = op - SistaV1::PopStoreTempBase;
+        // A pending read of that temp below the top takes its value now.
+        for (size_t q = 0; q + 1 < g_xs.size(); q++)
+            if (g_xs[q].k == XsK::Temp && g_xs[q].v == k) { flushBelow(1); break; }
+        const XsItem it = g_xs.back();
+        g_xs.pop_back();
+        if (it.k == XsK::Temp && it.v == k) return true;          // t := t
+        if (it.k == XsK::Const && (int64_t)(int32_t)it.v == it.v) {
+            a.mov(qword_ptr(r12, k * 8), asmjit::Imm(it.v));
+        } else if (it.k == XsK::Rcvr) {
+            a.mov(ptr(r12, k * 8), r13);
+        } else if (it.k == XsK::Reg) {
+            a.mov(ptr(r12, k * 8), rcx);
+        } else {
+            xsLoad(a, it, rax);
+            a.mov(ptr(r12, k * 8), rax);
+        }
+        return true;
+    }
+    // returnTop: the value straight into rax (the items below are dropped:
+    // a return leaves sp at the frame's base).  Not in a block: there it is
+    // a non-local return (emitOne_x86's NLR path, from the real stack).
+    if (op == SistaV1::ReturnTop && !g_emitIsBlock && !GET_DEBUG_BOOL(PHARO_X86_NO_SIM_RET)) {
+        flushBelow(1);
+        const XsItem it = g_xs.back();
+        g_xs.pop_back();
+        xsLoad(a, it, rax);
+        // As the popped slot holds it after a real pop: the C++ return
+        // paths read the value there.
+        a.mov(ptr(X86_SP_REG_OR_RAX), rax);
+        emitJ2JReturnPrelude_x86(a, rax);
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        emitSyncSpToState_x86(a); a.ret();
+        return true;
+    }
+    // + - and the comparisons with both operands pending.
+    const bool addSub = op == SistaV1::ArithBase || op == SistaV1::ArithBase + 1;
+    const bool cmp = op >= SistaV1::ArithBase + 2 && op <= SistaV1::ArithBase + 7;
+    if ((addSub || cmp) && n >= 2 && g_x86Cold && !GET_DEBUG_BOOL(PHARO_X86_NO_SIM_ARITH)) {
+        flushBelow(2);
+        const XsItem A = g_xs[0], B = g_xs[1];
+        g_xs.clear();
+        // B into rdx first: either may be the Reg item in rcx.
+        xsLoad(a, B, rdx);
+        xsLoad(a, A, rcx);
+        asmjit::Label tagBail = a.new_label(), ovfBail = a.new_label(), end = a.new_label();
+        a.mov(r8, rcx);
+        a.xor_(r8, rdx);
+        a.lea(r9, ptr(rcx, -1));
+        a.or_(r8, r9);
+        a.test(r8.r8(), asmjit::Imm(7));
+        a.jne(tagBail);
+        // A compare fused with the conditional jump after it (no jump target).
+        int fNext = -1, fTgt = -1, fPost = -1, fLen = 0;
+        bool fJt = false;
+        if (cmp && !GET_DEBUG_BOOL(PHARO_T1_NO_FUSE_CMPJ) && g_tosBc && g_tosJumpTargetsPtr) {
+            const int nextIdx = globalIdx + 1;
+            if ((size_t)nextIdx + 1 < g_tosBcLen) {
+                const uint8_t nop = g_tosBc[nextIdx];
+                const bool shortJ = SistaV1::isConditionalShortJump(nop);
+                const bool extJ = nop == SistaV1::ExtJumpTrue || nop == SistaV1::ExtJumpFalse;
+                if ((shortJ || extJ) && !(*g_tosJumpTargetsPtr)[nextIdx]) {
+                    const int targetIdx = shortJ ? SistaV1::shortJumpTarget(nop, nextIdx)
+                                                 : nextIdx + 2 + g_tosBc[nextIdx + 1];
+                    const int postIdx = nextIdx + (shortJ ? 1 : 2);
+                    if (targetIdx > nextIdx && (size_t)targetIdx < bcLabels.size()
+                            && (size_t)postIdx < bcLabels.size()) {
+                        fNext = nextIdx; fTgt = targetIdx; fPost = postIdx;
+                        fLen = shortJ ? 1 : 2;
+                        fJt = shortJ ? SistaV1::isShortJumpTrue(nop) : nop == SistaV1::ExtJumpTrue;
+                    }
+                }
+            }
+        }
+        if (addSub) {
+            if (op == SistaV1::ArithBase) a.add(rcx, rdx); else a.sub(rcx, rdx);
+            a.jo(ovfBail);
+            if (op == SistaV1::ArithBase) a.sub(rcx, asmjit::Imm(1)); else a.add(rcx, asmjit::Imm(1));
+            g_xs.push_back({XsK::Reg, 0});
+        } else if (fNext >= 0) {
+            a.cmp(rcx, rdx);
+            const asmjit::Label tgt = bcLabels[fTgt];
+            switch (op - SistaV1::ArithBase) {
+            case 2: if (fJt) a.jl(tgt);  else a.jge(tgt); break;
+            case 3: if (fJt) a.jg(tgt);  else a.jle(tgt); break;
+            case 4: if (fJt) a.jle(tgt); else a.jg(tgt);  break;
+            case 5: if (fJt) a.jge(tgt); else a.jl(tgt);  break;
+            case 6: if (fJt) a.je(tgt);  else a.jne(tgt); break;
+            default: if (fJt) a.jne(tgt); else a.je(tgt); break;
+            }
+            // falls into postIdx: the loop skips the jump bytecode.
+        } else {
+            a.cmp(rcx, rdx);
+            a.mov(rcx, ptr(rdi, OFF_FALSEOOP));
+            switch (op - SistaV1::ArithBase) {
+            case 2: a.cmovl(rcx, ptr(rdi, OFF_TRUEOOP)); break;
+            case 3: a.cmovg(rcx, ptr(rdi, OFF_TRUEOOP)); break;
+            case 4: a.cmovle(rcx, ptr(rdi, OFF_TRUEOOP)); break;
+            case 5: a.cmovge(rcx, ptr(rdi, OFF_TRUEOOP)); break;
+            case 6: a.cmove(rcx, ptr(rdi, OFF_TRUEOOP)); break;
+            default: a.cmovne(rcx, ptr(rdi, OFF_TRUEOOP)); break;
+            }
+            g_xs.push_back({XsK::Reg, 0});
+        }
+        // The slow path, cold: the operands to the real stack, then the
+        // bytecode's own code (its send, its exits) with no fusion; its
+        // result comes back on the real stack.
+        x86ColdBegin(a);
+        a.bind(ovfBail);
+        if (addSub) {
+            if (op == SistaV1::ArithBase) a.sub(rcx, rdx); else a.add(rcx, rdx);   // undo
+        }
+        a.bind(tagBail);
+        a.mov(ptr(X86_SP_REG_OR_RAX), rcx);
+        a.mov(ptr(X86_SP_REG_OR_RAX, 8), rdx);
+        a.add(X86_SP_REG_OR_RAX, asmjit::Imm(16));
+        g_x86NoFuse = true;
+        const bool ok = emitOne_x86(a, op, nilBits, bcOffsetFromMethObj, siteIdx, bcLabels,
+                                    globalIdx, callerArgCount, callerTempCount,
+                                    staticJ2JArgCount);
+        g_x86NoFuse = false;
+        if (!ok) { x86ColdEnd(a); return false; }
+        if (fNext >= 0) {
+            // The fused jump, for the slow path's Boolean (and the jump
+            // bytecode's re-entry point).
+            asmjit::Label take = a.new_label(), notBool = a.new_label();
+            a.bind(bcLabels[fNext]);
+            if (fLen == 2) a.bind(bcLabels[fNext + 1]);
+            a.mov(rax, ptr(X86_SP_REG_OR_RAX, -8));
+            a.cmp(rax, ptr(rdi, fJt ? OFF_TRUEOOP : OFF_FALSEOOP));
+            a.je(take);
+            a.cmp(rax, ptr(rdi, fJt ? OFF_FALSEOOP : OFF_TRUEOOP));
+            a.jne(notBool);
+            a.sub(X86_SP_REG_OR_RAX, 8);
+            a.jmp(bcLabels[fPost]);
+            a.bind(take);
+            a.sub(X86_SP_REG_OR_RAX, 8);
+            a.jmp(bcLabels[fTgt]);
+            a.bind(notBool);                         // the interpreter sends mustBeBoolean
+            emitLoadMethod_x86(a, r8);
+            a.add(r8, asmjit::Imm(bcOffsetFromMethObj + 1));
+            a.mov(ptr(rdi, OFF_IP), r8);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
+            emitSyncSpToState_x86(a); a.ret();
+            x86ColdEnd(a);
+            g_x86FusedSkipIdx = fNext;
+            return true;
+        }
+        // The result back into rcx (the Reg item).
+        a.sub(X86_SP_REG_OR_RAX, 8);
+        a.mov(rcx, ptr(X86_SP_REG_OR_RAX));
+        a.jmp(end);
+        x86ColdEnd(a);
+        a.bind(end);
+        return true;
+    }
+    return false;
 }
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -15827,6 +16082,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         if (code.new_section(Out<Section*>(coldSec), ".cold", SIZE_MAX, SectionFlags::kExecutable, 1) == kErrorOk)
             g_x86Cold = coldSec;
     }
+    g_xs.clear();
+    g_xsOn = x86RegsTruth() && !GET_DEBUG_BOOL(PHARO_X86_NO_SIMSTACK);
+    g_xsDeferredAt.assign(bcLen + 1, false);
     // V2 self-identification anchor: bind g_codeStartLabel at code offset 0
     // (STEP 1 of the V2 save port, docs/x86-v2-save-port.md; mirrors arm64
     // 9417-9418).  The V2 resumeAfterCall continuation self-identifies the
@@ -15873,7 +16131,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 prevExtPrefix = false;
                 continue;
             }
+            if (g_xsOn) {
+                // A jump target is reached with the memory stack: flush.
+                if (g_tosJumpTargetsPtr && (size_t)globalIdx < g_tosJumpTargetsPtr->size()
+                        && (*g_tosJumpTargetsPtr)[globalIdx])
+                    xsFlush(a);
+                g_xsDeferredAt[globalIdx] = !g_xs.empty();
+            }
             a.bind(bcLabels[globalIdx]);
+            if (g_xsOn) {
+                if (xsTryDefer(bcReal[i], nilBits)) { prevExtPrefix = false; continue; }
+                if (xsTryConsume_x86(a, bcReal[i], nilBits, bcOffsetBase + globalIdx, siteIdx,
+                                     bcLabels, globalIdx, callerArgCount, callerTempCount,
+                                     staticJ2JArgCount)) {
+                    prevExtPrefix = false;
+                    continue;
+                }
+                xsFlush(a);
+            }
             bool wasExtPrefix = prevExtPrefix;
             prevExtPrefix = false;
             // Diagnostic: track every emit's bcOffsetFromMethObj for the
@@ -16385,6 +16660,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             }
             if (isPhase4SendOp(bcReal[i])) siteIdx++;
         }
+        if (g_xsOn) xsFlush(a);
         if (bcRealLen == 0
                 || bcReal[bcRealLen-1] < SistaV1::ReturnReceiver
                 || bcReal[bcRealLen-1] > SistaV1::ReturnTop) {
@@ -17951,6 +18227,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // memory stack is not the interpreter's; no re-entry here.
 #if defined(__aarch64__) || defined(_M_ARM64)
                 if (i < g_simDeferredAt.size() && g_simDeferredAt[i]) { bcToCodeOut[i] = 0u; continue; }
+#else
+                if (g_xsOn && i < g_xsDeferredAt.size() && g_xsDeferredAt[i]) { bcToCodeOut[i] = 0u; continue; }
 #endif
                 uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
                 // Per contract, slot 0 is conventionally 0 (initial entry

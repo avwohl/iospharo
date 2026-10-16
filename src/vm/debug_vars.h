@@ -195,6 +195,10 @@ DEBUG_BOOL(PHARO_X86_NO_LAZY_CLOSURE)           // x86 MCF bisect: native record
 DEBUG_BOOL(PHARO_X86_NO_PIN_REGS)               // x86 MCF bisect: read the temp base and receiver from the state, not r12/r13
 DEBUG_BOOL(PHARO_X86_NO_LAZY_METHOD)            // x86 MCF bisect: native calls and returns write the state method and literals; machine code reads them there
 DEBUG_BOOL(PHARO_X86_PIN_WRITE_THROUGH)         // x86 MCF bisect: every store of a pinned register also writes its state copy (not only at exits and C calls)
+DEBUG_BOOL(PHARO_X86_NO_SIMSTACK)               // x86 MCF bisect: every push stores to the operand stack at once (no deferred pushes)
+DEBUG_BOOL(PHARO_X86_NO_SIM_ARITH)              // x86 MCF bisect: + - and comparisons flush the simStack (no register operands)
+DEBUG_BOOL(PHARO_X86_NO_SIM_STORE)              // x86 MCF bisect: popStoreTemp flushes the simStack
+DEBUG_BOOL(PHARO_X86_NO_SIM_RET)                // x86 MCF bisect: returnTop flushes the simStack
 DEBUG_BOOL(PHARO_X86_NO_SHORT_PUSH)             // x86 T1 bisect: push/pop through rcx (load sp, add, store) as before the short form
 DEBUG_BOOL(PHARO_MCF_NO_NLR_MEMO_INLINE)        // x86 MCF bisect: a native call of a block with ^ always calls pharo_mcf_block_home
 DEBUG_BOOL(PHARO_MCF_ONE_ENTRY_PROBE)          // x86 MCF bisect: probe only IC entry 0, as before the six-entry probe
