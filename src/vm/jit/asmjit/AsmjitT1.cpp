@@ -2183,6 +2183,16 @@ static inline void emitLoadLiterals_x86(asmjit::x86::Assembler& a, asmjit::x86::
         a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_LITERALS));
     }
 }
+// dst = literal n of the running method.
+static inline void emitLoadLiteral_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp dst, int n) {
+    if (x86LazyMethod()) {
+        a.mov(dst, asmjit::x86::ptr(asmjit::x86::r14, (int)offsetof(JITMethod, compiledMethodOop)));
+        a.mov(dst, asmjit::x86::ptr(dst, 16 + n * 8));
+    } else {
+        a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_LITERALS));
+        a.mov(dst, asmjit::x86::ptr(dst, n * 8));
+    }
+}
 static inline void emitCmpMethod_x86(asmjit::x86::Assembler& a, asmjit::x86::Gp r) {
     if (x86LazyMethod())
         a.cmp(r, asmjit::x86::ptr(asmjit::x86::r14, (int)offsetof(JITMethod, compiledMethodOop)));
@@ -3592,11 +3602,11 @@ static void emitMcfBlockCall_x86(asmjit::x86::Assembler& a, int nArgs, int ipAft
     if (!::pharo::mcfX86Compact())
         a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs));
     emitSetJM_x86(a, r9);
-    a.mov(r10, ptr(r8, 16));
     // No ip store: every exit and helper call that reads the state's ip
     // stores its own bytecode first (as the arm64 lazy view has it).
     // Compact: no bytecode end either (C++ derives it).
     if (!::pharo::mcfX86Compact()) {
+        a.mov(r10, ptr(r8, 16));
         a.mov(edx, r10d);
         a.and_(edx, asmjit::Imm(0xFFFFFF));
         a.mov(ptr(rdi, OFF_MCF_BCEND_OFF), rdx);
@@ -4491,8 +4501,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // pushLitConst N: push literals[N].
     if (op >= 0x20 && op <= 0x3F) {
         int n = op - 0x20;
-        emitLoadLiterals_x86(a, rax);
-        a.mov(rax, ptr(rax, n * 8));
+        emitLoadLiteral_x86(a, rax, n);
         emitPushReg(a, rax);
         return true;
     }
@@ -4500,8 +4509,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // push Association.value (slot 1).
     if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
         int n = op - SistaV1::PushLitVarBase;
-        emitLoadLiterals_x86(a, rax);
-        a.mov(rax, ptr(rax, n * 8));                     // Association oop
+        emitLoadLiteral_x86(a, rax, n);                     // Association oop
         a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8));            // slot[1] = value
         emitPushReg(a, rax);
         return true;
@@ -4698,10 +4706,15 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // returnTop: pop into rax (sp--, then *sp), store as retVal.
     if (op == SistaV1::ReturnTop) {
+#if PHARO_T1_X86_SP_IN_REG
+        a.sub(X86_SP_REG, 8);
+        a.mov(rax, ptr(X86_SP_REG));
+#else
         emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
         emitStoreSp_x86(a, rcx);
         a.mov(rax, ptr(rcx));
+#endif
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
@@ -16046,12 +16059,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + idx * 8));
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushLitConst) {
-                        emitLoadLiterals_x86(a, rax);
-                        a.mov(rax, ptr(rax, idx * 8));
+                        emitLoadLiteral_x86(a, rax, idx);
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushLitVar) {
-                        emitLoadLiterals_x86(a, rax);
-                        a.mov(rax, ptr(rax, idx * 8));       // Association oop
+                        emitLoadLiteral_x86(a, rax, idx);       // Association oop
                         a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8)); // slot[1] = value
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPushTemp) {
@@ -16080,8 +16091,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             emitLoadSp_x86(a, rcx);
                             a.mov(rax, ptr(rcx, -8));        // TOS (don't pop)
                         }
-                        emitLoadLiterals_x86(a, rdx);
-                        a.mov(rdx, ptr(rdx, idx * 8));       // Association oop
+                        emitLoadLiteral_x86(a, rdx, idx);       // Association oop
                         a.mov(ptr(rdx, OBJ_SLOT_0 + 8), rax); // slot[1] = value
                         emitRememberBarrierX86(a, rdx, rax, r10, r11);
                     }
