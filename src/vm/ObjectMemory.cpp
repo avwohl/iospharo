@@ -5216,25 +5216,44 @@ void ObjectMemory::processMarkStack() {
         }
         return;
     }
-    auto needsMark = [this](Oop v) {
-        if (!v.isObject()) return false;
-        const uint8_t* p = reinterpret_cast<const uint8_t*>(v.asObjectPtr());
-        return !(p >= oldSpaceStart_ && p < oldSpaceFree_ && v.asObjectPtr()->isMarked());
+    // markAndTrace's steps for the common case -- an unmarked old-space
+    // object of a non-weak format -- inline, in its order: class validity,
+    // object-start bit, mark, push.  Anything else takes the call.
+    const bool bitmapMode = objectStartCount_ != 0 && !objectStartUseSet_;
+    const bool fastOk = !objectStartUseSet_;
+    auto mark = [&](Oop v) {
+        if (!v.isObject()) return;
+        ObjectHeader* o = v.asObjectPtr();
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(o);
+        if (!(p >= oldSpaceStart_ && p < oldSpaceFree_) || !fastOk || isPermObject(o)) {
+            markAndTrace(v);
+            return;
+        }
+        if (o->isMarked()) return;
+        uint32_t ci = o->classIndex();
+        if (ci == 0 || ci >= classTable_.size() || !classTable_[ci].isObject()) return;
+        if (bitmapMode) {
+            size_t off = static_cast<size_t>(p - oldSpaceStart_);
+            if ((off & 7) != 0 || p >= objectStartBitsEnd_) return;
+            size_t w = off >> 3;
+            if (((objectStartBits_[w >> 6] >> (w & 63)) & 1) == 0) return;
+        }
+        ObjectFormat fmt = o->format();
+        if (fmt == ObjectFormat::WeakWithFixed || fmt == ObjectFormat::Weak) {
+            markAndTrace(v);                           // ephemeron / weak handling
+            return;
+        }
+        o->setMarked(true);
+        markStack_.push_back(o);
     };
     while (!markStack_.empty()) {
         ObjectHeader* obj = markStack_.back();
         markStack_.pop_back();
         uint32_t classIdx = obj->classIndex();
-        if (classIdx > 0 && classIdx < classTable_.size()) {
-            Oop cls = classTable_[classIdx];
-            if (needsMark(cls)) markAndTrace(cls);
-        }
+        if (classIdx > 0 && classIdx < classTable_.size()) mark(classTable_[classIdx]);
         size_t numPointers = pointerSlotsOf(obj);
         Oop* slots = obj->slots();
-        for (size_t i = 0; i < numPointers; ++i) {
-            Oop v = slots[i];
-            if (needsMark(v)) markAndTrace(v);
-        }
+        for (size_t i = 0; i < numPointers; ++i) mark(slots[i]);
     }
 }
 
