@@ -5689,8 +5689,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.cmp(rdx, ptr(rsi));
                 a.jne(miss);
             }
-            a.cmp(rdx, asmjit::Imm(0));      // reject empty IC slot
-            a.je(miss);
+            // Reject an empty IC slot (key 0).  Machine-code frames: no
+            // receiver has class index 0 (a free chunk), and should one
+            // match an empty slot, its method 0 finds only an empty call-cache
+            // entry (jm null), which refuses.
+            if (!::pharo::mcfMode() || GET_DEBUG_BOOL(PHARO_X86_KEY0_CHECK)) {
+                a.cmp(rdx, asmjit::Imm(0));
+                a.je(miss);
+            }
             if (GET_DEBUG_BOOL(PHARO_T1_PROBE_ALWAYS_MISS)) {
                 a.jmp(miss);                  // diagnostic: never take HIT
             }
