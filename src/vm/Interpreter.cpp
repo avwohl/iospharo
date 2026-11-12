@@ -14145,116 +14145,6 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         primFunc = primitiveTable_[primIndex];
     }
 
-    // Synthetic primitive: WriteStream>>nextPut:.  Used by Pharo's
-    // stream-based collection builders (streamContents:) — hits 50-100K
-    // times per bench-suite select 10x100K iteration.  Detect by class
-    // identity + selector bytes; install the inlined function pointer.
-    if (primIndex == 0 && classOop.isObject()
-            && classOop.rawBits() > 0x10000
-            && writeStreamClassIndex_ != 0
-            && selector.isObject() && selector.rawBits() > 0x10000) {
-        Oop wsClass = memory_.classAtIndex(writeStreamClassIndex_);
-        if (wsClass.rawBits() == classOop.rawBits()) {
-            ObjectHeader* selObj = selector.asObjectPtr();
-            if (selObj->isBytesObject() && selObj->byteSize() == 8) {
-                const uint8_t* sb = selObj->bytes();
-                if (sb[0] == 'n' && sb[1] == 'e' && sb[2] == 'x' && sb[3] == 't'
-                        && sb[4] == 'P' && sb[5] == 'u' && sb[6] == 't' && sb[7] == ':') {
-                    primFunc = &Interpreter::primitiveWSNextPut;
-                }
-            }
-        }
-    }
-
-    // Synthetic primitive: OrderedCollection>>add:.  The method itself
-    // has primIndex == 0 (no Smalltalk-level primitive declaration),
-    // but it's a 4-byte forwarder `^ self addLast: newObject`.  We
-    // detect this at cacheMethod time and install a synthetic prim
-    // that inlines the addLast: behavior — saves ~120 ns per call.
-    //
-    // Gated on:
-    //   classOop's classIndex == OrderedCollection's classIndex
-    //   selector bytes == "add:"
-    //   method bytecode body is the 4-byte forwarder pattern
-    //
-    // For OC subclasses (LinkedList, SortedCollection, etc.) the
-    // cache entry is keyed on their own class, so this only fires
-    // when the receiver is an actual OrderedCollection.
-    if (primIndex == 0 && classOop.isObject()
-            && classOop.rawBits() > 0x10000
-            && orderedCollectionClassIndex_ != 0
-            && selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* clsObj = classOop.asObjectPtr();
-        bool isOC = false;
-        // The class's own classIndex points to its metaclass.  To
-        // check "this is the OrderedCollection class", compare the
-        // class oop to memory_.classAtIndex(orderedCollectionClassIndex_).
-        // For speed, compare the classOop directly to that cached value.
-        Oop ocClass = memory_.classAtIndex(orderedCollectionClassIndex_);
-        if (ocClass.rawBits() == classOop.rawBits()) {
-            isOC = true;
-        }
-        (void)clsObj;
-        if (isOC) {
-            // Check selector bytes are "add:"
-            ObjectHeader* selObj = selector.asObjectPtr();
-            if (selObj->isBytesObject() && selObj->byteSize() == 4) {
-                const uint8_t* sb = selObj->bytes();
-                if (sb[0] == 'a' && sb[1] == 'd' && sb[2] == 'd' && sb[3] == ':') {
-                    // Check method body is forwarder to #addLast:.
-                    // 4 bytes: 0x4C (pushRecv); 0x40 (pushTemp 0);
-                    // 0x90+N (Send1 lit N — must be #addLast:); 0x5C/0x5E
-                    if (method.isObject() && method.rawBits() > 0x10000) {
-                        ObjectHeader* mObj = method.asObjectPtr();
-                        if (mObj->isCompiledMethod()) {
-                            Oop hdr = memory_.fetchPointerUnchecked(0, method);
-                            if (hdr.isSmallInteger()) {
-                                int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
-                                size_t bcStart = (1 + numLits) * 8;
-                                size_t totalBytes = mObj->byteSize();
-                                if (totalBytes >= bcStart + 4) {
-                                    const uint8_t* bc = mObj->bytes() + bcStart;
-                                    if (bc[0] == 0x4C && bc[1] == 0x40
-                                            && bc[2] >= 0x90 && bc[2] <= 0x9F
-                                            && (bc[3] == 0x5C || bc[3] == 0x5E)) {
-                                        int litIdx = bc[2] - 0x90;
-                                        if (litIdx < numLits) {
-                                            Oop fwdSel = memory_.fetchPointerUnchecked(
-                                                1 + litIdx, method);
-                                            if (fwdSel.isObject() && fwdSel.rawBits() > 0x10000) {
-                                                ObjectHeader* fso = fwdSel.asObjectPtr();
-                                                if (fso->isBytesObject() && fso->byteSize() == 9) {
-                                                    const uint8_t* fb = fso->bytes();
-                                                    if (fb[0] == 'a' && fb[1] == 'd'
-                                                            && fb[2] == 'd' && fb[3] == 'L'
-                                                            && fb[4] == 'a' && fb[5] == 's'
-                                                            && fb[6] == 't' && fb[7] == ':') {
-                                                        // Wait — "addLast:" is 8 chars not 9.
-                                                        // This branch never fires due to size mismatch.
-                                                    }
-                                                }
-                                                if (fso->isBytesObject() && fso->byteSize() == 8) {
-                                                    const uint8_t* fb = fso->bytes();
-                                                    if (fb[0] == 'a' && fb[1] == 'd'
-                                                            && fb[2] == 'd' && fb[3] == 'L'
-                                                            && fb[4] == 'a' && fb[5] == 's'
-                                                            && fb[6] == 't' && fb[7] == ':') {
-                                                        // Confirmed: OC>>add: forwarder.
-                                                        primFunc = &Interpreter::primitiveOCAdd;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     if (isNewSpaceBits(selector.rawBits()) || isNewSpaceBits(classOop.rawBits())
             || isNewSpaceBits(method.rawBits()))
         g_mcacheMayHoldYoung = true;   // the next scavenge walks the cache
@@ -21261,8 +21151,6 @@ void Interpreter::initializeClassIndexCache() {
 #if PHARO_JIT_ENABLED
     jit::g_mcfFbcClassIndex = fullBlockClosureClassIndex_;
 #endif
-    orderedCollectionClassIndex_ = lookupClassIndexByName("OrderedCollection");
-    writeStreamClassIndex_ = lookupClassIndexByName("WriteStream");
     // BoxedFloat64, via the special-objects array (name-independent).  Used
     // by the arithmeticSend mixed int/float compare fast path — that path
     // has no dispatch guarantee on the operand class, so it must match the

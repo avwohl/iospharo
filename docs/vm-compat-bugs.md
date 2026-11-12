@@ -255,6 +255,47 @@ Three defects were behind the abort:
 Check: the 22 test classes of Kernel-CodeModel-Tests give the Cog counts on
 arm64 and x86_64, with the JIT on and off.
 
+## FIXED 2026-11-12 — synthetic `add:` and `nextPut:` primitives removed
+
+`Interpreter::primitiveOCAdd` and `Interpreter::primitiveWSNextPut` were
+C++ copies of `OrderedCollection>>add:` and `WriteStream>>nextPut:`.  The
+method cache chose them from the class, the selector name and (for `add:`)
+the raw bytes of the method.  `scripts/cogdiff/collfast.st` ran 57 hazard
+cases on Cog (v10.3.12 and v12.0.6) and on our VM.  Before the change, the
+`nextPut:` copy differed from Cog in these cases:
+
+- A redefined `WriteStream>>nextPut:` ran its new body on 2 of 25 calls.
+  The copy kept its selection after the redefinition.
+- A read-only WriteStream, a WriteStream on a read-only collection and a
+  WriteStream on a literal Array accepted writes.  Cog raises
+  ModificationForbidden.  The copy stored with no read-only check.
+
+The `add:` copy never ran: it read `lastIndex` from slot 1 and the array
+from slot 2, and the real order is `array`, `firstIndex`, `lastIndex`.  It
+failed on every call.  Its selection code also had a dead branch (a 9-byte
+`addLast:` test).
+
+Cost of removal, instructions retired for 3 million `add:` or `nextPut:`
+calls (`/usr/bin/time -l`, Pharo 14, arm64, loop overhead included):
+
+    mode            copies kept   removed    add: copy corrected
+    JIT, add:         6394 M       6406 M      6389 M
+    JIT, nextPut:     6133 M       6141 M      6166 M
+    no JIT, add:     22512 M      22343 M     15352 M
+    no JIT, nextPut: 15491 M      18921 M     15453 M
+
+With the JIT on, the copies change nothing (0.2 percent, below noise).
+With `PHARO_NO_JIT=1` (a debug mode), a corrected `add:` copy would save
+about 2.4 thousand instructions per call, and the `nextPut:` copy saves 1.1
+thousand.  The product runs with the JIT, so both copies are gone,
+together with their selection code and the two class-index fields.
+
+After the change, `collfast.st` gives the same 57 lines as Cog on Pharo 13
+and 14, on arm64 and x86_64, with the JIT on and off.  OrderedCollectionTest,
+WriteStreamTest, ReadWriteStreamTest, SortedCollectionTest, StringTest and
+15 other collection and stream test classes pass (8130 tests on Pharo 13,
+7958 on Pharo 14) on both arches, with the JIT on and off.
+
 ## FIXED 2026-11-12 — Cog v12.0.6 (Pharo 14) differential check
 
 Pharo 14 ships with pharo-vm v12.0.6.  The scripts in `scripts/cogdiff/`
