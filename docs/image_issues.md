@@ -21,6 +21,94 @@ hash values.  Our identity hashes come from a fixed-seed generator, so
 the order changes only when process timing changes which objects get a
 hash first.  The defect is in the image's removal order, not in the VM.
 
+## TaskIt worker pool kills a busy worker (2026-11-12, not patched)
+
+`TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
+failed with `TKTTimeoutException` in the Pharo 13 and the Pharo 14 sweeps
+at d312bd40.  (The sweeps list the class under this name.
+`TKTWorkerPoolTest` passes 9 of 9.)  The test fails about 1 to 2 times in
+100 on arm64 with the JIT on and with `PHARO_NO_JIT=1`.  The test is a race
+in TaskIt, not a defect of the VM.
+
+The cause is in `TKTCommonQueueWorkerPool>>privateRemoveIdleWorkerIfNeeded`.
+The method builds the list of free workers (`currentTaskExecution isNil`).
+It then sends a few more messages (`size`, `anyOne`, `workers remove:`).
+Last, it sends `stop` to the worker that it chose.
+
+A worker takes a task from the queue and sets `currentTaskExecution`
+outside the pool mutex.  If a process switch falls between the two steps,
+the chosen worker is busy when `stop` runs.  `stop` terminates the worker
+process, and the task never ends.  The test then waits 100 ms for a future
+that cannot finish.
+
+Proof: a probe replaced `TKTWorkerProcess>>stop` with a copy that records
+`currentTaskExecution`.  In 10 of 11 failed runs on our VM, the worker had a
+`TKTFutureExecution` when `privateRemoveIdleWorkerIfNeeded` called `stop`.
+Every other worker waited in `AtomicSharedQueue>>next`.  One failed run
+shows a task that stopped without a `stop` record.
+
+Stock Cog v12.0.6
+(Pharo 14, x86_64 under Rosetta) shows the same record in 2 of 5 failed
+runs (2500 runs).  Two other Cog failures were tasks that ended after the
+100 ms limit.
+
+Failures in a loop that runs the test body (JIT on, same image):
+
+    ours, 2 x 1000 runs, load from other work   43 failures
+    ours, 3 x 400 runs, build 8a799eef          13 failures in 1200
+    ours, 3 x 400 runs, build e96d044d          18 failures in 1200
+    ours, PHARO_NO_JIT=1, 300 runs               7 failures
+    stock Cog v12.0.6, 2 x 1000 runs            14 failures
+    stock Cog v12.0.6, 1 x 2500 runs             5 failures
+
+The old build and the new build fail at the same rate, so no commit since
+8a799eef caused the failure.  Earlier sweeps did not show the test because
+one run of the test passes about 98 times in 100.  Our VM fails more often
+than Cog (about 1.5 times in 100 against 0.2 to 0.7).  Our VM has more process
+switches inside the window than Cog.  Cog fails too, so the VM stays as it
+is.
+
+## StTarjanAlgorithmTest times out in the runner, not in the VM (2026-11-12, runner fixed)
+
+`StTarjanAlgorithmTest>>testNoOutgoingDependenciesAfterTarjan` printed
+`TIMEOUT (exceeded 80s)` in two Pharo 14 sweeps.  It passed alone in 0.4 s
+when run by `eval`.  Run through the runner it timed out on each try, alone
+or after `StSpotterTest`.  The earlier classes of the batch do not matter.
+
+The test calls `StPackageRelationGraph>>computeStaticDependencies` on the
+`*Collections*` packages.  For `Collections-Unordered` the image signals
+`StPotentialOutDatedDependencyWarning`: the manifest lists `System-Support`
+as a manual dependency that the analysis does not find.  A pristine
+Pharo 14 image under stock Cog signals the same warning.
+
+The runner forks each test at priority 40.  The runner main process
+(priority 79) had activated the `TestExecutionEnvironment`, so
+`mainTestProcess` was the runner main.  `ProcessMonitorTestService` wraps
+each new process of the environment.  It treated the unhandled warning in the
+forked test process as a failure of a background process.  It suspended the
+test process in `suspendBackgroundFailure:`.
+
+A test in the main test process is different.  The monitor passes the
+warning on, and the headless default action prints the warning and resumes.
+
+Proof on stock Cog v12.0.6 with the same shape: `CurrentExecutionEnvironment
+runTestsBy: [ [ test runCase ] forkAt: 40 ... ]` leaves the test process
+suspended (`isSuspended` true, no result in 15 s).  Our VM gives the same
+answer.  When the forked process first sets `mainTestProcess` to itself,
+Cog finishes the test and prints the warning.
+
+The fix is in `scripts/pharo-headless-test/run_sunit_tests.st`, method
+`runSingleTest:selector:timeout:priority:on:`.  Right after the fork, the
+runner main sets `mainTestProcess` of the batch environment to the forked test
+process.  The runner main has priority 79, so the test has not started.  At the
+end of the method the runner restores `mainTestProcess` and
+`shouldSuspendBackgroundFailures`.  The monitor switches the suspension off for good after a failure of the
+main process.  The runner never calls `cleanUpAfterTest`, so the restore keeps
+the later tests as they were.
+
+The new temporaries must not share a name with a block temporary of the
+method.  `ReleaseTest>>testNoShadowedVariablesInMethods` fails when they do.
+
 ## `SDLOSXPlatform` over-releases autoreleased NSStrings
 
 `ObjCLibrary>>nsStringOf:` answers `+[NSString stringWithUTF8String:]`, which is
