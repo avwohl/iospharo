@@ -239,13 +239,23 @@ check in waitTimeoutMilliseconds:; (c) make the Delay scheduler's
 backend loop survive per-delay errors instead of dying with the first
 poisoned delay.
 
-## Test defects fixed by `scripts/pharo13-image-fixes.st` (2026-10-15)
+## Test defects fixed by `scripts/pharo-image-fixes.st` (2026-10-15)
 
-Six tests failed in every sweep, and each failed the same way on stock Cog
+Seven tests failed in every sweep, and each failed the same way on stock Cog
 with the pristine image.  The defects are in the image's tests or base code,
-not in a VM.  `scripts/pharo13-image-fixes.st` recompiles one method for
+not in a VM.  `scripts/pharo-image-fixes.st` recompiles one method for
 each.  File it in when you prepare the sweep image, after
-`setup_fake_gui.st`.  With the fixes, all six tests pass on both VMs.
+`setup_fake_gui.st`.  With the fixes, all seven tests pass on both VMs.
+(`scripts/pharo13-image-fixes.st` is a one-line file that files in the new
+name.  The relative path in it needs the repository root as the working
+directory.)
+
+Every fix checks the current method source first.  It recompiles the
+method only when the defect is present.  If the class is absent or Pharo
+fixed the defect, the fix prints `SKIP` and changes nothing.  So one file
+serves Pharo 13 and Pharo 14.  On Pharo 14 (e649a7f) fixes 1 to 6 find
+nothing to do: `SystemDependenciesTest` does not exist, and the other five
+defects are repaired upstream.  Fix 7 applies on both versions.
 
 | Test | Defect | Fix |
 |---|---|---|
@@ -255,6 +265,7 @@ each.  File it in when you prepare the sweep image, after
 | `StDebuggerTest>>testDynamicVariableEvaluation` | The provider forks a process that sets the dynamic variable when it first runs, and `fork` does not run it.  The test passed only if something preempted the test process while the debugger was built (a Delay that fired).  It failed on our VM in every sweep and passed when run alone. | `StTestDebuggerProvider>>debuggerWithDynamicVariableSuspendedContext` yields until the forked process has set the variable. |
 | `StDebuggerTest>>testUpdateLayoutForContextsIfAssertionFailure` | The test reads actual and expected from the assertion's description block by index (actual at 2, expected at 1).  The block's copied values are (actual, expected), so the test compared swapped values: "Got 4 instead of 2". | Swap the indexes. |
 | `StDebuggerInspectorTest>>testUpdateLayoutForContextsWithAssertionFailure` | The same swapped indexes. | Swap the indexes. |
+| `TFUFFICallbackTest>>testCallbackWithErrorHanlded` | `UIManager>>nonInteractiveManager` answers `NonInteractiveUIManager beDefault`.  That sends `beDefault` to the class, and the class has no such method.  `UIManager class>>nonInteractiveDuring:` calls it, so the test fails whenever the default manager is a `MorphicUIManager`, which the fake-GUI prep and the runner install.  Stock Cog fails the same way when `MorphicUIManager new beDefault` runs first (verified on Pharo 14).  The test passes when the default is `NonInteractiveUIManager`. | Send `new beDefault`. |
 
 The 2026-09-02 analysis of the first test, kept for its evidence: the
 definition names fifteen test traits, and this check finds the one that is

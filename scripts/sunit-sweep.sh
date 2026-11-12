@@ -23,8 +23,13 @@
 # on resume. Prepare it with:
 #
 #     <vm> fresh.image eval \
-#       "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
+#       "'scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
+#        'scripts/pharo-image-fixes.st' asFileReference fileIn.
+#        'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
 #        Smalltalk snapshot: true andQuit: true"
+#
+# (setup_fake_gui.st and pharo-image-fixes.st are optional; the fixes file works
+# on Pharo 13 and Pharo 14.  File run_sunit_tests.st LAST.)
 #
 # NOT with `eval --save`. Other docs in this repo describe prepping via
 # `pharo image eval --save ...`; that is the STOCK Cog VM's flag. Under
@@ -106,7 +111,7 @@ VM=${1:?usage: sunit-sweep.sh <vm-binary> <prepped-image> [outdir]}
 IMAGE=${2:?usage: sunit-sweep.sh <vm-binary> <prepped-image> [outdir]}
 OUT=${3:-./sunit-sweep-out}
 
-TOTAL=${TOTAL:-2047}          # concrete TestCase subclasses in a clean Pharo 13
+TOTAL=${TOTAL:-}              # class count; empty means ask the image (see below)
 STEP=${STEP:-50}
 PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-600}
 
@@ -178,6 +183,28 @@ fi
 # base.image instead, or wait for the sweep.
 rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
 
+# TOTAL is how many classes the runner lists.  It differs per image: 2047 on a
+# clean Pharo 13 and 2159 on a clean Pharo 14 (the runner counts the abstract
+# classes of its curated list too).  When TOTAL is not set, ask the prepped
+# image, which gives the same number the batches use.  An eval run touches
+# /tmp/sunit_run_completed.txt, so the next line removes it again.  The run
+# stages nothing: stage /tmp/sunit_test_classes.txt first, as for the batches.
+# A Pharo 13 image first prints the result of the prep command (EVAL-RESULT=a
+# SnapshotOperation), so take the LAST number-valued result.
+if [ -z "$TOTAL" ]; then
+    mkdir -p "$OUT/count"
+    cp "$IMAGE"   "$OUT/count/count.image"
+    cp "$CHANGES" "$OUT/count/count.changes"
+    cp "$SOURCES" "$OUT/count/"
+    TOTAL=$( cd "$OUT/count" && rm -f startup.st && timeout 300 "$VM" count.image eval \
+                 "SUnitRunner testClassCount printString" 2>&1 < /dev/null \
+             | grep -o "EVAL-RESULT='[0-9]*'" | tail -1 | tr -dc '0-9' )
+    rm -f /tmp/sunit_run_completed.txt
+    case "$TOTAL" in
+        ''|*[!0-9]*|0) echo "could not read the class count from the image (SUnitRunner testClassCount); set TOTAL" >&2; exit 1 ;;
+    esac
+fi
+
 {
   echo "sweep start $(date '+%F %H:%M:%S')"
   echo "  vm      $VM  ($(lipo -archs "$VM" 2>/dev/null || uname -m))"
@@ -186,15 +213,22 @@ rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
   echo "  total=$TOTAL step=$STEP timeout=${PER_BATCH_TIMEOUT}s"
 } >> "$OUT/sweep.log"
 
-# Run one batch and leave its exit status in $?.  Once the runner writes
-# /tmp/sunit_run_completed.txt every class in the batch has been recorded, so a
-# VM still alive SHUTDOWN_GRACE seconds later is wedged in shutdown and has
+# Run one batch and leave its exit status in $?.  Once the results file holds
+# the line "=== BATCH COMPLETE ===" every class in the batch has been recorded,
+# so a VM still alive SHUTDOWN_GRACE seconds later is wedged in shutdown and has
 # nothing left to contribute.  The 2026-09-02 x86_64 sweep burned its whole
 # 1800 s budget exactly that way -- batch 1801-1850 came back rc=124 with
 # classes=51 completed=yes, i.e. 1800 s spent for a batch that had finished its
 # work in a fraction of it.  Kill it at the marker rather than waiting the
 # timeout out.  timeout(1) is still the outer bound for a batch that hangs
-# BEFORE finishing, which is the case the marker cannot see.
+# BEFORE finishing, which is the case that line cannot see.
+#
+# Do NOT key this on /tmp/sunit_run_completed.txt.  That file is shared state:
+# every `test_load_image <image> eval ...` run in any shell touches it (it
+# stops a prepped image from starting its runner), so an eval started while a
+# sweep runs made the sweep kill a healthy VM 30 s later.  That cut batches
+# 501-600, 1901-2000, 2001-2100 and 2101-2159 of the first Pharo 14 sweep short
+# (rc=137, no BATCH COMPLETED line).
 SHUTDOWN_GRACE=${SHUTDOWN_GRACE:-30}
 # RUN_FROM_IMAGE_DIR runs the VM with its working directory set to the outdir,
 # where run.image lives.  DEFAULT ON since 2026-09-03, because it is the
@@ -237,7 +271,15 @@ run_batch() {                       # $1 = log path
     fi
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
-        if [ -f /tmp/sunit_run_completed.txt ]; then
+        # The prepped image found a foreign /tmp/sunit_run_completed.txt, skipped
+        # its runner and sits idle: stop it now, run_batch_retrying starts again.
+        if head -c 65536 "$log" 2>/dev/null | grep -q 'previous run completed, skipping auto-restart'; then
+            kill -9 "$pid" 2>/dev/null
+            pkill -9 -f "$OUT/run.image" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            return 138
+        fi
+        if grep -q '=== BATCH COMPLETE ===' /tmp/sunit_test_results.txt 2>/dev/null; then
             grace=$(( grace + 1 ))
             if [ "$grace" -ge "$SHUTDOWN_GRACE" ]; then
                 # kill BOTH: killing timeout(1) orphans the VM it wraps.  The
@@ -252,6 +294,24 @@ run_batch() {                       # $1 = log path
         sleep 1
     done
     wait "$pid"
+}
+
+# A foreign eval run can touch /tmp/sunit_run_completed.txt between the rm
+# below and the VM start.  The prepped image then skips its runner and prints
+# this line.  Run the batch again (at most three times) when it does.
+run_batch_retrying() {              # $1 = log path
+    local log=$1 try=1 rc
+    while :; do
+        run_batch "$log"
+        rc=$?
+        if grep -q 'previous run completed, skipping auto-restart' "$log" 2>/dev/null && [ "$try" -lt 3 ]; then
+            echo "  runner skipped (foreign marker file), run $try repeated: $log" >> "$OUT/sweep.log"
+            try=$(( try + 1 ))
+            rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
+            continue
+        fi
+        return $rc
+    done
 }
 
 # START_AT resumes a sweep that was cut short -- a spot reclaim, a kill, a
@@ -273,7 +333,7 @@ while [ "$start" -le "$TOTAL" ]; do
     rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
 
     t0=$(date +%s)
-    run_batch "$OUT/batch_${start}.log"
+    run_batch_retrying "$OUT/batch_${start}.log"
     rc=$?
     t1=$(date +%s)
 
@@ -282,7 +342,7 @@ while [ "$start" -le "$TOTAL" ]; do
         tr '\r' '\n' < /tmp/sunit_test_results.txt >> "$OUT/all_results.txt"
         got=$(tr '\r' '\n' < /tmp/sunit_test_results.txt | grep -c '^Total:' || true)
     fi
-    marker=no; [ -f /tmp/sunit_run_completed.txt ] && marker=yes
+    marker=no; grep -q '=== BATCH COMPLETE ===' /tmp/sunit_test_results.txt 2>/dev/null && marker=yes
 
     printf 'batch %5d-%-5d rc=%-3s %4ds  classes=%-4s completed=%s\n' \
         "$start" "$end" "$rc" "$((t1-t0))" "$got" "$marker" >> "$OUT/sweep.log"
@@ -334,7 +394,7 @@ if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
             t0=$(date +%s)
             # run_batch redirects the VM's stdin from /dev/null, which this site
             # needs regardless: the VM must not eat the `read` loop's stdin.
-            run_batch "$OUT/retry_${s2}.log"
+            run_batch_retrying "$OUT/retry_${s2}.log"
             rc=$?
             t1=$(date +%s)
 
