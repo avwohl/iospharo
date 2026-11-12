@@ -1,5 +1,5 @@
 "ffidiff.st -- libc callouts run on our VM and on Cog; diff the two answers.
-Run: test_load_image P.image eval "$(cat ffidiff.st)"; for Cog, arch -x86_64 Pharo --headless C.image eval ...
+Run: test_load_image P.image eval with the text of ffidiff.st; for Cog, arch -x86_64 Pharo --headless C.image eval ...
 #snprintf and #snprintfMany declare a variadic function without fixedArgumentCount:.
 They work on x86-64 only (variadic arguments go in registers there); on arm64
 Darwin variadic arguments go on the stack, so the answers are garbage on any VM.

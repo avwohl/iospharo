@@ -1,5 +1,5 @@
 "procdiff.st -- scenarios run on our VM and on Cog; diff the two answers.
-Run: test_load_image P.image eval "$(cat procdiff.st)"; for Cog, arch -x86_64 Pharo --headless C.image eval ...
+Run: test_load_image P.image eval with the text of procdiff.st; for Cog, arch -x86_64 Pharo --headless C.image eval ...
 See docs/vm-compat-bugs.md, 2026-10-17."
 
 | log run results |

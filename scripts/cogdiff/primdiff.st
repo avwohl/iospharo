@@ -3,8 +3,11 @@ Calls each pure primitive (arithmetic, comparison, at:, float, character,
 identity) of 20 core classes with 34 edge-case receivers and arguments and
 writes one line per call to the file named by the global PRIMDIFFOUT (default
 /tmp/primdiff-out.txt).  Run it on both VMs and diff the two files.  See
-docs/vm-compat-bugs.md, 2026-10-17.  Under Cog, leave ByteString and
-ByteSymbol out of the class list: Cog crashes on compareWith: 1."
+docs/vm-compat-bugs.md, 2026-10-17 and 2026-11-12.  Under Cog, leave ByteString
+and ByteSymbol out of the class list: Cog crashes on compareWith: 1.  Keep
+double quotes out of this header: the stock Pharo parser ends the comment at
+the first one.  2026-11-12 Pharo 14: one line differs (BoxedFloat64>>sqrt of
+negative infinity, a Cog defect)."
 
 | vals pure classes out f n |
 vals := { 0. 1. -1. 7. -7. 3. SmallInteger maxVal. SmallInteger minVal. 1 bitShift: 62. (1 bitShift: 62) negated. 1 bitShift: 100. (1 bitShift: 100) negated. 12345678901234567890. 3.5. -0.0. 0.0. 1.0e308. 2.5e-310. Float nan. Float infinity. Float negativeInfinity. 1/3. $a. (Character value: 300). 'abc'. 'ABD'. ''. #abc. #(1 2 3). #(). nil. true. #[1 2 255]. 1.5 }.

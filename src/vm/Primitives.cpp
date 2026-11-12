@@ -2484,6 +2484,8 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+static bool tryUnsigned64BitValueOf(ObjectMemory& memory, Oop oop, uint64_t& value);
+
 PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 #if PHARO_JIT_ENABLED
     if (__builtin_expect(GET_DEBUG_STR(PHARO_MCF_WATCH_OOP) != nullptr, 0))
@@ -2790,24 +2792,19 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 
     // 32-bit word objects (format 10-11): WideString, WordArray
     if (fmtVal >= 10 && fmtVal <= 11) {
-        // WideString stores Characters; WordArray stores SmallIntegers.  The
-        // generic at:put: must accept a Character (storing its codepoint) as
-        // well as a SmallInteger — Cog's primitive does, and WriteStream /
-        // select: / collect: on a WideString go through this store.  Rejecting
-        // Character here forced the Smalltalk fallback, which raised "Improper
-        // store into indexable object" (or, via the pointer path, wrote the raw
-        // 64-bit Character oop across two 32-bit slots — the `1867,0`-for-`233`
-        // corruption seen in StringTest>>testOnlyLetters).
+        // Primitive 61 stores an integer in a 32-bit word object: a
+        // SmallInteger or a LargePositiveInteger of at most 4 bytes
+        // (stObject:at:put: -> positive32BitValueOf:).  A Character is NOT
+        // accepted here.  Only primitive 64 (String>>at:put:, stringy = true in
+        // commonAtPut:) takes a Character and stores its codepoint;
+        // primitiveStringAtPut does that.  Accepting a Character here made
+        // WordArray at: 1 put: $a answer 97 and Float basicAt:put: $a store
+        // 97, where Cog fails the primitive and the image raises "Improper
+        // store into indexable object" (differential check primdiff2, Pharo 13
+        // and 14).
         uint64_t wordValue;
-        if (value.isSmallInteger()) {
-            int64_t sv = value.asSmallInteger();
-            if (sv < 0 || sv > 0xFFFFFFFF) {
-                return PrimitiveResult::Failure;
-            }
-            wordValue = static_cast<uint64_t>(sv);
-        } else if (value.isCharacter()) {
-            wordValue = value.asCharacter();   // codepoint fits in 32 bits
-        } else {
+        if (!tryUnsigned64BitValueOf(memory_, value, wordValue) ||
+            wordValue > 0xFFFFFFFFull) {
             return PrimitiveResult::Failure;
         }
         size_t numElements = header->slotCount() * 2 - (fmtVal - 10);
@@ -3313,6 +3310,192 @@ PrimitiveResult Interpreter::primitiveBasicSize(int argCount) {
     return primitiveSize(argCount);  // Same behavior
 }
 
+// ===== basicNew: planning (primitives 71, 597, 599) =====
+//
+// The three variable-size allocation primitives share one decision tree,
+// copied from the stock VM (pharo-vm v12.0.6, Spur64BitMemoryManager
+// >>instantiateClass:indexableSize:isPinned:isOldSpace: and
+// InterpreterPrimitives>>primitiveNewWithArg).  The tree decides WHICH
+// error code a failed basicNew: reports.  Pharo 14 Behavior>>basicNew: is
+// `<primitive: 71 error: ec>` and raises OutOfMemory only for
+// ec == #'insufficient object memory' (PrimErrNoMemory); every other code
+// becomes PrimitiveFailed.  So the code is image-visible.
+//
+// Stock VM v10.3.12 (Pharo 13) answered PrimErrNoMemory for every nil from
+// instantiateClass:indexableSize:.  v12.0.6 distinguishes:
+//   argument not a non-negative machine integer      PrimErrBadArgument
+//   receiver has no class format, or is not indexable
+//     (and the size is not 0), or is Float and size ~= 2  PrimErrBadReceiver
+//   slot count above 2^40 (maxSlotsForAlloc)         PrimErrUnsupported
+//   allocation fails inside the limit                PrimErrNoMemory
+static bool tryUnsigned64BitValueOf(ObjectMemory& memory, Oop oop, uint64_t& value);
+
+namespace {
+enum class NewKind { Fixed, Pointers, Words64, Words32, Words16, Bytes };
+struct NewPlan {
+    uint32_t classIndex = 0;
+    int instSpec = 0;
+    NewKind kind = NewKind::Fixed;
+    size_t n = 0;          // element count requested
+    size_t numSlots = 0;   // slots the object needs (stock VM's numSlots)
+    size_t fixedSize = 0;
+    ObjectFormat ptrFormat = ObjectFormat::Indexable;
+};
+// stock VM: Spur64BitMemoryManager>>maxSlotsForAlloc
+constexpr unsigned __int128 kMaxSlotsForAlloc =
+    (unsigned __int128)1 << 40;
+}  // namespace
+
+// Answers 0 and fills `plan`, or answers the primitive error code the stock
+// VM reports.  `n` is the already validated element count.
+static int planNewWithArg(ObjectMemory& memory, Oop rcvr, uint64_t n,
+                          NewPlan& plan, const char* who) {
+    if (!rcvr.isObject() || rcvr.rawBits() <= 0x10000)
+        return 2;  // PrimErrBadReceiver: formatOfClassSafe: = -1
+    Oop formatObj = memory.fetchPointer(2, rcvr);
+    if (!formatObj.isSmallInteger())
+        return 2;
+    int64_t format = formatObj.asSmallInteger();
+    plan.fixedSize = format & 0xFFFF;
+    plan.instSpec = (format >> 16) & 0x1F;
+    plan.n = static_cast<size_t>(n);
+    const int spec = plan.instSpec;
+    unsigned __int128 slots = 0;
+    if (spec == 2 || spec == 3 || spec == 4) {
+        // arrayFormat / indexablePointersFormat / weakArrayFormat
+        plan.kind = NewKind::Pointers;
+        plan.ptrFormat = spec == 3 ? ObjectFormat::IndexableWithFixed
+                       : spec == 4 ? ObjectFormat::Weak
+                                   : ObjectFormat::Indexable;
+        slots = (spec == 2 ? 0 : plan.fixedSize) + (unsigned __int128)n;
+    } else if (spec == 9) {
+        plan.kind = NewKind::Words64;
+        slots = n;
+    } else if (spec == 10) {
+        if (n != 2 && rcvr.rawBits() ==
+                memory.specialObject(SpecialObjectIndex::ClassFloat).rawBits())
+            return 2;  // a Float has exactly two 32-bit words
+        plan.kind = NewKind::Words32;
+        slots = ((unsigned __int128)n + 1) / 2;
+    } else if (spec == 12) {
+        plan.kind = NewKind::Words16;
+        slots = ((unsigned __int128)n + 3) / 4;
+    } else if (spec == 16) {
+        plan.kind = NewKind::Bytes;
+        slots = ((unsigned __int128)n + 7) / 8;
+    } else {
+        // Non-indexable: only a fixed instance (size 0) of a pointer format
+        // (0 zero-sized, 1 fixed, 5 ephemeron) is allowed.
+        if (n != 0 || spec > 5)
+            return 2;
+        plan.kind = NewKind::Fixed;
+        slots = plan.fixedSize;
+    }
+    plan.classIndex = memory.indexOfClass(rcvr);
+    // indexOfClass answers 0 for "not found", and cannot distinguish that
+    // from a real index.  0 is not a valid Spur class index, so allocating
+    // with it manufactures an object whose classIndex is 0: every send to it
+    // raises doesNotUnderstand:, and the DNU cannot be handled either because
+    // the receiver has no class.  Measured 2026-08-18 on
+    // PMAB2SolverTest>>testVectorSystem: `PMVector new: 2` returned an object
+    // BORN with class index 0 ([NEW-BAD-CLASS]).
+    if (plan.classIndex == 0) {
+        // No class-table entry yet.  classTable_ is rebuilt at image load by
+        // walking object headers, so a class is registered only if an
+        // INSTANCE existed when the image was snapshotted; a class the image
+        // created and never instantiated arrives with an ordinary object hash
+        // and no slot (every PolyMath class in a load-then-snapshot image).
+        // registerClass() enters the class at its own hash, which round-trips
+        // through snapshot because the hash lives in the class's header.
+        plan.classIndex = memory.registerClass(rcvr);
+    }
+    if (plan.classIndex == 0) {
+        static int badClsLog = 0;
+        if (badClsLog++ < 20) {
+            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
+            h = rcvr.asObjectPtr()->identityHash();
+            young = memory.isYoungObject(
+                        reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
+            if (h != 0 && h < memory.classTableSize())
+                atH = (unsigned long long)memory.classAtIndex(h).rawBits();
+            std::string cname = memory.nameOfClass(rcvr);
+            fprintf(stderr,
+                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
+                "table[hash]=0x%llx young=%d; failing the primitive rather "
+                "than allocating class index 0\n",
+                who, cname.empty() ? "?" : cname.c_str(),
+                (unsigned long long)rcvr.rawBits(), h, atH, young);
+        }
+        return 1;  // PrimErrGenericFailure
+    }
+    if (slots > kMaxSlotsForAlloc)
+        return 7;  // PrimErrUnsupported
+    plan.numSlots = static_cast<size_t>(slots);
+    return 0;
+}
+
+// Allocate for a plan.  `eden`: use the young-generation byte allocator
+// (primitive 71 only).
+static Oop allocateNewWithArgPlan(ObjectMemory& memory, const NewPlan& p,
+                                  bool eden) {
+    auto allocBytes = [&](size_t bytes) {
+        return (eden && !GET_DEBUG_BOOL(PHARO_NO_EDEN_BYTES_NEW))
+                   ? memory.allocateBytesYoung(p.classIndex, bytes)
+                   : memory.allocateBytes(p.classIndex, bytes);
+    };
+    switch (p.kind) {
+    case NewKind::Bytes:
+        // Byte objects in eden like pointer objects (old space past 254
+        // slots): a String made here was old garbage only a full GC
+        // reclaims, and a become of it scanned the heap.  Opt-out
+        // PHARO_NO_EDEN_BYTES_NEW.
+        return allocBytes(p.n);
+    case NewKind::Words64: {
+        Oop o = allocBytes(p.n * 8);
+        if (!o.isNil()) o.asObjectPtr()->setFormat(ObjectFormat::Indexable64);
+        return o;
+    }
+    case NewKind::Words32: {
+        Oop o = allocBytes(p.n * 4);
+        if (!o.isNil()) {
+            ObjectHeader* hdr = o.asObjectPtr();
+            size_t padding = hdr->slotCount() * 2 - p.n;
+            hdr->setFormat(static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable32) + padding));
+        }
+        return o;
+    }
+    case NewKind::Words16: {
+        Oop o = allocBytes(p.n * 2);
+        if (!o.isNil()) {
+            ObjectHeader* hdr = o.asObjectPtr();
+            size_t padding = hdr->slotCount() * 4 - p.n;
+            hdr->setFormat(static_cast<ObjectFormat>(
+                static_cast<int>(ObjectFormat::Indexable16) + padding));
+        }
+        return o;
+    }
+    case NewKind::Pointers: {
+        Oop o = memory.allocateSlots(p.classIndex, p.numSlots, p.ptrFormat);
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ALLOC_SIZE_CHECK), 0)
+            && !o.isNil() && p.ptrFormat == ObjectFormat::Indexable
+            && p.numSlots >= 1 && p.numSlots <= 6) {
+            size_t got = o.asObjectPtr()->slotCount();
+            if (got != p.numSlots)
+                fprintf(stderr, "[ALLOC-SIZE-MISMATCH] requested=%zu got=%zu clsIdx=%u\n",
+                        p.numSlots, got, p.classIndex);
+        }
+        return o;
+    }
+    case NewKind::Fixed:
+    default: {
+        ObjectFormat f = p.instSpec == 0 ? ObjectFormat::ZeroSized
+                       : p.instSpec == 5 ? ObjectFormat::WeakWithFixed
+                                         : ObjectFormat::FixedSize;
+        return memory.allocateSlots(p.classIndex, p.fixedSize, f);
+    }
+    }
+}
 // ===== OBJECT CREATION PRIMITIVES (70-71) =====
 
 PrimitiveResult Interpreter::primitiveNew(int argCount) {
@@ -3425,217 +3608,50 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         rcvr = stackValue(1);  // Class
     }
 
-    if (!rcvr.isObject()) {
+    // Stock VM: positiveMachineIntegerValueOf: -- a non-negative SmallInteger
+    // or a LargePositiveInteger of at most 8 bytes; anything else is
+    // PrimErrBadArgument, checked BEFORE the receiver.
+    uint64_t requested = 0;
+    if (!tryUnsigned64BitValueOf(memory_, sizeOop, requested)) {
+        primFailCode_ = PrimErrBadArgument_;
         return PrimitiveResult::Failure;
     }
 
-    // Handle size argument - can be SmallInteger or LargePositiveInteger
-    int64_t indexableSize = 0;
-    if (sizeOop.isSmallInteger()) {
-        indexableSize = sizeOop.asSmallInteger();
-    } else if (sizeOop.isObject() && sizeOop.rawBits() > 0x10000) {
-        // Extract value from LargePositiveInteger (little-endian bytes)
-        ObjectHeader* hdr = sizeOop.asObjectPtr();
-        if (hdr->isBytesObject() && hdr->byteSize() <= 8) {
-            uint8_t* bytes = (uint8_t*)hdr->bytes();
-            size_t byteLen = hdr->byteSize();
-            for (size_t i = 0; i < byteLen; i++) {
-                indexableSize |= ((int64_t)bytes[i]) << (i * 8);
+    // CompiledMethod (instSpec 24) basicNew: size header: header allocates
+    // (1+numLiterals)*8 + size bytes.  Not a stock-VM variant of primitive
+    // 71 (stock uses primitive 79); kept for the callers that rely on it.
+    if (argCount == 2 && rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+        headerOop.isSmallInteger()) {
+        Oop fo = memory_.fetchPointer(2, rcvr);
+        if (fo.isSmallInteger() && ((fo.asSmallInteger() >> 16) & 0x1F) == 24) {
+            uint32_t ci = memory_.indexOfClass(rcvr);
+            if (ci == 0) ci = memory_.registerClass(rcvr);
+            if (ci == 0) return PrimitiveResult::Failure;
+            int64_t headerBits = headerOop.asSmallInteger();
+            size_t numSlots = 1 + (headerBits & 0x7FFF);  // header + literals
+            Oop cm = memory_.allocateCompiledMethod(ci, numSlots,
+                                                    static_cast<size_t>(requested));
+            if (cm.isNil()) {
+                primFailCode_ = PrimErrNoMemory_;
+                return PrimitiveResult::Failure;
             }
-        } else {
-            return PrimitiveResult::Failure;
+            memory_.storePointer(0, cm, headerOop);
+            primitiveSuccess(cm);
+            return PrimitiveResult::Success;
         }
-    } else {
+    }
+
+    NewPlan plan;
+    if (int ec = planNewWithArg(memory_, rcvr, requested, plan, __func__)) {
+        primFailCode_ = ec;
         return PrimitiveResult::Failure;
     }
-    if (indexableSize < 0) {
-        return PrimitiveResult::Failure;
-    }
-    auto allocBytesNew = [&](uint32_t ci, size_t bytes) {
-        return GET_DEBUG_BOOL(PHARO_NO_EDEN_BYTES_NEW) ? memory_.allocateBytes(ci, bytes)
-                                                       : memory_.allocateBytesYoung(ci, bytes);
-    };
+    Oop newObj = allocateNewWithArgPlan(memory_, plan, /*eden=*/true);
 
-    // Get class format to determine if bytes or pointers
-    Oop formatObj = memory_.fetchPointer(2, rcvr);
-    if (!formatObj.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    int64_t format = formatObj.asSmallInteger();
-    size_t fixedSize = format & 0xFFFF;
-    int instSpec = (format >> 16) & 0x1F;  // Instance specification (0-31)
-
-    // Per official VM: validate this is a variable-sized class (format >= 2)
-    // Format 0-1 are fixed-size, format 2+ are variable (Array, String, etc.)
-    if (instSpec < 2) {
-        return PrimitiveResult::Failure;
-    }
-
-    bool isBytes = instSpec >= 16;
-    bool isWords32 = (instSpec >= 10 && instSpec <= 11);
-    bool isWords16 = (instSpec >= 12 && instSpec <= 15);
-    bool isWords64 = (instSpec == 9);
-
-    uint32_t classIndex = memory_.indexOfClass(rcvr);
-
-    // indexOfClass answers 0 for "not found", and cannot distinguish that from
-    // a real index. 0 is not a valid Spur class index, so allocating with it
-    // manufactures an object whose classIndex is 0: every send to it raises
-    // doesNotUnderstand:, and the DNU cannot be handled either because the
-    // receiver has no class. It surfaces far from here as an unrecoverable
-    // "corpse" cascade that also leaves the Delay scheduler wedged
-    // (timerSem=nil), i.e. as a hang.
-    //
-    // Measured 2026-08-18 on PMAB2SolverTest>>testVectorSystem: the corpse is
-    // the object `PMVector new: 2` had just returned -- isLastAlloc=1,
-    // allocCls=0, and allocScav == nowScav, so it was BORN with class index 0
-    // rather than collected.
-    //
-    // Fail the primitive instead, and say so. The image's basicNew: fallback
-    // then runs and can signal properly, which is what the VM owes its image.
-    // Why the lookup fails is a separate, still-open defect: indexOfClass
-    // compares classTable_ entries against this receiver by IDENTITY, so a
-    // stale class Oop misses both the hash path and the linear scan.
-    if (classIndex == 0) {
-        // No class-table entry yet. classTable_ is rebuilt at image load by
-        // walking object headers, so a class is registered only if an INSTANCE
-        // existed when the image was snapshotted; a class the image created and
-        // never instantiated arrives with an ordinary object hash and no slot.
-        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
-        // image is in that state (PMAB2SolverTest hash 1443483,
-        // classTable_[1443483] = nil) while every image-shipped class is fine
-        // (Array 51, Object 3161).
-        //
-        // registerClass() already handles this: a 22-bit object hash is always
-        // a valid index into the 4M-entry table, so its existing "the hash IS
-        // the index" branch enters the class at its own hash, which round-trips
-        // through snapshot because the hash lives in the class's header.
-        // Nothing was calling it for these classes.
-        classIndex = memory_.registerClass(rcvr);
-    }
-    if (classIndex == 0) {
-        static int badClsLog = 0;
-        if (badClsLog++ < 20) {
-            // Say WHY the lookup failed. indexOfClass takes the receiver's
-            // identityHash as its class-table index and then verifies
-            // classTable_[hash] == rcvr by IDENTITY. Printing the hash and what
-            // the table actually holds there separates the two possibilities:
-            //   hash==0            -> the class was never assigned a table slot
-            //   table[hash] != rcvr -> one of the two is stale (the class moved,
-            //                          or this receiver Oop was not updated)
-            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                h = rcvr.asObjectPtr()->identityHash();
-                young = memory_.isYoungObject(
-                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
-                if (h != 0 && h < memory_.classTableSize())
-                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
-            }
-            std::string cname = memory_.nameOfClass(rcvr);
-            fprintf(stderr,
-                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
-                "table[hash]=0x%llx young=%d; failing the primitive rather "
-                "than allocating class index 0\n",
-                __func__, cname.empty() ? "?" : cname.c_str(),
-                (unsigned long long)rcvr.rawBits(), h, atH, young);
-        }
-        return PrimitiveResult::Failure;
-    }
-
-    Oop newObj;
-
-    // CompiledMethod (instSpec 24) is special: it has pointer slots for literals
-    // followed by bytecode bytes. The header encodes numLiterals.
-    // basicNew: size header: header allocates (1+numLiterals)*8 + size bytes
-    if (instSpec == 24 && !headerOop.isNil() && headerOop.isSmallInteger()) {
-        int64_t headerBits = headerOop.asSmallInteger();
-        int numLiterals = headerBits & 0x7FFF;  // bits 0-14
-        size_t bytecodeSize = static_cast<size_t>(indexableSize);
-
-        // Total slots = 1 (header slot) + numLiterals
-        size_t numSlots = 1 + numLiterals;
-
-        // CompiledMethod uses format 24 (Indexable bytes with 0 odd)
-        // But we store as CompiledMethod format which includes both slots and bytes
-        newObj = memory_.allocateCompiledMethod(classIndex, numSlots, bytecodeSize);
-
-        if (!newObj.isNil()) {
-            // Store the header in slot 0
-            memory_.storePointer(0, newObj, headerOop);
-        }
-    } else if (isBytes) {
-        // Byte, word and double-word objects in eden like pointer objects
-        // (old space past 254 slots): a String made here was old garbage
-        // only a full GC reclaims, and a become of it scanned the heap.
-        // Opt-out PHARO_NO_EDEN_BYTES_NEW.
-        newObj = allocBytesNew(classIndex, static_cast<size_t>(indexableSize));
-    } else if (isWords32) {
-        // 32-bit word objects (WideString, WordArray) - instSpec 10-11
-        size_t numElements = static_cast<size_t>(indexableSize);
-        size_t byteCount = numElements * 4;
-        // Allocate as bytes then fix the format
-        newObj = allocBytesNew(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            // Set correct 32-bit format: 10 (even count) or 11 (odd count)
-            size_t padding32 = (hdr->slotCount() * 2) - numElements;
-            ObjectFormat fmt = static_cast<ObjectFormat>(
-                static_cast<int>(ObjectFormat::Indexable32) + padding32);
-            hdr->setFormat(fmt);
-        }
-    } else if (isWords16) {
-        // 16-bit word objects (DoubleByteArray) - instSpec 12-15
-        size_t numElements = static_cast<size_t>(indexableSize);
-        size_t byteCount = numElements * 2;
-        newObj = allocBytesNew(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            size_t padding16 = (hdr->slotCount() * 4) - numElements;
-            ObjectFormat fmt = static_cast<ObjectFormat>(
-                static_cast<int>(ObjectFormat::Indexable16) + padding16);
-            hdr->setFormat(fmt);
-        }
-    } else if (isWords64) {
-        // 64-bit word objects - instSpec 9
-        size_t numElements = static_cast<size_t>(indexableSize);
-        size_t byteCount = numElements * 8;
-        newObj = allocBytesNew(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            hdr->setFormat(ObjectFormat::Indexable64);
-        }
-    } else {
-        size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
-        // Choose correct format based on instSpec:
-        // instSpec 2 = variable pointers only (Array)
-        // instSpec 3 = variable pointers with fixed fields (Context, CompiledMethod)
-        // instSpec 4 = weak variable pointers only (WeakArray)
-        // instSpec 5 = weak variable pointers with fixed fields (WeakAnnouncementSubscription)
-        ObjectFormat objFormat;
-        switch (instSpec) {
-            case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
-            case 4: objFormat = ObjectFormat::Weak; break;
-            case 5: objFormat = ObjectFormat::WeakWithFixed; break;
-            default: objFormat = ObjectFormat::Indexable; break;
-        }
-        newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ALLOC_SIZE_CHECK), 0)
-            && !newObj.isNil() && objFormat == ObjectFormat::Indexable
-            && totalSlots >= 1 && totalSlots <= 6) {
-            size_t got = newObj.asObjectPtr()->slotCount();
-            if (got != totalSlots)
-                fprintf(stderr, "[ALLOC-SIZE-MISMATCH] requested=%zu got=%zu clsIdx=%u\n",
-                        totalSlots, got, classIndex);
-        }
-    }
-
-    // Allocation-failure path: allocateBytes / allocateSlots return nil when
-    // old-space is exhausted.  Signal PrimErrNoMemory so Pharo's basicNew:
-    // fallback (<primitive: 71 error: ec>) sees ec == #'insufficient object
-    // memory' and raises OutOfMemory, which tests can catch with
-    // `on: OutOfMemory do:`.  Without primFailCode_ set, the image falls
-    // through to generic PrimitiveFailed, uncatchable by OOM handlers.
+    // allocateBytes / allocateSlots answer nil when memory is exhausted.
+    // PrimErrNoMemory makes Pharo's basicNew: fallback
+    // (<primitive: 71 error: ec>) see ec == #'insufficient object memory'
+    // and raise OutOfMemory, which tests can catch with `on: OutOfMemory do:`.
     if (newObj.isNil()) {
         primFailCode_ = PrimErrNoMemory_;
         return PrimitiveResult::Failure;
@@ -8980,6 +8996,16 @@ static PrimitiveResult liPrimShift(Interpreter& interp, bool arithmetic) {
     return liSucceed(interp, result);
 }
 
+// The LargeIntegers plugin declares the neg: argument as #Boolean (SmartSyntax
+// coercion: booleanValueOf:), so anything but true or false fails the
+// primitive and the image fallback raises NonBooleanReceiver.  Treating every
+// non-true value as false was a difference from Cog.
+static bool liBooleanArg(ObjectMemory& memory, Oop oop, bool& value) {
+    if (oop.rawBits() == memory.trueObject().rawBits()) { value = true; return true; }
+    if (oop.rawBits() == memory.falseObject().rawBits()) { value = false; return true; }
+    return false;
+}
+
 // primDigitMultiplyNegative: receiver digitMultiply: arg neg: aBoolean.
 static PrimitiveResult liPrimDigitMultiplyNegative(Interpreter& interp, int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
@@ -8990,7 +9016,8 @@ static PrimitiveResult liPrimDigitMultiplyNegative(Interpreter& interp, int argC
         !liRead(memory, cls, interp.stackValue(1), b)) {
         return PrimitiveResult::Failure;
     }
-    bool neg = interp.stackValue(0).rawBits() == memory.trueObject().rawBits();
+    bool neg;
+    if (!liBooleanArg(memory, interp.stackValue(0), neg)) return PrimitiveResult::Failure;
     return liAnswer(interp, 3, liMultiply(memory, cls, a, b, neg));
 }
 
@@ -9075,7 +9102,8 @@ static PrimitiveResult liPrimDigitDivNegative(Interpreter& interp, int argCount)
         return PrimitiveResult::Failure;
     }
     if (b.n == 0) return PrimitiveResult::Failure;
-    bool quoNeg = interp.stackValue(0).rawBits() == memory.trueObject().rawBits();
+    bool quoNeg;
+    if (!liBooleanArg(memory, interp.stackValue(0), quoNeg)) return PrimitiveResult::Failure;
     LIDivision d(a, b);
 
     // Allocation never collects (a scavenge waits for the next safe point),
@@ -10031,7 +10059,8 @@ PrimitiveResult Interpreter::primDigitMultiplyNegative(int argCount) {
     }
 
     std::vector<uint8_t> resultMag = multiplyMagnitudes(aMag, bMag);
-    bool resultNeg = (negFlag.rawBits() == memory_.trueObject().rawBits());
+    bool resultNeg;
+    if (!liBooleanArg(memory_, negFlag, resultNeg)) return PrimitiveResult::Failure;
 
     if (resultMag.size() == 1 && resultMag[0] == 0) resultNeg = false;
 
@@ -10144,7 +10173,8 @@ PrimitiveResult Interpreter::primDigitDivNegative(int argCount) {
     divideMagnitudes(dividendMag, divisorMag, quotientMag, remainderMag);
 
     // Determine quotient sign from the neg flag
-    bool quotientNeg = (negFlag.rawBits() == memory_.trueObject().rawBits());
+    bool quotientNeg;
+    if (!liBooleanArg(memory_, negFlag, quotientNeg)) return PrimitiveResult::Failure;
     // Don't negate zero
     if (quotientMag.size() == 1 && quotientMag[0] == 0) quotientNeg = false;
 
@@ -13180,33 +13210,15 @@ PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Get value - accept SmallInteger or LargePositiveInteger that fits in 32 bits
-    uint32_t value;
-    if (valueOop.isSmallInteger()) {
-        int64_t sval = valueOop.asSmallInteger();
-        if (sval < 0 || sval > 0xFFFFFFFF) {
-            return PrimitiveResult::Failure;
-        }
-        value = static_cast<uint32_t>(sval);
-    } else if (valueOop.isObject()) {
-        // Try to extract from LargePositiveInteger
-        ObjectHeader* valHdr = valueOop.asObjectPtr();
-        if (!valHdr->isBytesObject()) {
-            return PrimitiveResult::Failure;
-        }
-        size_t byteSize = valHdr->byteSize();
-        if (byteSize > 4) {
-            return PrimitiveResult::Failure;  // Too large for 32 bits
-        }
-        // Read little-endian bytes
-        value = 0;
-        uint8_t* bytes = valHdr->bytes();
-        for (size_t i = 0; i < byteSize; i++) {
-            value |= static_cast<uint32_t>(bytes[i]) << (i * 8);
-        }
-    } else {
+    // Get value - positive32BitValueOf: accepts a SmallInteger or a
+    // LargePositiveInteger (by class, not by shape: a 4-byte String is not
+    // one) that fits in 32 bits.
+    uint64_t value64;
+    if (!tryUnsigned64BitValueOf(memory_, valueOop, value64) ||
+        value64 > 0xFFFFFFFFull) {
         return PrimitiveResult::Failure;
     }
+    uint32_t value = static_cast<uint32_t>(value64);
 
     if (!rcvr.isObject()) {
         return PrimitiveResult::Failure;  // Can't write to immediates
@@ -14231,97 +14243,100 @@ PrimitiveResult Interpreter::primitiveContextSize(int argCount) {
 // receiver sizeInBytesOfInstance: numElements -> SmallInteger
 // For variable-size classes, numElements specifies the number of indexable elements
 PrimitiveResult Interpreter::primitiveSizeInBytesOfInstance(int argCount) {
+    // Stock VM v12.0.6: InterpreterPrimitives>>primitiveSizeInBytesOfInstance
+    // with SpurMemoryManager>>byteSizeOfInstanceOf:withIndexableSlots:errInto:
+    // and byteSizeOfInstanceOf:errInto:.  The image's
+    // Behavior>>byteSizeOfInstanceOfSize: and handleFailingBasicNewTenured:
+    // depend on the failure paths: a size too large for the primitive makes
+    // the image halve the size and retry, and the byte count it adds up must
+    // not wrap.  The old code answered a wrapped SmallInteger for huge sizes
+    // and a byte count for classes that are not indexable.
+    if (argCount > 1) {
+        primFailCode_ = 5;  // PrimErrBadNumArgs
+        return PrimitiveResult::Failure;
+    }
     Oop classOop;
-    size_t numElements = 0;
-
-    if (argCount == 0) {
-        // No argument - get size for fixed-size instance
-        classOop = stackTop();
-    } else if (argCount == 1) {
-        // One argument - number of indexable elements
+    int64_t n = 0;
+    if (argCount == 1) {
         Oop numElemsOop = stackValue(0);
         classOop = stackValue(1);
-
         if (!numElemsOop.isSmallInteger()) {
+            primFailCode_ = PrimErrBadArgument_;
             return PrimitiveResult::Failure;
         }
-        int64_t n = numElemsOop.asSmallInteger();
-        if (n < 0) {
-            return PrimitiveResult::Failure;
-        }
-        numElements = static_cast<size_t>(n);
+        n = numElemsOop.asSmallInteger();
     } else {
-        return PrimitiveResult::Failure;
+        classOop = stackValue(0);
     }
 
-    if (!classOop.isObject()) {
+    if (!classOop.isObject() || classOop.rawBits() <= 0x10000) {
+        primFailCode_ = 2;  // PrimErrBadReceiver
         return PrimitiveResult::Failure;
     }
-
-    // Get the class format to determine instance structure
-    // Class format is at slot 2 (after superclass, methodDict)
     Oop formatOop = memory_.fetchPointer(2, classOop);
     if (!formatOop.isSmallInteger()) {
+        primFailCode_ = 2;
         return PrimitiveResult::Failure;
     }
+    const int64_t format = formatOop.asSmallInteger();
+    const unsigned __int128 fixed = static_cast<uint64_t>(format & 0xFFFF);
+    const int spec = static_cast<int>((format >> 16) & 0x1F);
 
-    int64_t format = formatOop.asSmallInteger();
-
-    // Extract instance size (number of fixed fields) from format
-    // In Spur, format encodes: instSize in bits 0-15, format type in bits 16-20
-    size_t instSize = static_cast<size_t>(format & 0xFFFF);
-    int formatType = static_cast<int>((format >> 16) & 0x1F);
-
-    // Calculate total slots based on format type (matches Cog VM's byteSizeOfInstanceOf:)
-    size_t numSlots;
-
-    switch (formatType) {
-        case 2: // Pure indexable (Array)
-            numSlots = numElements;
-            break;
-        case 3: // Indexable with fixed (e.g., Context)
-        case 4: // Weak
-        case 5: // Weak with fixed
-            numSlots = instSize + numElements;
-            break;
-        case 9: // 64-bit indexable
-            numSlots = numElements;
-            break;
-        case 10: // 32-bit first long format
-            numSlots = (numElements + 1) / 2;
-            break;
-        case 12: // 16-bit first short format
-            numSlots = (numElements + 3) / 4;
-            break;
-        case 16: // Byte format (first)
-        case 24: // CompiledMethod format (first)
-            numSlots = (numElements + 7) / 8;
-            break;
-        default:
-            if (formatType <= 1) {
-                // Fixed size only (argCount==0 case or no variable part)
-                numSlots = instSize + numElements;
-            } else {
-                return PrimitiveResult::Failure;
-            }
-            break;
-    }
-
-    // Compute total byte size matching Spur layout:
-    // - numSlots == 0: minimum 16 bytes (8 header + 8 body for forwarding ptr)
-    // - numSlots < 255: numSlots * 8 + 8 (body + standard header)
-    // - numSlots >= 255: numSlots * 8 + 16 (body + overflow header + standard header)
-    size_t totalBytes;
-    if (numSlots == 0) {
-        totalBytes = 8 + 8;  // BaseHeaderSize + minimum body
-    } else if (numSlots >= 255) {
-        totalBytes = (numSlots * 8) + 8 + 8;  // body + 2 headers (overflow)
+    unsigned __int128 numSlots;
+    if (argCount == 0) {
+        // isFixedSizePointerFormat: 0, 1 and the ephemeron format 5.
+        if (spec > 1 && spec != 5) {
+            primFailCode_ = 2;  // PrimErrBadReceiver: the class is indexable
+            return PrimitiveResult::Failure;
+        }
+        numSlots = fixed;
     } else {
-        totalBytes = (numSlots * 8) + 8;  // body + 1 header
+        // A negative size is not a legal argument.  (Stock answers a wrapped
+        // number for it; the image never asks.)
+        if (n < 0) {
+            primFailCode_ = PrimErrBadArgument_;
+            return PrimitiveResult::Failure;
+        }
+        const unsigned __int128 e = static_cast<uint64_t>(n);
+        switch (spec) {
+            case 2:  numSlots = e; break;                    // array
+            case 3:                                          // indexable pointers
+            case 4:  numSlots = fixed + e; break;            // weak array
+            case 9:  numSlots = e; break;                    // 64-bit words
+            case 10: numSlots = (e + 1) / 2; break;          // 32-bit words
+            case 12: numSlots = (e + 3) / 4; break;          // 16-bit words
+            case 16:                                         // bytes
+            case 24: numSlots = (e + 7) / 8; break;          // CompiledMethod
+            default:
+                primFailCode_ = 2;  // PrimErrBadReceiver: non-indexable
+                return PrimitiveResult::Failure;
+        }
+        // numSlots >= 1 << (bytesPerOop * 8 - logBytesPerOop)
+        if (numSlots >= (static_cast<unsigned __int128>(1) << 61)) {
+            primFailCode_ = 15;  // PrimErrLimitExceeded
+            return PrimitiveResult::Failure;
+        }
     }
 
+    // objectBytesForSlots: (Spur64BitMemoryManager): no slots still takes one
+    // forwarding slot; 255 slots or more need the overflow size header.
+    const uint64_t slots = static_cast<uint64_t>(numSlots);
+    uint64_t totalBytes;
+    if (slots == 0) {
+        totalBytes = 8 + 8;
+    } else if (slots >= 255) {
+        totalBytes = slots * 8 + 8 + 8;
+    } else {
+        totalBytes = slots * 8 + 8;
+    }
+
+    Oop result = uint64ToOop(memory_, totalBytes);
+    if (result.isNil()) {
+        primFailCode_ = PrimErrNoMemory_;
+        return PrimitiveResult::Failure;
+    }
     popN(argCount + 1);
-    push(Oop::fromSmallInteger(static_cast<int64_t>(totalBytes)));
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -28845,126 +28860,42 @@ PrimitiveResult Interpreter::primitiveNewOldSpace(int argCount) {
 }
 
 // Primitive 597: Create variable-size instance directly in old space
+// Primitives 597 and 599 share this failure rule.  Stock VM
+// primitiveNewWithArgOldSpace/Pinned: any nil from the allocation reports
+// PrimErrNoMemory when the class is indexable and not a CompiledMethod
+// format, and PrimErrBadReceiver otherwise (the inner codes are overwritten).
+// The size is read without a success check: a bad size leaves the generic
+// failure code unless the allocation of a size-0 instance also fails.
+static int newWithArgOldFailCode(Oop rcvr, ObjectMemory& memory) {
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+        Oop fo = memory.fetchPointer(2, rcvr);
+        if (fo.isSmallInteger()) {
+            int spec = (fo.asSmallInteger() >> 16) & 0x1F;
+            bool indexable = (spec >= 2 && spec <= 4) || spec >= 9;
+            if (indexable && spec < 24) return 9;  // PrimErrNoMemory
+        }
+    }
+    return 2;  // PrimErrBadReceiver
+}
+
 PrimitiveResult Interpreter::primitiveNewWithArgOldSpace(int argCount) {
     Oop sizeOop = stackValue(0);
     Oop rcvr = stackValue(1);  // Class
 
-    if (!rcvr.isObject()) {
+    uint64_t requested = 0;
+    const bool sizeOk = tryUnsigned64BitValueOf(memory_, sizeOop, requested);
+    NewPlan plan;
+    if (planNewWithArg(memory_, rcvr, requested, plan, __func__) != 0) {
+        primFailCode_ = newWithArgOldFailCode(rcvr, memory_);
         return PrimitiveResult::Failure;
     }
-
-    if (!sizeOop.isSmallInteger()) {
+    if (!sizeOk) {
+        primFailCode_ = 1;  // PrimErrGenericFailure from primitiveFail
         return PrimitiveResult::Failure;
     }
-
-    int64_t indexableSize = sizeOop.asSmallInteger();
-    if (indexableSize < 0) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Get class format
-    Oop formatObj = memory_.fetchPointer(2, rcvr);
-    if (!formatObj.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    int64_t format = formatObj.asSmallInteger();
-    size_t fixedSize = format & 0xFFFF;
-    int instSpec = (format >> 16) & 0x1F;
-
-    // Validate this is a variable-sized class (format >= 2)
-    if (instSpec < 2) {
-        return PrimitiveResult::Failure;
-    }
-
-    bool isBytes = instSpec >= 16;
-    bool isWords32 = (instSpec >= 10 && instSpec <= 11);
-    bool isWords16 = (instSpec >= 12 && instSpec <= 15);
-    bool isWords64 = (instSpec == 9);
-    uint32_t classIndex = memory_.indexOfClass(rcvr);
-
-    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
-    // found", and allocating with it manufactures an unusable object.
-    if (classIndex == 0) {
-        // No class-table entry yet. classTable_ is rebuilt at image load by
-        // walking object headers, so a class is registered only if an INSTANCE
-        // existed when the image was snapshotted; a class the image created and
-        // never instantiated arrives with an ordinary object hash and no slot.
-        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
-        // image is in that state (PMAB2SolverTest hash 1443483,
-        // classTable_[1443483] = nil) while every image-shipped class is fine
-        // (Array 51, Object 3161).
-        //
-        // registerClass() already handles this: a 22-bit object hash is always
-        // a valid index into the 4M-entry table, so its existing "the hash IS
-        // the index" branch enters the class at its own hash, which round-trips
-        // through snapshot because the hash lives in the class's header.
-        // Nothing was calling it for these classes.
-        classIndex = memory_.registerClass(rcvr);
-    }
-    if (classIndex == 0) {
-        static int badClsLog = 0;
-        if (badClsLog++ < 5) {
-            // Same reporting as primitiveNewWithArg -- see the note there.
-            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                h = rcvr.asObjectPtr()->identityHash();
-                young = memory_.isYoungObject(
-                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
-                if (h != 0 && h < memory_.classTableSize())
-                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
-            }
-            std::string cname = memory_.nameOfClass(rcvr);
-            fprintf(stderr,
-                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
-                "table[hash]=0x%llx young=%d; failing the primitive rather "
-                "than allocating class index 0\n",
-                __func__, cname.empty() ? "?" : cname.c_str(),
-                (unsigned long long)rcvr.rawBits(), h, atH, young);
-        }
-        return PrimitiveResult::Failure;
-    }
-
-    Oop newObj;
-    if (isBytes) {
-        newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
-    } else if (isWords32) {
-        size_t byteCount = static_cast<size_t>(indexableSize) * 4;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            size_t padding32 = (hdr->slotCount() * 2) - static_cast<size_t>(indexableSize);
-            hdr->setFormat(static_cast<ObjectFormat>(
-                static_cast<int>(ObjectFormat::Indexable32) + padding32));
-        }
-    } else if (isWords16) {
-        size_t byteCount = static_cast<size_t>(indexableSize) * 2;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            size_t padding16 = (hdr->slotCount() * 4) - static_cast<size_t>(indexableSize);
-            hdr->setFormat(static_cast<ObjectFormat>(
-                static_cast<int>(ObjectFormat::Indexable16) + padding16));
-        }
-    } else if (isWords64) {
-        size_t byteCount = static_cast<size_t>(indexableSize) * 8;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            newObj.asObjectPtr()->setFormat(ObjectFormat::Indexable64);
-        }
-    } else {
-        size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
-        ObjectFormat objFormat;
-        switch (instSpec) {
-            case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
-            case 4: objFormat = ObjectFormat::Weak; break;
-            case 5: objFormat = ObjectFormat::WeakWithFixed; break;
-            default: objFormat = ObjectFormat::Indexable; break;
-        }
-        newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
-    }
-
+    Oop newObj = allocateNewWithArgPlan(memory_, plan, /*eden=*/false);
     if (newObj.isNil()) {
+        primFailCode_ = newWithArgOldFailCode(rcvr, memory_);
         return PrimitiveResult::Failure;
     }
 
@@ -29056,122 +28987,20 @@ PrimitiveResult Interpreter::primitiveNewWithArgPinned(int argCount) {
     Oop sizeOop = stackValue(0);
     Oop rcvr = stackValue(1);  // Class
 
-    if (!rcvr.isObject()) {
+    uint64_t requested = 0;
+    const bool sizeOk = tryUnsigned64BitValueOf(memory_, sizeOop, requested);
+    NewPlan plan;
+    if (planNewWithArg(memory_, rcvr, requested, plan, __func__) != 0) {
+        primFailCode_ = newWithArgOldFailCode(rcvr, memory_);
         return PrimitiveResult::Failure;
     }
-
-    if (!sizeOop.isSmallInteger()) {
+    if (!sizeOk) {
+        primFailCode_ = 1;  // PrimErrGenericFailure from primitiveFail
         return PrimitiveResult::Failure;
     }
-
-    int64_t indexableSize = sizeOop.asSmallInteger();
-    if (indexableSize < 0) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Get class format
-    Oop formatObj = memory_.fetchPointer(2, rcvr);
-    if (!formatObj.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    int64_t format = formatObj.asSmallInteger();
-    size_t fixedSize = format & 0xFFFF;
-    int instSpec = (format >> 16) & 0x1F;
-
-    // Validate this is a variable-sized class (format >= 2)
-    if (instSpec < 2) {
-        return PrimitiveResult::Failure;
-    }
-
-    bool isBytes = instSpec >= 16;
-    bool isWords32 = (instSpec >= 10 && instSpec <= 11);
-    bool isWords16 = (instSpec >= 12 && instSpec <= 15);
-    bool isWords64 = (instSpec == 9);
-    uint32_t classIndex = memory_.indexOfClass(rcvr);
-
-    // See [NEW-BAD-CLASS] in primitiveNewWithArg: class index 0 means "not
-    // found", and allocating with it manufactures an unusable object.
-    if (classIndex == 0) {
-        // No class-table entry yet. classTable_ is rebuilt at image load by
-        // walking object headers, so a class is registered only if an INSTANCE
-        // existed when the image was snapshotted; a class the image created and
-        // never instantiated arrives with an ordinary object hash and no slot.
-        // Measured 2026-08-18: every PolyMath class in a load-then-snapshot
-        // image is in that state (PMAB2SolverTest hash 1443483,
-        // classTable_[1443483] = nil) while every image-shipped class is fine
-        // (Array 51, Object 3161).
-        //
-        // registerClass() already handles this: a 22-bit object hash is always
-        // a valid index into the 4M-entry table, so its existing "the hash IS
-        // the index" branch enters the class at its own hash, which round-trips
-        // through snapshot because the hash lives in the class's header.
-        // Nothing was calling it for these classes.
-        classIndex = memory_.registerClass(rcvr);
-    }
-    if (classIndex == 0) {
-        static int badClsLog = 0;
-        if (badClsLog++ < 5) {
-            // Same reporting as primitiveNewWithArg -- see the note there.
-            uint32_t h = 0; unsigned long long atH = 0; int young = 0;
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                h = rcvr.asObjectPtr()->identityHash();
-                young = memory_.isYoungObject(
-                            reinterpret_cast<void*>(rcvr.rawBits())) ? 1 : 0;
-                if (h != 0 && h < memory_.classTableSize())
-                    atH = (unsigned long long)memory_.classAtIndex(h).rawBits();
-            }
-            std::string cname = memory_.nameOfClass(rcvr);
-            fprintf(stderr,
-                "[NEW-BAD-CLASS] %s class=%s rcvr=0x%llx hash=%u "
-                "table[hash]=0x%llx young=%d; failing the primitive rather "
-                "than allocating class index 0\n",
-                __func__, cname.empty() ? "?" : cname.c_str(),
-                (unsigned long long)rcvr.rawBits(), h, atH, young);
-        }
-        return PrimitiveResult::Failure;
-    }
-
-    Oop newObj;
-    if (isBytes) {
-        newObj = memory_.allocateBytes(classIndex, static_cast<size_t>(indexableSize));
-    } else if (isWords32) {
-        size_t byteCount = static_cast<size_t>(indexableSize) * 4;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            size_t padding32 = (hdr->slotCount() * 2) - static_cast<size_t>(indexableSize);
-            hdr->setFormat(static_cast<ObjectFormat>(
-                static_cast<int>(ObjectFormat::Indexable32) + padding32));
-        }
-    } else if (isWords16) {
-        size_t byteCount = static_cast<size_t>(indexableSize) * 2;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            ObjectHeader* hdr = newObj.asObjectPtr();
-            size_t padding16 = (hdr->slotCount() * 4) - static_cast<size_t>(indexableSize);
-            hdr->setFormat(static_cast<ObjectFormat>(
-                static_cast<int>(ObjectFormat::Indexable16) + padding16));
-        }
-    } else if (isWords64) {
-        size_t byteCount = static_cast<size_t>(indexableSize) * 8;
-        newObj = memory_.allocateBytes(classIndex, byteCount);
-        if (!newObj.isNil()) {
-            newObj.asObjectPtr()->setFormat(ObjectFormat::Indexable64);
-        }
-    } else {
-        size_t totalSlots = fixedSize + static_cast<size_t>(indexableSize);
-        ObjectFormat objFormat;
-        switch (instSpec) {
-            case 3: objFormat = ObjectFormat::IndexableWithFixed; break;
-            case 4: objFormat = ObjectFormat::Weak; break;
-            case 5: objFormat = ObjectFormat::WeakWithFixed; break;
-            default: objFormat = ObjectFormat::Indexable; break;
-        }
-        newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
-    }
-
+    Oop newObj = allocateNewWithArgPlan(memory_, plan, /*eden=*/false);
     if (newObj.isNil()) {
+        primFailCode_ = newWithArgOldFailCode(rcvr, memory_);
         return PrimitiveResult::Failure;
     }
 

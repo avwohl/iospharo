@@ -1,9 +1,13 @@
 "primdiff2.st -- like primdiff.st, for primitives with up to four arguments
 (at:put:, replaceFrom:to:with:startingAt:, LargeIntegers and MiscPrimitivePlugin
 named primitives, class-side string primitives), on copies of the receivers.
-Answers and the receiver after the call are recorded.  2026-10-17: 124
-methods, 40819 calls, all equal to Cog.  Sort both outputs before diffing
-when the Cog side is run one class at a time."
+Answers and the receiver after the call are recorded.  Run the whole file in
+one eval on each VM and diff the two files line by line.  2026-11-12:
+Pharo 14 (Cog v12.0.6) 41431 calls, equal on our arm64 and x86_64 builds.
+Pharo 13 (Cog v10.3.12) 40819 calls, 63 differ: bitShift: and
+bitShiftMagnitude: failure codes, which changed between Cog v10 and v12.
+The 2026-10-17 note said all equal; that was wrong.  See
+docs/vm-compat-bugs.md, 2026-11-12."
 
 | vals small okMethod classes out f n show |
 vals := { 0. 1. -1. 7. 3. 255. 256. SmallInteger maxVal. SmallInteger minVal. 1 bitShift: 62. (1 bitShift: 62) negated. 1 bitShift: 100. (1 bitShift: 100) negated. 12345678901234567890. 3.5. -0.0. 1.0e308. Float nan. Float infinity. 1/3. $a. (Character value: 300). 'abc'. 'hello world'. ''. #abc. #(1 2 3). nil. true. #[1 2 255]. (ByteArray new: 300). 'abc' asWideString. (1 to: 5) asArray, #(nil). 1.5 }.

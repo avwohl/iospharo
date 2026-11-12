@@ -123,8 +123,9 @@ primitive (arithmetic, comparison, `at:`, float, character, identity) of
 and compares the answers (17526 calls).  The script is
 `scripts/cogdiff/primdiff.st`.  `scripts/cogdiff/primdiff2.st` does the same for
 primitives with up to four arguments and for the LargeIntegers and
-MiscPrimitivePlugin named primitives: 124 methods, 40819 calls, all
-equal to Cog.
+MiscPrimitivePlugin named primitives: 124 methods, 40819 calls.  The
+first report said "all equal to Cog".  That was wrong; see
+[2026-11-12](#fixed-2026-11-12--cog-v1206-pharo-14-differential-check).
 
 - Primitive 158 `compareWith:` answered -1, 0 or 1.  Cog answers the
   first differing characters' difference, else the length difference.
@@ -172,6 +173,115 @@ Two differences are Cog defects, not ours:
 - `'abc' compareWith: 1` crashes Cog (segmentation fault) after its JIT
   compiles `ByteString>>compareWith:`.  The machine-code primitive does
   not check that the argument is a byte object.  Ours fails the primitive.
+
+## FIXED 2026-11-12 — Cog v12.0.6 (Pharo 14) differential check
+
+Pharo 14 ships with pharo-vm v12.0.6.  The scripts in `scripts/cogdiff/`
+ran on Pharo 14 with the stock Cog (x86_64, under Rosetta) and with our
+arm64 and x86_64 builds.  Four groups of differences showed up.
+
+**basicNew: failure codes (primitive 71, 597 and 599).**  Pharo 14
+`Behavior>>basicNew:` calls `<primitive: 71 error: ec>`.  The image raises
+OutOfMemory only when `ec` is `#'insufficient object memory'`.  Any other
+code gives PrimitiveFailed.
+
+Cog v10.3.12 (Pharo 13) answered "no memory" for every failed allocation.
+Cog v12.0.6 answers:
+
+- bad argument (3): the size is not a non-negative SmallInteger or a
+  LargePositiveInteger of at most 8 bytes.  The VM checks this before the
+  receiver.
+- bad receiver (2): the receiver has no class format, is not indexable
+  (and the size is not 0), or is Float and the size is not 2.
+- unsupported (7): the object needs more than 2^40 slots.
+- no memory (9): the allocation fails inside that limit.
+
+Examples: `7 bitShift: 12345678901234567890` and
+`(ByteArray new: (2 raisedTo: 62)) size` now give PrimitiveFailed, as on
+Cog with Pharo 14.  `Primitives.cpp` has one function (`planNewWithArg`) that
+decides the code for the three primitives.  The JIT inline paths call
+`primitiveNewWithArg` and fall back to the send on failure, so they report
+the same code.  Probe: 11 sizes by 9 classes, 3000 calls each, equal to
+Cog on arm64 and x86_64.
+
+Primitives 597 and 599 (old-space and pinned): any failed allocation gives
+no memory for an indexable class and bad receiver for the rest, as in Cog.
+Cog leaves a corrupt stack when the size argument of these two is not a
+valid size (the image then raises MessageNotUnderstood for ByteSymbol).
+Ours fails the primitive cleanly.  Not copied.
+
+Primitive 181 (`byteSizeOfInstanceOfSize:`) changed too, because the image
+sends it after a failed 597.  It wrapped to a negative number for huge
+sizes, and it answered a size for classes that are not indexable.  It now
+follows `byteSizeOfInstanceOf:withIndexableSlots:errInto:`: it fails for
+non-indexable classes, fails above 2^61 slots, and answers a
+LargePositiveInteger when the byte count is not a SmallInteger.  A
+negative size fails.  Cog answers a wrapped number there.
+
+On Pharo 13, Cog v10.3.12 still answers OutOfMemory for these cases, so
+the Pharo 13 diff shows 85 lines: 21 `bitShift:` in primdiff, 63
+`bitShift:` and `bitShiftMagnitude:` in primdiff2, and 1 in edgediff.  They are the
+VM change, not an image change.  A Pharo 13 image on VM v12 behaves as
+ours does now.  No Pharo 13 test depends on the old code (SUnit:
+AllocationTest, OutOfMemoryTest, Behavior, Array, String, WideString,
+LargeInteger, Float and stream tests pass on both images).
+
+**Three "all equal" primdiff2 lines were not equal.**  primdiff2 showed
+1920 lines that differ on Pharo 13 and on Pharo 14.  The cause is not a
+harness artifact.  The same answers show with one-line probes outside the harness,
+and the code that caused them is older than the 2026-10-17 report (the
+Character store is from 2026-06-01, the LargeInteger rewrite from
+2026-10-15).  I could not find why the first run reported "all equal".
+Causes:
+
+- `digitMultiply:neg:` and `digitDiv:neg:` treated every flag that is not
+  `true` as `false`.  The LargeIntegers plugin declares the flag as
+  Boolean.  Cog fails the primitive and the image raises
+  NonBooleanReceiver.  Ours does the same now (`liBooleanArg`).
+- Primitive 61 (`at:put:`) stored a Character in a 32-bit word object.
+  `WordArray new: 2` with `at: 1 put: $a` answered 97, and
+  `Float basicAt: 1 put: $a` changed the float.  Only primitive 64
+  (`String>>at:put:`) takes a Character.  Primitive 61 now takes only an
+  integer from 0 to 2^32-1.  `String>>at:put:` keeps its old behavior.
+- Primitive 39 (`Float>>basicAt:put:`) took any byte object of 4 bytes or
+  less as a LargePositiveInteger.  It checks the class now.
+
+**Locale.**  Ours is left as it is, for these reasons.
+
+- `primMeasurement`: Cog v12.0.6 answers true on this Mac (US locale),
+  Cog v10.3.12 and ours answer false.  The image method did not change.
+  The VM changed: v12 builds the Unix `LocalePlugin` file on macOS
+  (`sqUnixLocale.c`), where `sqLocMeasurementMetric` always answers 1.
+  v10 had a macOS file that asks CFLocale.  Ours asks CFLocale, which is
+  right for the host locale.  Not copied.
+- Date and time formats: Cog v12 passes `nl_langinfo` strftime text
+  (`%H:%M:%S`, `%m/%d/%Y`).  The image cannot read that text.  v10
+  passed ICU patterns.  Ours translates to the format language that the
+  image reads (`h:mm:ss x`, `m/d/yy`).  Not copied.
+- `primLanguage` and `primCountry`: Cog answers one byte too many
+  (`'en '`).  The cause is a size error in Cog.  Not copied.
+
+**Two Cog defects stay.**  `BoxedFloat64>>sqrt` of negative infinity (see
+above) is the only line left in primdiff on Pharo 14.  Cog primitive 180
+(`growMemoryByAtLeast:`) grows the heap.  Ours has a fixed heap and
+answers 0, so `growMemoryByAtLeast: 0` and `-1` differ.
+
+Result after the fixes, Pharo 14, ours against Cog v12.0.6, arm64 and
+x86_64 the same: primdiff 1 line of 18070 (the sqrt defect), primdiff2 0
+of 41431, edgediff 0 of 146, locdiff 6 of 14 elements (time format, short
+and long date format, language, country and measurement, all explained
+above).
+
+How to run the scripts on Pharo 14: use the same steps as before (see the
+headers).  Three points matter.
+
+- A double quote inside the header comment ends the comment.  The stock
+  parser then fails.  Six headers had one in the `Run:` line.  They are
+  fixed.
+- Run the Cog side on the whole file in one `eval`.  The lines then match
+  ours one to one.  You do not need to sort them.
+- Take ByteString and ByteSymbol out of the primdiff class list for Cog.
+  The header says why.
 
 ## FIXED 2026-10-14 — ReStore: 20 *WithExclusion tests fail (two-way become moved identity hashes)
 
