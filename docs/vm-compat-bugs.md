@@ -174,6 +174,57 @@ Two differences are Cog defects, not ours:
   compiles `ByteString>>compareWith:`.  The machine-code primitive does
   not check that the argument is a byte object.  Ours fails the primitive.
 
+## FIXED 2026-11-12 — SpAthensAdapterTest>>testResizeMakesCanvasResize: a callback return ran other processes
+
+Symptom: the test failed in every sweep (Pharo 13 and 14, arm64 and x86_64).
+Stock Cog passed 18 of 18.  Earlier notes called this a UI scheduling race.
+
+What the test does.  `waitUntilUIRedrawed` defers a block that signals a
+semaphore, then waits on the semaphore.  The UI process runs the deferred
+block, then draws.  The draw calls `drawBlock:`, and that sets `extent`.
+The test reads `extent` as soon as the wait ends.  The wait must not end
+before the draw ends.
+
+Root cause.  The draw makes an FFI callout, and the callout calls back into
+Smalltalk.  The stack at the callback is `SpAthensMorph>>redraw`, then
+`surface`, then `AthensCairoSurface class>>registerSurface:`.  The VM runs
+the callback on the "Callback queue" process (priority 70).  The UI process waits in `SuspendedProcessInCallout`.  When the
+callback ends, Cog's `primitiveCallbackReturn` puts the handler to sleep and
+transfers at once to the UI process (`putToSleep:yieldingIf:` then
+`transferTo: suspendedProcess`).  No other process runs between the two.
+`Interpreter::enterInterpreterFromCallback` did not do this:
+
+- It tested `pendingCallbackReturn_` only once per 1000 steps.
+- Then it ran a "cooldown" of 500 steps.
+
+The handler ends in about 50 steps and terminates.  The scheduler then picks
+the front process of priority 40.  That process was the test process, which
+the UI process had just made ready with the semaphore signal.  The test
+process ran the rest of the batch and the cooldown, before the UI process
+came back.  It read `extent` before the draw set `extent`.  An event ring
+(`PHARO_EVENT_RING`) showed the order: the UI process signals the semaphore,
+the "Callback queue" process runs, a temporary process terminates, the test
+process runs.  The ring also shows a 50 ms idle gap before the UI process
+resumed.
+
+Fix (`src/vm/Interpreter.cpp`, `enterInterpreterFromCallback`).  The batch
+loop stops at once when `pendingCallbackReturn_` is set.  The cooldown stops
+as soon as the handler is no longer the active process.  The next process has
+run no bytecode at that point, so the existing code requeues that process in
+front of its band and resumes the callout process.
+
+Why x86_64 also failed in the sweep: the x86_64 test binary found no x86_64
+`libcairo` on this machine.  Athens never drew, so the test failed for a
+second reason.  With the x86_64 Cairo of the Cog bundle in place, x86_64
+failed like arm64.
+
+Measured (20 runs of the test in a forked priority-40 process, the Morphic UI
+process suspended and `FakeGUI startCycleLoop` running, as in the sweep).
+Before: arm64 Pharo 14 0 of 20, x86_64 Pharo 13 3 of 20, `PHARO_NO_JIT=1` 20
+of 20.  After: 20 of 20 in every configuration.  The old binary passed with
+`PHARO_NO_JIT=1`; the reason is not investigated.  Cog failed 1 run of 20 in
+each of two measurements (the first run, or one later run).
+
 ## FIXED 2026-11-12 (`36da3952`) — Pharo 14 Extension tests abort the VM
 
 On Pharo 14, `ExtensionTest`, `ExtensionConflictTest` and

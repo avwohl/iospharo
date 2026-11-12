@@ -7150,7 +7150,16 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     bool cbDbg = GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG);
     long lastDbgStep = 0;
     while (running_) {
-        for (int batch = 0; batch < 1000 && running_; batch++) {
+        // Stop the batch the moment the handler has called primitiveCallbackReturn.
+        // Cog's primitiveCallbackReturn (StackInterpreterPrimitives>>
+        // primitiveCallbackReturn, "popSameThreadCalloutSuspendedProcess ...
+        // transferTo: suspendedProcess") resumes the callout process at once,
+        // with no other process running in between.  The rest of a 1000-step
+        // batch ran whatever the handler's exit made runnable: once the handler
+        // had terminated, that was the front process of the callout process's
+        // own priority band, e.g. a SUnit test process blocked on a semaphore
+        // that the callout process had just signalled.
+        for (int batch = 0; batch < 1000 && running_ && !pendingCallbackReturn_; batch++) {
             step();
             nestedStepCount++;
         }
@@ -7275,9 +7284,21 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // callbackInvocationStack, signal callbackReturnSemaphore, and
             // the forked process needs to terminate. ~50 bytecodes total,
             // but we give 500 for safety (process switches, GC, etc.).
+            // The cooldown ends as soon as the handler stops being the active
+            // process (it ended, or blocked, or a higher-priority process
+            // preempted it).  What the scheduler would pick next has not run a
+            // bytecode yet; the code below requeues it and resumes the callout
+            // process, as Cog does at callback return.
+            // (The slot is a GC root, so read it again after each step.)
+            const bool knowHandler = callbackDepth_ < MaxCallbackDepth
+                && callbackHandlerStack_[callbackDepth_].isObject()
+                && !callbackHandlerStack_[callbackDepth_].isNil();
             for (int cooldown = 0; cooldown < 500 && running_; cooldown++) {
                 step();
                 nestedStepCount++;
+                if (knowHandler && getActiveProcess().rawBits()
+                        != callbackHandlerStack_[callbackDepth_].rawBits())
+                    break;
             }
             // The switch below saves the active process's pc and requeues
             // it.  If the last step() ran an ExtendA/ExtendB prefix, that pc

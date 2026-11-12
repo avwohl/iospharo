@@ -66,23 +66,11 @@ The history lives in `docs/history/`; nothing was deleted.
     shifts).  Only methods with 8193+ literals or very long jumps emit
     chained prefixes.
 
-- **SpAthensAdapterTest>>testResizeMakesCanvasResize fails on ours only
-  (2026-10-16).**  The test resizes a window, then
-  `waitUntilUIRedrawed` defers a semaphore signal to the Morphic cycle and
-  waits.  On ours the test process often resumes after the signal but
-  before the draw, so the canvas extent it reads is one redraw old (Cog:
-  18 of 18; ours: 17 of 18, every run).  Signal semantics and
-  `processPreemptionYields` match Cog (true on both).  A switch trace
-  (`PHARO_XFER_TRACE=1` now names the C++ caller) shows the UI process
-  calling `Processor yield` between the signal and the draw in some
-  cycles.  The cause of the different interleaving is not found yet.
-  2026-10-17: an event ring (`PHARO_EVENT_RING`) of a failing run shows
-  the process that runs the deferred block signal the test's semaphore and
-  then schedule a Delay before the draw; while it waits, the scheduler
-  runs the test process.  A runner whose wait loops sleep on Delays
-  instead of `relinquishProcessorForMicroseconds:` fails the same way, so
-  the runner's relinquish loop is not the cause.  Still open: which code in
-  the fake GUI's cycle waits on that Delay, and why Cog does not.
+- ~~**SpAthensAdapterTest>>testResizeMakesCanvasResize fails on ours only
+  (2026-10-16).**~~  FIXED 2026-11-12: the cause was not a UI scheduling
+  race.  The callback return in `enterInterpreterFromCallback` ran other
+  processes before it resumed the callout process.  See
+  docs/vm-compat-bugs.md, "SpAthensAdapterTest>>testResizeMakesCanvasResize".
 
 ## Tooling limitations worth knowing
 
