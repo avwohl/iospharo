@@ -14414,7 +14414,9 @@ void Interpreter::handleStackOverflow(int argCount) {
                 && stackOverflowSel.isObject() && !stackOverflowSel.isNil()) {
             Oop ctx = materializeFrameStack();
             push(ctx);
-            sendSelector(stackOverflowSel, 0);
+            // Read the selector again: materializeFrameStack allocates.
+            sendSelector(memory_.specialObject(
+                SpecialObjectIndex::SelectorStackOverflow), 0);
             return;
         }
     }
@@ -19248,9 +19250,12 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
 
     // GC SAFETY: allocateSlots may trigger fullGC, invalidating all C++ locals
     // that hold Oops. Push selector onto the operand stack so it's a GC root.
+    // lookupClass is rooted the same way: an anonymous class can be young,
+    // and nothing else holds it after primitivePerformInSuperclass pops it.
     // Stack currently: ... receiver arg1 arg2 ... argN
+    push(lookupClass);
     push(selector);
-    // Stack now: ... receiver arg1 arg2 ... argN selector
+    // Stack now: ... receiver arg1 arg2 ... argN lookupClass selector
 
     // Create Message object (may trigger GC)
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
@@ -19261,6 +19266,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
 
     if (message.rawBits() == memory_.nil().rawBits()) {
         pop();  // selector
+        pop();  // lookupClass
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth_--;
         stopVM("DNU: Failed to allocate Message object");
@@ -19281,6 +19287,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
     if (args.rawBits() == memory_.nil().rawBits() && argCount > 0) {
         pop();  // message
         pop();  // selector
+        pop();  // lookupClass
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth_--;
         stopVM("DNU: Failed to allocate args Array");
@@ -19290,6 +19297,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
     // Pop message and selector from stack (now GC-updated)
     message = pop();
     selector = pop();
+    lookupClass = pop();
     // Stack restored: ... receiver arg1 arg2 ... argN
 
     memory_.storePointer(0, message, selector);

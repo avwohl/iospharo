@@ -16,6 +16,9 @@
 # PHARO_NO_BECOME_FORWARDER, under PHARO_HEAP_CENSUS=1 — watch for the Context
 # explosion (storm) vs bounded heap.
 set -uo pipefail
+# This script loads the Pharo13 branch of Roassal, so it stays on Pharo 13
+# unless the caller sets PHARO_VERSION and changes the branch below.
+: "${PHARO_VERSION:=130}"
 . "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 sudo apt-get update -qq && sudo apt-get install -y -qq libcairo2-dev libfreetype6-dev libfontconfig1-dev
 mkdir -p ~/catbuild && cd ~/catbuild

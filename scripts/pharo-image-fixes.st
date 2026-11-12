@@ -190,7 +190,8 @@ beDefault, a send to the CLASS, and the class has no #beDefault.  Every default
 manager but NonInteractiveUIManager itself then fails in UIManager
 class>>nonInteractiveDuring: (TFUFFICallbackTest>>testCallbackWithErrorHanlded).
 Stock Cog fails the same way once MorphicUIManager is the default, which the
-fake-GUI prep and the runner install.  Pharo 13 has the same text."
+fake-GUI prep and the runner install.  Pharo 14 only: Pharo 13 has
+'^NonInteractiveUIManager replacing: self' and needs no fix."
 fix value: #UIManager value: #nonInteractiveManager
 	value: [ :source | source includesSubstring: '^NonInteractiveUIManager beDefault' ]
 	value:

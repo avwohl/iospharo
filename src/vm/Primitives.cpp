@@ -3328,7 +3328,6 @@ PrimitiveResult Interpreter::primitiveBasicSize(int argCount) {
 //     (and the size is not 0), or is Float and size ~= 2  PrimErrBadReceiver
 //   slot count above 2^40 (maxSlotsForAlloc)         PrimErrUnsupported
 //   allocation fails inside the limit                PrimErrNoMemory
-static bool tryUnsigned64BitValueOf(ObjectMemory& memory, Oop oop, uint64_t& value);
 
 namespace {
 enum class NewKind { Fixed, Pointers, Words64, Words32, Words16, Bytes };

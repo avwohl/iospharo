@@ -22,6 +22,7 @@ OUR_VM="$PROJECT_ROOT/build/test_load_image"
 HARNESS_DIR="${HARNESS_DIR:-$PHARO_HARNESS}"
 COG_VM="$HARNESS_DIR/pharo"
 IMAGE_SRC="$HARNESS_DIR/Pharo.image.bak"
+[ -f "$IMAGE_SRC" ] || IMAGE_SRC="$HARNESS_DIR/Pharo.image"   # a pristine download has no .bak
 TIMEOUT_PER_RUN="${BENCH_TIMEOUT:-180}"
 
 RUN_REF=true
