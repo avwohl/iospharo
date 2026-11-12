@@ -13,22 +13,29 @@ import ZIPFoundation
 /// A downloadable Pharo image template
 struct ImageTemplate: Identifiable {
     let id: String          // e.g. "130"
-    let label: String       // e.g. "Pharo 13 (latest)"
+    let label: String       // e.g. "Pharo 14 (stable)"
     let version: String     // e.g. "130"
     let url: URL
 
+    /// The first entry is the default for `downloadDefaultImage()`.
     static let builtIn: [ImageTemplate] = [
         ImageTemplate(
+            id: "140",
+            label: "Pharo 14 (stable)",
+            version: "140",
+            url: URL(string: "https://files.pharo.org/get-files/140/pharoImage-arm64.zip")!
+        ),
+        ImageTemplate(
             id: "130",
-            label: "Pharo 13 (stable)",
+            label: "Pharo 13",
             version: "130",
             url: URL(string: "https://files.pharo.org/get-files/130/pharoImage-arm64.zip")!
         ),
         ImageTemplate(
-            id: "140",
-            label: "Pharo 14 (dev)",
-            version: "140",
-            url: URL(string: "https://files.pharo.org/get-files/140/pharoImage-arm64.zip")!
+            id: "150",
+            label: "Pharo 15 (dev)",
+            version: "150",
+            url: URL(string: "https://files.pharo.org/get-files/150/pharoImage-arm64.zip")!
         ),
     ]
 }
