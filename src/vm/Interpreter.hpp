@@ -209,6 +209,10 @@ constexpr int ProcessNextLinkIndex = 0;         // nextLink (for LinkedList chai
 constexpr int ProcessSuspendedContextIndex = 1; // suspendedContext
 constexpr int ProcessPriorityIndex = 2;         // priority (SmallInteger 1-80)
 constexpr int ProcessMyListIndex = 3;           // myList (the list process is in)
+/// Pharo 14 only: Process>>shouldOverflow, inserted before errorHandler
+/// (Cog: StackInterpreter ProcessShouldOverflowIndex).  Pharo 13 has
+/// errorHandler here, which is never the true object.
+constexpr int ProcessShouldOverflowIndex = 9;
 
 /// ProcessScheduler slots
 constexpr int SchedulerProcessListsIndex = 0;   // quiescentProcessLists
@@ -4120,6 +4124,7 @@ private:
 
     // VM info named primitives
     PrimitiveResult primitiveInterpreterSourceVersion(int argCount);  // Named: interpreter source version
+    PrimitiveResult primitiveVMVersion(int argCount);                 // Named: #(major minor patch)
     PrimitiveResult primitiveFileMasks(int argCount);                 // Named: FileAttributesPlugin file masks
     PrimitiveResult primitiveFileAttribute(int argCount);             // Named: FileAttributesPlugin file attribute
     PrimitiveResult primitiveFileExists(int argCount);                // Named: FileAttributesPlugin file exists

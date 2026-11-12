@@ -14396,6 +14396,28 @@ void Interpreter::handleStackOverflow(int argCount) {
                            + std::chrono::seconds(60);
     }
     inStackOverflowSignal_ = true;
+    // Pharo 14 / pharo-vm v12 stack-overflow protocol (Cog:
+    // StackInterpreter>>handleStackOverflow).  When the active process has
+    // shouldOverflow == true and the image defines #stackOverflow in special
+    // object 24, send #stackOverflow to the active context; the image then
+    // signals its own Error ('Stack overflow').  Cog does this at every stack
+    // page overflow; we do it at our depth cap, the only overflow we have.
+    // A process without the flag (or an image without the selector) takes
+    // the #error: path below, unchanged.
+    {
+        Oop proc = getActiveProcess();
+        Oop stackOverflowSel =
+            memory_.specialObject(SpecialObjectIndex::SelectorStackOverflow);
+        if (proc.isObject() && !proc.isNil()
+                && proc.asObjectPtr()->slotCount() > (size_t)ProcessShouldOverflowIndex
+                && memory_.fetchPointer(ProcessShouldOverflowIndex, proc) == memory_.trueObject()
+                && stackOverflowSel.isObject() && !stackOverflowSel.isNil()) {
+            Oop ctx = materializeFrameStack();
+            push(ctx);
+            sendSelector(stackOverflowSel, 0);
+            return;
+        }
+    }
     // Signal a CATCHABLE Error rather than driving an uncatchable terminate
     // (docs/vm-compat-bugs.md #15).  Cog grows its stack and never errors at
     // all; with a hard cap, the honest equivalent is an ordinary Smalltalk
@@ -25108,6 +25130,7 @@ void Interpreter::initializeNamedPrimitives() {
 
     // VM info
     registerNamedPrimitive("", "primitiveInterpreterSourceVersion", &Interpreter::primitiveInterpreterSourceVersion);
+    registerNamedPrimitive("", "primitiveVMVersion", &Interpreter::primitiveVMVersion);
 
     // Environment access
     registerNamedPrimitive("", "primitiveGetenv", &Interpreter::primitiveGetenv);

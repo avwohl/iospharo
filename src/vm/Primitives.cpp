@@ -34,6 +34,21 @@
 #include "plugins/SoundPlugin.h"
 #include "plugins/MIDIPlugin.h"
 
+// VM identity strings (docs/vm-version-identity.md).  This VM claims
+// protocol compatibility with pharo-vm v12.0.6 (stack-overflow protocol,
+// primitiveVMVersion) and says so in the version number.  The "+iospharo"
+// build-metadata suffix keeps our own identity visible; Pharo 14
+// VirtualMachine>>vmVersion splits the string at "+" and then at ".", and
+// interpreterSourceDate splits it at "Date: ", so keep both parts.
+static constexpr int kVMVersionMajor = 12;
+static constexpr int kVMVersionMinor = 0;
+static constexpr int kVMVersionPatch = 6;
+static constexpr const char* kVMSourceVersionString =
+    "v12.0.6+iospharo - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000";
+static constexpr const char* kVMBuildDateString = "iospharo clean C++ VM, source date 2026-04-06";
+static constexpr const char* kVMInterpreterClassString = "StackInterpreter iospharo (clean C++ VM)";
+static constexpr const char* kVMCogitClassString = "Cogit iospharo (T1 JIT)";
+
 // SoundPlugin callback for signaling VM semaphores from audio thread
 extern "C" void soundSetSignalFunc(void (*fn)(int));
 
@@ -12389,13 +12404,17 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         case 1005:
             primitiveSuccess(makeBytes("Quartz"));
             return PrimitiveResult::Success;
-        case 1006:
-        case 1007:
-        case 1008:
-            primitiveSuccess(makeBytes("PharoSmalltalk 2025-01-28"));
+        case 1006:  // build date (VirtualMachine>>buildDate)
+            primitiveSuccess(makeBytes(kVMBuildDateString));
+            return PrimitiveResult::Success;
+        case 1007:  // interpreter class (VirtualMachine>>interpreterClass)
+            primitiveSuccess(makeBytes(kVMInterpreterClassString));
+            return PrimitiveResult::Success;
+        case 1008:  // cogit class (VirtualMachine>>cogitClass)
+            primitiveSuccess(makeBytes(kVMCogitClassString));
             return PrimitiveResult::Success;
         case 1009:
-            primitiveSuccess(makeBytes("v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000"));
+            primitiveSuccess(makeBytes(kVMSourceVersionString));
             return PrimitiveResult::Success;
         case 1201:
             primitiveSuccess(memory_.nil());
@@ -32197,8 +32216,28 @@ PrimitiveResult Interpreter::primitiveGetObjectFromAddress(int argCount) {
 PrimitiveResult Interpreter::primitiveInterpreterSourceVersion(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop result = createStringObject(memory_, "v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000");
+    Oop result = createStringObject(memory_, kVMSourceVersionString);
     if (result.isNil()) return PrimitiveResult::Failure;
+
+    popN(1);  // pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveVMVersion (no module).  Cog: StackInterpreterPrimitives>>
+// primitiveVMVersion answers #(major minor patch).  Pharo 14
+// VirtualMachine>>primVmVersion / vmVersion use it; Pharo 13 never calls it.
+PrimitiveResult Interpreter::primitiveVMVersion(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+    if (arrayClassIdx == 0) arrayClassIdx = memory_.registerClass(arrayClass);
+    Oop result = memory_.allocateSlots(arrayClassIdx, 3, ObjectFormat::Indexable);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    memory_.storePointer(0, result, Oop::fromSmallInteger(kVMVersionMajor));
+    memory_.storePointer(1, result, Oop::fromSmallInteger(kVMVersionMinor));
+    memory_.storePointer(2, result, Oop::fromSmallInteger(kVMVersionPatch));
 
     popN(1);  // pop receiver
     push(result);

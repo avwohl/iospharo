@@ -173,3 +173,38 @@ hard-kill fallback; it must stay comfortably below `MaxFrameDepth - StackOverflo
 - `docs/image_issues.md` — the recursive `Context>>copyTo:` image bug + iterative shim.
 - `docs/test-results.md` — full-suite results and the blocker #1/#2 narrative.
 - memory `timer-scheduler-wedge` — the full investigation and repro recipes.
+
+## Pharo 14 stack-overflow protocol (pharo-vm v12)
+
+Pharo 14 adds the instance variable `Process>>shouldOverflow` (slot 9;
+`errorHandler` moves to slot 10). Special object 24 holds `#stackOverflow`.
+In Pharo 13 that special object is nil and slot 9 is `errorHandler`.
+
+Cog sends `#stackOverflow` to the active context on each stack page
+overflow when three things hold: the active process has the flag slot, the
+flag is `true`, and the selector is not nil. The image method
+`Context>>stackOverflow` signals `Error` with the text 'Stack overflow'.
+Cog does not reset the flag. A process without the flag only grows its
+context chain on the heap.
+
+This VM has no stack pages. Its only overflow is the depth cap of 56000
+frames. `Interpreter::handleStackOverflow` now does this at the cap:
+
+- Flag true and selector present: it materializes the frame stack and
+  sends `#stackOverflow` to the active context. The headroom of
+  `StackOverflowSignalHeadroom` frames applies, as for `#error:`.
+- Otherwise: it signals `#error:` as before.
+
+The check runs only in `handleStackOverflow`, which only runs after the
+cap is reached. The send path has no new work. The interpreter and the
+machine-code frames of arm64 and x86 reach the same function.
+The signal context chain is 56003 frames deep in every mode (JIT on, JIT
+off, `PHARO_NO_MCF`, arm64, x86).
+
+Cog tests the slot count with `< 9`. This VM requires `> 9`, because slot 9
+must exist.
+
+## See also (version identity)
+
+`docs/vm-version-identity.md` describes the version strings that make
+`ProcessTest>>testStackOverflow` run instead of skip.

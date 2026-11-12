@@ -191,7 +191,7 @@ enum class SpecialObjectIndex : size_t {
     SelectorCannotReturn = 21,     // Was incorrectly 36
     ProcessSignalingLowSpace = 22, // Was: TheInputSemaphore
     SpecialSelectorsArray = 23,    // Array of special selectors (+, -, at:, at:put:, etc.)
-    // 24 is unused
+    SelectorStackOverflow = 24,    // Pharo 14 / pharo-vm v12: #stackOverflow (nil in Pharo 13)
     SelectorMustBeBoolean = 25,
     ClassByteArray = 26,
     // ClassProcess = 27,          // Unused by VM
