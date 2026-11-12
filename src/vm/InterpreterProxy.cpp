@@ -1494,7 +1494,7 @@ void initializeB2DPlugin(Interpreter* interp) {
     };
 
     for (auto& p : prims) {
-        interp->registerNamedPrimitive("B2DPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+        interp->registerNamedPrimitive("B2DPlugin", p.name, p.fn);
     }
 
 }
@@ -1527,7 +1527,7 @@ void initializeDSAPrims(Interpreter* interp) {
     };
 
     for (auto& p : prims) {
-        interp->registerNamedPrimitive("DSAPrims", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+        interp->registerNamedPrimitive("DSAPrims", p.name, p.fn);
     }
 
 }
@@ -1556,7 +1556,7 @@ void initializeJPEGReaderPlugin(Interpreter* interp) {
     };
 
     for (auto& p : prims) {
-        interp->registerNamedPrimitive("JPEGReaderPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+        interp->registerNamedPrimitive("JPEGReaderPlugin", p.name, p.fn);
     }
 
 }
@@ -1598,7 +1598,7 @@ void initializeJPEGReadWriter2Plugin(Interpreter* interp) {
     };
 
     for (auto& p : prims) {
-        interp->registerNamedPrimitive("JPEGReadWriter2Plugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+        interp->registerNamedPrimitive("JPEGReadWriter2Plugin", p.name, p.fn);
     }
 
 }
@@ -1639,7 +1639,7 @@ void initializeSqueakSSL(Interpreter* interp) {
     };
 
     for (auto& p : prims) {
-        interp->registerNamedPrimitive("SqueakSSL", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+        interp->registerNamedPrimitive("SqueakSSL", p.name, p.fn);
     }
 
 }
@@ -1738,6 +1738,6 @@ void initializeSocketPlugin(Interpreter* interp) {
     };
 
     for (auto& p : prims) {
-        interp->registerNamedPrimitive("SocketPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+        interp->registerNamedPrimitive("SocketPlugin", p.name, p.fn);
     }
 }

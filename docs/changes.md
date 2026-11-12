@@ -3187,6 +3187,58 @@ stubs for send/return/overflow exit to interpreter.
 
 Build 122 — 2026-04-01
 
+## Fix `anObject pointsTo:` reporting false matches on word arrays
+
+`primitiveObjectPointsTo` (primitive 132) guarded the word-array case with
+`format >= Indexable32 && format <= Indexable64`, i.e. `>= 10 && <= 9`, which
+is never true. WordArray, DoubleWordArray, Bitmap and Form bits therefore fell
+through to the pointer-slot loop, which reinterprets raw 32- and 64-bit pixel
+data as oops and compares it against the target. `anObject pointsTo:` could
+answer true purely because a bitmap happened to contain the target oop's bit
+pattern. Bounds corrected to formats 9..11.
+
+Note: the 16-bit formats (Indexable16..Indexable16_3) still fall through to the
+same pointer scan and have the identical defect. Left alone pending a decision.
+
+## Fix undefined behaviour zeroing a live mutex in MIDIPlugin
+
+`midiInit` and the port-close path used `memset` over `OpenPort`, which embeds a
+`std::mutex` that the CoreMIDI input callback thread touches. Zeroing a live
+pthread mutex is undefined behaviour. Replaced with a `resetPort()` helper that
+clears only the POD fields.
+
+## Fix mismatched `nil` macro push/pop in PlatformBridge
+
+`#pragma push_macro("nil")` / `pop_macro("nil")` were written as though they
+were scoped to control flow, with one pop before each early return. They are
+preprocessor-lexical, so the first pop re-enabled Objective-C's `nil` macro for
+the remaining ~28 lines that are meant to run with it undefined. Harmless only
+by luck today; now a single push/pop pair.
+
+## Clear every clang 21 warning in hand-written code
+
+Apple clang 21 reported 407 warnings across the VM. All 85 in hand-written code
+are now fixed — not suppressed. Three were the defects described above; the rest
+were dead locals removed after confirming their initialisers had no side
+effects, mis-ordered constructor initialiser lists, wrong printf specifiers, and
+a meaningless `volatile` on `utcMicroseconds`' return type in
+`sqVirtualMachine.h` (with the matching change in `InterpreterProxy.cpp` — in
+C++ the cv-qualifier survives in the function-pointer type, so both halves must
+move together).
+
+Values that existed only for `#ifdef DEBUG` traces moved inside those blocks, so
+release builds no longer compute them at all.
+
+The remaining 322 warnings are all in the VMMaker-generated plugin sources
+`B2DPlugin.c`, `JPEGReaderPlugin.c` and `DSAPrims.c`. They are deliberately left
+visible: suppressing them destroys information, and hand-deleting the dead
+generated code would be undone by the next regeneration. See
+`docs/vmmaker-issues.md` — 320 of the 322 are Slang emission artifacts (314 of
+them from the inliner, which emits out-of-line copies of methods it already
+inlined at all 1,010 call sites), and the other two are a genuine
+signed/unsigned defect in DSA's big-integer division that should be reported
+upstream.
+
 ## Fix image relaunch hang (displays but can't interact)
 
 Root cause: Three categories of global state were not reset between image

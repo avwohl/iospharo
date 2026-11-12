@@ -1258,6 +1258,9 @@ bool Interpreter::initialize() {
                 size_t stackTopSlot = 6 + static_cast<size_t>(stackp) - 1;
                 if (stackTopSlot < ctxHdr->slotCount()) {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
+#ifdef DEBUG
+                    // Describe the value we are about to overwrite. Used only by
+                    // the trace below, so it is computed only in DEBUG builds.
                     Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
                     const char* oldDesc = "unknown";
@@ -1267,6 +1270,7 @@ bool Interpreter::initialize() {
                     else if (oldVal.isSmallInteger()) oldDesc = "SmallInteger";
                     fprintf(stderr, "[RESUME] Patching: stackp=%lld stackTopSlot=%zu oldVal=%s(0x%llx) -> true\n",
                             (long long)stackp, stackTopSlot, oldDesc, (unsigned long long)oldVal.rawBits());
+#endif
                     memory_.storePointer(stackTopSlot, context, trueObj);
                 }
             }
@@ -15234,8 +15238,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
               // << " numLiterals=" << numLiterals << " bytecodeStart=" << bytecodeStart
               // << " totalBytes=" << totalBytes
               // << " homeMethod=" << (homeMethod_ == method_ ? "same" : "different");
-    if (homeMethod_ != method_ && homeMethod_.isObject()) {
-    }
+              // << " (homeLiterals=" << (homeHeaderBits & 0x7FFF) << ")";
     // std::cerr; // DEBUG
 
     // Show first few bytecodes for debugging
@@ -21828,9 +21831,14 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+    const size_t numPriorities = schedLists.asObjectPtr()->slotCount();
 
     // Current priority is 1-based, array index is 0-based
     int maxPriorityIndex = currentPriority - 2;  // One below current priority
+    // Clamp to the actual number of priority lists (as wakeHighestPriority does)
+    if (maxPriorityIndex >= static_cast<int>(numPriorities)) {
+        maxPriorityIndex = static_cast<int>(numPriorities) - 1;
+    }
 
     // Every 5th call, specifically try lowIOPriority (10) first to prevent starvation
     // lowIOPriority is where the event loop runs

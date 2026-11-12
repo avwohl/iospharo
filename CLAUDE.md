@@ -14,6 +14,11 @@ Key paths:
     docs/image_issues.md Pharo 13 image bugs we patch + upstream wishlist
     docs/vm-compat-bugs.md  open VM defects and leads
 
+## README stays short
+
+README.md is at most 150 lines. New detail goes in docs/<topic>.md with a one-line
+link from the README; never add sections to the README.
+
 ## Hard rules
 
 - Never draw tables using markdown table syntax or `|` (pipe) characters in

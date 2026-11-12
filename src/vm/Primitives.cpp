@@ -2310,7 +2310,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     // Sanity check header before accessing object data
     ObjectFormat fmt = header->format();
-    size_t slots = header->slotCount();
     // Note: objEnd check removed - was using incorrect memory layout assumptions
     // The receiver pointer has already been validated to be in a valid heap space above
     if (fmt == ObjectFormat::Indexable64) {
@@ -2461,6 +2460,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     static int fallthroughCount = 0;
     if (fallthroughCount < 10) {
         fallthroughCount++;
+        const size_t slots = header->slotCount();
         std::string cn = memory_.classNameOf(rcvr);
         fprintf(stderr, "[P60-FALLTHROUGH] idx=%lld fmt=%d slots=%zu class='%s' isBytes=%d isPtrs=%d isCM=%d\n",
                 (long long)idx, static_cast<int>(fmt), slots, cn.c_str(),
@@ -31918,6 +31918,7 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAt(int argCount) {
                     memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
                 }
                 if (!basePtr) return PrimitiveResult::Failure;
+                // External memory: no size is known, so we trust the caller
                 ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
             } else {
                 // ByteArray or other bytes object: read from own bytes

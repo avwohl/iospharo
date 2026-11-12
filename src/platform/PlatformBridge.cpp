@@ -33,7 +33,10 @@
 // the problematic methods to no-ops — Pharo's AppKit menus are meaningless
 // on Catalyst since UIKit handles menus via UIMenu.
 // Saved original IMP for setMainMenu: — called through for UIKit (main thread) calls.
-[[maybe_unused]] static IMP origSetMainMenu = nullptr;
+// Only the Catalyst build swizzles, so the variable exists only there.
+#if TARGET_OS_MACCATALYST
+static IMP origSetMainMenu = nullptr;
+#endif
 
 static void swizzleCatalystAppKit() {
 #if TARGET_OS_MACCATALYST
@@ -300,17 +303,11 @@ bool vm_initialize(size_t heapSize) {
 // the image, before any Smalltalk code runs.  This prevents the ~100ms timing
 // gap where the render loop tries sub-pixel text rendering before startup.st
 // can disable it.  See docs/subpixel-rendering.md.
-//
-// The function has multiple early-exit returns, each preceded by a
-// `pop_macro("nil")` to restore the ObjC-defined `nil`.  Lexically there's
-// only one `push_macro` (function entry) so the trailing pop_macros warn
-// "no matching push" — but per the pragma's lexical semantics that's a
-// no-op: after the first pop the macro is already restored, so subsequent
-// pops correctly leave it as-is.  Suppress the warning function-locally.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wignored-pragmas"
 static void disableSubPixelRendering() {
-    // ObjC headers #define nil — undefine it so we can call gMemory->nil()
+    // ObjC headers #define nil — undefine it so we can call gMemory->nil().
+    // push_macro/pop_macro are lexical, not control-flow scoped: one push here,
+    // one pop at the closing brace. Popping before an early return would restore
+    // the macro for the rest of the function text, not just that return path.
     #pragma push_macro("nil")
     #undef nil
     using namespace pharo;
@@ -337,7 +334,6 @@ static void disableSubPixelRendering() {
     }
     if (singleton.isNil() || !singleton.isObject()) {
         fprintf(stderr, "[VM] FreeTypeSettings singleton not yet created — startup.st will handle it\n");
-        #pragma pop_macro("nil")
         return;
     }
 
@@ -359,7 +355,6 @@ static void disableSubPixelRendering() {
                     size_t instVarIdx = si - 1;
                     gMemory->storePointer(instVarIdx, singleton, gMemory->falseObject());
                     fprintf(stderr, "[VM] Set FreeTypeSettings>>bitBltSubPixelAvailable to false (slot %zu)\n", instVarIdx);
-                    #pragma pop_macro("nil")
                     return;
                 }
             }
@@ -367,7 +362,6 @@ static void disableSubPixelRendering() {
     }
     #pragma pop_macro("nil")
 }
-#pragma GCC diagnostic pop
 
 bool vm_loadImage(const char* imagePath) {
     // Set app bundle path so FFI can find bundled libraries in Contents/Frameworks

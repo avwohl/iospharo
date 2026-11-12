@@ -4275,6 +4275,8 @@ void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,
                     size_t remaining = end - scan;
                     size_t neededSize = 8 + 8 + overflowCount * 8;
                     if (overflowCount >= 255 && neededSize <= remaining) {
+                        // headerPtr moves past the overflow count word; the size
+                        // returned by totalSize() below already includes that word.
                         headerPtr = wordPtr + 1;
                     } else {
                         scan += 16;
