@@ -114,6 +114,37 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 `docs/deferred.md`, which is now only that. Fixed work is recorded in
 `docs/changes.md` and `docs/history/`.
 
+## FIXED 2026-11-12 — registerSurface wrote its id through a stale pointer
+
+`primitiveRegisterSurface` (Athens and Cairo surfaces) calls the surface
+dispatch function `getSurfaceFormat`.  In the image this is a Smalltalk
+callback, so the nested interpreter runs image code inside the primitive.
+The primitive took the address of the `surfaceId:` holder (a young
+ByteArray) before the callback and wrote the new id through that address
+after the callback.  A scavenge inside the callback moves the holder.  The
+write then went to the old address of the holder, in memory that eden can
+reuse.  The holder stayed 0.  Any young object at that address gets the
+four bytes.
+
+Evidence: `scripts/cogdiff/surfacediff.st` runs a callback that scavenges.
+Cog answers ids 1 to 5.  Ours answered 0 for all five before the fix.  Now
+the ids count up.  The primitive now fetches the holder from the stack
+again after the callback (the GC updates stack slots as roots).
+
+The Pharo 14 arm64 sweep had one SIGSEGV in
+`RoassalSpecTest>>testTakeKeyboardFocus`.  The fault was in
+`primitiveExternalPointerRead` (`pointerAt:`) on an ExternalAddress that
+held the value 1, in the callback of `primitiveRegisterSurface`.  Four
+reruns did not show the crash again.  A write of a small surface id into a
+live young ExternalAddress is a possible cause, but no run proved this.
+Treat the crash as "not reproduced".
+
+`primitiveCallbackReturn` also ignored its receiver and always completed
+the invocation on top of the C stack.  Stock Cog answers false when the
+receiver is not that invocation.  Ours now does the same, and fails the
+primitive when the receiver is not an active invocation.  No test showed a
+wrong return before this change; the check follows Cog.
+
 ## FIXED 2026-10-17 — primitive answers that differed from Cog (differential check)
 
 The sweep passes every test, but some primitives still answered other

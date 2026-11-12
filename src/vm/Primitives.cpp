@@ -24086,7 +24086,17 @@ PrimitiveResult Interpreter::primitiveRegisterSurface(int argCount) {
         g_surfaces[surfaceID].isMSB = (msb != 0);
     }
 
-    // Write surface ID into the ByteArray output holder (little-endian 32-bit)
+    // Write surface ID into the ByteArray output holder (little-endian 32-bit).
+    // getSurfaceFormat above is a Smalltalk callback (Athens/Cairo): the
+    // nested interpreter ran image code, so a scavenge may have MOVED the
+    // young holder and idHdr now points into recycled eden.  Writing through
+    // it corrupted whatever object was allocated there and left the holder
+    // at 0.  The arguments stay on the stack across the callback and the GC
+    // updates them as roots, so fetch the holder again.
+    surfaceIDHolder = stackTop();
+    if (!surfaceIDHolder.isObject() || surfaceIDHolder.isNil()) return PrimitiveResult::Failure;
+    idHdr = surfaceIDHolder.asObjectPtr();
+    if (!idHdr->isBytesObject() || idHdr->byteSize() < 4) return PrimitiveResult::Failure;
     uint8_t* idBytes = idHdr->bytes();
     int32_t id32 = static_cast<int32_t>(surfaceID);
     std::memcpy(idBytes, &id32, 4);
@@ -35633,6 +35643,39 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
     if (!vmcc) {
         return PrimitiveResult::Failure;
+    }
+
+    // The receiver (a TFCallbackInvocation) names the invocation that wants
+    // to return.  Only the invocation on top of the C stack may return:
+    // popping the top for a DIFFERENT receiver completes the wrong vmcc, its
+    // handler frees that vmcc and unwinds its C frame (libffi's args array
+    // with it) while the image still runs that invocation and reads its
+    // arguments from freed memory (the pointerAt: SIGSEGV at address 1 in
+    // RoassalSpecTest, 2026-11-12).  The image orders returns per RUNNER,
+    // this stack is per VM, so invocations of two runners can finish out of
+    // C order.  Stock (callbackPrimitives.c primitiveCallbackReturn) answers
+    // false here: "the order is not correct, retry later".  The image's
+    // returnCallback: then waits on callbackReturnSemaphore, which the
+    // return of the invocation above signals.
+    {
+        Oop receiver = stackValue(argCount);
+        void* receiverHandle = (receiver.isObject() && memory_.slotCountOf(receiver) >= 1)
+            ? tffi_readAddress(memory_.fetchPointer(0, receiver)) : nullptr;
+        if (!receiverHandle) return PrimitiveResult::Failure;
+        if (receiverHandle != static_cast<void*>(vmcc)) {
+            bool deeper = false;
+            for (int i = callbackDepth_ - 2; i >= 0; --i)
+                if (callbackContextStack_[i] == receiverHandle) { deeper = true; break; }
+            if (!deeper) return PrimitiveResult::Failure;   // not an active invocation
+            if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
+                fprintf(stderr, "[CALLBACK-RETURN-ORDER] vmcc=%p is not the top (%p, depth %d): answering false\n",
+                        receiverHandle, (void*)vmcc, callbackDepth_);
+                fflush(stderr);
+            }
+            popN(argCount + 1);
+            push(memory_.falseObject());
+            return PrimitiveResult::Success;
+        }
     }
 
     // Pop the callback context from our stack and zero the slot so a
