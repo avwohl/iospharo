@@ -4448,10 +4448,17 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 // addLast:).  Inlines the addLast: behavior directly, skipping
 // both the add: forwarder activation AND the addLast: activation.
 //
-// OC layout (Pharo 13):
-//   slot 0: firstIndex
-//   slot 1: lastIndex
-//   slot 2: array
+// OC layout (Pharo 13 and 14, from `OrderedCollection allInstVarNames`):
+//   slot 0: array
+//   slot 1: firstIndex
+//   slot 2: lastIndex
+//
+// KNOWN DEFECT (comment only; code not changed here): the body below reads
+// slot 1 as lastIndex and slot 2 as array, which is the OLD order.  With the
+// real layout slot 2 is a SmallInteger, so the arrayOop.isObject() check
+// fails and this primitive answers Failure on every call (checked under lldb
+// on Pharo 14: three consecutive calls, result Failure).  The full method
+// then runs, so results stay correct, but the inline fast path never fires.
 //
 // Algorithm:
 //   if lastIndex < array size: lastIndex++; array[lastIndex] := arg; return arg

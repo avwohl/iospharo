@@ -14993,7 +14993,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     fprintf(stderr, " %s", memory_.oopToString(lit).c_str());
                 }
                 fprintf(stderr, "\n");
-                // Dump receiver slots (firstIndex, lastIndex, array if it's OC)
+                // Dump receiver slots (array, firstIndex, lastIndex if it's OC)
                 if (rcvr.isObject() && rcvr.rawBits() >= 0x10000) {
                     ObjectHeader* rh = rcvr.asObjectPtr();
                     fprintf(stderr, "  recv slots:");
