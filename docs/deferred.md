@@ -562,6 +562,22 @@ Matrix2x3Plugin, FontPlugin, BMPReadWriterPlugin, AsynchFilePlugin,
 InternetConfigPlugin, KedamaPlugin.  SocketPlugin and SqueakSSL register
 through their own tables, so a grep for registerNamedPrimitive misses them.
 
+## primitiveOCAdd never succeeds (found 2026-11-12)
+
+`Interpreter::primitiveOCAdd` (src/vm/Primitives.cpp) is a synthetic fast
+path for `OrderedCollection>>add:`.  It reads slot 1 as `lastIndex` and slot
+2 as `array`.  The real order in Pharo 13 and Pharo 14 is `array`,
+`firstIndex`, `lastIndex`.  Slot 2 is thus a SmallInteger, the object check
+fails, and the primitive answers Failure on each call.  The full method then
+runs, so the answers are correct.  Each interpreted `add:` pays for one
+failed attempt.
+
+Decide between two fixes.  Remove the fast path and its selector match in
+`Interpreter.cpp` (the match reads method bytes and the `addLast:` name).
+Or correct the slot order, and then prove that a subclass that overrides
+`addLast:` does not take the fast path.  Machine code does not use this
+primitive.
+
 ## Platform validation status
 
 - **Windows has no CI job and has not been validated in ~250 commits** (last

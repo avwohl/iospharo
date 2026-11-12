@@ -174,6 +174,36 @@ Two differences are Cog defects, not ours:
   compiles `ByteString>>compareWith:`.  The machine-code primitive does
   not check that the argument is a byte object.  Ours fails the primitive.
 
+## FIXED 2026-11-12 (`36da3952`) — Pharo 14 Extension tests abort the VM
+
+On Pharo 14, `ExtensionTest`, `ExtensionConflictTest` and
+`ExtensionHotUpdateAliasingTest` stopped the VM with SIGABRT.  Stock Cog
+passes them 28/28, 50/50 and 22/22.  Pharo 13 has no such tests.
+
+The first diagnosis was wrong.  The log showed `[SEL-CORRUPT]`, because the
+selector of the failed send was a `ScopedSelector`, not a Symbol.  A
+`ScopedSelector` is a legal selector.  Lookup compares selectors by identity,
+and that was already correct.  The `[SEL-CORRUPT]` trace is removed.  It also
+fired for each WideSymbol selector such as `#π`.
+
+Three defects were behind the abort:
+
+- `perform:withArguments:inSuperclass:` (primitive 100) activated the object
+  that it found in the method dictionary without a check.
+  `ScopedSelector>>bindAliasIn:` puts a `ConflictMethod` there, which is not
+  a CompiledMethod.  `pushFrame` then found a bad method header and called
+  `abort`.  The primitive now sends `run:with:in:` to such an object, as each
+  other send path does.
+- When the lookup in primitive 100 found nothing, the primitive failed.  Cog
+  sends `doesNotUnderstand:`.  Ours now does the same.
+- The Message of a `doesNotUnderstand:` always had the class of the receiver
+  as its `lookupClass`.  Cog stores the class where the lookup started: the
+  superclass for a super send, the given class for primitive 100.
+  `ScopedSelector>>handleDoesNotUnderstand:to:` reads it.
+
+Check: the 22 test classes of Kernel-CodeModel-Tests give the Cog counts on
+arm64 and x86_64, with the JIT on and off.
+
 ## FIXED 2026-11-12 — Cog v12.0.6 (Pharo 14) differential check
 
 Pharo 14 ships with pharo-vm v12.0.6.  The scripts in `scripts/cogdiff/`
