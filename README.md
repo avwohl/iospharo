@@ -14,9 +14,10 @@ does not support them.
 
 ## Status
 
-- The full Pharo 13 SUnit suite (2042 classes, 27996 tests): 27812 pass.
-  The tests that do not pass are a live network query, a UI timing race and
-  two timing-dependent tests (docs/WIP.md).
+- The full Pharo 14 SUnit suite (2154 classes, 28412 tests): 28198 pass
+  and 219 skip.  Pharo 13 (2047 classes, 28077 tests): 27930 pass and 182
+  skip.  The tests that do not pass are a live network query and
+  timing-dependent tests (docs/WIP.md).
 - Package tests (93 package images, 2535 test classes): 650 s, against
   1546 s on the Cog VM.  Every class passes at least as much as on Cog,
   except pharo-cig: its own FFI binding defect stops the run when libclang

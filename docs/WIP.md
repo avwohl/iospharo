@@ -1,4 +1,4 @@
-# WIP — 2026-08-23
+# WIP — 2026-11-12
 
 Current state only. This file was 4882 lines of stacked session entries going
 back to 2026-05-27; on 2026-08-23 it was pruned the same way `docs/deferred.md`
@@ -15,7 +15,46 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-10-16, late) -- x86 at about 2x Cog
+## Right now (2026-11-12) -- Pharo 14 support, main merged into jit
+
+- `origin/main` is merged into `jit` (`49d55559`).  Pharo 14.0.0 is the
+  default image (`scripts/pharo-version.sh`, `PHARO_VERSION`, default 140).
+- Pharo 14 changes in the VM: the `#stackOverflow` send (Process slot
+  `shouldOverflow`, special object 24), `primitiveVMVersion`, the VM
+  identity `v12.0.6+iospharo` ([vm-version-identity.md](vm-version-identity.md)),
+  and the failure codes of Cog v12 for primitives 71, 597 and 599.
+- Defects fixed after the first Pharo 14 sweeps
+  ([vm-compat-bugs.md](vm-compat-bugs.md), sections "FIXED 2026-11-12"):
+  the callback return let other processes run (SpAthensAdapterTest),
+  `primitiveRegisterSurface` wrote through a stale pointer, and the
+  synthetic `add:` and `nextPut:` primitives are removed.
+- The SUnit runner fix for StTarjanAlgorithmTest is in the
+  `pharo-headless-test` submodule (`590c7a4`).
+- Full sweeps at `479dc56e` (the pass counts include the recovery pass):
+
+      image     arch    classes  tests   pass    skip  not passed
+      Pharo 14  arm64   2154     28412   28198   219   1
+      Pharo 13  arm64   2047     28077   27930   182   2
+      Pharo 14  x86_64  2154     28412   28200   217   1
+      Pharo 13  x86_64  2047     28077   27929   180   5
+
+- Tests that did not pass:
+  - `ZnClientTest>>testQueryGoogle` in all four sweeps: a live network
+    query.  Cog fails this test too.
+  - `FreeTypeCacheTest>>testGlyphAccessIsThreadSafe` on Pharo 13, both
+    architectures: a timing-dependent test.
+  - Pharo 13 x86_64 only: three `TestTookTooMuchTime` errors
+    (`LinkInstallerTest>>testOneMetaLinkManyObjects`,
+    `TraitTestCase>>testCompositionCopy`,
+    `ReleaseTest>>testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses`)
+    and `StSpotterTest>>testOpenSpotterRefreshesPreviewOnce`, which Cog
+    fails too.
+- Open leads without a reproduction are in [deferred.md](deferred.md)
+  ("Open leads from the 2026-11-12 sweeps").
+- Not verified on this host: the Swift app build (no Xcode), the GUI on
+  Pharo 14, the 93-package run on Pharo 14, Windows and Linux.
+
+## Earlier (2026-10-16, late) -- x86 at about 2x Cog
 
 - x86 since the last entry: registers are the truth (state copies at
   exits and C calls), an x86 simStack (deferred pushes, register
