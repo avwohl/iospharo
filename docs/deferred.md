@@ -46,6 +46,31 @@ The history lives in `docs/history/`; nothing was deleted.
   is Cog-identical behaviour, but the consequence is worth stating: every
   headless `eval` run has no OOM defense. The 2026-08-11 package sweep lost
   three packages to an OOM kill for exactly this reason.
+- **Open leads from the 2026-11-12 sweeps.** None has a reproduction.
+  - `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
+    fails about 1.5 times in 100 on our VM and 0.2 to 0.7 times in 100 on
+    Cog.  The failure is an image race
+    ([image_issues.md](image_issues.md)), but the cause of the higher rate
+    is not known.
+  - `primitiveCallbackReturn` ignores its receiver and completes the top
+    invocation.  Cog answers false when the receiver is not the top
+    invocation.  A change was written and then removed, because no test
+    made the false answer occur.
+  - One SIGSEGV in `RoassalSpecTest>>testTakeKeyboardFocus`
+    (`primitiveExternalPointerRead` on an ExternalAddress that held 1, in
+    the `primitiveRegisterSurface` callback).  The stale-pointer write in
+    `primitiveRegisterSurface` is fixed and is a possible cause.  No run
+    proved this.
+  - A runner variant that set `mainTestProcess` from inside the forked
+    test process stopped 2 of 44 batches (exit code 134 with a
+    doesNotUnderstand recursion in `Context>>unwindTo:`, and exit code
+    139).  Six more runs of one of the two batches did not stop.  The
+    runner does not use that variant.
+  - Before the callback-return fix, some runs of `SpAthensAdapterTest`
+    showed a doesNotUnderstand in the Delay scheduler
+    (`#adaptToNumber:andSend:`, and `#<` sent to nil in
+    `DelayBasicScheduler>>scheduleAtTimingPriority`).  Fixed builds did not
+    show these.
 - **Windows old-space commit policy** — see open defect #10. Reserving the
   whole space up front is deliberate; committing it unconditionally is the bug.
 

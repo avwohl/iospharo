@@ -139,11 +139,11 @@ reruns did not show the crash again.  A write of a small surface id into a
 live young ExternalAddress is a possible cause, but no run proved this.
 Treat the crash as "not reproduced".
 
-`primitiveCallbackReturn` also ignored its receiver and always completed
-the invocation on top of the C stack.  Stock Cog answers false when the
-receiver is not that invocation.  Ours now does the same, and fails the
-primitive when the receiver is not an active invocation.  No test showed a
-wrong return before this change; the check follows Cog.
+`primitiveCallbackReturn` ignores its receiver and always completes the
+invocation on top of the C stack.  Stock Cog answers false when the
+receiver is not that invocation.  This difference is not changed: no run
+showed a return out of order.  The lead is in
+[deferred.md](deferred.md).
 
 ## FIXED 2026-10-17 — primitive answers that differed from Cog (differential check)
 
@@ -208,7 +208,7 @@ Two differences are Cog defects, not ours:
 ## FIXED 2026-11-12 — SpAthensAdapterTest>>testResizeMakesCanvasResize: a callback return ran other processes
 
 Symptom: the test failed in every sweep (Pharo 13 and 14, arm64 and x86_64).
-Stock Cog passed 18 of 18.  Earlier notes called this a UI scheduling race.
+Stock Cog passed the class in its sweep.  Earlier notes called this a UI scheduling race.
 
 What the test does.  `waitUntilUIRedrawed` defers a block that signals a
 semaphore, then waits on the semaphore.  The UI process runs the deferred
@@ -216,7 +216,7 @@ block, then draws.  The draw calls `drawBlock:`, and that sets `extent`.
 The test reads `extent` as soon as the wait ends.  The wait must not end
 before the draw ends.
 
-Root cause.  The draw makes an FFI callout, and the callout calls back into
+Primary cause.  The draw makes an FFI callout, and the callout calls back into
 Smalltalk.  The stack at the callback is `SpAthensMorph>>redraw`, then
 `surface`, then `AthensCairoSurface class>>registerSurface:`.  The VM runs
 the callback on the "Callback queue" process (priority 70).  The UI process waits in `SuspendedProcessInCallout`.  When the
@@ -244,16 +244,16 @@ as soon as the handler is no longer the active process.  The next process has
 run no bytecode at that point, so the existing code requeues that process in
 front of its band and resumes the callout process.
 
-Why x86_64 also failed in the sweep: the x86_64 test binary found no x86_64
-`libcairo` on this machine.  Athens never drew, so the test failed for a
-second reason.  With the x86_64 Cairo of the Cog bundle in place, x86_64
-failed like arm64.
+A test binary that finds no x86_64 `libcairo` fails this test for a second
+reason: Athens never draws.  A new x86_64 build tree needs the Cairo
+libraries beside the binary (the `build-x86` tree has them).
 
 Measured (20 runs of the test in a forked priority-40 process, the Morphic UI
 process suspended and `FakeGUI startCycleLoop` running, as in the sweep).
 Before: arm64 Pharo 14 0 of 20, x86_64 Pharo 13 3 of 20, `PHARO_NO_JIT=1` 20
 of 20.  After: 20 of 20 in every configuration.  The old binary passed with
-`PHARO_NO_JIT=1`; the reason is not investigated.  Cog failed 1 run of 20 in
+`PHARO_NO_JIT=1`.  The reason is not investigated, so a second cause is
+possible.  Cog failed 1 run of 20 in
 each of two measurements (the first run, or one later run).
 
 ## FIXED 2026-11-12 (`36da3952`) — Pharo 14 Extension tests abort the VM

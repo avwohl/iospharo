@@ -65,8 +65,9 @@ The old build and the new build fail at the same rate, so no commit since
 8a799eef caused the failure.  Earlier sweeps did not show the test because
 one run of the test passes about 98 times in 100.  Our VM fails more often
 than Cog (about 1.5 times in 100 against 0.2 to 0.7).  Our VM has more process
-switches inside the window than Cog.  Cog fails too, so the VM stays as it
-is.
+switches inside the window than Cog.  Cog fails too, so no VM change was
+made.  The higher failure rate of our VM is an open lead in
+[deferred.md](deferred.md).
 
 ## StTarjanAlgorithmTest times out in the runner, not in the VM (2026-11-12, runner fixed)
 
