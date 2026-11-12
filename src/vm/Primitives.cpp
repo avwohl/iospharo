@@ -14030,10 +14030,6 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
 
     // Look up the method starting from lookupClass
     Oop method = lookupMethod(selector, lookupClass);
-    if (method.isNil()) {
-        // DNU - fail and let Smalltalk handle it
-        return PrimitiveResult::Failure;
-    }
     // Cog: a method of a different arity fails PrimErrBadNumArgs ("wrong
     // number of arguments"); activating it put a stack of the wrong depth
     // under the method.
@@ -14065,6 +14061,24 @@ PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
     // Push arguments from array
     for (size_t i = 0; i < numArgs; ++i) {
         push(argsHeader->slotAt(i));
+    }
+
+    // Lookup failed: doesNotUnderstand: is not a failure to perform (Cog's
+    // primitiveObject:perform:...).  The Message records lookupClass as the
+    // class the lookup started in: ScopedSelector>>handleDoesNotUnderstand:to:
+    // reads it to resume a super send from the right class.
+    if (method.isNil()) {
+        sendDoesNotUnderstand(selector, static_cast<int>(numArgs), lookupClass);
+        return PrimitiveResult::Success;
+    }
+
+    // A non-CompiledMethod in the dictionary (Pharo 14 ConflictMethod,
+    // Reflectivity's ReflectiveMethod, any objectAsMethod proxy) is sent
+    // #run:with:in:, as Cog's lookup does for every send.  Activating it
+    // aborted the VM in pushFrame (method header not a SmallInteger).
+    if (isObjectAsMethod(method)) {
+        invokeObjectAsMethod(method, selector, static_cast<int>(numArgs));
+        return PrimitiveResult::Success;
     }
 
     // Run the looked-up method's own primitive first, as a send would (and

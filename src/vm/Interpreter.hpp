@@ -2931,7 +2931,10 @@ private:
     void terminateAndSwitchProcess();
 
     /// Send doesNotUnderstand:
-    void sendDoesNotUnderstand(Oop selector, int argCount);
+    /// lookupClass is the class the failed lookup started in (the superclass
+    /// for a super send); nil means the receiver's class.  It becomes the
+    /// Message's lookupClass slot, as in Cog's createActualMessageTo:.
+    void sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupClass = Oop::nil());
 
     /// Invoke a non-CompiledMethod object as a method (sends #run:with:in:)
     void invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount);

@@ -8412,7 +8412,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             lookupClass = superclassOf(definingClass);
             Oop method = lookupMethod(selector, lookupClass);
             if (method.isNil()) {
-                sendDoesNotUnderstand(selector, numArgs);
+                sendDoesNotUnderstand(selector, numArgs, lookupClass);
             } else if (isObjectAsMethod(method)) {
                 // Reflectivity installs ReflectiveMethod objects in method
                 // dictionaries; a super send that resolves to one must send
@@ -8459,7 +8459,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 lookupClass = superclassOf(methodClass);
             Oop method = lookupMethod(selector, lookupClass);
             if (method.isNil()) {
-                sendDoesNotUnderstand(selector, numArgs);
+                sendDoesNotUnderstand(selector, numArgs, lookupClass);
             } else if (isObjectAsMethod(method)) {
                 // Reflectivity installs ReflectiveMethod objects in method
                 // dictionaries; a super send that resolves to one must send
@@ -11724,7 +11724,7 @@ void Interpreter::extendedSuperSend() {
 
     Oop method = lookupMethod(selector, superclass);
     if (method.isNil()) {
-        sendDoesNotUnderstand(selector, argCount);
+        sendDoesNotUnderstand(selector, argCount, superclass);
     } else if (isObjectAsMethod(method)) {
         invokeObjectAsMethod(method, selector, argCount);   // see the V1 super sends
     } else {
@@ -13364,59 +13364,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 // made every cache hit save and restore the registers this path needs.
 [[gnu::noinline]] void Interpreter::sendSelectorMiss(Oop selector, int argCount,
                                                      Oop rcvr, Oop rcvrClass) {
-    // Selector sanity check: must be a bytes object (Symbol/ByteString).
-    // On the miss path only: a method-cache hit means this selector was
-    // already checked when its entry was made, and reading the Symbol's
-    // header on every send was a load the hit path does not otherwise need.
-    if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (__builtin_expect(!selHdr->isBytesObject(), 0)) {
-            static int badSelCount = 0;
-            if (badSelCount++ < 10) {
-                // Decode the send bytecode to find the literal index
-                uint8_t bc = instructionPointer_ ? *instructionPointer_ : 0;
-                int litIdx = -1;
-                if (bc >= 0x80 && bc <= 0x8F) litIdx = bc & 0xF; // send short
-                else if (bc >= 0x90 && bc <= 0x9F) litIdx = bc & 0xF;
-                else if (bc >= 0xA0 && bc <= 0xAF) litIdx = bc & 0xF;
-                else if (bc == 0xEA || bc == 0xEB) {
-                    uint8_t ext = instructionPointer_ ? instructionPointer_[1] : 0;
-                    litIdx = ext & 0x1F;
-                }
-                fprintf(stderr, "[SEL-CORRUPT #%d] selector fmt=%d cls=%u slots=%zu raw=0x%llx "
-                        "bc=0x%02X litIdx=%d method=0x%llx (#%s) fd=%zu\n",
-                        badSelCount, (int)selHdr->format(), selHdr->classIndex(),
-                        selHdr->slotCount(), (unsigned long long)selector.rawBits(),
-                        bc, litIdx, (unsigned long long)method_.rawBits(),
-                        memory_.selectorOf(method_).c_str(), frameDepth_);
-                // Dump the first 10 literals of the method
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mH = method_.asObjectPtr();
-                    Oop hdr = mH->slots()[0];
-                    int nLit = hdr.isSmallInteger() ? ((int)hdr.asSmallInteger() & 0x7FFF) : 0;
-                    fprintf(stderr, "[SEL-CORRUPT]   %d literals:", nLit);
-                    for (int i = 0; i < nLit && i < 15; i++) {
-                        Oop lit = mH->slots()[1 + i];
-                        ObjectHeader* lH = lit.isObject() && lit.rawBits() > 0x10000
-                            ? lit.asObjectPtr() : nullptr;
-                        if (lH && lH->isBytesObject() && lH->byteSize() < 64)
-                            fprintf(stderr, " [%d]='%.*s'", i,
-                                    (int)lH->byteSize(), (const char*)lH->bytes());
-                        else
-                            fprintf(stderr, " [%d]=0x%llx", i,
-                                    (unsigned long long)lit.rawBits());
-                    }
-                    fprintf(stderr, "\n");
-                }
-#if PHARO_JIT_ENABLED
-                // Check if we just came from JIT
-                fprintf(stderr, "[SEL-CORRUPT]   IP=0x%llx method bytes=%p\n",
-                        (unsigned long long)(uintptr_t)instructionPointer_,
-                        method_.isObject() ? (void*)method_.asObjectPtr()->bytes() : nullptr);
-#endif
-            }
-        }
-    }
+    // Any object may be a selector (Cog looks it up by identity, as a key of
+    // the method dictionary).  Pharo 14 uses ScopedSelector, a 4-slot pointer
+    // object, for extension methods; the old "selector must be a bytes object"
+    // diagnostic fired on every scoped send and is gone.
 
     // === FULL LOOKUP ===
     Oop method = lookupMethod(selector, rcvrClass);
@@ -18183,7 +18134,7 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 
 // ===== SPECIAL SENDS =====
 
-void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
+void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupClass) {
     const int MAX_DNU_DEPTH = 10;
 
     // Nil-methodDict proxy protocol: the immediately-preceding lookupMethod
@@ -19328,9 +19279,12 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     Oop originalReceiver = pop();
 
-    // Set lookupClass (slot 2) to the receiver's class.
-    // MessageNotUnderstood >> messageText uses message lookupClass printString.
-    memory_.storePointer(2, message, memory_.classOf(originalReceiver));
+    // lookupClass (slot 2): the class the lookup started in -- the receiver's
+    // class for an ordinary send, the superclass for a super send (Cog's
+    // createActualMessageTo:).  MessageNotUnderstood >> messageText prints it
+    // and ScopedSelector>>handleDoesNotUnderstand:to: resumes from it.
+    memory_.storePointer(2, message,
+        lookupClass.isNil() ? memory_.classOf(originalReceiver) : lookupClass);
 
     // Send doesNotUnderstand: to the original receiver
     push(originalReceiver);
