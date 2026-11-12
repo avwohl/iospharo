@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-manifest.sh — drive the 200-package JIT correctness sweep from a manifest.
 #
-# For each package: copy a clean Pharo 13.1 image, have the STOCK Cog VM
+# For each package: copy a clean stock Pharo image (13.1 or 14.0; BASE_IMAGE picks it), have the STOCK Cog VM
 # Metacello-load+save it (our VM can't do HTTPS), then run the package's SUnit on
 # BOTH the custom JIT VM and stock Cog and record load status + the JIT-only
 # failure count (candidate JIT regressions).  Resumable: rows already in

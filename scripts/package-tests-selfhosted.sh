@@ -15,7 +15,7 @@
 #     x86_64 stock VM runs fine under Rosetta and gives this machine a Cog
 #     baseline again:
 #         mkdir -p /tmp/harness-x86 && cd /tmp/harness-x86
-#         arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/130+vm | bash'
+#         arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/${PHARO_VERSION}+vm | bash'
 #         arch -x86_64 ./pharo Pharo.image eval '42 factorial printString'
 #     Verified on Cog v10.3.9, `eval` and `eval --save` both. Every stock-VM
 #     command needs the `arch -x86_64` prefix or you get the abort above. So a
@@ -34,6 +34,7 @@
 #
 # Run on an idle machine; the suites are timing-sensitive.
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 VM=${1:?usage: package-tests-selfhosted.sh <vm-binary> <base-image> [package ...]}
 BASE=${2:?usage: package-tests-selfhosted.sh <vm-binary> <base-image> [package ...]}

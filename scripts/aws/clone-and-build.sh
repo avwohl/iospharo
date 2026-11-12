@@ -4,6 +4,7 @@
 # the x86 work branch off the latest `jit`, builds the x64 VM, and smoke-tests
 # it against a freshly downloaded Pharo image.
 set -euxo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 
 GIT_REMOTE="${GIT_REMOTE:-git@github.com:avwohl/iospharo.git}"
 BASE_BRANCH="${BASE_BRANCH:-jit}"
@@ -118,10 +119,10 @@ mkdir -p build
 PHARO_DISABLE_LTO="${PHARO_DISABLE_LTO-1}" ./scripts/build-linux.sh 2>&1 | tee build/build.log
 
 # --- smoke test against a fresh Pharo image ---------------------------------
-HARNESS=/home/ubuntu/harness
+HARNESS="${HARNESS:-/home/ubuntu/harness$PHARO_SUFFIX}"
 mkdir -p "$HARNESS"
 if [ ! -f "$HARNESS/Pharo.image" ]; then
-    (cd "$HARNESS" && curl -sL https://get.pharo.org/64/130 | bash)
+    (cd "$HARNESS" && curl -sL "$PHARO_IMAGE_URL" | bash)
 fi
 echo "=== smoke test: test_load_image ==="
 SMOKE=/home/ubuntu/smoke-result.txt

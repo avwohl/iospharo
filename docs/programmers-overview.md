@@ -112,7 +112,7 @@ docs/                    # Documentation
 ### Prerequisites
 - Xcode 16+ with iOS 15+ SDK
 - CMake 3.20+ and Ninja
-- A Pharo 13 image (downloaded automatically by the app, or manually via `curl -sL https://get.pharo.org/64/130 | bash`)
+- A Pharo 13 or 14 image (downloaded automatically by the app, or manually via `curl -sL https://get.pharo.org/64/140 | bash`; use 130 for Pharo 13)
 
 ### Quick build (local testing)
 ```bash

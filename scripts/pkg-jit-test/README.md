@@ -53,7 +53,7 @@ results/              captured benchmark logs
 
 ## Workflow
 
-1. Get a stock Pharo 13.1 image + `pharo` launcher (e.g. `curl get.pharo.org/64/130+vm | bash`).
+1. Get a stock Pharo image (13.1 or 14.0) + `pharo` launcher (e.g. `curl get.pharo.org/64/140+vm | bash`; use 130 for Pharo 13.1).
 2. Load a package on the stock VM and save:
    ```
    cp Pharo.image polymath.image

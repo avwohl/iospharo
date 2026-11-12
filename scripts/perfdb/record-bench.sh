@@ -12,6 +12,7 @@
 # Cog timing rarely changes on a fixed machine, so --skip-cog-if-present skips
 # the Cog run when a Cog bench result already exists for this machine+source.
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -20,12 +21,12 @@ INJECT_ST="$SCRIPT_DIR/bench_inject.st"
 
 OUR_VM="${OUR_VM:-$PROJECT_ROOT/build-rel/test_load_image}"
 [ -x "$OUR_VM" ] || OUR_VM="$PROJECT_ROOT/build/test_load_image"
-HARNESS_DIR="${HARNESS_DIR:-/tmp/harness}"
+HARNESS_DIR="${HARNESS_DIR:-$PHARO_HARNESS}"
 COG_VM="$HARNESS_DIR/pharo"
 IMAGE_SRC="$HARNESS_DIR/Pharo.image.bak"
 [ -f "$IMAGE_SRC" ] || IMAGE_SRC="$HARNESS_DIR/Pharo.image"
 TIMEOUT_PER_RUN="${BENCH_TIMEOUT:-200}"
-IMAGE_SIG="${IMAGE_SIG:-pharo13.1-45e803d}"
+IMAGE_SIG="${IMAGE_SIG:-$PHARO_IMAGE_SIG}"
 JIT_KNOBS="${JIT_KNOBS:-PHARO_JIT_DEFER=15}"
 
 RUN_REF=true; RUN_OURS=true; SKIP_COG_IF_PRESENT=false
@@ -41,7 +42,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -x "$OUR_VM" ]    || { echo "ERROR: our VM not built: $OUR_VM" >&2; exit 2; }
-[ -f "$IMAGE_SRC" ] || { echo "ERROR: image missing: $IMAGE_SRC (curl get.pharo.org/64/130+vm)" >&2; exit 2; }
+[ -f "$IMAGE_SRC" ] || { echo "ERROR: image missing: $IMAGE_SRC (curl get.pharo.org/64/${PHARO_VERSION}+vm)" >&2; exit 2; }
 [ -x "$COG_VM" ]    || { echo "WARN: Cog VM missing — ref run skipped" >&2; RUN_REF=false; }
 
 # --- identities (idempotent) ---
@@ -54,7 +55,7 @@ COG_VER=$("$COG_VM" --version 2>/dev/null | grep -oE 'v[0-9.]+\+[0-9.]+[a-f0-9]+
 COG_VM_ID=$(python3 "$PERFDB" register-vm --kind cog --build-config Release \
            --arch "$(uname -m)" --vm-version "Pharo-${COG_VER:-unknown}" --git-sha "${COG_VER##*+}")
 BENCH_SRC=$(python3 "$PERFDB" register-source --name bench-suite --kind bench \
-           --pharo-version 13.1 --image-sig "$IMAGE_SIG")
+           --pharo-version "$PHARO_DOTTED" --image-sig "$IMAGE_SIG")
 echo "[ids] machine=$MACHINE jit_vm=$JIT_VM cog_vm=$COG_VM_ID bench_src=$BENCH_SRC"
 
 # --- stage + inject the bench harness once (via Cog --save) ---

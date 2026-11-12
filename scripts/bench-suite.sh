@@ -14,11 +14,12 @@
 #   scripts/bench-suite.sh --ref-only
 
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 OUR_VM="$PROJECT_ROOT/build/test_load_image"
-HARNESS_DIR="/tmp/harness"
+HARNESS_DIR="${HARNESS_DIR:-$PHARO_HARNESS}"
 COG_VM="$HARNESS_DIR/pharo"
 IMAGE_SRC="$HARNESS_DIR/Pharo.image.bak"
 TIMEOUT_PER_RUN="${BENCH_TIMEOUT:-180}"
@@ -31,7 +32,7 @@ case "${1:-}" in
 esac
 
 [ -x "$OUR_VM" ]    || { echo "ERROR: $OUR_VM not built (cmake --build build)" >&2; exit 2; }
-[ -f "$IMAGE_SRC" ] || { echo "ERROR: $IMAGE_SRC missing (curl -sL https://get.pharo.org/64/130+vm | bash)" >&2; exit 2; }
+[ -f "$IMAGE_SRC" ] || { echo "ERROR: $IMAGE_SRC missing (curl -sL $PHARO_VM_URL | bash)" >&2; exit 2; }
 [ -x "$COG_VM" ]    || { echo "WARNING: $COG_VM missing — skipping reference run" >&2; RUN_REF=false; }
 
 # Stage image + handler injection.  Run pharo from /tmp (Cog silently

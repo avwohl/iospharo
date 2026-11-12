@@ -16,6 +16,7 @@
 #   /tmp/pharo_benchmarks_ours.txt   Our VM results
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -59,10 +60,10 @@ if $RUN_REF && [ -z "$REF_VM" ]; then
 fi
 
 # Download fresh image
-echo "[1/3] Downloading fresh Pharo 13 image..."
+echo "[1/3] Downloading fresh Pharo $PHARO_DOTTED image..."
 mkdir -p "$IMAGE_DIR"
 cd "$IMAGE_DIR"
-curl -sL https://get.pharo.org/64/130 | bash > /dev/null 2>&1
+curl -sL "$PHARO_IMAGE_URL" | bash > /dev/null 2>&1
 echo "  Image: $IMAGE_DIR/Pharo.image"
 
 # Inject benchmark runner

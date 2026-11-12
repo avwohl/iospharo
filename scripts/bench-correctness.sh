@@ -19,12 +19,13 @@
 # Exit code: 0 if all asserts passed, 1 otherwise.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 OUR_VM="$PROJECT_ROOT/build/test_load_image"
 
-HARNESS_DIR="/tmp/harness"
+HARNESS_DIR="${HARNESS_DIR:-$PHARO_HARNESS}"
 IMAGE_SRC="$HARNESS_DIR/Pharo.image.bak"
 IMAGE="/tmp/bench_correctness.image"
 INJECT_ST="/tmp/bench_correctness_inject.st"
@@ -60,7 +61,7 @@ expected() {
 
 # --- preflight ---
 [ -x "$OUR_VM" ]   || { echo "ERROR: $OUR_VM not built. Run: cmake --build build" >&2; exit 2; }
-[ -f "$IMAGE_SRC" ] || { echo "ERROR: $IMAGE_SRC not found. Stage with: curl -sL https://get.pharo.org/64/130+vm | bash" >&2; exit 2; }
+[ -f "$IMAGE_SRC" ] || { echo "ERROR: $IMAGE_SRC not found. Stage with: curl -sL $PHARO_VM_URL | bash" >&2; exit 2; }
 [ -f "$HARNESS_DIR/pharo" ] || { echo "ERROR: $HARNESS_DIR/pharo not found. Cannot inject startup handler." >&2; exit 2; }
 
 cp "$IMAGE_SRC" "$IMAGE"

@@ -8,6 +8,7 @@
 #   batch_size:   classes per batch (default: 100)
 
 set -e
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 VM="./build/test_load_image"
 SCRIPT="scripts/pharo-headless-test/run_sunit_tests.st"
@@ -54,7 +55,7 @@ while true; do
 
     # Fresh image
     cd /tmp
-    curl -sL https://get.pharo.org/64/130 | bash > /dev/null 2>&1
+    curl -sL "$PHARO_IMAGE_URL" | bash > /dev/null 2>&1
     cd - > /dev/null
 
     # Validate fresh image (pre-test)

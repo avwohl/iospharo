@@ -11,9 +11,10 @@
 # Resume: re-run with the same RUN_ID.  It pulls the previous outdir from S3 and
 # continues from the first batch the last attempt did not finish.
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 REPO=${REPO:-/home/ubuntu/src/iospharo}
-HARNESS=${HARNESS:-/home/ubuntu/harness}
-STOCK=${STOCK:-/home/ubuntu/stockvm}
+HARNESS=${HARNESS:-/home/ubuntu/harness$PHARO_SUFFIX}
+STOCK=${STOCK:-/home/ubuntu/stockvm$PHARO_SUFFIX}
 RUN_ID=${RUN_ID:-x86-gui-$(date -u +%Y%m%d)}
 OUT=${OUT:-/home/ubuntu/results/$RUN_ID}
 BUCKET=${BUCKET:-iospharo-build-670060058357}
@@ -27,7 +28,7 @@ log() { echo "[$(date -u '+%H:%M:%S')] $*"; }
 if [ ! -x "$STOCK/pharo" ]; then
     log "installing stock pharo VM"
     rm -rf "$STOCK"; mkdir -p "$STOCK"
-    (cd "$STOCK" && curl -sL https://get.pharo.org/64/vm130 | bash) >/dev/null 2>&1
+    (cd "$STOCK" && curl -sL "$PHARO_VMONLY_URL" | bash) >/dev/null 2>&1
 fi
 [ -x "$STOCK/pharo" ] || { echo "FATAL: no stock Pharo VM; the prep cannot install SUnitRunner" >&2; exit 1; }
 [ -x "$VM" ] || { echo "FATAL: no $VM -- run clone-and-build.sh first" >&2; exit 1; }
@@ -48,9 +49,9 @@ fi
 # image+changes+sources must come from the SAME fetch; a stale .sources beside a
 # fresh image mimics a VM regression across ~700 AST/decompiler tests.
 if [ ! -f "$HARNESS/Pharo.image" ]; then
-    log "fetching a fresh Pharo 13 image"
+    log "fetching a fresh Pharo $PHARO_DOTTED image"
     rm -rf "$HARNESS"; mkdir -p "$HARNESS"
-    (cd "$HARNESS" && curl -sL https://get.pharo.org/64/130 | bash >/dev/null 2>&1)
+    (cd "$HARNESS" && curl -sL "$PHARO_IMAGE_URL" | bash >/dev/null 2>&1)
 fi
 if [ ! -f "$HARNESS/sunit-gui.image" ]; then
     log "prepping: setup_fake_gui.st then run_sunit_tests.st"

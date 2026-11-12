@@ -7,18 +7,19 @@
 #
 #   ./sunit-sista-verify.sh ["ClassA ClassB ..."]   (default: collection/float subset)
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 REPO=/home/ubuntu/src/iospharo
-HARNESS=/home/ubuntu/harness
-STOCK=/home/ubuntu/stockvm
+HARNESS="${HARNESS:-/home/ubuntu/harness$PHARO_SUFFIX}"
+STOCK="${STOCK:-/home/ubuntu/stockvm$PHARO_SUFFIX}"
 SUBSET="${1:-FloatTest ArrayTest OrderedCollectionTest IntervalTest Float64ArrayTest SetTest DictionaryTest}"
 
 # Stock Pharo VM (used only to fileIn the runner into the image for prep).
 if [ ! -x "$STOCK/pharo" ]; then
     echo "== installing stock pharo VM =="
     rm -rf "$STOCK"; mkdir -p "$STOCK"
-    (cd "$STOCK" && curl -sL https://get.pharo.org/64/vm130 | bash) >/dev/null 2>&1
+    (cd "$STOCK" && curl -sL "$PHARO_VMONLY_URL" | bash) >/dev/null 2>&1
 fi
-[ -f "$HARNESS/Pharo.image" ] || (cd "$HARNESS" && curl -sL https://get.pharo.org/64/130 | bash >/dev/null 2>&1)
+[ -f "$HARNESS/Pharo.image" ] || (cd "$HARNESS" && curl -sL "$PHARO_IMAGE_URL" | bash >/dev/null 2>&1)
 
 cp "$REPO/scripts/pharo-headless-test/test_classes.txt" /tmp/sunit_test_classes.txt
 : > /tmp/sunit_class_names.txt

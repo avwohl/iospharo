@@ -15,7 +15,7 @@
 # Install with:
 #
 #     mkdir -p /tmp/harness-x86 && cd /tmp/harness-x86
-#     arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/130+vm | bash'
+#     arch -x86_64 /bin/bash -c 'curl -sL https://get.pharo.org/64/${PHARO_VERSION}+vm | bash'
 #
 # THE PATHS ARE NAMESPACED, so this is safe to run beside our own sweep as far
 # as /tmp state goes: SUNIT_PREFIX makes run_sunit_cog.st use <prefix>_* rather
@@ -35,10 +35,11 @@
 # `Total: N P:.. F:..` lines, and that column greps both.  The TOTALS block at
 # the end requires the P/F/E/S fields and so counts classes correctly.
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 LIST=${1:?usage: cog-sweep.sh <class-list> <outdir> [pharo-dir]}
 OUT=${2:?usage: cog-sweep.sh <class-list> <outdir> [pharo-dir]}
-PHARO_DIR=${3:-/tmp/harness-x86}
+PHARO_DIR=${3:-$PHARO_HARNESS_X86}
 RUNNER=${RUNNER:-$(cd "$(dirname "$0")" && pwd)/pharo-headless-test/run_sunit_cog.st}
 STEP=${STEP:-100}
 PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-1800}

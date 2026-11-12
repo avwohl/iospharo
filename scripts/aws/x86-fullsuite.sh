@@ -3,9 +3,10 @@
 # jit branch @ HEAD on native x86 Linux.  Distilled from sunit-fullsuite-ab.sh
 # (same silent-runner checklist), minus the A/B second config.
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 REPO=/home/ubuntu/src/iospharo
-HARNESS=/home/ubuntu/harness
-STOCK=/home/ubuntu/stockvm
+HARNESS="${HARNESS:-/home/ubuntu/harness$PHARO_SUFFIX}"
+STOCK="${STOCK:-/home/ubuntu/stockvm$PHARO_SUFFIX}"
 OUT=/home/ubuntu/results
 VM="$REPO/build/test_load_image"
 mkdir -p "$OUT"
@@ -13,7 +14,7 @@ mkdir -p "$OUT"
 # Stock Pharo VM.  Needed because our VM cannot file the SUnit runner into the
 # image itself -- the prep step below is what installs SUnitRunner.
 #
-# get.pharo.org/64/vm130 serves x86_64 ONLY.  On aarch64 it returns something
+# get.pharo.org/64/vm${PHARO_VERSION} serves x86_64 ONLY.  On aarch64 it returns something
 # that is not a zip, unzip fails, and (because the whole thing was
 # >/dev/null 2>&1) the script carried on with no VM: the prep silently did
 # nothing, the image saved WITHOUT SUnitRunner, and the run reported
@@ -24,10 +25,10 @@ if [ ! -x "$STOCK/pharo" ]; then
     rm -rf "$STOCK"; mkdir -p "$STOCK"
     case "$(uname -m)" in
         x86_64)
-            (cd "$STOCK" && curl -sL https://get.pharo.org/64/vm130 | bash) >/dev/null 2>&1
+            (cd "$STOCK" && curl -sL "$PHARO_VMONLY_URL" | bash) >/dev/null 2>&1
             ;;
         aarch64|arm64)
-            # Pharo publishes no aarch64 build under get.pharo.org/64/vm130;
+            # Pharo publishes no aarch64 build under get.pharo.org/64/vm${PHARO_VERSION};
             # the newest Linux-aarch64 headless VM is the 10.2.x line.
             _base=https://files.pharo.org/vm/pharo-spur64-headless/Linux-aarch64
             _zip=$(curl -sL "$_base/" 2>/dev/null \
@@ -52,7 +53,7 @@ echo "== stock VM: $("$STOCK/pharo" --version 2>&1 | head -1) =="
 # ~700 AST/decompiler/FFI-parser tests and mimicked a VM regression
 # (box run #4, 2026-07-06).
 rm -rf "$HARNESS"; mkdir -p "$HARNESS"
-(cd "$HARNESS" && curl -sL https://get.pharo.org/64/130 | bash >/dev/null 2>&1)
+(cd "$HARNESS" && curl -sL "$PHARO_IMAGE_URL" | bash >/dev/null 2>&1)
 
 cp "$REPO/scripts/pharo-headless-test/test_classes.txt" /tmp/sunit_test_classes.txt
 # full suite: no batch file, no class-names filter -> runner runs everything

@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 # Run test suite in batches, each with a fresh Pharo image.
 # Split into small batches to avoid hitting VM limitations during
 # extended test runs. Each batch starts from a fresh image.
@@ -42,7 +43,7 @@ while [ $start -le $TOTAL_CLASSES ]; do
 
     # Fresh image each batch
     rm -f /tmp/Pharo.image /tmp/Pharo.changes
-    (cd /tmp && curl -sL https://get.pharo.org/64/130 | bash) 2>/dev/null || true
+    (cd /tmp && curl -sL "$PHARO_IMAGE_URL" | bash) 2>/dev/null || true
 
     if [ ! -f /tmp/Pharo.image ]; then
         echo "ERROR: Failed to download Pharo image"

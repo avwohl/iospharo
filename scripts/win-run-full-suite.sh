@@ -9,6 +9,7 @@
 #
 # Results: C:\tmp\sunit_test_results.txt (+ sunit_test_detail.txt)
 set -u
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 REPO=/c/temp/src/iospharo-jit
 IMG_SRC="${1:-C:/temp/pharo-win-test/Pharo.image}"
 WORK=$(dirname "$(cygpath -u "$IMG_SRC" 2>/dev/null || echo "$IMG_SRC")")
@@ -22,7 +23,7 @@ mkdir -p /c/tmp
 
 if [ ! -x "$REFVM" ]; then
   echo "Reference Pharo Windows VM not found at $REFVM"
-  echo "Get it: cd '$WORK' && mkdir -p refvm && cd refvm && curl -sL https://get.pharo.org/64/vm130 | bash"
+  echo "Get it: cd '$WORK' && mkdir -p refvm && cd refvm && curl -sL $PHARO_VMONLY_URL | bash"
   exit 1
 fi
 

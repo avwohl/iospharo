@@ -12,9 +12,10 @@
 #   - PHARO_CODE_ZONE_MB=192 (the 64MB zone fills mid-suite)
 #   - check <imagedir>/PharoDebug.log when a run is silent
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 REPO=/home/ubuntu/src/iospharo
-HARNESS=/home/ubuntu/harness
-STOCK=/home/ubuntu/stockvm
+HARNESS="${HARNESS:-/home/ubuntu/harness$PHARO_SUFFIX}"
+STOCK="${STOCK:-/home/ubuntu/stockvm$PHARO_SUFFIX}"
 OUT=/home/ubuntu/results
 VM="$REPO/build-opt/test_load_image"
 mkdir -p "$OUT"
@@ -22,9 +23,9 @@ mkdir -p "$OUT"
 if [ ! -x "$STOCK/pharo" ]; then
     echo "== installing stock pharo VM =="
     rm -rf "$STOCK"; mkdir -p "$STOCK"
-    (cd "$STOCK" && curl -sL https://get.pharo.org/64/vm130 | bash) >/dev/null 2>&1
+    (cd "$STOCK" && curl -sL "$PHARO_VMONLY_URL" | bash) >/dev/null 2>&1
 fi
-[ -f "$HARNESS/Pharo.image" ] || (mkdir -p "$HARNESS" && cd "$HARNESS" && curl -sL https://get.pharo.org/64/130 | bash >/dev/null 2>&1)
+[ -f "$HARNESS/Pharo.image" ] || (mkdir -p "$HARNESS" && cd "$HARNESS" && curl -sL "$PHARO_IMAGE_URL" | bash >/dev/null 2>&1)
 
 if [ ! -x "$VM" ]; then
     echo "== building build-opt =="

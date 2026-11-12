@@ -16,10 +16,11 @@
 # PHARO_NO_BECOME_FORWARDER, under PHARO_HEAP_CENSUS=1 — watch for the Context
 # explosion (storm) vs bounded heap.
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 sudo apt-get update -qq && sudo apt-get install -y -qq libcairo2-dev libfreetype6-dev libfontconfig1-dev
 mkdir -p ~/catbuild && cd ~/catbuild
-[ -x ./pharo ] || curl -sL https://get.pharo.org/64/vm130 | bash >/dev/null 2>&1
-[ -f ./Pharo.image ] || curl -sL https://get.pharo.org/64/130 | bash >/dev/null 2>&1
+[ -x ./pharo ] || curl -sL "$PHARO_VMONLY_URL" | bash >/dev/null 2>&1
+[ -f ./Pharo.image ] || curl -sL "$PHARO_IMAGE_URL" | bash >/dev/null 2>&1
 # Roassal3 for Pharo 13 is on the 'Pharo13' branch of pharo-graphics/Roassal:
 timeout 1500 ./pharo Pharo.image eval --save \
   "[Metacello new baseline: 'Roassal3'; repository: 'github://pharo-graphics/Roassal:Pharo13/src'; onConflict: [:e | e useIncoming]; load. 'RS-LOADED'] on: Error do: [:e | 'RS-ERR: ', e messageText]"

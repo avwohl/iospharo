@@ -5,6 +5,7 @@
 # Results: /tmp/pkg_test_results_all.txt (combined summary)
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/pharo-version.sh" || exit 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -19,7 +20,7 @@ fi
 
 if [ ! -f /tmp/pharo ]; then
   echo "ERROR: Stock Pharo VM not found at /tmp/pharo"
-  echo "  cd /tmp && curl -sL https://get.pharo.org/64/130 | bash"
+  echo "  cd /tmp && curl -sL $PHARO_IMAGE_URL | bash"
   exit 1
 fi
 
@@ -72,8 +73,8 @@ for entry in "${packages_to_run[@]}"; do
   mkdir -p "$PKG_DIR"
 
   # 1. Fresh image
-  echo "  Downloading fresh Pharo 13 image..."
-  if ! (cd "$PKG_DIR" && curl -sL https://get.pharo.org/64/130 | bash) > /dev/null 2>&1; then
+  echo "  Downloading fresh Pharo $PHARO_DOTTED image..."
+  if ! (cd "$PKG_DIR" && curl -sL "$PHARO_IMAGE_URL" | bash) > /dev/null 2>&1; then
     echo "  ERROR: Failed to download image" | tee -a "$COMBINED"
     continue
   fi
