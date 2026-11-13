@@ -45,6 +45,7 @@ namespace ev {
 constexpr size_t kMaxQueuedEvents = 65535;   // SDL_MAX_QUEUED_EVENTS
 constexpr uint32_t kFirstEvent = 0;
 constexpr uint32_t kLastEvent = 0xFFFF;
+constexpr uint32_t kRegisterEventsFailed = UINT32_MAX;   // SDL_RegisterEvents answers (Uint32)-1
 constexpr uint32_t kUserEvent = 0x8000;
 constexpr uint32_t kTextInputEvent = 0x303;
 constexpr uint32_t kTextEditingEvent = 0x302;
@@ -121,7 +122,9 @@ inline bool queueNotEmpty() {
 
 // SDL_PeepEvents.  Add answers the number added.  Peek and get answer the
 // number of events in [minType, maxType], at most `numevents` when a buffer is
-// given; get also removes them.  With no buffer, peek and get count them all.
+// given; get also removes them, but only when a buffer is given (SDL cuts an
+// event only when it copies the event out).  With no buffer, peek and get
+// count them all and remove nothing.
 inline int peepEvents(Event* events, int numevents, int action, uint32_t minType, uint32_t maxType) {
     State& s = state();
     if (action == kAdd) {
@@ -138,7 +141,7 @@ inline int peepEvents(Event* events, int numevents, int action, uint32_t minType
         if (it->type >= minType && it->type <= maxType) {
             if (events) copyOut(&events[used], *it);
             ++used;
-            if (action == kGet) { it = s.queue.erase(it); continue; }
+            if (action == kGet && events) { it = s.queue.erase(it); continue; }
         }
         ++it;
     }
@@ -260,7 +263,7 @@ inline uint32_t registerEvents(int count) {
         s.nextUserEvent += static_cast<uint32_t>(count);
         return first;
     }
-    return 0xFFFFFFFFu;
+    return kRegisterEventsFailed;
 }
 
 // SDL_EventState.  Answers the previous state; DISABLE also drops queued events of the type.

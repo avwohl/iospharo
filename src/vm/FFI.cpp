@@ -780,7 +780,8 @@ struct SDLRendererState {
     int backW = 0, backH = 0;
 };
 
-static uintptr_t sNextHandle = 0x10000;  // Incrementing unique handles
+constexpr uintptr_t kFirstHandle = 0x10000;   // handles below this value are not pointers
+static uintptr_t sNextHandle = kFirstHandle;  // Incrementing unique handles
 // An unknown window handle is "Invalid window" in SDL (the first line of
 // nearly every window function).
 #define WINDOW_CHECK(w, retval) \
@@ -966,7 +967,8 @@ enum SDLWindowFlag : uint32_t {
     kWindowFullscreen = 1u << 0, kWindowOpenGL = 1u << 1, kWindowShown = 1u << 2,
     kWindowHidden = 1u << 3, kWindowBorderless = 1u << 4, kWindowResizable = 1u << 5,
     kWindowMinimized = 1u << 6, kWindowMaximized = 1u << 7,
-    kWindowFullscreenDesktop = kWindowFullscreen | (1u << 12)
+    kWindowFullscreenDesktop = kWindowFullscreen | (1u << 12),
+    kWindowVulkan = 1u << 28, kWindowMetal = 1u << 29
 };
 // SDL_WINDOWPOS_UNDEFINED / SDL_WINDOWPOS_CENTERED carry a display index in the
 // low 16 bits and a marker in the high 16 bits.
@@ -991,6 +993,14 @@ static int resolveWindowPosition(int pos, int windowExtent, int displayExtent) {
     return pos;
 }
 
+const char* stub_SDL_GetCurrentVideoDriver();
+
+// SDL_ContextNotSupported: the text for a graphics API the video driver lacks.
+static std::string contextNotSupportedText(const char* what) {
+    return std::string(what) + " support is either not configured in SDL or not available in current SDL video driver (" +
+           stub_SDL_GetCurrentVideoDriver() + ") or platform";
+}
+
 void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint32_t flags) {
     // Override dimensions with actual display surface size when available
     // so Pharo creates textures/Forms at the correct resolution
@@ -1001,6 +1011,17 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     if (title && strstr(title, "Emergency") != nullptr) {
         g_emergencyDebuggerTriggered.store(true, std::memory_order_release);
     }
+    // SDL accepts one graphics API flag, and only when the video driver has
+    // that API.  There is no OpenGL, Vulkan or Metal driver here, so each flag
+    // fails as it fails on a video driver without the API.  The image sets the
+    // OpenGL flag only for an OSWindow that asks for GL attributes; it never
+    // sets the flag for the Morphic world window.
+    constexpr uint32_t kGraphicsApiFlags = kWindowOpenGL | kWindowMetal | kWindowVulkan;
+    const uint32_t graphicsFlags = flags & kGraphicsApiFlags;
+    if (graphicsFlags & (graphicsFlags - 1)) return sdlFailNull("Conflicting window flags specified");
+    if (flags & kWindowVulkan) return sdlFailNull(contextNotSupportedText("Vulkan").c_str());
+    if (flags & kWindowOpenGL) return sdlFailNull(contextNotSupportedText("OpenGL").c_str());
+    if (flags & kWindowMetal) return sdlFailNull(contextNotSupportedText("Metal").c_str());
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLWindowState state;
     state.width = w;
@@ -2077,9 +2098,14 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
     // DO NOT override dimensions -- Pharo's Form uses the same extent for BitBlt stride.
     // Changing the texture size without Pharo knowing causes stride mismatch (diagonal garbage).
     if (!findRenderer(renderer)) return sdlFailNull("Parameter 'renderer' is invalid");
-    if (!sdl2::formatInfo(format)) return sdlFailNull("Unsupported pixel format");
-    if (access < kAccessStatic || access > kAccessTarget) return sdlFailNull("Unknown texture access");
+    if (!format) format = sdl2::kFormats[0].format;   // SDL takes the first format the renderer lists
+    // SDL_BYTESPERPIXEL is never 0 for a FOURCC (YUV) format.
+    if (!sdl2::pix::isFourCCValue(format) && sdl2::pix::bytesPerPixel(format) == 0) return sdlFailNull("Invalid texture format");
+    if (sdl2::isIndexedFormat(format)) return sdlFailNull("Palettized textures are not supported");
     if (w <= 0 || h <= 0) return sdlFailNull("Texture dimensions can't be 0");
+    if (sdl2::pix::isFourCCValue(format) && !strcmp(sdl2::pix::formatName(format), "SDL_PIXELFORMAT_UNKNOWN"))
+        return sdlFailNull("Unsupported YUV format");
+    if (!sdl2::formatInfo(format)) return sdlFailNull("Unsupported pixel format");
     if (w > kMaxTextureSize || h > kMaxTextureSize) return sdlFailNull("Texture dimensions are limited to 16384");
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLTextureState state;
@@ -2437,8 +2463,10 @@ int stub_SDL_RenderReadPixels(void* renderer, const void* rect, uint32_t format,
     sdl2::Pixels src;
     if (!renderTargetPixels(renderer, *rs, src)) return sdlFail(-1, "Invalid render target");
     // Format 0 asks for the native format of the target.
-    const sdl2::FormatInfo* out = sdl2::formatInfo(format ? format : src.fmt->format);
-    if (!out) return sdlFail(-1, "Unsupported pixel format");
+    const uint32_t outFormat = format ? format : src.fmt->format;
+    sdl2::PixelFormatRaw outProto;
+    if (sdl2::isIndexedFormat(outFormat) || !sdl2::surf::formatProto(outFormat, outProto))
+        return sdlFail(-1, "Unsupported pixel format");
     sdl2::Rect r = viewportOf(renderer, *rs);
     uint8_t* dest = static_cast<uint8_t*>(pixels);
     if (rect) {
@@ -2449,12 +2477,15 @@ int stub_SDL_RenderReadPixels(void* renderer, const void* rect, uint32_t format,
                                             reinterpret_cast<sdl2::rect::RectT<int>*>(&cut)))
             return 0;
         if (cut.y > want->y) dest += static_cast<size_t>(pitch) * (cut.y - want->y);
-        if (cut.x > want->x) dest += 4 * static_cast<size_t>(cut.x - want->x);
+        if (cut.x > want->x) dest += static_cast<size_t>(outProto.bytesPerPixel) * static_cast<size_t>(cut.x - want->x);
         r = cut;
     }
     if (r.x < 0 || r.x + r.w > src.w || r.y < 0 || r.y + r.h > src.h)
         return sdlFail(-1, "Tried to read outside of surface bounds");
-    sdl2::convertRect(src, r, *out, dest, pitch);
+    sdl2::Pixels dp;
+    dp.data = dest; dp.w = r.w; dp.h = r.h; dp.pitch = pitch; dp.pf = &outProto;
+    if (outProto.bytesPerPixel == 4) dp.fmt = sdl2::formatInfo(outFormat);
+    sdl2::convertRect(src, r, dp);
     return 0;
 }
 
@@ -2527,7 +2558,7 @@ static int pollNativeEvent(void* event) {
     }
 
     // Reject null/low event pointers (stale heap address after GC compaction)
-    if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000) {
+    if (!event || reinterpret_cast<uintptr_t>(event) < kFirstHandle) {
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
 
@@ -2809,7 +2840,7 @@ static void pumpHostEvents() {
 // low address).
 int stub_SDL_PollEvent(void* event) {
     pumpHostEvents();
-    if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000)
+    if (!event || reinterpret_cast<uintptr_t>(event) < kFirstHandle)
         return sdl2::ev::queueNotEmpty() ? 1 : 0;
     sdl2::ev::Event next;
     if (!sdl2::ev::popFront(next)) return 0;
@@ -2846,19 +2877,36 @@ extern "C" const char* vm_getClipboardText(void);
 extern "C" void vm_setClipboardText(const char* text);
 
 static char* sdlAllocString(const char* s);
-char* stub_SDL_GetClipboardText() {
+
+// The host bridge may keep no text (test_load_image has none), so the last text
+// that SDL_SetClipboardText got is kept here too.  The host text wins when it
+// is not empty, because another application may have changed the clipboard.
+static std::mutex sClipboardMutex;
+static std::string sClipboardCopy;
+
+static std::string clipboardText() {
     const char* text = vm_getClipboardText();
-    return sdlAllocString(text ? text : "");
+    if (text && text[0] != '\0') return text;
+    std::lock_guard<std::mutex> lk(sClipboardMutex);
+    return sClipboardCopy;
+}
+
+char* stub_SDL_GetClipboardText() {
+    return sdlAllocString(clipboardText().c_str());
 }
 
 int stub_SDL_SetClipboardText(const char* text) {
-    if (text) vm_setClipboardText(text);
+    if (!text) text = "";
+    {
+        std::lock_guard<std::mutex> lk(sClipboardMutex);
+        sClipboardCopy = text;
+    }
+    vm_setClipboardText(text);
     return 0;
 }
 
 int stub_SDL_HasClipboardText() {
-    const char* text = vm_getClipboardText();
-    return (text && text[0] != '\0') ? 1 : 0;
+    return clipboardText().empty() ? 0 : 1;
 }
 
 void stub_SDL_free(void* mem);   // defined with the memory table (SDL2StubsCore.inc)
@@ -2918,34 +2966,53 @@ uint32_t stub_SDL_GetWindowFlags(void* window) {
 // reads their fields and pixels through FFI structure accessors.  Only the
 // 32-bit packed formats exist, as for textures.
 
-void* stub_SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
-                                uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask) {
-    if (width < 0 || height < 0) return sdlFailNull("Parameter 'width' or 'height' is invalid");
-    const uint32_t fmtEnum = sdl2::pix::masksToEnum(depth, Rmask, Gmask, Bmask, Amask);
-    const sdl2::FormatInfo* f = sdl2::formatInfo(fmtEnum);
-    if (!f) return sdlFailNull(fmtEnum ? "Unknown pixel format: only 32-bit surfaces are supported" : "Unknown pixel format");
-    sdl2::SurfaceRaw* s = sdl2::createOwnedSurface(width, height, *f);
+// The smallest row size of `w` pixels (SDL_CalculatePitch with minimal set).
+static uint64_t minimalSurfacePitch(const sdl2::PixelFormatRaw& pf, int w) {
+    return pf.bitsPerPixel >= 8 ? static_cast<uint64_t>(w) * pf.bytesPerPixel
+                                : (static_cast<uint64_t>(w) * pf.bitsPerPixel + 7) / 8;
+}
+
+static void* createSurfaceChecked(int width, int height, const sdl2::PixelFormatRaw& proto) {
+    if (sdl2::surfacePitch(proto, width) > static_cast<uint64_t>(INT32_MAX)) return sdlFailNull("Out of memory");
+    sdl2::SurfaceRaw* s = sdl2::createOwnedSurface(width, height, proto);
     return s ? static_cast<void*>(s) : sdlFailNull("Out of memory");
 }
 
 void* stub_SDL_CreateRGBSurfaceWithFormat(uint32_t flags, int width, int height, int depth, uint32_t format) {
-    if (width < 0 || height < 0) return sdlFailNull("Parameter 'width' or 'height' is invalid");
-    const sdl2::FormatInfo* f = sdl2::formatInfo(format);
-    if (!f) return sdlFailNull("Unknown pixel format: only 32-bit surfaces are supported");
-    sdl2::SurfaceRaw* s = sdl2::createOwnedSurface(width, height, *f);
+    if (width < 0) { sdl2::sys::invalidParam("width"); return nullptr; }
+    if (height < 0) { sdl2::sys::invalidParam("height"); return nullptr; }
+    sdl2::PixelFormatRaw proto;
+    if (!sdl2::surf::formatProto(format, proto)) return nullptr;
+    return createSurfaceChecked(width, height, proto);
+}
+
+void* stub_SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
+                                uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask) {
+    if (width < 0) { sdl2::sys::invalidParam("width"); return nullptr; }
+    if (height < 0) { sdl2::sys::invalidParam("height"); return nullptr; }
+    const uint32_t format = sdl2::pix::masksToEnum(depth, Rmask, Gmask, Bmask, Amask);
+    if (!format) return sdlFailNull("Unknown pixel format");
+    return stub_SDL_CreateRGBSurfaceWithFormat(flags, width, height, depth, format);
+}
+
+static void* createSurfaceOver(void* pixels, int width, int height, int pitch, uint32_t format) {
+    sdl2::PixelFormatRaw proto;
+    if (!sdl2::surf::formatProto(format, proto)) return nullptr;
+    const uint64_t minimal = minimalSurfacePitch(proto, width);
+    if (pitch < 0 || (pitch > 0 && static_cast<uint64_t>(pitch) < minimal)) { sdl2::sys::invalidParam("pitch"); return nullptr; }
+    if (!pixels) return sdlFailNull("Parameter 'pixels' is invalid");
+    sdl2::SurfaceRaw* s = sdl2::createSurfaceFrom(pixels, width, height, pitch, proto);
     return s ? static_cast<void*>(s) : sdlFailNull("Out of memory");
 }
 
 void* stub_SDL_CreateRGBSurfaceFrom(void* pixels, int width, int height, int depth,
                                       int pitch, uint32_t Rmask, uint32_t Gmask,
                                       uint32_t Bmask, uint32_t Amask) {
-    const uint32_t fmtEnum = sdl2::pix::masksToEnum(depth, Rmask, Gmask, Bmask, Amask);
-    const sdl2::FormatInfo* f = sdl2::formatInfo(fmtEnum);
-    if (!f) return sdlFailNull(fmtEnum ? "Unknown pixel format: only 32-bit surfaces are supported" : "Unknown pixel format");
-    if (!pixels) return sdlFailNull("Parameter 'pixels' is invalid");
-    if (width < 0 || height < 0 || pitch < width * 4) return sdlFailNull("Parameter 'width', 'height' or 'pitch' is invalid");
-    sdl2::SurfaceRaw* s = sdl2::createSurfaceFrom(pixels, width, height, pitch, *f);
-    return s ? static_cast<void*>(s) : sdlFailNull("Out of memory");
+    if (width < 0) { sdl2::sys::invalidParam("width"); return nullptr; }
+    if (height < 0) { sdl2::sys::invalidParam("height"); return nullptr; }
+    const uint32_t format = sdl2::pix::masksToEnum(depth, Rmask, Gmask, Bmask, Amask);
+    if (!format) return sdlFailNull("Unknown pixel format");
+    return createSurfaceOver(pixels, width, height, pitch, format);
 }
 
 void stub_SDL_FreeSurface(void* surface) {
@@ -2954,16 +3021,7 @@ void stub_SDL_FreeSurface(void* surface) {
 
 void* stub_SDL_ConvertSurfaceFormat(void* surface, uint32_t format, uint32_t flags) {
     if (!sdl2::isSurface(surface)) return sdlFailNull("Parameter 'surface' is invalid");
-    const sdl2::FormatInfo* f = sdl2::formatInfo(format);
-    if (!f) return sdlFailNull("Unknown pixel format: only 32-bit surfaces are supported");
-    const sdl2::SurfaceRaw* src = static_cast<const sdl2::SurfaceRaw*>(surface);
-    const sdl2::Pixels sp = sdl2::surfacePixels(src);
-    if (!sp.fmt) return sdlFailNull("Unknown pixel format of the source surface");
-    sdl2::SurfaceRaw* out = sdl2::createOwnedSurface(src->w, src->h, *f);
-    if (!out) return sdlFailNull("Out of memory");
-    if (src->w > 0 && src->h > 0)
-        sdl2::convertRect(sp, { 0, 0, src->w, src->h }, *f, out->pixels, out->pitch);
-    return out;
+    return sdl2::surf::convert(static_cast<const sdl2::SurfaceRaw*>(surface), format);
 }
 
 // Software surfaces need no locking (SDL_MUSTLOCK is false for them).
@@ -3234,20 +3292,78 @@ const char* stub_SDL_GetHint(const char* name) {
     return sdl2::base::getHint(name);
 }
 
-static std::unordered_map<int, int> sGLAttributes;  // SDL_GL_SetAttribute values
+// SDL_GLattr values (SDL_video.h) and the defaults of SDL_GL_ResetAttributes.
+// The stored configuration is what SDL keeps in its video device; no GL driver
+// exists here, so an attribute that SDL reads back from a live GL context
+// fails as it does on a video driver without GL.
+enum SDLGLAttr : int {
+    kGLRedSize, kGLGreenSize, kGLBlueSize, kGLAlphaSize, kGLBufferSize, kGLDoubleBuffer,
+    kGLDepthSize, kGLStencilSize, kGLAccumRedSize, kGLAccumGreenSize, kGLAccumBlueSize,
+    kGLAccumAlphaSize, kGLStereo, kGLMultisampleBuffers, kGLMultisampleSamples,
+    kGLAcceleratedVisual, kGLRetainedBacking, kGLContextMajorVersion, kGLContextMinorVersion,
+    kGLContextEGL, kGLContextFlags, kGLContextProfileMask, kGLShareWithCurrentContext,
+    kGLFramebufferSRGBCapable, kGLContextReleaseBehavior, kGLContextResetNotification,
+    kGLContextNoError, kGLFloatBuffers, kGLAttrCount
+};
+constexpr int kGLReleaseBehaviorFlush = 1;   // SDL_GL_CONTEXT_RELEASE_BEHAVIOR_FLUSH
+constexpr int kGLAcceleratedAny = -1;        // "accelerated or not, both are fine"
+constexpr int kGLDefaultRedSize = 3, kGLDefaultGreenSize = 3, kGLDefaultBlueSize = 2;
+constexpr int kGLDefaultDepthSize = 16, kGLDefaultMajorVersion = 2, kGLDefaultMinorVersion = 1;
+
+static std::mutex sGLAttrMutex;
+static std::array<int, kGLAttrCount> sGLAttributes = {};
+
+static void glAttributesReset() {   // caller holds sGLAttrMutex
+    sGLAttributes.fill(0);
+    sGLAttributes[kGLRedSize] = kGLDefaultRedSize;
+    sGLAttributes[kGLGreenSize] = kGLDefaultGreenSize;
+    sGLAttributes[kGLBlueSize] = kGLDefaultBlueSize;
+    sGLAttributes[kGLDepthSize] = kGLDefaultDepthSize;
+    sGLAttributes[kGLDoubleBuffer] = 1;
+    sGLAttributes[kGLRetainedBacking] = 1;
+    sGLAttributes[kGLAcceleratedVisual] = kGLAcceleratedAny;
+    sGLAttributes[kGLContextMajorVersion] = kGLDefaultMajorVersion;
+    sGLAttributes[kGLContextMinorVersion] = kGLDefaultMinorVersion;
+    sGLAttributes[kGLContextReleaseBehavior] = kGLReleaseBehaviorFlush;
+}
+static void glAttributesEnsureInit() {   // caller holds sGLAttrMutex
+    static bool done = false;
+    if (!done) { glAttributesReset(); done = true; }
+}
 
 int stub_SDL_GL_SetAttribute(int attr, int value) {
+    std::lock_guard<std::mutex> lk(sGLAttrMutex);
+    glAttributesEnsureInit();
+    if (attr < 0 || attr >= kGLAttrCount) return sdlFail(-1, "Unknown OpenGL attribute");
     sGLAttributes[attr] = value;
     return 0;
 }
 
-// An attribute nobody set has the value 0 here; there is no GL driver to
-// supply a default.
 int stub_SDL_GL_GetAttribute(int attr, int* value) {
     if (!value) return sdlFail(-1, "Parameter 'value' is invalid");
-    auto it = sGLAttributes.find(attr);
-    *value = it == sGLAttributes.end() ? 0 : it->second;
-    return 0;
+    *value = 0;
+    std::lock_guard<std::mutex> lk(sGLAttrMutex);
+    glAttributesEnsureInit();
+    switch (attr) {
+    case kGLAcceleratedVisual: *value = sGLAttributes[attr] != 0; return 0;
+    case kGLRetainedBacking: case kGLContextMajorVersion: case kGLContextMinorVersion:
+    case kGLContextFlags: case kGLContextProfileMask: case kGLShareWithCurrentContext:
+    case kGLFramebufferSRGBCapable: case kGLContextNoError:
+        *value = sGLAttributes[attr];
+        return 0;
+    case kGLContextEGL:
+        return 0;
+    case kGLRedSize: case kGLGreenSize: case kGLBlueSize: case kGLAlphaSize: case kGLBufferSize:
+    case kGLDoubleBuffer: case kGLDepthSize: case kGLStencilSize: case kGLAccumRedSize:
+    case kGLAccumGreenSize: case kGLAccumBlueSize: case kGLAccumAlphaSize: case kGLStereo:
+    case kGLMultisampleBuffers: case kGLMultisampleSamples: case kGLContextReleaseBehavior:
+        // SDL asks a live GL context for these; there is no GL entry point.
+        return sdlFail(-1, (std::string("No dynamic GL support in current SDL video driver (") +
+                            stub_SDL_GetCurrentVideoDriver() + ")").c_str());
+    default:
+        // Reset notification and float buffers cannot be read back at all.
+        return sdlFail(-1, "Unknown OpenGL attribute");
+    }
 }
 
 void* stub_SDL_GL_GetProcAddress(const char* name) {
@@ -3265,10 +3381,7 @@ void stub_SDL_GL_GetDrawableSize(void* window, int* w, int* h) {
 // OpenGL cannot exist here.  A window without the OpenGL flag is not an OpenGL
 // window; a window with the flag asks for a GL driver that this video driver
 // does not have.  Both answers are the SDL texts.
-static std::string glNotConfiguredText() {
-    return std::string("OpenGL support is either not configured in SDL or not available in current SDL video driver (") +
-           stub_SDL_GetCurrentVideoDriver() + ") or platform";
-}
+static std::string glNotConfiguredText() { return contextNotSupportedText("OpenGL"); }
 
 void* stub_SDL_GL_CreateContext(void* window) {
     WINDOW_CHECK(window, nullptr)

@@ -59,12 +59,9 @@ static void stub_SDL_CalculateGammaRamp(float gamma, uint16_t* ramp) { sdlpix::c
 
 static void* stub_SDL_CreateRGBSurfaceWithFormatFrom(void* pixels, int w, int h, int depth, int pitch, uint32_t format) {
     (void)depth;
-    if (!pixels) return sdlFailNull("Parameter 'pixels' is invalid");
-    const sdl2::FormatInfo* f = sdl2::formatInfo(format);
-    if (!f) return sdlFailNull("Unknown pixel format: only 32-bit surfaces are supported");
-    if (w < 0 || h < 0 || pitch < w * 4) return sdlFailNull("Parameter 'width', 'height' or 'pitch' is invalid");
-    sdl2::SurfaceRaw* s = sdl2::createSurfaceFrom(pixels, w, h, pitch, *f);
-    return s ? static_cast<void*>(s) : sdlFailNull("Out of memory");
+    if (w < 0) { sdl2::sys::invalidParam("width"); return nullptr; }
+    if (h < 0) { sdl2::sys::invalidParam("height"); return nullptr; }
+    return createSurfaceOver(pixels, w, h, pitch, format);
 }
 
 static void* stub_SDL_ConvertSurface(void* surface, const void* fmt, uint32_t flags) {
@@ -384,7 +381,8 @@ static void* stub_SDL_CreateTextureFromSurface(void* renderer, void* surface) {
     sdl2::SurfaceRaw* s = asSurface(surface);
     const sdl2::Pixels sp = sdl2::surfacePixels(s);
     if (!sp.valid()) return sdlFailNull("Unsupported pixel format");
-    const uint32_t format = sp.fmt->aMask ? sp.fmt->format : sdl2::kFormatXRGB8888;
+    const uint32_t format = !sp.hasAlpha() ? sdl2::kFormatXRGB8888
+                          : (sdl2::formatInfo(sp.pf->format) ? sp.pf->format : sdl2::kFormatARGB8888);
     void* tex = stub_SDL_CreateTexture(renderer, format, kAccessStatic, s->w, s->h);
     if (!tex) return nullptr;
     SDLTextureState* t = findTexture(tex);
@@ -393,8 +391,8 @@ static void* stub_SDL_CreateTextureFromSurface(void* renderer, void* surface) {
     const sdl2::Pixels tp = texturePixels(*t);
     for (int y = 0; y < s->h; y++) {
         for (int x = 0; x < s->w; x++) {
-            const uint32_t raw = *sp.at(x, y);
-            sdl2::RGBA c = sdl2::unpackPixel(*sp.fmt, raw);
+            const uint32_t raw = sp.raw(x, y);
+            sdl2::RGBA c = sp.unpack(raw);
             if (sdlsurf::keyedOut(sp, e, raw)) c.a = 0;
             tp.put(x, y, c);
         }

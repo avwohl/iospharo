@@ -404,9 +404,12 @@ inline void waitThread(Thread* t, int* status) {
 
 inline void detachThread(Thread* t) {
     if (!t) return;
+    // Copy the handle first: once the CAS succeeds the thread owns the record
+    // and can free it at any time, so the record must not be read afterwards.
+    const pthread_t handle = t->handle;
     int expected = kThreadAlive;
     if (t->state.compare_exchange_strong(expected, kThreadDetached)) {
-        pthread_detach(t->handle);   // the thread frees the record when its function returns
+        pthread_detach(handle);   // the thread frees the record when its function returns
     } else {
         // The function already returned: nobody joined, so free the record now.
         pthread_join(t->handle, nullptr);

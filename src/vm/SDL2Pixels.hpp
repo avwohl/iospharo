@@ -43,7 +43,8 @@ enum PackedOrder : uint32_t {
 constexpr uint32_t pixelType(uint32_t f) { return (f >> 24) & 0x0F; }
 constexpr uint32_t pixelOrder(uint32_t f) { return (f >> 20) & 0x0F; }
 constexpr uint32_t pixelLayout(uint32_t f) { return (f >> 16) & 0x0F; }
-constexpr uint32_t bitsPerPixel(uint32_t f) { return (f >> 8) & 0xFF; }
+constexpr uint32_t kFormatByteMask = 0xFFu;
+constexpr uint32_t bitsPerPixel(uint32_t f) { return (f >> 8) & kFormatByteMask; }
 constexpr uint32_t flagFourCC = 1;
 
 // SDL_ISPIXELFORMAT_FOURCC: a format that is not a flagged enumeration.
@@ -74,7 +75,7 @@ inline const char* formatName(uint32_t format) {
 // has no masks to give.
 inline int enumToMasks(uint32_t f, int* bpp, uint32_t* rm, uint32_t* gm, uint32_t* bm, uint32_t* am) {
     if (isFourCCValue(f)) { sys::setError("FOURCC pixel formats are not supported"); return 0; }
-    const uint32_t bytes = f & 0xFF;
+    const uint32_t bytes = f & kFormatByteMask;
     *bpp = bytes <= 2 ? static_cast<int>(bitsPerPixel(f)) : static_cast<int>(bytes * 8);
     *rm = *gm = *bm = *am = 0;
     constexpr uint32_t kRgb24 = 386930691u, kBgr24 = 390076419u;   // SDL_PIXELFORMAT_RGB24, BGR24
@@ -141,14 +142,10 @@ inline uint32_t masksToEnum(int bpp, uint32_t rm, uint32_t gm, uint32_t bm, uint
 
 // ----- Palettes and pixel formats -----
 
-struct Color { uint8_t r, g, b, a; };
+using sdl2::Color;
+using sdl2::PaletteRaw;
 
-struct PaletteRaw {                 // SDL_Palette
-    int ncolors;
-    Color* colors;
-    uint32_t version;
-    int refcount;
-};
+constexpr uint8_t kOpaqueWhiteByte = 255;
 
 struct FormatList {
     std::mutex mx;
@@ -166,7 +163,7 @@ inline PaletteRaw* allocPalette(int ncolors) {
     p->colors = static_cast<Color*>(malloc(static_cast<size_t>(ncolors) * sizeof(Color)));
     if (!p->colors) { free(p); sys::setError("Out of memory"); return nullptr; }
     p->ncolors = ncolors;
-    memset(p->colors, 0xFF, static_cast<size_t>(ncolors) * sizeof(Color));   // every colour starts opaque white
+    memset(p->colors, kOpaqueWhiteByte, static_cast<size_t>(ncolors) * sizeof(Color));   // every colour starts opaque white
     p->version = 1;
     p->refcount = 1;
     return p;
@@ -174,9 +171,7 @@ inline PaletteRaw* allocPalette(int ncolors) {
 
 inline void freePalette(PaletteRaw* p) {
     if (!p) { sys::invalidParam("palette"); return; }
-    if (--p->refcount > 0) return;
-    free(p->colors);
-    free(p);
+    releasePalette(p);   // drops one reference, frees at zero
 }
 
 inline int setPaletteColors(PaletteRaw* p, const Color* colors, int first, int n) {
@@ -189,13 +184,7 @@ inline int setPaletteColors(PaletteRaw* p, const Color* colors, int first, int n
     return status;
 }
 
-inline void initChannel(uint32_t mask, uint8_t& loss, uint8_t& shift) {
-    shift = 0;
-    loss = 8;
-    if (!mask) return;
-    for (; !(mask & 1); mask >>= 1) ++shift;
-    for (; (mask & 1); mask >>= 1) --loss;
-}
+using sdl2::initChannel;
 
 inline PixelFormatRaw* allocFormat(uint32_t format) {
     FormatList& list = formatList();
@@ -244,53 +233,36 @@ inline int setFormatPalette(PixelFormatRaw* f, PaletteRaw* pal) {
     return 0;
 }
 
-// The index of the palette colour nearest to (r, g, b, a).
-inline uint8_t findColor(const PaletteRaw* pal, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    uint32_t smallest = ~0u;
-    uint8_t best = 0;
-    for (int i = 0; i < pal->ncolors; i++) {
-        const int rd = static_cast<int>(pal->colors[i].r) - r, gd = static_cast<int>(pal->colors[i].g) - g;
-        const int bd = static_cast<int>(pal->colors[i].b) - b, ad = static_cast<int>(pal->colors[i].a) - a;
-        const uint32_t d = static_cast<uint32_t>(rd * rd + gd * gd + bd * bd + ad * ad);
-        if (d < smallest) { smallest = d; best = static_cast<uint8_t>(i); if (d == 0) break; }
-    }
-    return best;
-}
+using sdl2::findColor;
 
 inline uint32_t mapRGBA(const PixelFormatRaw* f, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     if (f->palette) return findColor(static_cast<const PaletteRaw*>(f->palette), r, g, b, a);
-    return (static_cast<uint32_t>(r >> f->rLoss) << f->rShift) | (static_cast<uint32_t>(g >> f->gLoss) << f->gShift) |
-           (static_cast<uint32_t>(b >> f->bLoss) << f->bShift) | ((static_cast<uint32_t>(a >> f->aLoss) << f->aShift) & f->aMask);
+    return (channelFrom8(r, f->rLoss) << f->rShift) | (channelFrom8(g, f->gLoss) << f->gShift) |
+           (channelFrom8(b, f->bLoss) << f->bShift) | ((channelFrom8(a, f->aLoss) << f->aShift) & f->aMask);
 }
 
 inline uint32_t mapRGB(const PixelFormatRaw* f, uint8_t r, uint8_t g, uint8_t b) {
     if (f->palette) return findColor(static_cast<const PaletteRaw*>(f->palette), r, g, b, 255);
-    return (static_cast<uint32_t>(r >> f->rLoss) << f->rShift) | (static_cast<uint32_t>(g >> f->gLoss) << f->gShift) |
-           (static_cast<uint32_t>(b >> f->bLoss) << f->bShift) | f->aMask;
+    return (channelFrom8(r, f->rLoss) << f->rShift) | (channelFrom8(g, f->gLoss) << f->gShift) |
+           (channelFrom8(b, f->bLoss) << f->bShift) | f->aMask;
 }
 
-// A channel with fewer than 8 bits expands to 8 bits by scaling the range.
-inline uint8_t expandChannel(uint32_t value, int loss) {
-    if (loss == 0) return static_cast<uint8_t>(value);
-    if (loss >= 8) return 255;   // a channel with no bits reads as full
-    const uint32_t max = (1u << (8 - loss)) - 1;
-    return static_cast<uint8_t>(value * 255 / max);   // the value scaled to 0..255, truncated
-}
+using sdl2::expandChannel;
 
 inline void getRGBA(uint32_t pixel, const PixelFormatRaw* f, uint8_t* r, uint8_t* g, uint8_t* b, uint8_t* a) {
     if (f->palette) {
         const PaletteRaw* pal = static_cast<const PaletteRaw*>(f->palette);
-        const Color c = pixel < static_cast<uint32_t>(pal->ncolors) ? pal->colors[pixel] : Color{ 0xFF, 0xFF, 0xFF, 0xFF };
+        const Color c = pixel < static_cast<uint32_t>(pal->ncolors) ? pal->colors[pixel] : Color{ kOpaqueWhiteByte, kOpaqueWhiteByte, kOpaqueWhiteByte, kOpaqueWhiteByte };
         if (r) *r = c.r;
         if (g) *g = c.g;
         if (b) *b = c.b;
         if (a) *a = c.a;
         return;
     }
-    if (r) *r = expandChannel((pixel & f->rMask) >> f->rShift, f->rLoss);
-    if (g) *g = expandChannel((pixel & f->gMask) >> f->gShift, f->gLoss);
-    if (b) *b = expandChannel((pixel & f->bMask) >> f->bShift, f->bLoss);
-    if (a) *a = f->aMask ? expandChannel((pixel & f->aMask) >> f->aShift, f->aLoss) : 255;
+    if (r) *r = channelTo8((pixel & f->rMask) >> f->rShift, f->rLoss);
+    if (g) *g = channelTo8((pixel & f->gMask) >> f->gShift, f->gLoss);
+    if (b) *b = channelTo8((pixel & f->bMask) >> f->bShift, f->bLoss);
+    if (a) *a = f->aMask ? channelTo8((pixel & f->aMask) >> f->aShift, f->aLoss) : 255;
 }
 
 inline void calculateGammaRamp(float gamma, uint16_t* ramp) {

@@ -35061,8 +35061,10 @@ struct Pending {
 
 // Wake a parked forwarded-callback handler: pending->cv for plain native
 // threads, plus the owning worker's cv (the service-wait sleeps there so
-// it can also see new tasks).  Call with pending->done/aborted already set
-// under pending->mx.
+// it can also see new tasks).  Call with pending->mx HELD, after setting
+// pending->done/aborted: a parked plain thread returns only after it takes
+// pending->mx, and then frees the Pending, so a notify made after the unlock
+// would touch freed memory (ASan heap-use-after-free, 2026-11-13).
 static void wakePending(Pending* p) {
     p->cv.notify_all();
     if (p->worker) p->worker->cv.notify_all();
@@ -35101,8 +35103,8 @@ void abortCallbacksForWorkerThread(std::thread::id tid) {
             std::lock_guard<std::mutex> l2(p->mx);
             p->done = true;
             p->aborted = true;
+            wakePending(p);
         }
-        wakePending(p);
     };
     for (auto* p : g_queue) abortOne(p);
     for (auto& kv : g_active) abortOne(kv.second);
@@ -35122,16 +35124,16 @@ extern "C" void pharo_xtcbShutdown(void) {
             std::lock_guard<std::mutex> l2(p->mx);
             p->done = true;
             p->aborted = true;
+            xtcb::wakePending(p);
         }
-        xtcb::wakePending(p);
     }
     for (auto& kv : xtcb::g_active) {
         {
             std::lock_guard<std::mutex> l2(kv.second->mx);
             kv.second->done = true;
             kv.second->aborted = true;
+            xtcb::wakePending(kv.second);
         }
-        xtcb::wakePending(kv.second);
     }
 }
 
@@ -35385,8 +35387,8 @@ void Interpreter::adoptPendingWorkerCallbacks() {
                 std::lock_guard<std::mutex> lk(pending->mx);
                 pending->done = true;
                 pending->aborted = true;  // never handed to the image
+                xtcb::wakePending(pending);
             }
-            xtcb::wakePending(pending);
             continue;
         }
         callbackContextStack_[callbackDepth_] = pending->vmcc;
@@ -35807,8 +35809,8 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
             {
                 std::lock_guard<std::mutex> lk(pending->mx);
                 pending->done = true;
+                xtcb::wakePending(pending);
             }
-            xtcb::wakePending(pending);
             popN(argCount);
             pop();
             push(memory_.trueObject());

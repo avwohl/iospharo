@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <unordered_set>
 
 namespace pharo {
@@ -111,17 +112,152 @@ inline uint32_t packPixel(const FormatInfo& f, RGBA c) {
     return px;
 }
 
-// A writable or readable 32-bit pixel area.
+// ---------------------------------------------------------------------------
+// General pixel description (SDL_PixelFormat, SDL_Palette) and access for any
+// packed or indexed format of 1, 4, 8, 16, 24 and 32 bits per pixel.
+// ---------------------------------------------------------------------------
+
+struct Color { uint8_t r, g, b, a; };
+
+struct PaletteRaw {                 // SDL_Palette
+    int ncolors;
+    Color* colors;
+    uint32_t version;
+    int refcount;
+};
+
+struct PixelFormatRaw {
+    uint32_t format;
+    void* palette;
+    uint8_t bitsPerPixel, bytesPerPixel, pad[2];
+    uint32_t rMask, gMask, bMask, aMask;
+    uint8_t rLoss, gLoss, bLoss, aLoss, rShift, gShift, bShift, aShift;
+    int refcount;
+    PixelFormatRaw* next;
+};
+
+constexpr int kBitsPerByte = 8;
+constexpr uint32_t kBitmapOrder4321 = 1;   // INDEX1LSB and INDEX4LSB: the first pixel is in the low bits
+constexpr uint32_t kPixelOrderShift = 20, kPixelOrderMask = 0x0F;
+
+// A channel with fewer than 8 bits expands to 8 bits by scaling the range.
+inline uint8_t expandChannel(uint32_t value, int loss) {
+    if (loss == 0) return static_cast<uint8_t>(value);
+    if (loss >= kBitsPerByte) return 255;   // a channel with no bits reads as full
+    const uint32_t max = (1u << (kBitsPerByte - loss)) - 1;
+    return static_cast<uint8_t>(value * 255 / max);   // the value scaled to 0..255, truncated
+}
+
+// A channel of more than 8 bits (ARGB2101010) has a loss below zero, which the
+// 8-bit field of SDL_PixelFormat holds as a wrapped value.
+constexpr int kWideChannelFirstLoss = 128;
+inline bool isWideChannel(uint8_t loss) { return loss >= kWideChannelFirstLoss; }
+inline int channelWidth(uint8_t loss) { return kBitsPerByte - static_cast<int8_t>(loss); }
+
+// The 8-bit value of the channel bits `value` of a channel with the given loss.
+inline uint8_t channelTo8(uint32_t value, uint8_t loss) {
+    if (isWideChannel(loss)) return static_cast<uint8_t>(value >> (channelWidth(loss) - kBitsPerByte));
+    return expandChannel(value, loss);
+}
+
+// The channel bits for an 8-bit value: fewer bits drop the low bits, more bits
+// repeat the high bits into the low bits.
+inline uint32_t channelFrom8(uint8_t c, uint8_t loss) {
+    if (isWideChannel(loss)) {
+        const int width = channelWidth(loss);
+        return (static_cast<uint32_t>(c) << (width - kBitsPerByte)) | (static_cast<uint32_t>(c) >> (2 * kBitsPerByte - width));
+    }
+    return static_cast<uint32_t>(c >> loss);
+}
+
+// The index of the palette colour nearest to (r, g, b, a).
+inline uint8_t findColor(const PaletteRaw* pal, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    uint32_t smallest = ~0u;
+    uint8_t best = 0;
+    for (int i = 0; i < pal->ncolors; i++) {
+        const int rd = static_cast<int>(pal->colors[i].r) - r, gd = static_cast<int>(pal->colors[i].g) - g;
+        const int bd = static_cast<int>(pal->colors[i].b) - b, ad = static_cast<int>(pal->colors[i].a) - a;
+        const uint32_t d = static_cast<uint32_t>(rd * rd + gd * gd + bd * bd + ad * ad);
+        if (d < smallest) { smallest = d; best = static_cast<uint8_t>(i); if (d == 0) break; }
+    }
+    return best;
+}
+
+inline RGBA unpackGeneric(const PixelFormatRaw& f, uint32_t px) {
+    if (f.palette) {
+        const PaletteRaw* pal = static_cast<const PaletteRaw*>(f.palette);
+        const Color c = px < static_cast<uint32_t>(pal->ncolors) ? pal->colors[px] : Color{ 255, 255, 255, 255 };
+        return RGBA{ c.r, c.g, c.b, c.a };
+    }
+    RGBA c;
+    c.r = channelTo8((px & f.rMask) >> f.rShift, f.rLoss);
+    c.g = channelTo8((px & f.gMask) >> f.gShift, f.gLoss);
+    c.b = channelTo8((px & f.bMask) >> f.bShift, f.bLoss);
+    c.a = f.aMask ? channelTo8((px & f.aMask) >> f.aShift, f.aLoss) : 255;
+    return c;
+}
+
+inline uint32_t packGeneric(const PixelFormatRaw& f, RGBA c) {
+    if (f.palette) return findColor(static_cast<const PaletteRaw*>(f.palette), c.r, c.g, c.b, c.a);
+    return (channelFrom8(c.r, f.rLoss) << f.rShift) | (channelFrom8(c.g, f.gLoss) << f.gShift) |
+           (channelFrom8(c.b, f.bLoss) << f.bShift) | ((channelFrom8(c.a, f.aLoss) << f.aShift) & f.aMask);
+}
+
+// A writable or readable pixel area.  `fmt` is set for a 32-bit packed format
+// without palette (the fast path of textures); `pf` describes any other format.
 struct Pixels {
     uint8_t* data = nullptr;
     int w = 0, h = 0, pitch = 0;
     const FormatInfo* fmt = nullptr;
-    bool valid() const { return data && fmt && w > 0 && h > 0; }
-    uint32_t* at(int x, int y) const {
+    const PixelFormatRaw* pf = nullptr;
+    bool valid() const { return data && (fmt || pf) && w > 0 && h > 0; }
+    int bitsPerPixel() const { return fmt ? 32 : pf->bitsPerPixel; }
+    int bytes() const { return fmt ? 4 : pf->bytesPerPixel; }
+    bool hasAlpha() const { return fmt ? fmt->aMask != 0 : pf->aMask != 0; }
+    uint32_t aMask() const { return fmt ? fmt->aMask : pf->aMask; }
+    bool subByte() const { return !fmt && pf->bitsPerPixel < kBitsPerByte; }
+    uint32_t* at(int x, int y) const {   // 32-bit formats only
         return reinterpret_cast<uint32_t*>(data + static_cast<size_t>(y) * pitch + static_cast<size_t>(x) * 4);
     }
-    RGBA get(int x, int y) const { return unpackPixel(*fmt, *at(x, y)); }
-    void put(int x, int y, RGBA c) const { *at(x, y) = packPixel(*fmt, c); }
+    // The pixel as stored, in the low bits of the answer.
+    uint32_t raw(int x, int y) const {
+        const uint8_t* row = data + static_cast<size_t>(y) * pitch;
+        if (fmt) return *at(x, y);
+        const int bits = pf->bitsPerPixel;
+        if (bits < kBitsPerByte) {
+            const int perByte = kBitsPerByte / bits;
+            const uint32_t mask = (1u << bits) - 1;
+            const uint32_t slot = static_cast<uint32_t>(x % perByte);
+            const uint32_t order = (pf->format >> kPixelOrderShift) & kPixelOrderMask;
+            const uint32_t shift = (order == kBitmapOrder4321 ? slot : static_cast<uint32_t>(perByte - 1) - slot) * bits;
+            return (row[x / perByte] >> shift) & mask;
+        }
+        uint32_t v = 0;
+        const uint8_t* q = row + static_cast<size_t>(x) * pf->bytesPerPixel;
+        for (int i = 0; i < pf->bytesPerPixel; i++) v |= static_cast<uint32_t>(q[i]) << (kBitsPerByte * i);
+        return v;
+    }
+    void putRaw(int x, int y, uint32_t v) const {
+        uint8_t* row = data + static_cast<size_t>(y) * pitch;
+        if (fmt) { *at(x, y) = v; return; }
+        const int bits = pf->bitsPerPixel;
+        if (bits < kBitsPerByte) {
+            const int perByte = kBitsPerByte / bits;
+            const uint32_t mask = (1u << bits) - 1;
+            const uint32_t slot = static_cast<uint32_t>(x % perByte);
+            const uint32_t order = (pf->format >> kPixelOrderShift) & kPixelOrderMask;
+            const uint32_t shift = (order == kBitmapOrder4321 ? slot : static_cast<uint32_t>(perByte - 1) - slot) * bits;
+            uint8_t& byte = row[x / perByte];
+            byte = static_cast<uint8_t>((byte & ~(mask << shift)) | ((v & mask) << shift));
+            return;
+        }
+        uint8_t* q = row + static_cast<size_t>(x) * pf->bytesPerPixel;
+        for (int i = 0; i < pf->bytesPerPixel; i++) q[i] = static_cast<uint8_t>(v >> (kBitsPerByte * i));
+    }
+    RGBA unpack(uint32_t rawValue) const { return fmt ? unpackPixel(*fmt, rawValue) : unpackGeneric(*pf, rawValue); }
+    uint32_t pack(RGBA c) const { return fmt ? packPixel(*fmt, c) : packGeneric(*pf, c); }
+    RGBA get(int x, int y) const { return unpack(raw(x, y)); }
+    void put(int x, int y, RGBA c) const { putRaw(x, y, pack(c)); }
 };
 
 // ---------------------------------------------------------------------------
@@ -268,11 +404,9 @@ inline void plot(const Pixels& dst, const Clip& clip, int x, int y, RGBA c,
 // SDL_RenderClear: the draw colour replaces every pixel; blend mode and clip
 // rectangle do not apply.
 inline void clearAll(const Pixels& dst, RGBA c) {
-    const uint32_t px = packPixel(*dst.fmt, c);
-    for (int y = 0; y < dst.h; y++) {
-        uint32_t* row = dst.at(0, y);
-        for (int x = 0; x < dst.w; x++) row[x] = px;
-    }
+    const uint32_t px = dst.pack(c);
+    for (int y = 0; y < dst.h; y++)
+        for (int x = 0; x < dst.w; x++) dst.putRaw(x, y, px);
 }
 
 inline void fillRect(const Pixels& dst, const Clip& clip, const Rect& r, RGBA c, uint32_t blend) {
@@ -549,30 +683,17 @@ inline void drawTriangle(const Pixels& dst, const Clip& clip, const Vertex2D& a,
 // Read back and convert.
 // ---------------------------------------------------------------------------
 
-// Copy the pixels of `src` inside `r` (already clipped to src) into a buffer
-// of another 32-bit format.
-inline void convertRect(const Pixels& src, const Rect& r, const FormatInfo& dstFmt,
-                        void* dstPixels, int dstPitch) {
-    for (int y = 0; y < r.h; y++) {
-        uint32_t* out = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(dstPixels) + static_cast<size_t>(y) * dstPitch);
-        for (int x = 0; x < r.w; x++) out[x] = packPixel(dstFmt, src.get(r.x + x, r.y + y));
-    }
+// Copy the pixels of `src` inside `r` (already clipped to src) into `dst`,
+// which starts at its own origin.  Each pixel goes through 8-bit RGBA.
+inline void convertRect(const Pixels& src, const Rect& r, const Pixels& dst) {
+    for (int y = 0; y < r.h; y++)
+        for (int x = 0; x < r.w; x++) dst.put(x, y, src.get(r.x + x, r.y + y));
 }
 
 // ---------------------------------------------------------------------------
 // Surfaces.  The two structs follow the SDL 2.0.x layout that the image's
 // SDL_Surface and SDL_PixelFormat FFI structures read.
 // ---------------------------------------------------------------------------
-
-struct PixelFormatRaw {
-    uint32_t format;
-    void* palette;
-    uint8_t bitsPerPixel, bytesPerPixel, pad[2];
-    uint32_t rMask, gMask, bMask, aMask;
-    uint8_t rLoss, gLoss, bLoss, aLoss, rShift, gShift, bShift, aShift;
-    int refcount;
-    PixelFormatRaw* next;
-};
 
 struct SurfaceRaw {
     uint32_t flags;
@@ -609,53 +730,132 @@ struct SurfaceBlock {
     PixelFormatRaw format;
 };
 
-inline std::unordered_set<void*>& surfaceRegistry() {
-    static std::unordered_set<void*> registry;
-    return registry;
+struct SurfaceRegistry {
+    std::mutex mx;
+    std::unordered_set<void*> set;
+};
+inline SurfaceRegistry& surfaceRegistry() {
+    static SurfaceRegistry* registry = new SurfaceRegistry;
+    return *registry;
 }
 
 inline bool isSurface(const void* s) {
-    return s && surfaceRegistry().count(const_cast<void*>(s)) != 0;
+    if (!s) return false;
+    SurfaceRegistry& r = surfaceRegistry();
+    std::lock_guard<std::mutex> lk(r.mx);
+    return r.set.count(const_cast<void*>(s)) != 0;
 }
 
-inline SurfaceRaw* createSurface(void* pixels, int w, int h, int pitch, const FormatInfo& f) {
-    auto* block = static_cast<SurfaceBlock*>(calloc(1, sizeof(SurfaceBlock)));
-    if (!block) return nullptr;
-    if (!pixels) {
-        pitch = w * 4;
-        pixels = calloc(std::max<size_t>(static_cast<size_t>(h) * static_cast<size_t>(pitch), 1), 1);
-        if (!pixels) { free(block); return nullptr; }
-    }
-    PixelFormatRaw& pf = block->format;
+// The shift and the loss (8 minus the width) of one channel mask.
+inline void initChannel(uint32_t mask, uint8_t& loss, uint8_t& shift) {
+    shift = 0;
+    loss = kBitsPerByte;
+    if (!mask) return;
+    for (; !(mask & 1); mask >>= 1) ++shift;
+    for (; (mask & 1); mask >>= 1) --loss;
+}
+
+// A pixel format description for one of the 32-bit packed formats of kFormats.
+inline PixelFormatRaw formatRawFromInfo(const FormatInfo& f) {
+    PixelFormatRaw pf = {};
     pf.format = f.format;
     pf.bitsPerPixel = 32;   // the depth of the surface, whether or not the format has alpha
     pf.bytesPerPixel = 4;
     pf.rMask = f.rMask; pf.gMask = f.gMask; pf.bMask = f.bMask; pf.aMask = f.aMask;
-    pf.rShift = static_cast<uint8_t>(f.rShift); pf.gShift = static_cast<uint8_t>(f.gShift);
-    pf.bShift = static_cast<uint8_t>(f.bShift); pf.aShift = static_cast<uint8_t>(f.aShift);
-    pf.aLoss = f.aMask ? 0 : 8;
+    initChannel(f.rMask, pf.rLoss, pf.rShift);
+    initChannel(f.gMask, pf.gLoss, pf.gShift);
+    initChannel(f.bMask, pf.bLoss, pf.bShift);
+    initChannel(f.aMask, pf.aLoss, pf.aShift);
+    return pf;
+}
+
+inline void releasePalette(PaletteRaw* p) {
+    if (!p || --p->refcount > 0) return;
+    free(p->colors);
+    free(p);
+}
+
+constexpr uint32_t kPixelTypeShift = 24, kPixelTypeMask = 0x0F;
+constexpr uint32_t kPixelTypeIndex1 = 1, kPixelTypeIndex8 = 3;
+constexpr uint32_t kRowAlignmentMask = 3;   // surface rows start on 4-byte boundaries
+
+inline bool isIndexedFormat(uint32_t format) {
+    const uint32_t type = (format >> kPixelTypeShift) & kPixelTypeMask;
+    return type >= kPixelTypeIndex1 && type <= kPixelTypeIndex8;
+}
+
+// SDL_CalculatePitch with 4-byte row alignment; the 64-bit answer is checked by the caller.
+inline uint64_t surfacePitch(const PixelFormatRaw& pf, int w) {
+    uint64_t pitch = pf.bitsPerPixel >= kBitsPerByte ? static_cast<uint64_t>(w) * pf.bytesPerPixel
+                                                      : (static_cast<uint64_t>(w) * pf.bitsPerPixel + (kBitsPerByte - 1)) / kBitsPerByte;
+    return (pitch + kRowAlignmentMask) & ~static_cast<uint64_t>(kRowAlignmentMask);
+}
+
+// Build a surface for the format `proto`.  An indexed format gets a palette of
+// 2^bits entries (opaque white; the 1-bit palette is white and black), as SDL
+// does.  With `pixels` null the surface owns a zeroed pixel buffer and the
+// pitch is computed; a zero-sized surface has no pixel buffer.
+inline SurfaceRaw* createSurface(void* pixels, int w, int h, int pitch, const PixelFormatRaw& proto) {
+    auto* block = static_cast<SurfaceBlock*>(calloc(1, sizeof(SurfaceBlock)));
+    if (!block) return nullptr;
+    PixelFormatRaw& pf = block->format;
+    pf = proto;
+    pf.palette = nullptr;
+    pf.next = nullptr;
     pf.refcount = 1;
+    if (isIndexedFormat(pf.format)) {
+        const int entries = 1 << pf.bitsPerPixel;
+        auto* pal = static_cast<PaletteRaw*>(calloc(1, sizeof(PaletteRaw)));
+        Color* colors = static_cast<Color*>(malloc(static_cast<size_t>(entries) * sizeof(Color)));
+        if (!pal || !colors) { free(pal); free(colors); free(block); return nullptr; }
+        memset(colors, 255, static_cast<size_t>(entries) * sizeof(Color));
+        if (entries == 2) colors[1] = Color{ 0, 0, 0, 255 };   // a bitmap palette: white, then black
+        pal->ncolors = entries; pal->colors = colors; pal->version = 1; pal->refcount = 1;
+        pf.palette = pal;
+    }
+    bool owned = false;
+    if (!pixels) {
+        const uint64_t rowBytes = surfacePitch(pf, w);
+        if (rowBytes > static_cast<uint64_t>(INT32_MAX)) { releasePalette(static_cast<PaletteRaw*>(pf.palette)); free(block); return nullptr; }
+        pitch = static_cast<int>(rowBytes);
+        pixels = calloc(std::max<size_t>(static_cast<size_t>(h) * static_cast<size_t>(pitch), 1), 1);
+        if (!pixels) { releasePalette(static_cast<PaletteRaw*>(pf.palette)); free(block); return nullptr; }
+        owned = true;
+    }
     SurfaceRaw& s = block->surface;
     s.format = &pf;
     s.w = w; s.h = h; s.pitch = pitch; s.pixels = pixels;
     s.clipRect = { 0, 0, w, h };
     s.refcount = 1;
-    surfaceRegistry().insert(&s);
+    if (owned) s.flags |= kSurfaceSimdAligned;   // calloc returns 16-byte aligned memory
+    {
+        SurfaceRegistry& r = surfaceRegistry();
+        std::lock_guard<std::mutex> lk(r.mx);
+        r.set.insert(&s);
+    }
     return &s;
 }
 
+inline SurfaceRaw* createSurface(void* pixels, int w, int h, int pitch, const FormatInfo& f) {
+    return createSurface(pixels, w, h, pitch, formatRawFromInfo(f));
+}
+
 // Create a surface with its own zeroed pixel buffer (SDL_CreateRGBSurface*).
+inline SurfaceRaw* createOwnedSurface(int w, int h, const PixelFormatRaw& proto) {
+    return createSurface(nullptr, w, h, 0, proto);
+}
 inline SurfaceRaw* createOwnedSurface(int w, int h, const FormatInfo& f) {
-    SurfaceRaw* s = createSurface(nullptr, w, h, w * 4, f);
-    if (s) s->flags |= kSurfaceSimdAligned;   // calloc returns 16-byte aligned memory
-    return s;
+    return createSurface(nullptr, w, h, 0, formatRawFromInfo(f));
 }
 
 // Wrap pixels the caller owns (SDL_CreateRGBSurfaceFrom).
-inline SurfaceRaw* createSurfaceFrom(void* pixels, int w, int h, int pitch, const FormatInfo& f) {
-    SurfaceRaw* s = createSurface(pixels, w, h, pitch, f);
+inline SurfaceRaw* createSurfaceFrom(void* pixels, int w, int h, int pitch, const PixelFormatRaw& proto) {
+    SurfaceRaw* s = createSurface(pixels, w, h, pitch, proto);
     if (s) s->flags |= kSurfacePreallocated;
     return s;
+}
+inline SurfaceRaw* createSurfaceFrom(void* pixels, int w, int h, int pitch, const FormatInfo& f) {
+    return createSurfaceFrom(pixels, w, h, pitch, formatRawFromInfo(f));
 }
 
 // Code that keeps data per surface (SDL2Surface.hpp) sets this to learn when a
@@ -670,9 +870,14 @@ inline void (*&surfaceFreeHook())(const SurfaceRaw*) {
 inline void freeSurface(SurfaceRaw* s) {
     if (!isSurface(s)) return;
     if (--s->refcount > 0) return;
-    surfaceRegistry().erase(s);
+    {
+        SurfaceRegistry& r = surfaceRegistry();
+        std::lock_guard<std::mutex> lk(r.mx);
+        r.set.erase(s);
+    }
     if (surfaceFreeHook()) surfaceFreeHook()(s);
     if (!(s->flags & kSurfacePreallocated)) free(s->pixels);
+    releasePalette(static_cast<PaletteRaw*>(s->format->palette));
     free(s);   // the block starts at the surface
 }
 
@@ -681,7 +886,9 @@ inline Pixels surfacePixels(const SurfaceRaw* s) {
     if (!s || !s->format) return p;
     p.data = static_cast<uint8_t*>(s->pixels);
     p.w = s->w; p.h = s->h; p.pitch = s->pitch;
-    p.fmt = formatInfo(s->format->format);
+    p.pf = s->format;
+    // Surfaces of a 32-bit packed format without palette take the fast path.
+    if (s->format->bytesPerPixel == 4 && !s->format->palette) p.fmt = formatInfo(s->format->format);
     return p;
 }
 

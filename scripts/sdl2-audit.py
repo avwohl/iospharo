@@ -48,6 +48,40 @@ SDL_DequeueAudio SDL_GetQueuedAudioSize SDL_ClearQueuedAudio SDL_MixAudio
 """.split())
 ABSENT_HEADERS = {"SDL_system.h", "SDL_main.h"}
 
+# Functions that work but differ from the real library in a way that a script
+# or the doc names.  Status "partial"; the note says what differs.
+TEXTURE_NOTE = "32-bit packed texture formats only (see Known differences)"
+CONVERT_NOTE = "RGB332 and ARGB2101010 results differ from SDL 2.32 in the low bits; no YUV (see Known differences)"
+WAIT_NOTE = "blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads)"
+BILINEAR_NOTE = "bilinear scaling is scalar; stock x86 libSDL2 uses SSE2 and differs by one step in a few pixels"
+AUDIO_RATE_NOTE = "a change of sample rate or channel count is approximate (linear interpolation)"
+PARTIAL = {
+    "SDL_CreateTexture": TEXTURE_NOTE, "SDL_CreateTextureFromSurface": TEXTURE_NOTE,
+    "SDL_QueryTexture": TEXTURE_NOTE, "SDL_UpdateTexture": TEXTURE_NOTE, "SDL_LockTexture": TEXTURE_NOTE,
+    "SDL_LockTextureToSurface": TEXTURE_NOTE,
+    "SDL_ConvertSurface": CONVERT_NOTE, "SDL_ConvertSurfaceFormat": CONVERT_NOTE, "SDL_ConvertPixels": CONVERT_NOTE,
+    "SDL_LoadBMP_RW": "run-length compressed files are not supported",
+    "SDL_WaitThread": WAIT_NOTE, "SDL_SemWait": WAIT_NOTE, "SDL_SemWaitTimeout": WAIT_NOTE,
+    "SDL_LockMutex": WAIT_NOTE, "SDL_CondWait": WAIT_NOTE, "SDL_CondWaitTimeout": WAIT_NOTE,
+    "SDL_DelEventWatch": "a watch that runs on another thread can still finish after the call returns (see Events and threads)",
+    "SDL_PollEvent": "the event buffer must stay valid while Smalltalk watches run (see Events and threads)",
+    "SDL_WaitEvent": "waits at most 100 ms and answers 0",
+    "SDL_RenderCopy": BILINEAR_NOTE, "SDL_RenderCopyF": BILINEAR_NOTE, "SDL_RenderCopyEx": BILINEAR_NOTE,
+    "SDL_RenderCopyExF": BILINEAR_NOTE,
+    "SDL_ConvertAudio": AUDIO_RATE_NOTE, "SDL_NewAudioStream": AUDIO_RATE_NOTE,
+    "SDL_AudioStreamPut": AUDIO_RATE_NOTE, "SDL_AudioStreamGet": AUDIO_RATE_NOTE,
+    "SDL_LoadWAV_RW": AUDIO_RATE_NOTE,
+    "SDL_SetClipboardText": "the host bridge may keep no text; the layer keeps a copy",
+    "SDL_GetClipboardText": "the host bridge may keep no text; the layer keeps a copy",
+    "SDL_HasClipboardText": "the host bridge may keep no text; the layer keeps a copy",
+    "SDL_CreateWindow": "OpenGL, Vulkan and Metal flags fail as on a driver without the API",
+    "SDL_GL_GetAttribute": "answers match the stock library except the driver name in the error text",
+}
+
+# Functions of the zero-argument sweep whose answer differs from stock libSDL2
+# (host values, driver names and the known differences of the doc).
+differs = set(open(root + "/scripts/sdl2diff-zero-differs.txt").read().split())
+
 tested = set()
 for path in glob.glob(root + "/scripts/cogdiff/sdl2diff_*.st"):
     tested |= set(re.findall(r"\b(SDL_\w+)\b", open(path).read()))
@@ -58,6 +92,8 @@ def status(name, header):
         if header in ABSENT_HEADERS:
             return "absent", "platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it"
         return "MISSING", ""
+    if name in PARTIAL:
+        return "partial", PARTIAL[name]
     if name in HOST_LACKS:
         return "host lacks", "answers the SDL error of a video driver without the feature"
     if header in NO_DEVICE_HEADERS or name in NO_DEVICE_AUDIO:
@@ -71,7 +107,8 @@ if "--table" in sys.argv:
     for name in sorted(protos):
         header = protos[name][0]
         st, note = status(name, header)
-        print("| %s | %s | %s | %s | %s |" % (name, header[:-2], st, "yes" if name in tested else "", note))
+        compared = "" if name not in tested else ("differs (see Known differences)" if name in differs else "yes")
+        print("| %s | %s | %s | %s | %s |" % (name, header[:-2], st, compared, note))
 else:
     missing = defaultdict(list)
     for name, (header, ret, params) in protos.items():

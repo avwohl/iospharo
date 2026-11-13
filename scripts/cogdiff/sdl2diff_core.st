@@ -122,6 +122,8 @@ out << 'has ' << (SDL2 xHasEvent: 32768) printString << ' ' << (SDL2 xHasEvents:
 evs := ByteArray new: 56 * 3. 1 to: 3 do: [ :k | evs unsignedLongAt: (k - 1) * 56 + 1 put: 32768 + k. evs unsignedLongAt: (k - 1) * 56 + 9 put: k * 10 ].
 out << 'peep add ' << (SDL2 xPeep: evs n: 3 action: 0 min: 0 max: 0) printString << ' seen ' << seen size printString; nextPut: Character lf.
 out << 'peep peek ' << (SDL2 xPeep: nil n: 0 action: 1 min: 32768 max: 32770) printString << ' ' << (SDL2 xPeep: (ByteArray new: 56 * 2) n: 2 action: 1 min: 0 max: 65535) printString; nextPut: Character lf.
+out << 'peep get with no buffer ' << (SDL2 xPeep: nil n: 0 action: 2 min: 32768 max: 32770) printString << ' still ' << (SDL2 xPeep: nil n: 0 action: 1 min: 32768 max: 32770) printString << ' get with buffer ' << (SDL2 xPeep: (ByteArray new: 56 * 2) n: 2 action: 2 min: 32768 max: 32770) printString << ' left ' << (SDL2 xPeep: nil n: 0 action: 1 min: 32768 max: 32770) printString; nextPut: Character lf.
+SDL2 xPeep: evs n: 3 action: 0 min: 0 max: 0.
 SDL2 xFlushEvent: 32770.
 out << 'after flush ' << (SDL2 xHasEvent: 32770) printString << ' ' << (SDL2 xHasEvent: 32769) printString; nextPut: Character lf.
 ev := ByteArray new: 56.

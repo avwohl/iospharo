@@ -13,12 +13,15 @@ this page lists every function and its status.
 - A symbol without a stub does not resolve.  `ffi::lookupFunction` returns
   null, the same result as a real library that lacks the symbol, and the
   image raises its own error.
-- `SDL_GetError` answers the message of the last failed call of the calling
+- `SDL_GetError` answers the message of the last failed call of the same
   thread, and an empty string before the first failure.
-- The layer supports the 32-bit packed pixel formats for surfaces and
-  textures: ARGB8888, XRGB8888, ABGR8888, XBGR8888, RGBA8888, RGBX8888,
-  BGRA8888 and BGRX8888.  The calls on pixel formats (names, masks,
-  `SDL_MapRGB`, `SDL_ConvertPixels`) work for every SDL pixel format.
+- Surfaces hold every packed format of 8, 16, 24 and 32 bits, and the indexed
+  formats of 1, 4 and 8 bits with a palette.  A surface of a YUV (FOURCC)
+  format fails, as in SDL ("FOURCC pixel formats are not supported").
+  Textures hold the 32-bit packed formats only: ARGB8888, XRGB8888, ABGR8888,
+  XBGR8888, RGBA8888, RGBX8888, BGRA8888 and BGRX8888.  The calls on pixel
+  formats (names, masks, `SDL_MapRGB`, `SDL_ConvertPixels`) work for every SDL
+  pixel format.
 - The error text of a call is the text that a real libSDL2 gives.  Where SDL
   2.26.5 and SDL 2.32.10 differ, the layer follows 2.32.10, because the
   checks below run against 2.32.10.
@@ -47,13 +50,13 @@ this page lists every function and its status.
 The host UI thread produces the real events (mouse, keyboard, window).  The
 UI thread does not call SDL.  It puts the events in `gEventQueue`.
 
-- `SDL_PollEvent` on the VM thread converts every waiting host event to an SDL
-  event.  Each event passes the event filter and the event watches, and then
+- `SDL_PollEvent` on the VM thread converts every host event in the queue to
+  an SDL event.  Each event passes the event filter and the event watches, and then
   enters the SDL queue.  `SDL_PollEvent` answers the oldest event of the
   queue.
 - `SDL_PushEvent` runs the filter, then the watches, then adds the event.  It
-  answers 1 when the event is queued, 0 when the filter drops the event, and
-  -1 when the queue is full.
+  answers 1 when the layer queues the event, 0 when the filter drops the event,
+  and -1 when the queue is full.
 - `SDL_AddEventWatch` and `SDL_DelEventWatch` follow SDL.  The watch runs for
   every event that enters the queue.  Removal is by the pair of function and
   userdata.
@@ -66,48 +69,64 @@ UI thread does not call SDL.  It puts the events in `gEventQueue`.
 - The callbacks get a pointer to a private copy of the event.  No object
   pointer of the Smalltalk heap is held across a callback, so a garbage
   collection inside a callback cannot move the event.
-- `SDL_CreateThread` makes a native pthread.  When the function is a Smalltalk
-  callback thunk, the VM handler for a thread that is not the VM thread queues
-  the call for the VM thread and parks the thread until the image has answered
-  (the callback queue of "TFFI v2" in `Primitives.cpp`).  The layer needs no
-  callback code of its own.  The same holds for the timer thread of
-  `SDL_AddTimer`.
-- `SDL_WaitThread` on the VM thread blocks the VM thread.  A thread function
-  that is a Smalltalk callback needs the VM thread, so wait for it before the
-  call, with a semaphore or a `Delay` loop, as with any blocking FFI call.
+- `SDL_CreateThread` makes a native pthread.  The function can be a Smalltalk
+  callback thunk.  The VM handler for a thread that is not the VM thread
+  queues the call for the VM thread.  It parks the thread until the image has
+  answered (the callback queue of "TFFI v2" in `Primitives.cpp`).  The layer
+  needs no callback code of its own.  The timer thread of `SDL_AddTimer` works
+  in the same way.
+- The VM thread cannot wait inside SDL for a thread that needs a Smalltalk
+  callback.  `SDL_WaitThread`, `SDL_SemWait`, `SDL_SemWaitTimeout`,
+  `SDL_LockMutex`, `SDL_CondWait` and `SDL_CondWaitTimeout` block the VM
+  thread.  A parked callback then cannot run, and the VM abandons the callback
+  after 120 seconds with a zero result.  Wait in Smalltalk instead.  Use a
+  `Delay` loop or a Smalltalk semaphore that the callback signals.  Call the
+  SDL function when the other thread is done.
+- `SDL_DelEventWatch` removes the watch from the table at once.  A watch that
+  runs on another thread at that moment can still finish after the call
+  returns.  The layer does not wait for the watch, because the VM thread
+  that waits could never run the Smalltalk callback of that watch.  Keep the
+  callback object and its userdata alive until a later quiet point.
+- A watch or a filter can run Smalltalk code during `SDL_PollEvent`, and that
+  code can start a garbage collection.  The event buffer of the call must not
+  move.  The image passes a pinned buffer for an FFI argument, and the layer
+  relies on that.  The layer copies the event to the buffer after the watches
+  have run.
+- `SDL_PeepEvents` removes events only when it copies them to a buffer.  With a
+  null buffer, `SDL_GETEVENT` counts the events and removes none.
 - Mutexes are recursive pthread mutexes.  A semaphore is a mutex with a
   condition variable.  The error state is per thread.
-- `SDL_EventState` is kept per type.  Host events are dropped only for a type
-  that the image disabled with `SDL_EventState(type, SDL_DISABLE)`.  The three
-  types that SDL disables at start (text input, text editing, window manager)
-  report "disabled", but the host events of these types still arrive: the host
-  keyboard sends text events without `SDL_StartTextInput`.
+- `SDL_EventState` is kept per type.  The layer drops host events only for a
+  type that the image disabled with `SDL_EventState(type, SDL_DISABLE)`.  SDL
+  disables three types at start (text input, text change, window manager).
+  They report "disabled", but the host events of these types still arrive,
+  because the host keyboard sends text events without `SDL_StartTextInput`.
 
 ## Window hit test
 
 `SDL_SetWindowHitTest` answers -1 and "That operation is not supported".
-This is the answer of a real video driver without hit test support (the
-dummy driver and the UIKit driver).  The host window of the app has no native
-drag regions, so the VM could not act on an answer of the callback.  The
-Cocoa driver of real SDL on a Mac accepts the callback.  The layer keeps the
-answer of a driver without support, because storing a callback that the
-VM never calls would be a silent no-op.
+The test driver of SDL and the UIKit driver give the same answer, because
+they have no hit test support.  The host window of the app has no native drag
+regions, so the VM could not act on an answer of the callback.  The Cocoa
+driver of real SDL on a Mac accepts the callback.  The layer keeps the answer
+of a driver without support.  A stored callback that the VM never calls would
+be a silent no-op.
 
 ## Hints and the environment
 
-`SDL_GetHint` follows SDL: the environment variable of the hint name wins
-over a hint of normal or default priority, and a hint of override priority wins
-over the environment variable.  The layer copies the environment once, at the
+`SDL_GetHint` follows SDL.  The environment variable of the hint name wins over
+a hint of normal or default priority.  A hint of override priority wins over
+the environment variable.  The layer copies the environment once, at the
 first lookup, into a table that `SDL_getenv`, `SDL_setenv` and the hint
-functions share.  `SDL_setenv` writes through to the process environment.
-A later `setenv` by other code is not seen.  Hint callbacks run on the calling
-thread.
+functions share.  `SDL_setenv` writes through to the process environment, but
+the table does not see a later `setenv` by other code.  Hint callbacks run on
+the thread that sets the hint.
 
 ## Renderer
 
 - The software renderer keeps the viewport, the clip, the scale, the logical
-  size and the integer scale per target, with the same backup when a texture
-  becomes the target.  `SDL_RenderSetLogicalSize` letterboxes by the SDL rule
+  size and the integer scale for each target.  The backup is the same when a
+  texture becomes the target.  `SDL_RenderSetLogicalSize` letterboxes by the SDL rule
   (and the overscan mode with `SDL_HINT_RENDER_LOGICAL_SIZE_MODE`).
 - `SDL_RenderReadPixels` reads the viewport, as SDL does.
 - Lines follow the point method of the SDL software renderer: a long line is
@@ -127,8 +146,8 @@ thread.
 ### What changed on the display renderer path
 
 The first renderer of the app, while a display surface exists, keeps its
-path: the image locks the streaming texture and gets the display surface
-bytes, `SDL_RenderCopy` only records the texture, `SDL_RenderPresent` shows
+path.  The image locks the streaming texture and gets the display surface
+bytes.  `SDL_RenderCopy` only records the texture, `SDL_RenderPresent` shows
 the display surface, and `SDL_RenderClear` does nothing.  Four things changed:
 
 - The draw calls of this renderer now apply the viewport, the scale and the
@@ -147,8 +166,10 @@ invalid", and for an unknown texture "Parameter 'texture' is invalid".
 
 The app has no joystick, game controller, haptic device, sensor, touch device
 or HID device, and no audio device.  Every function of these families answers
-what a real libSDL2 answers when no device exists.  The file `scripts/sdl2-device-semantics.txt` holds the answers of a real libSDL2, and
+what a real libSDL2 answers when no device exists.  The file
+`scripts/sdl2-device-semantics.txt` holds the answers of a real libSDL2.
 `scripts/gen-sdl2-device-stubs.py` writes the stubs from the file.
+
 The audio subsystem is a driver named `none` with no device.  Audio streams,
 audio converters, `SDL_MixAudioFormat` and `SDL_LoadWAV_RW` need no device and
 work.  A conversion that changes only the sample format is exact.  A
@@ -157,12 +178,31 @@ bit for bit the same.
 
 ## Features that the host lacks
 
-OpenGL, Vulkan, Metal, shaped windows, the window manager info, opacity,
+These features answer the SDL error of a video driver without the feature:
+OpenGL, Vulkan, Metal, shaped windows and the window manager info.  Opacity,
 window borders, modal windows, flash, gamma, brightness, mouse capture and
-global mouse warp answer the SDL error of a video driver without the feature
-(for example "That operation is not supported", or "No dynamic OpenGL support
-in current SDL video driver (cocoa)").  `SDL_OpenURL` and the message boxes
+global mouse warp answer in the same way.
+Two examples of the text are "That operation is not supported" and "No dynamic GL support
+in current SDL video driver (cocoa)".  `SDL_OpenURL` and the message boxes
 also fail, because the VM has no call that opens a URL or a dialog.
+
+- `SDL_CreateWindow` with the OpenGL, Vulkan or Metal flag fails with
+  "OpenGL support is either not configured in SDL or not available in current
+  SDL video driver (cocoa) or platform" (and the same text for the other two
+  names).  Two of these flags together fail with "Conflicting window flags
+  specified".  The image sets the OpenGL flag only for an OSWindow that asks
+  for GL attributes.  The Morphic world window never sets the flag.
+- `SDL_GL_SetAttribute` stores the value of a known attribute.
+  `SDL_GL_GetAttribute` answers the stored value for the attributes that SDL
+  keeps in its video device (accelerated visual, retained backing, context
+  version, flags, profile, share, sRGB, no error).  It answers -1 with "No
+  dynamic GL support in current SDL video driver (cocoa)" for the attributes
+  that SDL reads from a live GL context (the colour sizes, buffer, depth,
+  stencil, accumulation, stereo, multisample and release behavior).  An
+  unknown attribute number gives "Unknown OpenGL attribute".
+  `SDL_GL_ExtensionSupported` fails with the same "No dynamic GL support" text,
+  except for an empty name or a name with a space, which SDL rejects without
+  an error.
 
 The functions of `SDL_system.h` (Android, Windows, GDK, WinRT, Linux and
 UIKit app delegate) and the start functions of `SDL_main.h` do not resolve.
@@ -173,12 +213,12 @@ A real libSDL2 on macOS does not export them either.
 The zero-argument sweep calls 691 functions.  Stock Cog and this VM answer
 the same for 652 of them on arm64.  The other 39 differ for these reasons.
 
-- Host values: the CPU feature flags (`SDL_HasSSE`, `SDL_HasNEON`, ...), the
-  cache line size, `SDL_GetPowerInfo`, thread ids, the performance counter,
-  `SDL_GetTicks64`, the address of the assertion handler, the handle
-  `SDL_iconv_open` answers, `SDL_GetNumAllocations` (-1: no allocation
-  counting), and `SDL_TLSCreate` (the first id is 2 here, and Cog has used
-  some ids already).
+- Host values.  The CPU feature flags (`SDL_HasSSE`, `SDL_HasNEON`, ...) and
+  the cache line size depend on the host.  So do `SDL_GetPowerInfo`, thread
+  ids, the performance counter and `SDL_GetTicks64`.  The address of the
+  assertion handler and the handle that `SDL_iconv_open` answers also differ.  `SDL_GetNumAllocations` answers -1, because the
+  layer does not count allocations.  The first `SDL_TLSCreate` id is 2 here,
+  and Cog has used some ids already.
 - Driver and platform: the stock run uses the `dummy` driver and the layer
   says `cocoa` or `uikit`.  The error text of `SDL_GL_LoadLibrary`,
   `SDL_GL_GetProcAddress` and `SDL_Vulkan_LoadLibrary` names the driver.
@@ -191,22 +231,33 @@ the same for 652 of them on arm64.  The other 39 differ for these reasons.
   mappings (`SDL_GameControllerNumMappings`, `SDL_GameControllerMappingForIndex`).
 - Devices: the real library found an audio device on the Mac
   (`SDL_GetNumAudioDevices`, `SDL_GetAudioDeviceName`).  This VM has none.
-- Surfaces: a surface or texture needs a 32-bit packed format.
-  `SDL_CreateRGBSurfaceWithFormat` with the format `SDL_PIXELFORMAT_UNKNOWN`
-  and a size of zero makes a surface in SDL, and fails here.
+- Surfaces: a texture needs a 32-bit packed format, and a surface cannot have
+  a YUV format.  `SDL_CreateRGBSurfaceWithFormat` with the format
+  `SDL_PIXELFORMAT_UNKNOWN` and a size of zero makes a surface in SDL, and
+  fails here.  A conversion to RGB332 from a 32-bit surface packs each channel
+  here.  Stock SDL 2.32 answers E0 for all four test pixels, and the cause is
+  not known.  A conversion to ARGB2101010
+  repeats the high bits into the low bits of each 10-bit channel.  SDL 2.32
+  gives slightly different low bits and a different alpha for the middle
+  values.  A blit or a conversion to a surface of fewer than 8 bits fails with
+  "Blit combination not supported", as in SDL.
+- Clipboard: `test_load_image` has no clipboard bridge.  The layer keeps the
+  last text of `SDL_SetClipboardText` so that `SDL_GetClipboardText` answers
+  the text.  The text of the host clipboard wins when it is not empty.
 - Version: `SDL_LockMutex`, `SDL_TryLockMutex` and `SDL_UnlockMutex` of a null
   mutex answer an error as in SDL 2.26.5.  SDL 2.32.10 answers 0.
 - Time: `SDL_WaitEventTimeout` answers 1 when an event waits.  The real
-  library had a window event waiting, and this VM sends its window events later.
+  library had a window event in the queue, and this VM sends its window events later.
 - `SDL_VideoInit(NULL)` keeps the error text of an earlier call in SDL.
 
-Four more differences are not in the sweep.
+More differences are not in the sweep.
 
 - Bilinear scaling: the scaler follows the scalar SDL algorithm.  Stock Cog on
   x86 uses an SSE2 version, and in a bilinear rotated copy the blue channel
   differs by one step for 19 of 98 pixels.
-- A 24-bit BMP file loads as an XRGB8888 surface.  SDL answers a 24-bit
-  surface, and the layer has no 24-bit surface.
+- `SDL_LoadBMP_RW` reads the files of 1, 2, 4, 8, 15, 16, 24 and 32 bits per
+  pixel, with or without bit masks.  A file with run-length compression fails
+  with "Compressed BMP files are not supported".
 - The default `SDL_AssertionHandler` logs the failure and answers
   `SDL_ASSERTION_IGNORE`.  It does not abort the VM.
 - `SDL_WaitEvent` is the older stub: it waits at most 100 ms and answers 0.
@@ -234,6 +285,10 @@ and compare the texts.
 - `scripts/cogdiff/sdl2diff_misc.st`: pixel formats, surfaces, BMP files,
   audio conversion, keyboard names, window and display calls, text conversion,
   the no-device families.
+- `scripts/cogdiff/sdl2diff_surfaces.st`: surfaces of every format (fields,
+  fill, conversion, palette, blit, BMP files), and the answers for the
+  review fixes (event peek with no buffer, OpenGL attributes, window flags,
+  texture errors, clipboard).
 - `scripts/cogdiff/sdl2diff_zero.st`: every function with zero arguments.
   `scripts/gen-sdl2diff-zero.py` writes it.  `scripts/sdl2diff-zero-skip.txt`
   lists the functions that crash stock libSDL2 with a null argument.
@@ -254,8 +309,23 @@ running app:
 
 ## Every function
 
+The layer registers 833 of the 866 public functions of SDL 2.26.5.  The 33
+others are the platform functions of `SDL_system.h` and `SDL_main.h` (Android,
+Windows, GDK, WinRT, Linux, DXGI, Direct3D and the UIKit start functions), and
+the two iOS callbacks `SDL_iPhoneSetAnimationCallback` and
+`SDL_iPhoneSetEventPump`.  The host drives the frames and the event pump
+itself, so these functions have no meaning here.
+
+Status values: "implemented" works as the real function.  "partial" works, and
+the note names what differs.  "host lacks" answers the SDL error of a video
+driver without the feature.  "no device" answers as SDL does when no device
+exists.  "absent" does not resolve.
+
 The column "Compared with real SDL" is "yes" when a differential script calls
-the function.
+the function and the answers match.  It is "differs" when the answers differ
+for a reason in the section "Known differences".  The column is empty when no
+script calls the function.
+
 | Function | Header | Status | Compared with real SDL | Note |
 | --- | --- | --- | --- | --- |
 | SDL_AddEventWatch | SDL_events | implemented | yes |  |
@@ -288,8 +358,8 @@ the function.
 | SDL_AudioStreamAvailable | SDL_audio | implemented | yes |  |
 | SDL_AudioStreamClear | SDL_audio | implemented | yes |  |
 | SDL_AudioStreamFlush | SDL_audio | implemented | yes |  |
-| SDL_AudioStreamGet | SDL_audio | implemented | yes |  |
-| SDL_AudioStreamPut | SDL_audio | implemented | yes |  |
+| SDL_AudioStreamGet | SDL_audio | partial | yes | a change of sample rate or channel count is approximate (linear interpolation) |
+| SDL_AudioStreamPut | SDL_audio | partial | yes | a change of sample rate or channel count is approximate (linear interpolation) |
 | SDL_BuildAudioCVT | SDL_audio | implemented | yes |  |
 | SDL_CalculateGammaRamp | SDL_pixels | implemented | yes |  |
 | SDL_CaptureMouse | SDL_mouse | host lacks | yes | answers the SDL error of a video driver without the feature |
@@ -302,34 +372,34 @@ the function.
 | SDL_ComposeCustomBlendMode | SDL_blendmode | implemented | yes |  |
 | SDL_CondBroadcast | SDL_mutex | implemented | yes |  |
 | SDL_CondSignal | SDL_mutex | implemented | yes |  |
-| SDL_CondWait | SDL_mutex | implemented | yes |  |
-| SDL_CondWaitTimeout | SDL_mutex | implemented | yes |  |
-| SDL_ConvertAudio | SDL_audio | implemented | yes |  |
-| SDL_ConvertPixels | SDL_surface | implemented | yes |  |
-| SDL_ConvertSurface | SDL_surface | implemented | yes |  |
-| SDL_ConvertSurfaceFormat | SDL_surface | implemented | yes |  |
+| SDL_CondWait | SDL_mutex | partial | yes | blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads) |
+| SDL_CondWaitTimeout | SDL_mutex | partial | yes | blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads) |
+| SDL_ConvertAudio | SDL_audio | partial | yes | a change of sample rate or channel count is approximate (linear interpolation) |
+| SDL_ConvertPixels | SDL_surface | partial | yes | RGB332 and ARGB2101010 results differ from SDL 2.32 in the low bits; no YUV (see Known differences) |
+| SDL_ConvertSurface | SDL_surface | partial | yes | RGB332 and ARGB2101010 results differ from SDL 2.32 in the low bits; no YUV (see Known differences) |
+| SDL_ConvertSurfaceFormat | SDL_surface | partial | yes | RGB332 and ARGB2101010 results differ from SDL 2.32 in the low bits; no YUV (see Known differences) |
 | SDL_CreateColorCursor | SDL_mouse | implemented | yes |  |
 | SDL_CreateCond | SDL_mutex | implemented | yes |  |
 | SDL_CreateCursor | SDL_mouse | implemented | yes |  |
 | SDL_CreateMutex | SDL_mutex | implemented | yes |  |
 | SDL_CreateRGBSurface | SDL_surface | implemented | yes |  |
 | SDL_CreateRGBSurfaceFrom | SDL_surface | implemented | yes |  |
-| SDL_CreateRGBSurfaceWithFormat | SDL_surface | implemented | yes |  |
-| SDL_CreateRGBSurfaceWithFormatFrom | SDL_surface | implemented | yes |  |
+| SDL_CreateRGBSurfaceWithFormat | SDL_surface | implemented | differs (see Known differences) |  |
+| SDL_CreateRGBSurfaceWithFormatFrom | SDL_surface | implemented | differs (see Known differences) |  |
 | SDL_CreateRenderer | SDL_render | implemented | yes |  |
 | SDL_CreateSemaphore | SDL_mutex | implemented | yes |  |
 | SDL_CreateShapedWindow | SDL_shape | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_CreateSoftwareRenderer | SDL_render | implemented | yes |  |
-| SDL_CreateSystemCursor | SDL_mouse | implemented | yes |  |
-| SDL_CreateTexture | SDL_render | implemented | yes |  |
-| SDL_CreateTextureFromSurface | SDL_render | implemented | yes |  |
+| SDL_CreateSystemCursor | SDL_mouse | implemented | differs (see Known differences) |  |
+| SDL_CreateTexture | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
+| SDL_CreateTextureFromSurface | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
 | SDL_CreateThread | SDL_thread | implemented | yes |  |
 | SDL_CreateThreadWithStackSize | SDL_thread | implemented | yes |  |
-| SDL_CreateWindow | SDL_video | implemented | yes |  |
+| SDL_CreateWindow | SDL_video | partial | yes | OpenGL, Vulkan and Metal flags fail as on a driver without the API |
 | SDL_CreateWindowAndRenderer | SDL_render | implemented |  |  |
 | SDL_CreateWindowFrom | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_DXGIGetOutputInfo | SDL_system | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
-| SDL_DelEventWatch | SDL_events | implemented | yes |  |
+| SDL_DelEventWatch | SDL_events | partial | yes | a watch that runs on another thread can still finish after the call returns (see Events and threads) |
 | SDL_DelHintCallback | SDL_hints | implemented | yes |  |
 | SDL_Delay | SDL_timer | implemented |  |  |
 | SDL_DequeueAudio | SDL_audio | no device | yes | answers as SDL does when no device exists |
@@ -366,14 +436,14 @@ the function.
 | SDL_GL_BindTexture | SDL_render | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_GL_CreateContext | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_GL_DeleteContext | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
-| SDL_GL_ExtensionSupported | SDL_video | host lacks |  | answers the SDL error of a video driver without the feature |
-| SDL_GL_GetAttribute | SDL_video | implemented | yes |  |
+| SDL_GL_ExtensionSupported | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
+| SDL_GL_GetAttribute | SDL_video | partial | yes | answers match the stock library except the driver name in the error text |
 | SDL_GL_GetCurrentContext | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_GL_GetCurrentWindow | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_GL_GetDrawableSize | SDL_video | implemented | yes |  |
-| SDL_GL_GetProcAddress | SDL_video | implemented | yes |  |
+| SDL_GL_GetProcAddress | SDL_video | implemented | differs (see Known differences) |  |
 | SDL_GL_GetSwapInterval | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
-| SDL_GL_LoadLibrary | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
+| SDL_GL_LoadLibrary | SDL_video | host lacks | differs (see Known differences) | answers the SDL error of a video driver without the feature |
 | SDL_GL_MakeCurrent | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_GL_ResetAttributes | SDL_video | implemented | yes |  |
 | SDL_GL_SetAttribute | SDL_video | implemented | yes |  |
@@ -424,10 +494,10 @@ the function.
 | SDL_GameControllerMapping | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GameControllerMappingForDeviceIndex | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GameControllerMappingForGUID | SDL_gamecontroller | no device |  | answers as SDL does when no device exists |
-| SDL_GameControllerMappingForIndex | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
+| SDL_GameControllerMappingForIndex | SDL_gamecontroller | no device | differs (see Known differences) | answers as SDL does when no device exists |
 | SDL_GameControllerName | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GameControllerNameForIndex | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
-| SDL_GameControllerNumMappings | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
+| SDL_GameControllerNumMappings | SDL_gamecontroller | no device | differs (see Known differences) | answers as SDL does when no device exists |
 | SDL_GameControllerOpen | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GameControllerPath | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GameControllerPathForIndex | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
@@ -440,30 +510,30 @@ the function.
 | SDL_GameControllerTypeForIndex | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GameControllerUpdate | SDL_gamecontroller | no device | yes | answers as SDL does when no device exists |
 | SDL_GetAndroidSDKVersion | SDL_system | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
-| SDL_GetAssertionHandler | SDL_assert | implemented | yes |  |
+| SDL_GetAssertionHandler | SDL_assert | implemented | differs (see Known differences) |  |
 | SDL_GetAssertionReport | SDL_assert | implemented | yes |  |
-| SDL_GetAudioDeviceName | SDL_audio | no device | yes | answers as SDL does when no device exists |
+| SDL_GetAudioDeviceName | SDL_audio | no device | differs (see Known differences) | answers as SDL does when no device exists |
 | SDL_GetAudioDeviceSpec | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_GetAudioDeviceStatus | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_GetAudioDriver | SDL_audio | implemented | yes |  |
 | SDL_GetAudioStatus | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_GetBasePath | SDL_filesystem | implemented | yes |  |
-| SDL_GetCPUCacheLineSize | SDL_cpuinfo | implemented | yes |  |
+| SDL_GetCPUCacheLineSize | SDL_cpuinfo | implemented | differs (see Known differences) |  |
 | SDL_GetCPUCount | SDL_cpuinfo | implemented | yes |  |
 | SDL_GetClipRect | SDL_surface | implemented | yes |  |
-| SDL_GetClipboardText | SDL_clipboard | implemented | yes |  |
+| SDL_GetClipboardText | SDL_clipboard | partial | yes | the host bridge may keep no text; the layer keeps a copy |
 | SDL_GetClosestDisplayMode | SDL_video | implemented | yes |  |
 | SDL_GetColorKey | SDL_surface | implemented | yes |  |
 | SDL_GetCurrentAudioDriver | SDL_audio | implemented | yes |  |
 | SDL_GetCurrentDisplayMode | SDL_video | implemented | yes |  |
 | SDL_GetCurrentVideoDriver | SDL_video | implemented | yes |  |
 | SDL_GetCursor | SDL_mouse | implemented | yes |  |
-| SDL_GetDefaultAssertionHandler | SDL_assert | implemented | yes |  |
+| SDL_GetDefaultAssertionHandler | SDL_assert | implemented | differs (see Known differences) |  |
 | SDL_GetDefaultAudioInfo | SDL_audio | no device | yes | answers as SDL does when no device exists |
-| SDL_GetDefaultCursor | SDL_mouse | implemented | yes |  |
+| SDL_GetDefaultCursor | SDL_mouse | implemented | differs (see Known differences) |  |
 | SDL_GetDesktopDisplayMode | SDL_video | implemented | yes |  |
 | SDL_GetDisplayBounds | SDL_video | implemented | yes |  |
-| SDL_GetDisplayDPI | SDL_video | implemented | yes |  |
+| SDL_GetDisplayDPI | SDL_video | implemented | differs (see Known differences) |  |
 | SDL_GetDisplayMode | SDL_video | implemented | yes |  |
 | SDL_GetDisplayName | SDL_video | implemented | yes |  |
 | SDL_GetDisplayOrientation | SDL_video | implemented | yes |  |
@@ -485,22 +555,22 @@ the function.
 | SDL_GetModState | SDL_keyboard | implemented | yes |  |
 | SDL_GetMouseFocus | SDL_mouse | implemented | yes |  |
 | SDL_GetMouseState | SDL_mouse | implemented | yes |  |
-| SDL_GetNumAllocations | SDL_stdinc | implemented | yes |  |
-| SDL_GetNumAudioDevices | SDL_audio | no device | yes | answers as SDL does when no device exists |
-| SDL_GetNumAudioDrivers | SDL_audio | implemented | yes |  |
+| SDL_GetNumAllocations | SDL_stdinc | implemented | differs (see Known differences) |  |
+| SDL_GetNumAudioDevices | SDL_audio | no device | differs (see Known differences) | answers as SDL does when no device exists |
+| SDL_GetNumAudioDrivers | SDL_audio | implemented | differs (see Known differences) |  |
 | SDL_GetNumDisplayModes | SDL_video | implemented | yes |  |
-| SDL_GetNumRenderDrivers | SDL_render | implemented | yes |  |
+| SDL_GetNumRenderDrivers | SDL_render | implemented | differs (see Known differences) |  |
 | SDL_GetNumTouchDevices | SDL_touch | no device | yes | answers as SDL does when no device exists |
 | SDL_GetNumTouchFingers | SDL_touch | no device | yes | answers as SDL does when no device exists |
 | SDL_GetNumVideoDisplays | SDL_video | implemented | yes |  |
-| SDL_GetNumVideoDrivers | SDL_video | implemented | yes |  |
+| SDL_GetNumVideoDrivers | SDL_video | implemented | differs (see Known differences) |  |
 | SDL_GetOriginalMemoryFunctions | SDL_stdinc | implemented |  |  |
-| SDL_GetPerformanceCounter | SDL_timer | implemented | yes |  |
+| SDL_GetPerformanceCounter | SDL_timer | implemented | differs (see Known differences) |  |
 | SDL_GetPerformanceFrequency | SDL_timer | implemented | yes |  |
 | SDL_GetPixelFormatName | SDL_pixels | implemented | yes |  |
 | SDL_GetPlatform | SDL_platform | implemented | yes |  |
 | SDL_GetPointDisplayIndex | SDL_video | implemented |  |  |
-| SDL_GetPowerInfo | SDL_power | implemented | yes |  |
+| SDL_GetPowerInfo | SDL_power | implemented | differs (see Known differences) |  |
 | SDL_GetPrefPath | SDL_filesystem | implemented | yes |  |
 | SDL_GetPreferredLocales | SDL_locale | implemented | yes |  |
 | SDL_GetPrimarySelectionText | SDL_clipboard | implemented | yes |  |
@@ -532,10 +602,10 @@ the function.
 | SDL_GetTextureColorMod | SDL_render | implemented | yes |  |
 | SDL_GetTextureScaleMode | SDL_render | implemented | yes |  |
 | SDL_GetTextureUserData | SDL_render | implemented | yes |  |
-| SDL_GetThreadID | SDL_thread | implemented | yes |  |
+| SDL_GetThreadID | SDL_thread | implemented | differs (see Known differences) |  |
 | SDL_GetThreadName | SDL_thread | implemented | yes |  |
 | SDL_GetTicks | SDL_timer | implemented |  |  |
-| SDL_GetTicks64 | SDL_timer | implemented | yes |  |
+| SDL_GetTicks64 | SDL_timer | implemented | differs (see Known differences) |  |
 | SDL_GetTouchDevice | SDL_touch | no device | yes | answers as SDL does when no device exists |
 | SDL_GetTouchDeviceType | SDL_touch | no device | yes | answers as SDL does when no device exists |
 | SDL_GetTouchFinger | SDL_touch | no device | yes | answers as SDL does when no device exists |
@@ -601,7 +671,7 @@ the function.
 | SDL_HasAVX2 | SDL_cpuinfo | implemented | yes |  |
 | SDL_HasAVX512F | SDL_cpuinfo | implemented | yes |  |
 | SDL_HasAltiVec | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasClipboardText | SDL_clipboard | implemented | yes |  |
+| SDL_HasClipboardText | SDL_clipboard | partial | yes | the host bridge may keep no text; the layer keeps a copy |
 | SDL_HasColorKey | SDL_surface | implemented | yes |  |
 | SDL_HasEvent | SDL_events | implemented | yes |  |
 | SDL_HasEvents | SDL_events | implemented | yes |  |
@@ -609,15 +679,15 @@ the function.
 | SDL_HasIntersectionF | SDL_rect | implemented | yes |  |
 | SDL_HasLASX | SDL_cpuinfo | implemented | yes |  |
 | SDL_HasLSX | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasMMX | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasNEON | SDL_cpuinfo | implemented | yes |  |
+| SDL_HasMMX | SDL_cpuinfo | implemented | differs (see Known differences) |  |
+| SDL_HasNEON | SDL_cpuinfo | implemented | differs (see Known differences) |  |
 | SDL_HasPrimarySelectionText | SDL_clipboard | implemented | yes |  |
-| SDL_HasRDTSC | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasSSE | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasSSE2 | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasSSE3 | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasSSE41 | SDL_cpuinfo | implemented | yes |  |
-| SDL_HasSSE42 | SDL_cpuinfo | implemented | yes |  |
+| SDL_HasRDTSC | SDL_cpuinfo | implemented | differs (see Known differences) |  |
+| SDL_HasSSE | SDL_cpuinfo | implemented | differs (see Known differences) |  |
+| SDL_HasSSE2 | SDL_cpuinfo | implemented | differs (see Known differences) |  |
+| SDL_HasSSE3 | SDL_cpuinfo | implemented | differs (see Known differences) |  |
+| SDL_HasSSE41 | SDL_cpuinfo | implemented | differs (see Known differences) |  |
+| SDL_HasSSE42 | SDL_cpuinfo | implemented | differs (see Known differences) |  |
 | SDL_HasScreenKeyboardSupport | SDL_keyboard | implemented | yes |  |
 | SDL_HasSurfaceRLE | SDL_surface | implemented |  |  |
 | SDL_HideWindow | SDL_video | implemented | yes |  |
@@ -694,21 +764,21 @@ the function.
 | SDL_JoystickUpdate | SDL_joystick | no device | yes | answers as SDL does when no device exists |
 | SDL_LinuxSetThreadPriority | SDL_system | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
 | SDL_LinuxSetThreadPriorityAndPolicy | SDL_system | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
-| SDL_LoadBMP_RW | SDL_surface | implemented | yes |  |
+| SDL_LoadBMP_RW | SDL_surface | partial | yes | run-length compressed files are not supported |
 | SDL_LoadDollarTemplates | SDL_gesture | no device | yes | answers as SDL does when no device exists |
 | SDL_LoadFile | SDL_rwops | implemented | yes |  |
 | SDL_LoadFile_RW | SDL_rwops | implemented |  |  |
 | SDL_LoadFunction | SDL_loadso | implemented | yes |  |
 | SDL_LoadObject | SDL_loadso | implemented | yes |  |
-| SDL_LoadWAV_RW | SDL_audio | implemented | yes |  |
+| SDL_LoadWAV_RW | SDL_audio | partial | yes | a change of sample rate or channel count is approximate (linear interpolation) |
 | SDL_LockAudio | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_LockAudioDevice | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_LockJoysticks | SDL_joystick | no device | yes | answers as SDL does when no device exists |
-| SDL_LockMutex | SDL_mutex | implemented | yes |  |
+| SDL_LockMutex | SDL_mutex | partial | differs (see Known differences) | blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads) |
 | SDL_LockSensors | SDL_sensor | no device | yes | answers as SDL does when no device exists |
 | SDL_LockSurface | SDL_surface | implemented |  |  |
-| SDL_LockTexture | SDL_render | implemented | yes |  |
-| SDL_LockTextureToSurface | SDL_render | implemented | yes |  |
+| SDL_LockTexture | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
+| SDL_LockTextureToSurface | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
 | SDL_Log | SDL_log | implemented | yes |  |
 | SDL_LogCritical | SDL_log | implemented |  |  |
 | SDL_LogDebug | SDL_log | implemented |  |  |
@@ -740,7 +810,7 @@ the function.
 | SDL_MixAudio | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_MixAudioFormat | SDL_audio | implemented | yes |  |
 | SDL_MouseIsHaptic | SDL_haptic | no device | yes | answers as SDL does when no device exists |
-| SDL_NewAudioStream | SDL_audio | implemented | yes |  |
+| SDL_NewAudioStream | SDL_audio | partial | yes | a change of sample rate or channel count is approximate (linear interpolation) |
 | SDL_NumHaptics | SDL_haptic | no device | yes | answers as SDL does when no device exists |
 | SDL_NumJoysticks | SDL_joystick | no device | yes | answers as SDL does when no device exists |
 | SDL_NumSensors | SDL_sensor | no device | yes | answers as SDL does when no device exists |
@@ -758,11 +828,11 @@ the function.
 | SDL_PauseAudioDevice | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_PeepEvents | SDL_events | implemented | yes |  |
 | SDL_PixelFormatEnumToMasks | SDL_pixels | implemented | yes |  |
-| SDL_PollEvent | SDL_events | implemented | yes |  |
+| SDL_PollEvent | SDL_events | partial | yes | the event buffer must stay valid while Smalltalk watches run (see Events and threads) |
 | SDL_PremultiplyAlpha | SDL_surface | implemented | yes |  |
 | SDL_PumpEvents | SDL_events | implemented | yes |  |
 | SDL_PushEvent | SDL_events | implemented | yes |  |
-| SDL_QueryTexture | SDL_render | implemented | yes |  |
+| SDL_QueryTexture | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
 | SDL_QueueAudio | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_Quit | SDL | implemented |  |  |
 | SDL_QuitSubSystem | SDL | implemented |  |  |
@@ -789,10 +859,10 @@ the function.
 | SDL_RegisterEvents | SDL_events | implemented | yes |  |
 | SDL_RemoveTimer | SDL_timer | implemented | yes |  |
 | SDL_RenderClear | SDL_render | implemented | yes |  |
-| SDL_RenderCopy | SDL_render | implemented | yes |  |
-| SDL_RenderCopyEx | SDL_render | implemented | yes |  |
-| SDL_RenderCopyExF | SDL_render | implemented | yes |  |
-| SDL_RenderCopyF | SDL_render | implemented | yes |  |
+| SDL_RenderCopy | SDL_render | partial | yes | bilinear scaling is scalar; stock x86 libSDL2 uses SSE2 and differs by one step in a few pixels |
+| SDL_RenderCopyEx | SDL_render | partial | yes | bilinear scaling is scalar; stock x86 libSDL2 uses SSE2 and differs by one step in a few pixels |
+| SDL_RenderCopyExF | SDL_render | partial | yes | bilinear scaling is scalar; stock x86 libSDL2 uses SSE2 and differs by one step in a few pixels |
+| SDL_RenderCopyF | SDL_render | partial | yes | bilinear scaling is scalar; stock x86 libSDL2 uses SSE2 and differs by one step in a few pixels |
 | SDL_RenderDrawLine | SDL_render | implemented | yes |  |
 | SDL_RenderDrawLineF | SDL_render | implemented | yes |  |
 | SDL_RenderDrawLines | SDL_render | implemented | yes |  |
@@ -851,8 +921,8 @@ the function.
 | SDL_SemPost | SDL_mutex | implemented | yes |  |
 | SDL_SemTryWait | SDL_mutex | implemented | yes |  |
 | SDL_SemValue | SDL_mutex | implemented | yes |  |
-| SDL_SemWait | SDL_mutex | implemented | yes |  |
-| SDL_SemWaitTimeout | SDL_mutex | implemented | yes |  |
+| SDL_SemWait | SDL_mutex | partial | yes | blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads) |
+| SDL_SemWaitTimeout | SDL_mutex | partial | yes | blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads) |
 | SDL_SensorClose | SDL_sensor | no device | yes | answers as SDL does when no device exists |
 | SDL_SensorFromInstanceID | SDL_sensor | no device | yes | answers as SDL does when no device exists |
 | SDL_SensorGetData | SDL_sensor | no device | yes | answers as SDL does when no device exists |
@@ -869,7 +939,7 @@ the function.
 | SDL_SensorUpdate | SDL_sensor | no device | yes | answers as SDL does when no device exists |
 | SDL_SetAssertionHandler | SDL_assert | implemented |  |  |
 | SDL_SetClipRect | SDL_surface | implemented | yes |  |
-| SDL_SetClipboardText | SDL_clipboard | implemented |  |  |
+| SDL_SetClipboardText | SDL_clipboard | partial | yes | the host bridge may keep no text; the layer keeps a copy |
 | SDL_SetColorKey | SDL_surface | implemented | yes |  |
 | SDL_SetCursor | SDL_mouse | implemented | yes |  |
 | SDL_SetError | SDL_error | implemented | yes |  |
@@ -889,7 +959,7 @@ the function.
 | SDL_SetSurfaceAlphaMod | SDL_surface | implemented | yes |  |
 | SDL_SetSurfaceBlendMode | SDL_surface | implemented | yes |  |
 | SDL_SetSurfaceColorMod | SDL_surface | implemented | yes |  |
-| SDL_SetSurfacePalette | SDL_surface | implemented |  |  |
+| SDL_SetSurfacePalette | SDL_surface | implemented | yes |  |
 | SDL_SetSurfaceRLE | SDL_surface | implemented |  |  |
 | SDL_SetTextInputRect | SDL_keyboard | implemented | yes |  |
 | SDL_SetTextureAlphaMod | SDL_render | implemented | yes |  |
@@ -932,11 +1002,11 @@ the function.
 | SDL_StartTextInput | SDL_keyboard | implemented | yes |  |
 | SDL_StopTextInput | SDL_keyboard | implemented | yes |  |
 | SDL_TLSCleanup | SDL_thread | implemented | yes |  |
-| SDL_TLSCreate | SDL_thread | implemented | yes |  |
+| SDL_TLSCreate | SDL_thread | implemented | differs (see Known differences) |  |
 | SDL_TLSGet | SDL_thread | implemented | yes |  |
 | SDL_TLSSet | SDL_thread | implemented | yes |  |
-| SDL_ThreadID | SDL_thread | implemented | yes |  |
-| SDL_TryLockMutex | SDL_mutex | implemented | yes |  |
+| SDL_ThreadID | SDL_thread | implemented | differs (see Known differences) |  |
+| SDL_TryLockMutex | SDL_mutex | implemented | differs (see Known differences) |  |
 | SDL_UIKitRunApp | SDL_main | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
 | SDL_UnionFRect | SDL_rect | implemented | yes |  |
 | SDL_UnionRect | SDL_rect | implemented | yes |  |
@@ -944,29 +1014,29 @@ the function.
 | SDL_UnlockAudio | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_UnlockAudioDevice | SDL_audio | no device | yes | answers as SDL does when no device exists |
 | SDL_UnlockJoysticks | SDL_joystick | no device | yes | answers as SDL does when no device exists |
-| SDL_UnlockMutex | SDL_mutex | implemented | yes |  |
+| SDL_UnlockMutex | SDL_mutex | implemented | differs (see Known differences) |  |
 | SDL_UnlockSensors | SDL_sensor | no device | yes | answers as SDL does when no device exists |
 | SDL_UnlockSurface | SDL_surface | implemented |  |  |
 | SDL_UnlockTexture | SDL_render | implemented | yes |  |
 | SDL_UnregisterApp | SDL_main | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
 | SDL_UpdateNVTexture | SDL_render | host lacks | yes | answers the SDL error of a video driver without the feature |
-| SDL_UpdateTexture | SDL_render | implemented | yes |  |
+| SDL_UpdateTexture | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
 | SDL_UpdateWindowSurface | SDL_video | implemented | yes |  |
 | SDL_UpdateWindowSurfaceRects | SDL_video | implemented | yes |  |
 | SDL_UpdateYUVTexture | SDL_render | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_UpperBlit | SDL_surface | implemented | yes |  |
 | SDL_UpperBlitScaled | SDL_surface | implemented | yes |  |
-| SDL_VideoInit | SDL_video | implemented | yes |  |
+| SDL_VideoInit | SDL_video | implemented | differs (see Known differences) |  |
 | SDL_VideoQuit | SDL_video | implemented |  |  |
 | SDL_Vulkan_CreateSurface | SDL_vulkan | host lacks |  | answers the SDL error of a video driver without the feature |
 | SDL_Vulkan_GetDrawableSize | SDL_vulkan | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_Vulkan_GetInstanceExtensions | SDL_vulkan | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_Vulkan_GetVkGetInstanceProcAddr | SDL_vulkan | host lacks | yes | answers the SDL error of a video driver without the feature |
-| SDL_Vulkan_LoadLibrary | SDL_vulkan | host lacks | yes | answers the SDL error of a video driver without the feature |
+| SDL_Vulkan_LoadLibrary | SDL_vulkan | host lacks | differs (see Known differences) | answers the SDL error of a video driver without the feature |
 | SDL_Vulkan_UnloadLibrary | SDL_vulkan | host lacks | yes | answers the SDL error of a video driver without the feature |
-| SDL_WaitEvent | SDL_events | implemented |  |  |
-| SDL_WaitEventTimeout | SDL_events | implemented | yes |  |
-| SDL_WaitThread | SDL_thread | implemented | yes |  |
+| SDL_WaitEvent | SDL_events | partial |  | waits at most 100 ms and answers 0 |
+| SDL_WaitEventTimeout | SDL_events | implemented | differs (see Known differences) |  |
+| SDL_WaitThread | SDL_thread | partial | yes | blocks the VM thread: a Smalltalk callback on the other side cannot run (see Events and threads) |
 | SDL_WarpMouseGlobal | SDL_mouse | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_WarpMouseInWindow | SDL_mouse | implemented | yes |  |
 | SDL_WasInit | SDL | implemented | yes |  |
@@ -1036,7 +1106,7 @@ the function.
 | SDL_iPhoneSetEventPump | SDL_system | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
 | SDL_iconv | SDL_stdinc | implemented |  |  |
 | SDL_iconv_close | SDL_stdinc | implemented | yes |  |
-| SDL_iconv_open | SDL_stdinc | implemented | yes |  |
+| SDL_iconv_open | SDL_stdinc | implemented | differs (see Known differences) |  |
 | SDL_iconv_string | SDL_stdinc | implemented | yes |  |
 | SDL_isalnum | SDL_stdinc | implemented | yes |  |
 | SDL_isalpha | SDL_stdinc | implemented | yes |  |

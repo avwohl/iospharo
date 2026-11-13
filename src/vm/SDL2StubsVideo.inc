@@ -278,8 +278,17 @@ static std::string noSupportText(const char* what) {
 }
 static int stub_SDL_GL_LoadLibrary(const char* path) { (void)path; return sdl2::sys::setError(noSupportText("OpenGL").c_str()); }
 static void stub_SDL_GL_UnloadLibrary() {}
-static int stub_SDL_GL_ExtensionSupported(const char* name) { (void)name; return 0; }
-static void stub_SDL_GL_ResetAttributes() { sGLAttributes.clear(); }
+static int stub_SDL_GL_ExtensionSupported(const char* name) {
+    // SDL rejects an empty name or a name with a space without an error, then
+    // asks the GL driver, which does not exist here.
+    if (!name || !*name || strchr(name, ' ')) return 0;
+    sdl2::sys::setError(noSupportText("GL").c_str());
+    return 0;
+}
+static void stub_SDL_GL_ResetAttributes() {
+    std::lock_guard<std::mutex> lk(sGLAttrMutex);
+    glAttributesReset();
+}
 static void* stub_SDL_GL_GetCurrentContext() { return nullptr; }
 static void* stub_SDL_GL_GetCurrentWindow() { return nullptr; }
 static int stub_SDL_GL_GetSwapInterval() { return 0; }
