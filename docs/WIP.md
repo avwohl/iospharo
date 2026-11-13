@@ -18,7 +18,7 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 ## Right now (2026-11-13) -- Pharo 14 package run, six VM fixes, four sweeps done
 
 The four full SUnit sweeps ran at `3a697c16` on `jit`.  `main` is
-fast-forwarded to `jit` after the sweeps.
+fast-forwarded to `jit` after each set of sweeps.
 
 | image | arch | pass, recovery pass included | not passed | sweep at `479dc56e` |
 |---|---|---|---|---|
@@ -46,6 +46,22 @@ Each change was measured with interleaved runs of the old binary
   use an image prepared again with the fixed runner.
 
 `testQueryGoogle` fails in each sweep, on Cog also (live network query).
+
+The four sweeps ran again at `a21b24c4` (the three fixes from the second
+package run, and the fixed runner).  No `TestTookTooMuchTime` error is left.
+
+| image | arch | pass, recovery pass included | not passed |
+|---|---|---|---|
+| Pharo 14 | arm64 | 28195 | 4 |
+| Pharo 13 | arm64 | 27931 | 1 |
+| Pharo 14 | x86_64 | 28200 | 1 |
+| Pharo 13 | x86_64 | 27931 | 3 |
+
+The tests that did not pass: `testQueryGoogle` (4 sweeps); two tests that
+could not resolve `api.github.com` in that run; and the timing-dependent
+tests `testNewProcessTaskRunnerRunsInNewProcessEveryTime`,
+`StPlaygroundPageTest>>testContents` and
+`testOpenSpotterRefreshesPreviewOnce`, each one known from earlier sweeps.
 
 - Pharo 14 package run (`scripts/pkg-jit-test/`, 200 manifest rows, stock
   Cog v12.0.6 loads each package): 151 packages load, 49 do not load on
@@ -98,8 +114,7 @@ Each change was measured with interleaved runs of the old binary
     races that Cog shows also.  `newapplesho-google-cloud-smalltalk`: Cog
     crashes in `libcrypto`.
   - `pharo-cig` and `smalltalkweb-myprecious`: no change, see below.
-- Not done: the four sweeps on the build with these three fixes (in
-  progress); a package run on a real x86_64 host
+- Not done: a package run on a real x86_64 host
   ([x86-package-run.md](x86-package-run.md)).
 - Open: a block whose home is live on the stack of a different process
   still uses the method fallback (scenario B7; the tested answer matches
