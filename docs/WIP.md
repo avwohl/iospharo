@@ -205,6 +205,17 @@ runs for each build, gave the same result for the build at `9e22a112`:
 one of the two timing-dependent TaskIt tests failed in 5 of 20 runs there
 and in 4 of 20 runs at `d5323560`.
 
+The four sweeps ran again at `bcb49d42` (the `SDL_CreateWindow` fix for the
+OpenGL flag).  In each sweep the only test that did not pass is
+`testQueryGoogle`.
+
+| image | arch | pass, recovery pass included | not passed |
+|---|---|---|---|
+| Pharo 14 | arm64 | 28198 | 1 |
+| Pharo 13 | arm64 | 27931 | 1 |
+| Pharo 14 | x86_64 | 28200 | 1 |
+| Pharo 13 | x86_64 | 27933 | 1 |
+
 - Pharo 14 package run (`scripts/pkg-jit-test/`, 200 manifest rows, stock
   Cog v12.0.6 loads each package): 151 packages load, 49 do not load on
   Pharo 14.  First run at `d8a36711`, arm64: Cog 30436 passes, our VM 30414.
