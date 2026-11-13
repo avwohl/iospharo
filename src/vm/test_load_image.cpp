@@ -1697,6 +1697,11 @@ int main(int argc, char* argv[]) {
         if (exitCode == 0) exitCode = 71;
     }
 
+    // The status the image gave to its quit primitive (`Smalltalk exitFailure`
+    // is quit: 1) is the process exit status, as on the stock VM.  The guards
+    // above stay: they report a run that never quit.
+    if (exitCode == 0) exitCode = interpreter.quitExitStatus();
+
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] main returning %d\n", exitCode);
     }

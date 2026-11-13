@@ -1,8 +1,11 @@
 # Machine-code frames on x86-64
 
 Status: the default on x86-64 macOS and Linux since 2026-10-18 (opt out
-with `PHARO_NO_X86_MCF=1`).  Windows: opt-in (`PHARO_X86_MCF=1`), not
-built or tested there yet.  Design: docs/mc-frames-design.md (arm64).
+with `PHARO_NO_X86_MCF=1`).  Windows: the default since 2026-11-13.  Before
+that, Windows ran the loops-only policy and was 4 to 10 times slower: the
+package smalltalkweb-myprecious failed `testArgPassByReference` there
+because a 100 ms response timeout expired on slow Fuel round trips.
+Design: docs/mc-frames-design.md (arm64).
 
 ## Why
 

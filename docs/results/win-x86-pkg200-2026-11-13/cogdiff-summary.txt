@@ -28,27 +28,27 @@ filediff         mcf      SAME       cog_exit=0 our_exit=0 cog_lines=2
 locdiff          jit      SAME       cog_exit=0 our_exit=0 cog_lines=14
 locdiff          nojit    SAME       cog_exit=0 our_exit=0 cog_lines=14
 locdiff          mcf      SAME       cog_exit=0 our_exit=0 cog_lines=14
-nlrhome          jit      DIFF 1     cog_exit=0 our_exit=0 cog_lines=71
-nlrhome          nojit    DIFF 1     cog_exit=0 our_exit=0 cog_lines=71
-nlrhome          mcf      DIFF 1     cog_exit=0 our_exit=0 cog_lines=71
+nlrhome          jit      SAME       cog_exit=0 our_exit=0 cog_lines=70
+nlrhome          nojit    SAME       cog_exit=0 our_exit=0 cog_lines=70
+nlrhome          mcf      SAME       cog_exit=0 our_exit=0 cog_lines=70
 objdiff          jit      SAME       cog_exit=0 our_exit=0 cog_lines=1
 objdiff          nojit    SAME       cog_exit=0 our_exit=0 cog_lines=1
 objdiff          mcf      SAME       cog_exit=0 our_exit=0 cog_lines=1
-primdiff         jit      DIFF 14    cog_exit=0 our_exit=0 cog_lines=18070
-primdiff         nojit    DIFF 14    cog_exit=0 our_exit=0 cog_lines=18070
-primdiff         mcf      DIFF 14    cog_exit=0 our_exit=0 cog_lines=18070
-primdiff2        jit      DIFF 8     cog_exit=0 our_exit=0 cog_lines=41431
-primdiff2        nojit    DIFF 8     cog_exit=0 our_exit=0 cog_lines=41431
-primdiff2        mcf      DIFF 8     cog_exit=0 our_exit=0 cog_lines=41431
+primdiff         jit      DIFF 8     cog_exit=0 our_exit=0 cog_lines=18070
+primdiff         nojit    DIFF 8     cog_exit=0 our_exit=0 cog_lines=18070
+primdiff         mcf      DIFF 8     cog_exit=0 our_exit=0 cog_lines=18070
+primdiff2        jit      DIFF 4     cog_exit=0 our_exit=0 cog_lines=41431
+primdiff2        nojit    DIFF 4     cog_exit=0 our_exit=0 cog_lines=41431
+primdiff2        mcf      DIFF 4     cog_exit=0 our_exit=0 cog_lines=41431
 procdiff         jit      SAME       cog_exit=0 our_exit=0 cog_lines=16
 procdiff         nojit    SAME       cog_exit=0 our_exit=0 cog_lines=16
 procdiff         mcf      SAME       cog_exit=0 our_exit=0 cog_lines=16
 surfacediff      jit      DIFF 2     cog_exit=0 our_exit=0 cog_lines=1
 surfacediff      nojit    DIFF 2     cog_exit=0 our_exit=0 cog_lines=1
 surfacediff      mcf      DIFF 2     cog_exit=0 our_exit=0 cog_lines=1
-sysdiff          jit      DIFF 10    cog_exit=0 our_exit=0 cog_lines=34
-sysdiff          nojit    DIFF 10    cog_exit=0 our_exit=0 cog_lines=34
-sysdiff          mcf      DIFF 10    cog_exit=0 our_exit=0 cog_lines=34
+sysdiff          jit      DIFF 2     cog_exit=0 our_exit=0 cog_lines=26
+sysdiff          nojit    DIFF 2     cog_exit=0 our_exit=0 cog_lines=26
+sysdiff          mcf      DIFF 2     cog_exit=0 our_exit=0 cog_lines=26
 weakdiff         jit      SAME       cog_exit=0 our_exit=0 cog_lines=1
 weakdiff         nojit    SAME       cog_exit=0 our_exit=0 cog_lines=1
 weakdiff         mcf      SAME       cog_exit=0 our_exit=0 cog_lines=1

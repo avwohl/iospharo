@@ -490,6 +490,10 @@ public:
     // False at exit in eval mode means the eval never completed; see
     // evalReachedQuit_.
     bool evalReachedQuit() const { return evalReachedQuit_; }
+    // The status the image passed to the quit primitive (`Smalltalk quit: n`,
+    // `exitFailure`); 0 when none was passed.  main returns it as the process
+    // exit status, as the stock VM does.
+    int quitExitStatus() const { return quitExitStatus_; }
     const std::vector<std::string>& imageArguments() const { return imageArguments_; }
 
     /// Set/get VM parameters (returned by primitiveGetAttribute at negative indices)
@@ -1385,6 +1389,7 @@ private:
     // `return 0`.  A load that did nothing then reported success, which is
     // how XMLParser's x86_64 abort was recorded as `load rc=0` for weeks.
     bool evalReachedQuit_ = false;
+    int quitExitStatus_ = 0;
     // Wall-clock bound on that deferral.  An idle image executes very few
     // bytecodes, so a step-count deadline would never arrive; and if nothing
     // ever consumes the script (no command-line handler was queued) the VM
@@ -4966,7 +4971,8 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
 
     // Well-known selectors
     visitor(selectors_.doesNotUnderstand);
-    visitor(selectors_.cannotInterpret);   // proxy protocol: a stale copy after a compacting GC made lookup miss the handler
+    visitor(selectors_.cannotInterpret);
+    visitor(cannotInterpretClass_);        // set by a lookup, used by the send that follows
     visitor(selectors_.mustBeBoolean);
     visitor(selectors_.cannotReturn);
     visitor(selectors_.aboutToReturn);

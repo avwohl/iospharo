@@ -19414,7 +19414,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
 // sendDoesNotUnderstand builder's stack/GC discipline exactly.
 void Interpreter::sendCannotInterpret(Oop selector, int argCount, Oop nilDictClass) {
     // Stack: ... receiver arg1 .. argN
-    push(selector);  // GC root during allocations
+    push(nilDictClass);  // GC root during allocations: a GC may move the class
+    push(selector);      // GC root during allocations
 
     Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
     uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
@@ -19422,7 +19423,7 @@ void Interpreter::sendCannotInterpret(Oop selector, int argCount, Oop nilDictCla
         messageClassIdx = memory_.registerClass(messageClass);
     Oop message = memory_.allocateSlots(messageClassIdx, 3, ObjectFormat::FixedSize);
     if (message.rawBits() == memory_.nil().rawBits()) {
-        pop();
+        pop(); pop();
         for (int i = 0; i < argCount + 1; i++) pop();
         stopVM("cannotInterpret: failed to allocate Message");
         return;
@@ -19435,7 +19436,7 @@ void Interpreter::sendCannotInterpret(Oop selector, int argCount, Oop nilDictCla
         arrayClassIdx = memory_.registerClass(arrayClass);
     Oop args = memory_.allocateSlots(arrayClassIdx, argCount, ObjectFormat::Indexable);
     if (args.rawBits() == memory_.nil().rawBits() && argCount > 0) {
-        pop(); pop();
+        pop(); pop(); pop();
         for (int i = 0; i < argCount + 1; i++) pop();
         stopVM("cannotInterpret: failed to allocate args Array");
         return;
@@ -19443,6 +19444,7 @@ void Interpreter::sendCannotInterpret(Oop selector, int argCount, Oop nilDictCla
 
     message = pop();
     selector = pop();
+    nilDictClass = pop();
 
     memory_.storePointer(0, message, selector);
     for (int i = argCount - 1; i >= 0; --i) {

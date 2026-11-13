@@ -5532,6 +5532,16 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
     }
 
+    // `Smalltalk quit: n` (and exitFailure, which is quit: 1) hands the
+    // process exit status to this primitive as its argument.  Keep it for
+    // main to return; the stock VM exits with it.  A deferred quit keeps it
+    // too, and a repeat quit replaces it.
+    if (argCount >= 1) {
+        Oop statusOop = stackValue(0);
+        if (statusOop.isSmallInteger())
+            quitExitStatus_ = static_cast<int>(statusOop.asSmallInteger());
+    }
+
     // A quit taken while a callback is outstanding cannot be honoured here.
     // The C function that invoked the callback — qsort, say — still has frames
     // on the stack expecting the callback to return, and stopping the
@@ -15323,35 +15333,97 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
 // every file syscall site.  GetFullPathNameA canonicalizes first because the
 // \\?\ form disables the normalization (./.. , forward slashes, relative paths)
 // that the Win32 path layer would otherwise perform.
-static std::string winLongPath(const std::string& path) {
 #ifdef _WIN32
-    if (path.size() >= 248 && path.rfind("\\\\?\\", 0) != 0) {
-        std::string abs;
-        if (path.size() >= 3 && path[1] == ':' &&
-            (path[2] == '\\' || path[2] == '/')) {
-            // Already an absolute drive path — canonicalize slashes ourselves.
-            // GetFullPathNameA is itself MAX_PATH-limited and FAILS on a long
-            // input (the very case we are here to handle), so an absolute long
-            // path must NOT be routed through it.
-            abs = path;
-            for (char& c : abs) if (c == '/') c = '\\';
+// The image hands the VM every path as UTF-8.  The ANSI (code page) Win32 and
+// CRT entry points mangle any name outside the code page, so each file call
+// here goes through the wide API: convert the UTF-8 path to UTF-16 (stock
+// Cog does the same), then add the long-path prefix on the wide string.
+static std::wstring winWidePath(const std::string& path) {
+    std::wstring w;
+    int n = MultiByteToWideChar(CP_UTF8, 0, path.data(), (int)path.size(), nullptr, 0);
+    if (n > 0) {
+        w.assign((size_t)n, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, path.data(), (int)path.size(), &w[0], n);
+    }
+    if (w.size() >= 248 && w.rfind(L"\\\\?\\", 0) != 0) {
+        std::wstring abs;
+        if (w.size() >= 3 && w[1] == L':' && (w[2] == L'\\' || w[2] == L'/')) {
+            // Already an absolute drive path: GetFullPathNameW is MAX_PATH-limited
+            // on a long input, so canonicalize the slashes ourselves.
+            abs = w;
+            for (wchar_t& c : abs) if (c == L'/') c = L'\\';
         } else {
-            // Relative / drive-relative: GetFullPathNameA is safe only because
-            // the *resolved* result is what is long, not the short input.
-            char full[32768];
-            DWORD n = GetFullPathNameA(path.c_str(), (DWORD)sizeof(full), full, nullptr);
-            if (n != 0 && n < sizeof(full)) abs.assign(full, n);
+            std::vector<wchar_t> full(32768);
+            DWORD m = GetFullPathNameW(w.c_str(), (DWORD)full.size(), full.data(), nullptr);
+            if (m != 0 && m < full.size()) abs.assign(full.data(), m);
         }
         if (!abs.empty()) {
-            if (abs.rfind("\\\\", 0) == 0)         // UNC: \\srv\share -> \\?\UNC\srv\share
-                return "\\\\?\\UNC\\" + abs.substr(2);
-            if (abs.size() >= 2 && abs[1] == ':')  // drive: C:\.. -> \\?\C:\..
-                return "\\\\?\\" + abs;
+            if (abs.rfind(L"\\\\", 0) == 0)         // UNC: \\srv\share -> \\?\UNC\srv\share
+                return L"\\\\?\\UNC\\" + abs.substr(2);
+            if (abs.size() >= 2 && abs[1] == L':')  // drive: C:\.. -> \\?\C:\..
+                return L"\\\\?\\" + abs;
         }
     }
-#endif
-    return path;
+    return w;
 }
+
+static std::string winNarrowUtf8(const wchar_t* w, int len /* -1: NUL-terminated */) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, len, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return std::string();
+    std::string out((size_t)n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, len, &out[0], n, nullptr, nullptr);
+    if (len == -1 && !out.empty()) out.pop_back();   // drop the NUL
+    return out;
+}
+
+static int pharoStat(const std::string& path, struct stat* st, bool = true) {
+    // mingw-w64 declares struct stat and struct _stat64i32 as two tags for one layout.
+    static_assert(sizeof(struct stat) == sizeof(struct _stat64i32), "stat layouts differ");
+    return _wstat(winWidePath(path).c_str(), reinterpret_cast<struct _stat64i32*>(st));
+}
+static int pharoAccess(const std::string& path, int mode) {
+    return _waccess(winWidePath(path).c_str(), mode);
+}
+static int pharoRemove(const std::string& path) {
+    return _wremove(winWidePath(path).c_str());
+}
+static int pharoRename(const std::string& from, const std::string& to) {
+    return _wrename(winWidePath(from).c_str(), winWidePath(to).c_str());
+}
+static int pharoMkdir(const std::string& path) {
+    return _wmkdir(winWidePath(path).c_str());
+}
+static int pharoRmdir(const std::string& path) {
+    return _wrmdir(winWidePath(path).c_str());
+}
+static int pharoChdir(const std::string& path) {
+    return _wchdir(winWidePath(path).c_str());
+}
+static bool pharoGetcwd(std::string& out) {
+    wchar_t buf[32768];
+    if (!_wgetcwd(buf, 32768)) return false;
+    out = winNarrowUtf8(buf, -1);
+    return true;
+}
+#else
+static inline int pharoStat(const std::string& path, struct stat* st, bool follow = true) {
+    return follow ? stat(path.c_str(), st) : lstat(path.c_str(), st);
+}
+static inline int pharoAccess(const std::string& path, int mode) { return access(path.c_str(), mode); }
+static inline int pharoRemove(const std::string& path) { return remove(path.c_str()); }
+static inline int pharoRename(const std::string& from, const std::string& to) {
+    return rename(from.c_str(), to.c_str());
+}
+static inline int pharoMkdir(const std::string& path) { return mkdir(path.c_str(), 0755); }
+static inline int pharoRmdir(const std::string& path) { return rmdir(path.c_str()); }
+static inline int pharoChdir(const std::string& path) { return chdir(path.c_str()); }
+static inline bool pharoGetcwd(std::string& out) {
+    char buf[PATH_MAX];
+    if (!getcwd(buf, sizeof(buf))) return false;
+    out = buf;
+    return true;
+}
+#endif
 
 #ifdef _WIN32
 // Enumerate a directory's entry names via the WIDE Win32 API.  opendir()/
@@ -15368,11 +15440,8 @@ static std::string winLongPath(const std::string& path) {
 // are the real mechanism (stock's Windows FileAttributesPlugin does the
 // same — `isSymlink` answers true there, probed 2026-07-02).
 static bool winIsSymlink(const std::string& path) {
-    std::string lp = winLongPath(path);
-    int wlen = MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, nullptr, 0);
-    if (wlen <= 0) return false;
-    std::wstring wp((size_t)wlen, L' ');
-    MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, &wp[0], wlen);
+    std::wstring wp = winWidePath(path);
+    if (wp.empty()) return false;
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(wp.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -15397,11 +15466,8 @@ static bool winReadSymlinkTarget(const std::string& path, std::string& target) {
         WCHAR  PathBuffer[1];
     } SymlinkReparseBuffer;
 
-    std::string lp = winLongPath(path);
-    int wlen = MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, nullptr, 0);
-    if (wlen <= 0) return false;
-    std::wstring wp((size_t)wlen, L' ');
-    MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, &wp[0], wlen);
+    std::wstring wp = winWidePath(path);
+    if (wp.empty()) return false;
 
     HANDLE h = CreateFileW(wp.c_str(), FILE_READ_ATTRIBUTES,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -15426,31 +15492,23 @@ static bool winReadSymlinkTarget(const std::string& path, std::string& target) {
         nameLen = rb->SubstituteNameLength / sizeof(WCHAR);
         if (nameLen <= 0) return false;
     }
-    int alen = WideCharToMultiByte(CP_UTF8, 0, name, nameLen, nullptr, 0, nullptr, nullptr);
-    if (alen <= 0) return false;
-    target.assign((size_t)alen, ' ');
-    WideCharToMultiByte(CP_UTF8, 0, name, nameLen, &target[0], alen, nullptr, nullptr);
-    return true;
+    target = winNarrowUtf8(name, nameLen);
+    return !target.empty();
 }
 
 static bool winListDir(const std::string& path, std::vector<std::string>& out) {
-    std::string pat = winLongPath(path);
-    if (!pat.empty() && pat.back() != '\\' && pat.back() != '/') pat += '\\';
-    pat += '*';
-    int wlen = MultiByteToWideChar(CP_ACP, 0, pat.c_str(), -1, nullptr, 0);
-    if (wlen <= 0) return false;
-    std::wstring wpat((size_t)wlen, L'\0');
-    MultiByteToWideChar(CP_ACP, 0, pat.c_str(), -1, &wpat[0], wlen);
+    std::wstring wpat = winWidePath(path);
+    if (wpat.empty()) return false;
+    if (wpat.back() != L'\\' && wpat.back() != L'/') wpat += L'\\';
+    wpat += L'*';
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(wpat.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
             continue;
-        int nlen = WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, nullptr, 0, nullptr, nullptr);
-        if (nlen <= 1) continue;
-        std::string name((size_t)(nlen - 1), '\0');
-        WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, &name[0], nlen, nullptr, nullptr);
+        std::string name = winNarrowUtf8(fd.cFileName, -1);
+        if (name.empty()) continue;
         out.push_back(name);
     } while (FindNextFileW(h, &fd));
     FindClose(h);
@@ -15466,8 +15524,7 @@ static FILE* pharoSharedFopen(const char* path, const char* mode) {
     if (wr && !plus) access = GENERIC_WRITE;             // "wb": write-only
     const DWORD disposition = wr ? CREATE_ALWAYS : (ap ? OPEN_ALWAYS : OPEN_EXISTING);
     const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    std::string lp = winLongPath(path);
-    HANDLE h = CreateFileA(lp.c_str(), access, share, nullptr, disposition,
+    HANDLE h = CreateFileW(winWidePath(path).c_str(), access, share, nullptr, disposition,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return nullptr;
     int oflags = _O_BINARY;
@@ -15699,7 +15756,7 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    int result = remove(winLongPath(filename).c_str());
+    int result = pharoRemove(filename);
 
     // Cog: fail when the delete fails (File class>>primDeleteFile: answers
     // nil then), answer the receiver when it succeeds.
@@ -15901,7 +15958,7 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (rename(winLongPath(oldName).c_str(), winLongPath(newName).c_str()) != 0) {
+    if (pharoRename(oldName, newName) != 0) {
         osErrorCode_ = errno;
         return PrimitiveResult::Failure;
     }
@@ -15928,11 +15985,7 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-#ifdef _WIN32
-    if (_mkdir(winLongPath(path).c_str()) != 0) {  // Windows _mkdir takes no mode argument
-#else
-    if (mkdir(path.c_str(), 0755) != 0) {
-#endif
+    if (pharoMkdir(path) != 0) {
         // Preserve errno so a future primitiveErrorCode could expose it.
         osErrorCode_ = errno;
         return PrimitiveResult::Failure;
@@ -16056,7 +16109,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     int64_t modTime = 0;
     int64_t createTime = 0;
 
-    if (stat(winLongPath(fullPath).c_str(), &statBuf) == 0) {
+    if (pharoStat(fullPath, &statBuf) == 0) {
         isDir = S_ISDIR(statBuf.st_mode);
         fileSize = isDir ? 0 : statBuf.st_size;
         modTime = statBuf.st_mtime;
@@ -16121,7 +16174,7 @@ Oop Interpreter::directoryEntryArray(const std::string& name, const std::string&
     struct stat st;
     bool isDir = false, isLink = false;
     int64_t size = 0, mtime = 0, ctime = 0, perms = 0;
-    if (stat(winLongPath(fullPath).c_str(), &st) == 0) {
+    if (pharoStat(fullPath, &st) == 0) {
         isDir = S_ISDIR(st.st_mode);
         size = isDir ? 0 : (int64_t)st.st_size;
         mtime = st.st_mtime;
@@ -16170,14 +16223,14 @@ PrimitiveResult Interpreter::primitiveDirectoryEntry(int argCount) {
     if (name.empty()) return PrimitiveResult::Failure;
     if (dir.empty()) dir = "/";
     struct stat dst;
-    if (stat(winLongPath(dir).c_str(), &dst) != 0 || !S_ISDIR(dst.st_mode))
+    if (pharoStat(dir, &dst) != 0 || !S_ISDIR(dst.st_mode))
         return PrimitiveResult::Failure;
     std::string full = dir;
     if (full.back() != '/' && full.back() != '\\') full += '/';
     full += name;
     struct stat st;
     Oop result = memory_.nil();
-    if (stat(winLongPath(full).c_str(), &st) == 0) {
+    if (pharoStat(full, &st) == 0) {
         result = directoryEntryArray(name, full);
         if (result.isNil()) return PrimitiveResult::Failure;
     }
@@ -16256,7 +16309,7 @@ PrimitiveResult Interpreter::primitiveDirectoryDelete(int argCount) {
     }
 
     // rmdir only works on empty directories
-    int result = rmdir(winLongPath(path).c_str());
+    int result = pharoRmdir(path);
 
     // Cog: fail when rmdir fails (File class>>deleteDirectory: then sends
     // primitiveFailed), answer the receiver when it succeeds.
@@ -16279,7 +16332,7 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
         return PrimitiveResult::Failure;
     }
     struct stat statBuf;
-    if (stat(winLongPath(path).c_str(), &statBuf) != 0) {
+    if (pharoStat(path, &statBuf) != 0) {
         return PrimitiveResult::Failure;
     }
     popN(argCount);
@@ -16289,11 +16342,11 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
 // primitiveGetCurrentWorkingDirectory - named primitive (no module)
 // Takes 1 arg: a ByteArray buffer. Fills it with getcwd() result and returns a String.
 PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
-    char buf[1024];
-    if (!getcwd(buf, sizeof(buf))) {
+    std::string cwdStr;
+    if (!pharoGetcwd(cwdStr)) {
         return PrimitiveResult::Failure;
     }
-    Oop result = createStringObject(memory_, std::string(buf));
+    Oop result = createStringObject(memory_, cwdStr);
     if (result.isNil()) {
         return PrimitiveResult::Failure;
     }
@@ -28350,10 +28403,11 @@ PrimitiveResult Interpreter::primitiveSetEnvironment(int argCount) {
 PrimitiveResult Interpreter::primitiveGetCurrentDirectory(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    char buffer[PATH_MAX];
-    char* cwd = getcwd(buffer, sizeof(buffer));
+    std::string cwdStr;
+    bool haveCwd = pharoGetcwd(cwdStr);
+    const char* cwd = cwdStr.c_str();
 
-    if (!cwd) {
+    if (!haveCwd) {
         return PrimitiveResult::Failure;
     }
 
@@ -28379,7 +28433,7 @@ PrimitiveResult Interpreter::primitiveSetCurrentDirectory(int argCount) {
     }
 
     std::string path = extractString(memory_, pathOop);
-    int result = chdir(path.c_str());
+    int result = pharoChdir(path);
 
     popN(2);  // pop path and receiver
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
@@ -32066,7 +32120,7 @@ static bool isBuiltInLibrary(const std::string& path) {
 // Index 13 (1-based) of the file-attributes stat array: the Windows
 // file-attributes bitmask (FILE_ATTRIBUTE_*), which WindowsStore>>isHidden:
 // tests for FILE_ATTRIBUTE_HIDDEN (0x2).  0 on non-Windows (never read there).
-// GetFileAttributesA returns INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) on failure —
+// GetFileAttributesW returns INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) on failure —
 // that has bit 0x2 set and would falsely report hidden, so fall back to
 // FILE_ATTRIBUTE_NORMAL (0x80, not hidden).
 // Both call sites are themselves inside #ifdef _WIN32, so the non-Windows
@@ -32074,7 +32128,7 @@ static bool isBuiltInLibrary(const std::string& path) {
 // on every other platform.  Guard the whole definition instead.
 #ifdef _WIN32
 static int64_t winFileAttributes(const std::string& path) {
-    DWORD a = GetFileAttributesA(winLongPath(path).c_str());
+    DWORD a = GetFileAttributesW(winWidePath(path).c_str());
     if (a == INVALID_FILE_ATTRIBUTES) a = FILE_ATTRIBUTE_NORMAL;
     return static_cast<int64_t>(a);
 }
@@ -32127,7 +32181,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Attributes 13-15 use access()
     if (attrNum >= 13 && attrNum <= 15) {
         int mode = (attrNum == 13) ? R_OK : (attrNum == 14) ? W_OK : X_OK;
-        bool ok = (access(path.c_str(), mode) == 0);
+        bool ok = (pharoAccess(path, mode) == 0);
         // Built-in libraries are readable but not writable/executable
         if (!ok && isBuiltInLibrary(path)) {
             ok = (attrNum == 13);  // readable=true, writable/executable=false
@@ -32144,7 +32198,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         bool isSymlink = winIsSymlink(path);
 #else
         struct stat st;
-        bool isSymlink = (lstat(winLongPath(path).c_str(), &st) == 0) && S_ISLNK(st.st_mode);
+        bool isSymlink = (lstat(path.c_str(), &st) == 0) && S_ISLNK(st.st_mode);
 #endif
         popN(3);
         push(isSymlink ? memory_.trueObject() : memory_.falseObject());
@@ -32169,7 +32223,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         return PrimitiveResult::Success;
 #else
         struct stat lst;
-        if (lstat(winLongPath(path).c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        if (lstat(path.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
             char buf[4096];
             ssize_t n = readlink(path.c_str(), buf, sizeof(buf));
             if (n < 0) {
@@ -32191,7 +32245,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
 
     // Attributes 1-12 use stat()
     struct stat st;
-    if (stat(winLongPath(path).c_str(), &st) != 0) {
+    if (pharoStat(path, &st) != 0) {
         // File doesn't exist on disk — check if it's a built-in library
         if (isBuiltInLibrary(path)) {
             fillSyntheticStat(&st);
@@ -32280,7 +32334,7 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
 
     struct stat st;
-    bool exists = (stat(winLongPath(path).c_str(), &st) == 0);
+    bool exists = (pharoStat(path, &st) == 0);
 
     // Built-in libraries (SDL2/cairo stubs) exist as compiled-in code
     if (!exists && isBuiltInLibrary(path)) {
@@ -32447,7 +32501,7 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         entryPath += '/';
     }
     entryPath += dName;
-    haveStat = (stat(winLongPath(entryPath).c_str(), &st) == 0);
+    haveStat = (pharoStat(entryPath, &st) == 0);
 #else
     struct dirent* entry = nullptr;
     while ((entry = readdir(dir)) != nullptr) {
@@ -32814,7 +32868,7 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
 
     struct stat st;
     bool useLstat = (mask & 4) != 0;
-    int statResult = useLstat ? lstat(winLongPath(path).c_str(), &st) : stat(winLongPath(path).c_str(), &st);
+    int statResult = pharoStat(path, &st, !useLstat);
     if (statResult != 0) {
         // File doesn't exist on disk — check if it's a built-in library
         if (isBuiltInLibrary(path)) {
@@ -32935,9 +32989,9 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         statArray = pop();  // restore statArray
         if (accessArray.isNil()) return PrimitiveResult::Failure;
 
-        bool readable = access(path.c_str(), R_OK) == 0;
-        bool writable = access(path.c_str(), W_OK) == 0;
-        bool executable = access(path.c_str(), X_OK) == 0;
+        bool readable = pharoAccess(path, R_OK) == 0;
+        bool writable = pharoAccess(path, W_OK) == 0;
+        bool executable = pharoAccess(path, X_OK) == 0;
 
         memory_.storePointer(0, accessArray, readable ? memory_.trueObject() : memory_.falseObject());
         memory_.storePointer(1, accessArray, writable ? memory_.trueObject() : memory_.falseObject());

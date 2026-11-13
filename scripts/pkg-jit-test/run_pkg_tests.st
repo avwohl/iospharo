@@ -18,8 +18,19 @@
  when the run ended.  Keep the comments free of text that looks like such a
  line: a failed compile echoes this source into the log."
 
-| log prefixes classes p f e to perTimeout envp |
+| log prefixes classes p f e to perTimeout envp msg |
 log := Stdio stdout.
+"msg value: anException value: max : the message text, at most max characters,
+ with a question mark for each character that is not ASCII.  One wide character
+ makes the full line a WideString, and the stock Windows VM then writes 4 bytes
+ for each character: the FAIL and ERR extractors found no such line
+ (koendehondt-hera-for-pharo, 3 FAIL lines of Cog not counted, 2026-11-13)."
+msg := [:ex :max | | t |
+  t := (ex messageText ifNil: ['']) asString.
+  String streamContents: [:st |
+    1 to: (t size min: max) do: [:i | | c |
+      c := t at: i.
+      st nextPut: (c codePoint < 128 ifTrue: [c] ifFalse: [$?])]]].
 perTimeout := 50 seconds.
 "Prefixes come from the PKG_PREFIXES env var (comma-separated) when set, else the
  /tmp/pkg_prefixes.txt file.  The env path lets parallel workers each pass their
@@ -67,7 +78,7 @@ classes do: [:cls |
               on: TestFailure do: [:ex |
                 f := f + 1.
                 log lf; nextPutAll: 'FAIL ', cls name, '>>', sel,
-                  ' [', ((ex messageText ifNil: ['']) copyFrom: 1 to: ((ex messageText ifNil: ['']) size min: 200)), ']'; lf.
+                  ' [', (msg value: ex value: 200), ']'; lf.
                 #fail]]
             "Halt is an Exception, not an Error, so without it here a test that sends
              #halt (or #haltIf:) leaves the headless eval with an unhandled Halt and
@@ -76,7 +87,7 @@ classes do: [:cls |
             on: Error, Halt do: [:ex |
               e := e + 1.
               log lf; nextPutAll: 'ERR  ', cls name, '>>', sel,
-                ' (', ex class name, ': ', ((ex messageText ifNil: ['']) copyFrom: 1 to: ((ex messageText ifNil: ['']) size min: 160)), ')'; lf.
+                ' (', ex class name, ': ', (msg value: ex value: 160), ')'; lf.
               #error].
     res = #pass ifTrue: [p := p + 1].
     res = #timeout ifTrue: [to := to + 1.
