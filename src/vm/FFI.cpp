@@ -1012,10 +1012,11 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
         g_emergencyDebuggerTriggered.store(true, std::memory_order_release);
     }
     // SDL accepts one graphics API flag, and only when the video driver has
-    // that API.  There is no OpenGL, Vulkan or Metal driver here, so each flag
-    // fails as it fails on a video driver without the API.  The image sets the
-    // OpenGL flag only for an OSWindow that asks for GL attributes; it never
-    // sets the flag for the Morphic world window.
+    // that API.  There is no Vulkan or Metal driver here, so each of those
+    // flags fails as it fails on a video driver without the API.  The OpenGL
+    // flag is accepted, as the cocoa driver of libSDL2 accepts it: the Bloc
+    // window host of the image always sets it and needs a window handle.  The
+    // later SDL_GL_CreateContext call is the one that fails.
     constexpr uint32_t kGraphicsApiFlags = kWindowOpenGL | kWindowMetal | kWindowVulkan;
     const uint32_t graphicsFlags = flags & kGraphicsApiFlags;
     if (graphicsFlags & (graphicsFlags - 1)) return sdlFailNull("Conflicting window flags specified");
