@@ -273,6 +273,7 @@ struct WellKnownSelectors {
     Oop cannotReturn;
     Oop aboutToReturn;
     Oop returnThrough;   // return:through: — image-protocol NLR unwind, sent to the C++-resolved home ctx
+    Oop resumeThrough;   // resume:through: — third step of the image unwind protocol
     Oop add;           // +
     Oop subtract;      // -
     Oop lessThan;      // <
@@ -1745,6 +1746,10 @@ private:
 
     std::array<MethodCacheEntry, MethodCacheSize> methodCache_;
     WellKnownSelectors selectors_;
+    // The Context methods for aboutToReturn:through:, return:through: and
+    // resume:through: as found at image start (a GC root; see
+    // mcfUnwindProtocolIsStock).
+    Oop stockUnwindMethods_[3];
     std::array<PrimitiveFunc, 700> primitiveTable_;  // Must be >= 661 for generated_primitives.inc
 
     // Named primitive registry - maps "moduleName:primitiveName" to function
@@ -2147,6 +2152,11 @@ public:
     // (docs/native-nlr-plan.md, "ensure shortcut").  e = the ensure: frame's
     // depth.  ensureShortcutOk is check-only; the commit runs after it.
     bool mcfEnsureShortcutOk(size_t h, size_t d, size_t e);
+    // True while Context's aboutToReturn:through:, return:through: and
+    // resume:through: are still the methods the image shipped with.  The
+    // ensure shortcut replaces those three sends, so a tool that wraps one
+    // (MethodProxies) must see the real protocol run instead.
+    bool mcfUnwindProtocolIsStock();
     void* mcfEnsureShortcutCommit(jit::JITState* st, size_t h, size_t e, Oop value);
     // Trim steps 7-8 (docs/mcf-call-trim-plan.md): a record's closure is
     // fp[0] of a block frame (INV-FP0), nil for a method frame; its active
@@ -4943,6 +4953,8 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     visitor(selectors_.cannotReturn);
     visitor(selectors_.aboutToReturn);
     visitor(selectors_.returnThrough);
+    visitor(selectors_.resumeThrough);
+    for (Oop& m : stockUnwindMethods_) visitor(m);
     visitor(selectors_.add);
     visitor(selectors_.subtract);
     visitor(selectors_.lessThan);

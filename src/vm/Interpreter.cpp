@@ -21198,6 +21198,19 @@ void Interpreter::initializeSelectors() {
     // symbol table.  Used by handleContextNLRUnwind to run the image-protocol
     // unwind against the C++-resolved HOME context directly (see there).
     selectors_.returnThrough = memory_.lookupSymbol("return:through:");
+    selectors_.resumeThrough = memory_.lookupSymbol("resume:through:");
+    {
+        // Remember the image's own unwind-protocol methods: the ensure
+        // shortcut (mcfEnsureShortcutOk) is only sound while they are in place.
+        const Oop ctxClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+        const Oop sels[3] = { selectors_.aboutToReturn, selectors_.returnThrough,
+                              selectors_.resumeThrough };
+        for (int i = 0; i < 3; i++) {
+            stockUnwindMethods_[i] = Oop::nil();
+            if (ctxClass.isObject() && !ctxClass.isNil() && sels[i].isObject() && !sels[i].isNil())
+                stockUnwindMethods_[i] = lookupMethod(sels[i], ctxClass);
+        }
+    }
 
 
     // For arithmetic selectors, search SmallInteger's method dictionary

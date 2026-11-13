@@ -2236,8 +2236,26 @@ static bool mcfSymbolIs(Oop o, const char* s) {
     return h->byteSize() == n && memcmp(h->bytes(), s, n) == 0;
 }
 
+bool Interpreter::mcfUnwindProtocolIsStock() {
+    const Oop ctxClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+    if (!ctxClass.isObject() || ctxClass.isNil()) return false;
+    const Oop sels[3] = { selectors_.aboutToReturn, selectors_.returnThrough,
+                          selectors_.resumeThrough };
+    for (int i = 0; i < 3; i++) {
+        const Oop stock = stockUnwindMethods_[i];
+        // No method found at image start: the image has no such protocol to
+        // run, so there is nothing the shortcut could skip.
+        if (stock.isNil()) continue;
+        if (lookupMethodForSend(sels[i], ctxClass).rawBits() != stock.rawBits()) return false;
+    }
+    return true;
+}
+
 bool Interpreter::mcfEnsureShortcutOk(size_t h, size_t d, size_t e) {
     if (e <= h || e >= d || h == 0 || seg_.armed || collapsed_.armed) return false;
+    // The shortcut stands in for Context>>aboutToReturn:through: and its
+    // callees; with one of them replaced (MethodProxies) run the real protocol.
+    if (!mcfUnwindProtocolIsStock()) return false;
     const SavedFrame& E = savedFrames_[e];
     if (!E.materializedContext.isNil() || !E.fp()) return false;
     // E runs BlockClosure>>ensure: (1 argument, 4 temporaries, the selector).
