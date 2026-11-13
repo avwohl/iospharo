@@ -1750,6 +1750,14 @@ private:
     // resume:through: as found at image start (a GC root; see
     // mcfUnwindProtocolIsStock).
     Oop stockUnwindMethods_[3];
+    // Bumped by every method-cache or inline-cache flush (flushMethodCache,
+    // flushJITCaches): the image's only way to make a changed method
+    // dictionary visible, so the answer of mcfUnwindProtocolIsStock stays
+    // valid until the epoch moves (three cache lookups per NLR through
+    // ensure: cost 5.7% of that loop).
+    uint64_t methodChangeEpoch_ = 1;
+    uint64_t unwindCheckEpoch_ = 0;
+    bool unwindProtocolIsStock_ = false;
     std::array<PrimitiveFunc, 700> primitiveTable_;  // Must be >= 661 for generated_primitives.inc
 
     // Named primitive registry - maps "moduleName:primitiveName" to function
@@ -1781,6 +1789,7 @@ private:
 
     /// Clear the method cache (used when methods are modified or GC runs)
     void flushMethodCache() {
+        methodChangeEpoch_++;
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_FLUSH_CENSUS), 0)) {
             static uint64_t nf = 0;
             if ((++nf & 63) == 0) {
@@ -1819,6 +1828,7 @@ private:
     // its shortcut, and OCSpecialSelectorTest pins that).
     bool specialValueNeedsLookup();
     void flushJITCaches() {
+        methodChangeEpoch_++;
 #if PHARO_JIT_ENABLED
         if (jitRuntime_.isInitialized()) {
             jitRuntime_.flushCaches();
@@ -2114,6 +2124,9 @@ public:
     bool mcfPrimMethodCallable(Oop method, int p);
     size_t findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext, Oop methodToExecute);
     Oop lexicalHomeContextOf(Oop closure);
+    Oop lexicalHomeFromContext(Oop outerContext);
+    bool contextHasReturned(Oop context);
+    bool lexicalHomeHasReturned();
     Oop blockHomeMethodForNLR(Oop compiledBlock);
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);

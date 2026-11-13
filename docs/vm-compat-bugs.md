@@ -5575,3 +5575,41 @@ OPEN, all latent or harmless:
 - ~~132 `instVarsInclude:` on a Context scans slots above its stack pointer.~~
   FIXED 2026-10-13: it uses the GC's `pointerSlotsOf` (Cog's `lastPointerOf:`).
 - 213 `primitiveContextXray` always answers 0.
+
+## 2026-11-12 -- block ^ with a dead home: FIXED; handled BlockCannotReturn loop: OPEN (LOW)
+
+`scripts/cogdiff/nlrhome.st` runs 70 scenarios cold and 2000 times in a loop on
+Pharo 13 and 14: ^ from blocks of class and trait-copied methods (passed down,
+nested, home materialized, in handlers, ensure:, ifCurtailed:, across a process
+switch), dead homes, ^ through one and two ensure: blocks, valueWithExit
+nested and recursive, and a wrapper on `Context>>aboutToReturn:through:`.
+Six of our configurations (arm64 and x86_64; JIT, `PHARO_NO_JIT`,
+`PHARO_NO_MCF`) are compared with stock Cog.
+
+- FIXED. A block whose home method had returned, called while ANOTHER activation
+  of the same method was on the stack (recursion), returned into that other
+  activation (`#dead`).  Cog sends `cannotReturn:` (BlockCannotReturn).  The
+  home searches kept a method-equality fallback, and `findBlockHomeFrame`
+  matched frames by method.  They now skip the fallback when the closure's
+  lexical home context (`lexicalHomeContextOf`) has returned (pc nil or -1).
+  All 12 configurations on both images now answer as Cog does.
+- OPEN, LOW. `cannotReturnStormGuard` (default 64 sends in 2,000,000 steps,
+  `PHARO_CANNOT_RETURN_BURST`) terminates the process on the 65th
+  BlockCannotReturn even when the image handles each one.  Cog has no such
+  limit.  The probe sets the knob high.  The guard exists for defect #23.
+- `mcfUnwindProtocolIsStock` caches its answer per method-cache flush epoch:
+  the three lookups cost +5.7% on a loop of ^ through ensure:, the cached
+  check +0.8%.
+- OPEN, found by the probe (pre-existing: the 2026-11-12 fixes do not change it).
+  Nested recursive `valueWithExit` (`tG5:exits:log:` in `nlrhome.st`) very rarely
+  (about 1 run in 30 on `PHARO_NO_JIT` / `PHARO_NO_MCF`) answers
+  `(#no2 100 #no #no2 101 #no #no2 102)` instead of `(102)`: the exit block
+  returns into the innermost `valueWithExit` activation.  Repro, deterministic
+  enough: `PHARO_NO_JIT=1 PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=1` with
+  20000 calls (3 to 8 wrong answers on arm64 Pharo 14, 22 to 26 per 60000 on
+  x86_64 Pharo 13, old and new binaries alike).  In `findBlockHomeFrame` the
+  identity match against `savedFrames_[i].materializedContext` fails for the
+  exit block (its `outerContext` is a context whose receiver is none of the
+  `valueWithExit` frames on the stack), and the method-equality loop then
+  takes the innermost frame.  Why the stub context is not any frame's
+  context is not yet known.

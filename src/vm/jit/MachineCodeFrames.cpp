@@ -2237,18 +2237,29 @@ static bool mcfSymbolIs(Oop o, const char* s) {
 }
 
 bool Interpreter::mcfUnwindProtocolIsStock() {
+    // The answer only changes when a method dictionary changes, and the image
+    // announces that with a cache flush (methodChangeEpoch_).
+    if (unwindCheckEpoch_ == methodChangeEpoch_) return unwindProtocolIsStock_;
+    bool stockNow = true;
     const Oop ctxClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
-    if (!ctxClass.isObject() || ctxClass.isNil()) return false;
-    const Oop sels[3] = { selectors_.aboutToReturn, selectors_.returnThrough,
-                          selectors_.resumeThrough };
-    for (int i = 0; i < 3; i++) {
-        const Oop stock = stockUnwindMethods_[i];
-        // No method found at image start: the image has no such protocol to
-        // run, so there is nothing the shortcut could skip.
-        if (stock.isNil()) continue;
-        if (lookupMethodForSend(sels[i], ctxClass).rawBits() != stock.rawBits()) return false;
+    if (!ctxClass.isObject() || ctxClass.isNil()) {
+        stockNow = false;
+    } else {
+        const Oop sels[3] = { selectors_.aboutToReturn, selectors_.returnThrough,
+                              selectors_.resumeThrough };
+        for (int i = 0; i < 3 && stockNow; i++) {
+            const Oop stock = stockUnwindMethods_[i];
+            // No method found at image start: the image has no such protocol to
+            // run, so there is nothing the shortcut could skip.
+            if (stock.isNil()) continue;
+            if (lookupMethodForSend(sels[i], ctxClass).rawBits() != stock.rawBits()) stockNow = false;
+        }
     }
-    return true;
+    // The lookups above can fill the method cache but never flush it, so the
+    // epoch read here is still the one the answer belongs to.
+    unwindCheckEpoch_ = methodChangeEpoch_;
+    unwindProtocolIsStock_ = stockNow;
+    return stockNow;
 }
 
 bool Interpreter::mcfEnsureShortcutOk(size_t h, size_t d, size_t e) {

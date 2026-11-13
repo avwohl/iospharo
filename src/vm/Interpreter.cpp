@@ -10280,9 +10280,12 @@ void Interpreter::returnFromMethodSlow(Oop value) {
             // an unrelated live frame: ARM startup wrong-receiver DNU
             // corruption, bisected to fae4edc1 (2026-07-04).
             bool triedDynamicHome = false;
+            // A block whose home already returned must reach cannotReturn:,
+            // never a live activation of the same method found by method oop.
+            const bool lexHomeReturned = lexicalHomeHasReturned();
         retryHomeSearch:
             // If we found a home method, search context chain and do context-based NLR
-            if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
+            if (!lexHomeReturned && homeMethodOop.isObject() && !homeMethodOop.isNil()) {
                 if (seg_.armed) nlrSegmentDeopt();   // the context walk may cross a frozen boundary
                 bool nlrTrace = false;
                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
@@ -10682,7 +10685,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
             ctx = memory_.fetchPointer(0, ctx);
             depth++;
         }
-        if (homeCtx.isNil()) homeCtx = fallbackCtx;
+        if (homeCtx.isNil() && !lexicalHomeHasReturned()) homeCtx = fallbackCtx;
 
         if (homeCtx.isObject() && !homeCtx.isNil()) {
             // Check for unwind (ensure:) contexts between here and home
@@ -10765,7 +10768,11 @@ void Interpreter::killContextsThrough(Oop from, Oop homeCtx) {
 // comparing methods.  Answers nil when the closure has no usable outerContext.
 Oop Interpreter::lexicalHomeContextOf(Oop closure) {
     if (!closure.isObject() || closure.isNil()) return Oop::nil();
-    Oop home = memory_.fetchPointer(0, closure);   // outerContext
+    return lexicalHomeFromContext(memory_.fetchPointer(0, closure));   // outerContext
+}
+
+// Same walk, starting from a closure's outerContext.
+Oop Interpreter::lexicalHomeFromContext(Oop home) {
     for (int hops = 0; hops < 256; hops++) {
         if (!home.isObject() || home.isNil()) return Oop::nil();
         Oop outerClosure = memory_.fetchPointer(4, home);   // closureOrNil
@@ -10773,6 +10780,27 @@ Oop Interpreter::lexicalHomeContextOf(Oop closure) {
         home = memory_.fetchPointer(0, outerClosure);
     }
     return Oop::nil();
+}
+
+// True when the context has already returned: its pc is nil (a normal or
+// non-local return widows the context) or the HasBeenReturnedFrom sentinel.
+// Stock Cog sends cannotReturn: for a block whose home context has returned,
+// even while ANOTHER activation of the same method is live (recursion);
+// matching the home by method would return into that unrelated activation.
+bool Interpreter::contextHasReturned(Oop context) {
+    if (!context.isObject() || context.isNil()) return false;
+    const Oop pc = memory_.fetchPointer(1, context);
+    return !pc.isSmallInteger() || pc.asSmallInteger() == -1;
+}
+
+// True when the running block's lexical home context has already returned.
+// Only answers true for a closure that provably belongs to the running block
+// (compiledBlock == method_): on JIT-resident returns closure_ can be a stale
+// register from an unrelated activation.
+bool Interpreter::lexicalHomeHasReturned() {
+    if (!closure_.isObject() || closure_.isNil()) return false;
+    if (memory_.fetchPointer(1, closure_).rawBits() != method_.rawBits()) return false;
+    return contextHasReturned(lexicalHomeContextOf(closure_));
 }
 
 void Interpreter::returnFromBlock() {
@@ -10911,7 +10939,7 @@ void Interpreter::returnFromBlock() {
                 ctx = memory_.fetchPointer(0, ctx);
                 depth++;
             }
-            if (homeCtx.isNil()) homeCtx = fallbackCtx;
+            if (homeCtx.isNil() && !lexicalHomeHasReturned()) homeCtx = fallbackCtx;
 
             if (homeCtx.isObject() && !homeCtx.isNil()) {
                 // Check for unwind (ensure:) contexts between here and home
@@ -16493,6 +16521,12 @@ size_t Interpreter::findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext,
                         (unsigned long long)savedFrames_[i2 - 1].savedMethod.rawBits());
             }
         }
+        // The identity match found no live home frame.  A block whose lexical
+        // home context has already returned has no home: matching by method
+        // below would pick another live activation of the same method
+        // (recursion), where stock Cog sends cannotReturn:.
+        if (homeFrame == SIZE_MAX && contextHasReturned(lexicalHomeFromContext(outerContext)))
+            return SIZE_MAX;
         for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
