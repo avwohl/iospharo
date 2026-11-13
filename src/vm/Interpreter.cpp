@@ -10764,12 +10764,12 @@ void Interpreter::killContextsThrough(Oop from, Oop homeCtx) {
 // MCPUpdateClassCommand): the home must be found by context identity, not by
 // comparing methods.  Answers nil when the closure has no usable outerContext.
 Oop Interpreter::lexicalHomeContextOf(Oop closure) {
-    if (!closure.isObject() || closure.isNil() || closure.rawBits() <= 0x10000) return Oop::nil();
+    if (!closure.isObject() || closure.isNil()) return Oop::nil();
     Oop home = memory_.fetchPointer(0, closure);   // outerContext
     for (int hops = 0; hops < 256; hops++) {
-        if (!home.isObject() || home.isNil() || home.rawBits() <= 0x10000) return Oop::nil();
+        if (!home.isObject() || home.isNil()) return Oop::nil();
         Oop outerClosure = memory_.fetchPointer(4, home);   // closureOrNil
-        if (!outerClosure.isObject() || outerClosure.isNil() || outerClosure.rawBits() <= 0x10000) return home;
+        if (!outerClosure.isObject() || outerClosure.isNil()) return home;
         home = memory_.fetchPointer(0, outerClosure);
     }
     return Oop::nil();
@@ -10897,8 +10897,6 @@ void Interpreter::returnFromBlock() {
             // NLR home disambiguation (nlr-nested-valuewithexit-bug): prefer the
             // chain context whose IDENTITY == the closure's outerContext (exact
             // lexical home), in-chain + home method, over the method-oop nearest.
-            Oop och = memory_.fetchPointer(0, closure_);
-            if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
             Oop lexicalHome = lexicalHomeContextOf(closure_);
             Oop fallbackCtx = Oop::nil();
             while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
@@ -21202,6 +21200,8 @@ void Interpreter::initializeSelectors() {
     {
         // Remember the image's own unwind-protocol methods: the ensure
         // shortcut (mcfEnsureShortcutOk) is only sound while they are in place.
+        // Captured once: if the image later recompiles one of the three, the
+        // shortcut stays off for the rest of the run (slower, still correct).
         const Oop ctxClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
         const Oop sels[3] = { selectors_.aboutToReturn, selectors_.returnThrough,
                               selectors_.resumeThrough };
