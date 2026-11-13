@@ -96,6 +96,18 @@ void* lookupRegisteredFunction(const std::string& funcName);
 // Register all SDL2 stub functions for iOS
 void registerSDL2Stubs();
 
+// SDL2 is served by the built-in stubs (registerSDL2Stubs); SDL3 is a
+// different library with the same SDL_ prefix and many of the same names
+// (SDL_Init, SDL_GetError, SDL_CreateWindow).  Its calls must reach the real
+// library, never the SDL2 stubs or the generic SDL_ no-op.  The test is on the
+// library's file name: a name that mentions SDL but not SDL3 is SDL2.
+bool isSDL2ModuleName(const std::string& moduleName);
+bool isSDL3ModuleName(const std::string& moduleName);
+// dlopen handles of loaded SDL3 libraries, so a call through an
+// ExternalAddress module handle (no name) can still be told from SDL2.
+void noteSDL3ModuleHandle(void* handle);
+bool isSDL3ModuleHandle(void* handle);
+
 // Parse FFI type from Pharo type name
 FFIType parseType(const std::string& typeName);
 

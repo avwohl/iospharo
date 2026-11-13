@@ -340,6 +340,24 @@ void shutdownFFI() {
     resetAllFFIState();
 }
 
+static std::string moduleBaseName(const std::string& moduleName) {
+    size_t slash = moduleName.find_last_of('/');
+    return slash == std::string::npos ? moduleName : moduleName.substr(slash + 1);
+}
+
+bool isSDL3ModuleName(const std::string& moduleName) {
+    return moduleBaseName(moduleName).find("SDL3") != std::string::npos;
+}
+
+bool isSDL2ModuleName(const std::string& moduleName) {
+    const std::string base = moduleBaseName(moduleName);
+    return base.find("SDL") != std::string::npos && !isSDL3ModuleName(moduleName);
+}
+
+static std::unordered_set<void*> sSDL3Handles;
+void noteSDL3ModuleHandle(void* handle) { if (handle) sSDL3Handles.insert(handle); }
+bool isSDL3ModuleHandle(void* handle) { return handle && sSDL3Handles.count(handle) != 0; }
+
 bool isModuleLoaded(const std::string& moduleName) {
     if (moduleName == "SDL2" || moduleName == "libSDL2" ||
         moduleName.find("SDL2") != std::string::npos) {
@@ -488,6 +506,16 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
 }
 
 void* lookupFunction(const std::string& moduleName, const std::string& funcName) {
+    if (isSDL3ModuleName(moduleName)) {
+        // Real SDL3 only: the cache and the SDL_ no-op below belong to SDL2.
+        if (!moduleName.empty() && moduleName[0] == '/') {
+            if (void* h = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL)) {
+                noteSDL3ModuleHandle(h);
+                return dlsym(h, funcName.c_str());
+            }
+        }
+        return tryLoadFromSearchPaths(moduleBaseName(moduleName), funcName);
+    }
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
         return it->second;

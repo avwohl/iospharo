@@ -21312,7 +21312,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    Oop destBits = memory_.fetchPointer(FormBits, destForm);
+    // A Bitmap handed to FFI as a pointer is pinned by a forwarder; BitBlt must read the target, not the forwarder.
+    Oop destBits = memory_.followForwarded(memory_.fetchPointer(FormBits, destForm));
     intptr_t destWidth = bitBltField(memory_, destForm, FormWidth);
     intptr_t destHeight = bitBltField(memory_, destForm, FormHeight);
     intptr_t destDepth = bitBltField(memory_, destForm, FormDepth);
@@ -21441,7 +21442,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         if (!sourceForm.isNil() && sourceForm.isObject()) {
             // Rule 32: count non-zero source pixels
-            Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
+            Oop srcBits = memory_.followForwarded(memory_.fetchPointer(FormBits, sourceForm));
             intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
             intptr_t srcWidth2 = bitBltField(memory_, sourceForm, FormWidth);
 
@@ -21498,7 +21499,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // The colorMap serves as the tally/histogram table.
     if (combinationRule == 33) {
         // Read dest pixels
-        Oop dBits = memory_.fetchPointer(FormBits, destForm);
+        Oop dBits = memory_.followForwarded(memory_.fetchPointer(FormBits, destForm));
         if (!dBits.isObject() || dBits.isNil()) {
             #ifdef DEBUG
             fprintf(stderr, "[BITBLT-R33] destBits invalid: isObj=%d isNil=%d\n",
@@ -21637,7 +21638,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 halftoneHeight = static_cast<intptr_t>(htHdr->byteSize() / 4);
             } else {
                 // It's a Form - get its bits
-                Oop htBits = memory_.fetchPointer(FormBits, halftoneForm);
+                Oop htBits = memory_.followForwarded(memory_.fetchPointer(FormBits, halftoneForm));
                 if (htBits.isObject() && !htBits.isNil()) {
                     ObjectHeader* htBitsHdr = htBits.asObjectPtr();
                     halftoneWords = reinterpret_cast<uint32_t*>(htBitsHdr->bytes());
@@ -21857,7 +21858,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
+    Oop srcBits = memory_.followForwarded(memory_.fetchPointer(FormBits, sourceForm));
     intptr_t srcWidth = bitBltField(memory_, sourceForm, FormWidth);
     intptr_t srcHeight = bitBltField(memory_, sourceForm, FormHeight);
     intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
@@ -30493,8 +30494,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                 moduleName = memory_.oopToString(moduleOop);
 
                 // For SDL2, use our built-in stubs
-                if (moduleName.find("SDL2") != std::string::npos ||
-                    moduleName.find("SDL") != std::string::npos) {
+                if (ffi::isSDL2ModuleName(moduleName)) {
                     moduleHandle = RTLD_DEFAULT;
                 } else {
                     // Try dlopen with the name as given (handles absolute paths)
@@ -30569,6 +30569,9 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         moduleHandle = RTLD_DEFAULT;
     }
 
+    if (ffi::isSDL3ModuleName(moduleName) && moduleHandle && moduleHandle != RTLD_DEFAULT)
+        ffi::noteSDL3ModuleHandle(moduleHandle);
+
     // Look up the symbol:
     // 1. If we have a real module handle (from dlopen), use it directly
     // 2. Otherwise use lookupFunction which searches paths and falls back to stubs
@@ -30591,7 +30594,9 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     // ends in missing-library fallback stubs (FT_ etc.), which must never
     // preempt a REAL dlopen handle (x86-Linux box: libfreetype installed and
     // dlopen-able, yet every FT_* resolved to the error stub).
-    if (!symbolAddr) {
+    // SDL3 shares SDL_ names with the SDL2 stubs; its calls go to the real library.
+    const bool sdl3Module = ffi::isSDL3ModuleName(moduleName) || ffi::isSDL3ModuleHandle(moduleHandle);
+    if (!symbolAddr && !sdl3Module) {
         symbolAddr = ffi::lookupRegisteredFunction(symbolName);
     }
 
@@ -30677,8 +30682,7 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     void* moduleHandle = nullptr;
 
     // Special handling for SDL2
-    if (moduleName.find("SDL2") != std::string::npos ||
-        moduleName.find("SDL") != std::string::npos) {
+    if (ffi::isSDL2ModuleName(moduleName)) {
         // SDL2 is "built-in" via our stubs - return a non-null handle
         moduleHandle = kBuiltinModuleHandle;
     } else {
@@ -30728,6 +30732,7 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     if (!moduleHandle) {
         return PrimitiveResult::Failure;
     }
+    if (ffi::isSDL3ModuleName(moduleName)) ffi::noteSDL3ModuleHandle(moduleHandle);
 
     // Create an ExternalAddress containing the module handle
     Oop externalAddressClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);
