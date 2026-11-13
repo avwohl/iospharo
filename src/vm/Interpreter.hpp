@@ -2128,6 +2128,13 @@ public:
     Oop lexicalHomeFromContext(Oop outerContext);
     bool contextHasReturned(Oop context);
     bool lexicalHomeHasReturned();
+    // Where a LIVE lexical home context is, by identity.  See homeSiteOf.
+    enum class HomeSite { Unknown, Frame, Chain };
+    HomeSite homeSiteOf(Oop home, size_t& frameIndex);
+    Oop lexicalHomeOfRunningBlock();
+    HomeSite runningBlockHomeSite(Oop& liveHome, size_t& frameIndex);
+    Oop liveLexicalHomeOfRunningBlock();
+    void nlrFallbackNote(const char* site, bool liveHome, Oop homeMethod);
     Oop blockHomeMethodForNLR(Oop compiledBlock);
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
@@ -2976,6 +2983,7 @@ private:
     // NLR-marker validation (cascade-#3 residual): see Interpreter.cpp.
     Oop nlrHomeCMOf(Oop code);
     size_t validateNLRHomeFrame(size_t homeFrame, Oop expectedHome);
+    size_t validateNLRHomeFrameSlow(size_t homeFrame, Oop expectedHome);
 
     /// Get temporary variable
     Oop temporary(int index) const;

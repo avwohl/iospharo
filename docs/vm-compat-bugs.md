@@ -5703,16 +5703,50 @@ Six of our configurations (arm64 and x86_64; JIT, `PHARO_NO_JIT`,
 - `mcfUnwindProtocolIsStock` caches its answer per method-cache flush epoch:
   the three lookups cost +5.7% on a loop of ^ through ensure:, the cached
   check +0.8%.
-- OPEN, found by the probe (pre-existing: the 2026-11-12 fixes do not change it).
-  Nested recursive `valueWithExit` (`tG5:exits:log:` in `nlrhome.st`) very rarely
-  (about 1 run in 30 on `PHARO_NO_JIT` / `PHARO_NO_MCF`) answers
-  `(#no2 100 #no #no2 101 #no #no2 102)` instead of `(102)`: the exit block
-  returns into the innermost `valueWithExit` activation.  Repro, deterministic
-  enough: `PHARO_NO_JIT=1 PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=1` with
-  20000 calls (3 to 8 wrong answers on arm64 Pharo 14, 22 to 26 per 60000 on
-  x86_64 Pharo 13, old and new binaries alike).  In `findBlockHomeFrame` the
-  identity match against `savedFrames_[i].materializedContext` fails for the
-  exit block (its `outerContext` is a context whose receiver is none of the
-  `valueWithExit` frames on the stack), and the method-equality loop then
-  takes the innermost frame.  Why the stub context is not any frame's
-  context is not yet known.
+- FIXED. Nested recursive `valueWithExit` (`tG5:exits:log:` in `nlrhome.st`)
+  sometimes answered `(#no2 100 #no #no2 101 #no #no2 102)` instead of
+  `(102)`: the exit block returned into the innermost `valueWithExit`
+  activation.  Before the fix, 42 to 438 wrong answers per 200000 calls, on
+  arm64 and x86_64, Pharo 13 and 14, with the JIT, `PHARO_NO_JIT` and
+  `PHARO_NO_MCF`, run with `PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=1`.
+  After the fix, 0 in 1000000 calls in each of these 12 configurations.
+  - Cause. The stub context was the real home context, and no frame and no
+    context was duplicated.  A process switch writes all inline frames to
+    Context objects, and the process resumes with only the top one rebuilt as
+    an inline frame.  The older activations then exist only as Contexts in the
+    `activeContext_` sender chain.  An exit block whose home is one of those
+    Contexts found no frame by identity.  `findBlockHomeFrame` then used the
+    method-equality loop and chose the innermost frame that runs
+    `valueWithExit`: another activation of the same method.  The
+    `returnFromMethodSlow` search for a missing home marker chose the outermost
+    such frame by method in the same way, and `validateNLRHomeFrame` accepted
+    any marker frame that runs the right method.  Diagnostic
+    `PHARO_NLR_HOME_DIAG` printed "home live, in the sender chain at depth N,
+    no frame owns it, 1 to 3 other frames run the method" for each wrong
+    answer, and for no right answer.
+  - Fix. The home is found by identity of the lexical home context
+    (`Context>>home`), never by method, whenever the home has not returned.
+    New `homeSiteOf` says where the home is: a saved frame whose Context is it,
+    the sender chain, or unknown.  `findBlockHomeFrame` answers "no frame" for a
+    home in the chain, so the return takes the context path.
+    `validateNLRHomeFrame` keeps a marker only when its frame owns the home
+    context, and the missing-marker search in `returnFromMethodSlow` looks for
+    the home by identity first and in the chain with the exact home context.
+  - Method-equality fallbacks. They stay, because the count is not zero.
+    The `PHARO_NLR_HOME_DIAG` count of runs of a fallback while the home is
+    live and owned by no frame and no chain context: Kernel-Tests,
+    Kernel-CodeModel-Tests, Kernel-Extended-Tests, SUnit-Tests, Traits-Tests,
+    Debugger-Model-Tests, Debugger-Oups-Tests and DebugPoints-Tests on arm64
+    Pharo 14: 0.  `nlrhome.st`: only scenario B7, 2001 times per copy of the
+    method: the home is live on the stack of ANOTHER process, which Cog also
+    answers with `cannotReturn:`.  The fallback finds no frame of that method
+    there, so the answer matches Cog, but a forked process that runs another
+    activation of the same method would still return into that activation.
+    The calls that remain are in `findBlockHomeFrame`, the `returnFromMethodSlow`
+    frame and chain scans, and the re-search in `validateNLRHomeFrame`.
+    `returnValue` resumes a paused NLR by `nlrHomeMethod_` (a method, not a
+    context); no scenario here reaches that with recursion.
+  - Cost. Instructions retired, 5 interleaved pairs, arm64: send-heavy
+    (`fib: 34`) +0.2%, block-heavy (`do:` loop) +0.3% (noise), 3 million
+    non-local returns from a `do:` block +32 instructions per return, +0.8% of
+    the run.

@@ -9937,6 +9937,49 @@ Oop Interpreter::nlrHomeCMOfMemo(Oop code) {
 // marker is wrong but the home is findable, SIZE_MAX otherwise.
 size_t Interpreter::validateNLRHomeFrame(size_t homeFrame, Oop expectedHome) {
     if (homeFrame == SIZE_MAX || homeFrame >= frameDepth_) return homeFrame;
+    // Usual case, a few loads: the block was made directly in the home
+    // method (its outerContext is a method context) and the marker's frame
+    // owns that context.  A frame that owns the home context is on the
+    // stack, so the home is live.
+    const Oop owned = savedFrames_[homeFrame].materializedContext;
+    if (owned.isObject() && !owned.isNil() && owned.rawBits() > 0x10000
+            && closure_.isObject() && !closure_.isNil()) {
+        ObjectHeader* cl = closure_.asObjectPtr();
+        ObjectHeader* oc = owned.asObjectPtr();
+        // A closure has at least outerContext and compiledBlock; a frame's
+        // materialized Context has the six fixed Context fields.
+        if (cl->slotAt(1).rawBits() == method_.rawBits()
+                && cl->slotAt(0).rawBits() == owned.rawBits()
+                && oc->slotAt(4).rawBits() == memory_.nil().rawBits())
+            return homeFrame;
+    }
+    return validateNLRHomeFrameSlow(homeFrame, expectedHome);
+}
+
+// The rest of validateNLRHomeFrame, out of line so the usual case above stays
+// small.  A block's ^ has an exact answer: the lexical home context.  The
+// marker is right when its frame owns that context; otherwise the home is
+// another frame that owns it, or a context below the frames (answer "no
+// frame").  Only when no one owns it does the method comparison decide.
+__attribute__((noinline))
+size_t Interpreter::validateNLRHomeFrameSlow(size_t homeFrame, Oop expectedHome) {
+    const Oop owned = savedFrames_[homeFrame].materializedContext;
+    {
+        const Oop home = lexicalHomeOfRunningBlock();
+        if (home.isObject() && !home.isNil()) {
+            if (owned.rawBits() == home.rawBits())
+                return homeFrame;
+            if (!contextHasReturned(home)) {
+                size_t owner;
+                switch (homeSiteOf(home, owner)) {
+                    case HomeSite::Frame: return owner;
+                    case HomeSite::Chain: return SIZE_MAX;
+                    case HomeSite::Unknown: break;
+                }
+                if (GET_DEBUG_BOOL(PHARO_NLR_HOME_DIAG)) nlrFallbackNote("validateNLRHomeFrame", true, expectedHome);
+            }
+        }
+    }
     if (!expectedHome.isObject() || expectedHome.isNil()
         || expectedHome.rawBits() < 0x10000)
         return homeFrame;  // cannot validate
@@ -10295,13 +10338,26 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 // outermost order as the identity pass rather than inventing a
                 // different one.
                 size_t nlrHomeFrameIdx = SIZE_MAX;
-                for (size_t si = 0; si < frameDepth_; si++) {
+                // The running block's lexical home is known exactly when it is
+                // live: a frame owning it, or a context in the chain.  Only a
+                // home that no one owns is looked up by method below.
+                Oop liveHome;
+                bool homeIsChainContext = false;
+                switch (runningBlockHomeSite(liveHome, nlrHomeFrameIdx)) {
+                    case HomeSite::Frame: break;
+                    case HomeSite::Chain: homeIsChainContext = true; break;
+                    case HomeSite::Unknown: break;
+                }
+                const bool methodScan = nlrHomeFrameIdx == SIZE_MAX && !homeIsChainContext;
+                if (methodScan && GET_DEBUG_BOOL(PHARO_NLR_HOME_DIAG))
+                    nlrFallbackNote("returnFromMethodSlow-frame-scan", !liveHome.isNil(), homeMethodOop);
+                for (size_t si = 0; methodScan && si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
                         nlrHomeFrameIdx = si;
                         break;
                     }
                 }
-                if (nlrHomeFrameIdx == SIZE_MAX
+                if (methodScan && nlrHomeFrameIdx == SIZE_MAX
                         && topBlockOop.isObject() && topBlockOop.rawBits() > 0x10000) {
                     for (size_t si = 0; si < frameDepth_; si++) {
                         Oop fm = savedFrames_[si].savedMethod;
@@ -10365,19 +10421,17 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 // IN this dynamic chain AND is the home method (an escaped block's
                 // outerContext off the chain would corrupt the unwind). Fall back to
                 // the method-oop nearest match.
-                Oop och = Oop::nil();
-                if (closure_.isObject() && !closure_.isNil()) {
-                    och = memory_.fetchPointer(0, closure_);
-                    if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
-                }
+                // The exact lexical home (Context>>home) of the running block,
+                // not its outerContext: for a block nested in a block the
+                // outerContext is the outer block's activation.
                 Oop fallbackCtx = Oop::nil();
-                while (ctx.isObject() && !ctx.isNil() && searchDepth < 70000) {
+                if (homeIsChainContext) {
+                    homeCtx = liveHome;   // found by identity in this very chain
+                } else if (GET_DEBUG_BOOL(PHARO_NLR_HOME_DIAG)) {
+                    nlrFallbackNote("returnFromMethodSlow-chain-scan", !liveHome.isNil(), homeMethodOop);
+                }
+                while (!homeIsChainContext && ctx.isObject() && !ctx.isNil() && searchDepth < 70000) {
                     Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                    if (!och.isNil() && ctx.rawBits() == och.rawBits()
-                        && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
-                        homeCtx = ctx;  // exact lexical home, in-chain, home method
-                        break;
-                    }
                     if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
                         fallbackCtx = ctx;
                     }
@@ -10763,6 +10817,77 @@ bool Interpreter::lexicalHomeHasReturned() {
     if (!closure_.isObject() || closure_.isNil()) return false;
     if (memory_.fetchPointer(1, closure_).rawBits() != method_.rawBits()) return false;
     return contextHasReturned(lexicalHomeContextOf(closure_));
+}
+
+// Diagnostic only (PHARO_NLR_HOME_DIAG): one line per use of a method-equality
+// fallback in the home searches.  Count the lines per site with grep.
+void Interpreter::nlrFallbackNote(const char* site, bool liveHome, Oop homeMethod) {
+    static int n = 0;
+    if (++n <= 2000000)
+        fprintf(stderr, "[NLR-FALLBACK] site=%s liveHome=%d fd=%zu home=%s\n", site, liveHome ? 1 : 0, frameDepth_,
+                (homeMethod.isObject() && homeMethod.rawBits() > 0x10000) ? memory_.selectorOf(homeMethod).c_str() : "?");
+}
+
+// Where the live lexical home context `home` is, by identity (never by
+// method): Frame when a saved frame's materialized Context IS it (frameIndex
+// gets the savedFrames_ index), Chain when it is in the activeContext_ sender
+// chain below the inline frames (a process switch or an exception
+// materialized the frames and only the top one was rebuilt), else Unknown.
+// A frame's Context counts only when it runs the frame's own method, so a
+// stale materializedContext of another activation cannot match.
+//
+// Why identity: a method that is on the stack more than once (recursion,
+// nested valueWithExit) has one activation per home, and a block belongs to
+// exactly one of them.  Matching by method takes the innermost or outermost
+// activation, which is the wrong home whenever the real home is in the
+// context chain and a LATER activation of the same method is an inline frame.
+Interpreter::HomeSite Interpreter::homeSiteOf(Oop home, size_t& frameIndex) {
+    frameIndex = SIZE_MAX;
+    if (!home.isObject() || home.isNil() || home.rawBits() <= 0x10000) return HomeSite::Unknown;
+    for (size_t i = frameDepth_; i > 0; i--) {
+        const Oop mc = savedFrames_[i - 1].materializedContext;
+        if (mc.rawBits() == home.rawBits()
+                && memory_.fetchPointer(3, mc).rawBits() == savedFrames_[i - 1].savedMethod.rawBits()) {
+            frameIndex = i - 1;
+            return HomeSite::Frame;
+        }
+    }
+    const Oop nilObj = memory_.nil();
+    Oop c = activeContext_;
+    for (int hops = 0; hops < 70000 && c.isObject() && c.rawBits() != nilObj.rawBits(); hops++) {
+        if (c.rawBits() == home.rawBits()) return HomeSite::Chain;
+        c = memory_.fetchPointer(0, c);
+    }
+    return HomeSite::Unknown;
+}
+
+// The lexical home context of the running block's closure, or nil.  Answers
+// nil unless closure_ provably belongs to the running block (compiledBlock ==
+// method_): on JIT-resident returns closure_ can be a stale register from an
+// unrelated activation.  The home may have returned: see liveLexicalHome.
+Oop Interpreter::lexicalHomeOfRunningBlock() {
+    if (!closure_.isObject() || closure_.isNil()) return Oop::nil();
+    if (memory_.fetchPointerUnchecked(1, closure_).rawBits() != method_.rawBits()) return Oop::nil();
+    return lexicalHomeContextOf(closure_);
+}
+
+// The same home when it has not returned, else nil.
+Oop Interpreter::liveLexicalHomeOfRunningBlock() {
+    const Oop home = lexicalHomeOfRunningBlock();
+    if (!home.isObject() || home.isNil() || contextHasReturned(home)) return Oop::nil();
+    return home;
+}
+
+// Where the running block's live lexical home is (see homeSiteOf); liveHome
+// gets the home context, nil when the home has returned or the block is not
+// provably the running one.  Out of line: returnFromMethodSlow is a
+// register-hungry function and this runs only when the home marker is missing.
+__attribute__((noinline))
+Interpreter::HomeSite Interpreter::runningBlockHomeSite(Oop& liveHome, size_t& frameIndex) {
+    frameIndex = SIZE_MAX;
+    liveHome = liveLexicalHomeOfRunningBlock();
+    if (liveHome.isNil()) return HomeSite::Unknown;
+    return homeSiteOf(liveHome, frameIndex);
 }
 
 void Interpreter::returnFromBlock() {
@@ -16460,17 +16585,30 @@ size_t Interpreter::findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext,
         // outerContext (the exact home). REQUIRE savedMethod==homeMethodOop too, so
         // a coincidental context match on a non-home frame can't fire (that
         // false-positive regressed DateAndTime in an earlier attempt).
+        Oop liveHome = Oop::nil();   // the closure's lexical home when it has not returned
+        // Usual case first: a block made directly in the home method, whose
+        // frame owns the outerContext.
         if (outerContext.isObject() && !outerContext.isNil() && outerContext.rawBits() > 0x10000) {
             for (size_t i = frameDepth_; i > 0; i--) {
-                Oop mc = savedFrames_[i - 1].materializedContext;
-                if (mc.isObject() && !mc.isNil() && mc.rawBits() == outerContext.rawBits()
-                    && savedFrames_[i - 1].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                const Oop mc = savedFrames_[i - 1].materializedContext;
+                if (mc.rawBits() == outerContext.rawBits()
+                        && savedFrames_[i - 1].savedMethod.rawBits() == homeMethodOop.rawBits()) {
                     homeFrame = i - 1;
                     break;
                 }
             }
         }
-
+        if (homeFrame == SIZE_MAX
+                && outerContext.isObject() && !outerContext.isNil() && outerContext.rawBits() > 0x10000) {
+            // Identity of the lexical HOME context (Context>>home), not of the
+            // outerContext: for a block nested in a block the outerContext is
+            // the outer block's activation, which no frame names as home.
+            Oop lh = lexicalHomeFromContext(outerContext);
+            if (lh.isObject() && !lh.isNil() && !contextHasReturned(lh)) liveHome = lh;
+            size_t ownerFrame;
+            if (!liveHome.isNil() && homeSiteOf(liveHome, ownerFrame) == HomeSite::Frame)
+                homeFrame = ownerFrame;
+        }
         if (GET_DEBUG_BOOL(PHARO_NLR_TRACE)) {
             fprintf(stderr, "[NLR-ACT] home=0x%llx alt=0x%llx outerCtx=0x%llx(%s) fd=%zu preHome=%zu\n",
                     (unsigned long long)homeMethodOop.rawBits(),
@@ -16489,6 +16627,20 @@ size_t Interpreter::findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext,
         // (recursion), where stock Cog sends cannotReturn:.
         if (homeFrame == SIZE_MAX && contextHasReturned(lexicalHomeFromContext(outerContext)))
             return SIZE_MAX;
+        // A live home that is no frame but sits in the context chain below
+        // the frames: the home is a context, and the method-equality loop
+        // would pick a frame running the same method, which is another
+        // activation of it.  Answer "no frame": the return then takes the
+        // context path, which finds the home by identity.
+        if (homeFrame == SIZE_MAX && !liveHome.isNil()) {
+            size_t ignored;
+            if (homeSiteOf(liveHome, ignored) == HomeSite::Chain) return SIZE_MAX;
+        }
+        // Diagnostic: the method-equality loop below is about to run.
+        // liveHome=1 means the home has not returned and no frame or chain
+        // context owns it by identity: the loop then chooses by method alone.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NLR_HOME_DIAG), 0) && homeFrame == SIZE_MAX)
+            nlrFallbackNote("findBlockHomeFrame", !liveHome.isNil(), homeMethodOop);
         for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
