@@ -1,4 +1,4 @@
-# WIP — 2026-11-12
+# WIP — 2026-11-13
 
 Current state only. This file was 4882 lines of stacked session entries going
 back to 2026-05-27; on 2026-08-23 it was pruned the same way `docs/deferred.md`
@@ -15,7 +15,50 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-11-12) -- Pharo 14 support, main merged into jit
+## Right now (2026-11-13) -- Pharo 14 package run, six VM fixes, not yet swept
+
+State at `3a697c16` on `jit`.  `main` is still at `d8a36711`.  The four full
+SUnit sweeps for this state were started on the arm64 Mac and are NOT
+complete.  Do not fast-forward `main` before the four sweeps pass.
+
+- Pharo 14 package run (`scripts/pkg-jit-test/`, 200 manifest rows, stock
+  Cog v12.0.6 loads each package): 151 packages load, 49 do not load on
+  Pharo 14.  First run at `d8a36711`, arm64: Cog 30436 passes, our VM 30414.
+- VM defects found from the package differences, all fixed on `jit`
+  ([vm-compat-bugs.md](vm-compat-bugs.md)):
+  - Block `^` in a method copied from a trait: the home was found by method,
+    not by context identity (`evref-bl-mcp`, 23 tests).
+  - The machine-code `ensure:` shortcut did not send
+    `aboutToReturn:through:` when a tool replaced that method (MethodProxies).
+  - Block `^` with a returned home went into another live activation of the
+    same method.  Cog sends `cannotReturn:`.
+  - Block `^` after a process switch went into the wrong activation of a
+    recursive method (scenario tG5 of `scripts/cogdiff/nlrhome.st`).
+  - Callback return: the cooldown from `08c94847` left a window in which the
+    executor process suspended itself with the `stackProtect` lock held
+    (`pharo-cig` hung under load).  The return now follows Cog, and `step()`
+    switches processes only at interrupt points.
+- New differential scripts: `scripts/cogdiff/nlrhome.st` (70 scenarios) and
+  `scripts/cogdiff/callbackstress.st`.  Both give the Cog answers on arm64
+  and x86_64 (x86_64 under Rosetta).
+- Harness fixes in `scripts/pkg-jit-test/` (see the README there): the
+  fake-GUI prelude goes through `PKG_PRELUDE`, the log extraction accepts
+  CR line endings and glued lines, `RUN` lines, `Halt` is an ERR, the
+  summary has the exit statuses.  The 21 GUI packages gave no result in the
+  first run because of the prelude defect.
+- Package differences that are not VM defects: `pharo-cig` aborts because
+  the package declares the 16-byte `CXString` struct as one pointer;
+  `smalltalkweb-myprecious` has a busy loop and a service-name race, and Cog
+  under Rosetta does not complete the reconnect while the loop runs.
+- Not done: the four sweeps at `3a697c16`; the full Pharo 14 package run
+  with the fixed harness and the fixed VM; a package run on a real x86_64
+  host (the Linux x86_64 build is not validated since the merge of `main`).
+- Open: a block whose home is live on the stack of a different process
+  still uses the method fallback (scenario B7; the tested answer matches
+  Cog).  `cannotReturnStormGuard` stops a process after 64 handled
+  `BlockCannotReturn` signals; Cog has no such limit.
+
+## Earlier (2026-11-12) -- Pharo 14 support, main merged into jit
 
 - `origin/main` is merged into `jit` (`49d55559`).  Pharo 14.0.0 is the
   default image (`scripts/pharo-version.sh`, `PHARO_VERSION`, default 140).
