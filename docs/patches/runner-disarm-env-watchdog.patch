@@ -1,0 +1,49 @@
+--- a/run_sunit_tests.st	2026-11-13 01:17:56
++++ b/run_sunit_tests.st	2026-11-13 01:17:56
+@@ -1087,6 +1087,7 @@
+     [hostEnv := CurrentExecutionEnvironment value.
+      savedMainProcess := hostEnv instVarNamed: ''mainTestProcess''.
+      savedSuspends := hostEnv processMonitor shouldSuspendBackgroundFailures.
++     hostEnv instVarNamed: ''testCompleted'' put: false.
+      hostEnv instVarNamed: ''mainTestProcess'' put: testProcess] on: Error do: [:e2 | hostEnv := nil]].
+ 
+   "Watchdog: relinquish-based at userBackgroundPriority (60).
+@@ -1208,17 +1209,27 @@
+     [hostEnv instVarNamed: ''mainTestProcess'' put: savedMainProcess.
+      hostEnv processMonitor shouldSuspendBackgroundFailures: savedSuspends] on: Error do: [:e2 |]].
+ 
+-  "Fix up TestExecutionEnvironment state: if our watchdog killed the test process,
+-   the ensure: block in runTestCase: may not have fired, leaving testCompleted=false.
+-   The env watchdog at P79 is blocked in waitTimeoutMilliseconds: — it won''t check
+-   testCompleted until signaled or timed out. Signal only for timeouts."
+-  result == #timeout ifTrue: [
+-    [| env wds |
+-     env := CurrentExecutionEnvironment value.
+-     env instVarNamed: ''testCompleted'' put: true.
+-     wds := env instVarNamed: ''watchDogSemaphore''.
+-     wds ifNotNil: [wds signal]]
+-    on: Error do: [:e |]].
++  "Stand the environment's watchdog down after EVERY test, not only after a
++   timeout.  This runner calls runCase, never runTestCase:, so nothing else sets
++   testCompleted.  A test that calls `self timeLimit: 30 seconds` (ProtoObjectTest,
++   IntegerTest, TraitFileOutTest, ...) runs TestCase>>timeLimit:, which signals the
++   watchdog; the watchdog then waits in 30 s slices with testCompleted still false
++   and, at the end of each slice, signals TestTookTooMuchTime into whatever test
++   process is running at that moment (hostEnv mainTestProcess).  Victims are
++   unrelated tests chosen by the wall clock, every 5-60 s until the batch ends.
++   Measured 2026-11-13 on Pharo 13 x86_64, batch 1951-2000: four victims 30 s
++   apart; with this block: none in 3 runs of batch 1-50 (4 of 4 without).
++   Also set testCompleted false at the start of each test (above), as
++   TestExecutionEnvironment>>runTestCase: does.
++   If our watchdog killed the test process, the ensure: block in runTestCase:
++   may not have fired either; the semaphore signal wakes the watchdog so it
++   reads testCompleted."
++  [| env wds |
++   env := CurrentExecutionEnvironment value.
++   env instVarNamed: ''testCompleted'' put: true.
++   wds := env instVarNamed: ''watchDogSemaphore''.
++   wds ifNotNil: [wds signal]]
++    on: Error do: [:e |].
+ 
+   ^ result' classified: 'running'!
+ 

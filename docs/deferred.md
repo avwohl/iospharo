@@ -583,3 +583,95 @@ through their own tables, so a grep for registerNamedPrimitive misses them.
   binary that default-on `becomeForward` and the GC context-reuse changes have
   landed on top of untested. Either add a Windows build job or read that file
   as dated.
+
+## TestTookTooMuchTime in the x86_64 Pharo 13 sweeps (measured 2026-11-13)
+
+The tests that report TestTookTooMuchTime are not slow.  The sweep runner
+causes the errors.  The VM commits bc06ad8f to 3a697c16 did not change the
+speed of these tests.
+
+Tests: TrueTest>>testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses,
+LinkInstallerTest>>testOneMetaLinkClassAndObjects and
+testOneMetaLinkManyObjects, TraitTestCase>>testExplicitRequirement and
+testCompositionCopy, TraitWithPackagesTest>>testPackageOfRemovedTrait.
+
+### Speed (A/B, one test per process, 10 runs per arm, interleaved)
+
+Old binary: d8a36711, build-x86 Release.  New binary: main build-x86.  The
+instructions-retired counts are Rosetta counts; they are only good for
+old against new.  Median of 10 runs, new against old:
+
+    TrueTest>>testMethods...Superclasses   19.87G vs 19.94G instr   86 vs 84 ms
+    LinkInstallerTest>>...ClassAndObjects  22.69G vs 22.48G         436 vs 381 ms
+    LinkInstallerTest>>...ManyObjects      23.53G vs 23.54G         496 vs 584 ms
+    TraitTestCase>>testExplicitRequirement 43.08G vs 43.20G         2820 vs 2940 ms
+    TraitTestCase>>testCompositionCopy     42.43G vs 42.37G         2542 vs 2523 ms
+    TraitWithPackagesTest>>...RemovedTrait 22.15G vs 22.11G         316 vs 314 ms
+
+The counts differ by less than 1 percent and the wall times are equal.
+The time in the image has a spread of +-30 percent because other jobs ran on
+the machine.  Stock Cog 13 under Rosetta on the same tests takes longer, not
+less (single runs, same load): testCompositionCopy 3.2 to 4.8 s,
+testExplicitRequirement 3.0 to 3.9 s, the other four 0.2 to 0.9 s.  Every
+test passes alone on every VM, longest 3.5 s.
+
+### Cause of the errors
+
+The default time limit in the sweep is 50 s (the runner sets 10 s times 5),
+and SUNIT_TIMEOUT_MULT does not change it.  The variable only scales the
+runner's own watchdog (min of 2 x seconds and 300 s).  The batch 1-50 takes
+16 s in total, so no test ran 50 s.  The limit that fired was 5 s, 20 s or
+30 s.  Those are values that tests set with `self timeLimit:`
+(IntegerTest>>testNthRootTruncated 5 s, ProtoObjectTest>>testFastPointersTo
+1 minute, TraitFileOutTest>>testFileOutCategory 30 s).
+
+`TestCase>>timeLimit:` sends `maxTimeForTest:` to the environment, and that
+method wakes the environment's watchdog process.  Stock SUnit calls
+`runTestCase:`, which resets `testCompleted` after each test.  The sweep
+runner calls `runCase` and never `runTestCase:`.  So `testCompleted` stays
+false, and the watchdog wakes every limit period for the rest of the batch.
+Each time it signals TestTookTooMuchTime into the test that runs at that
+moment (the runner makes the test process the environment's main process).
+The victim test depends on the wall clock only.
+
+Proof, with a private copy of the runner and a log line in `watchDogLoop`
+(`[WD-FIRE]`, scratch dir r4/slow-x86/pr2):
+
+    batch 1-50 on the sweep image: 1 victim in 4 of 4 runs
+      waitMs=5000 waitStartedAt=3434 now=8441, victim BlockClosureTest>>testBenchFor
+    batch 901-950: waitMs=20000, two victims 20 s apart
+    batch 1951-2000: waitMs=30000, four victims 30 s apart
+      (TraitMCDefinitionsTest, TraitTestCase x2, ZipArchiveTest)
+    same batches with the patch below: 0 victims (batch 1-50 three runs,
+      901-950 and 1951-2000 one run each)
+
+Why only x86_64: the victim needs a test that still runs one limit period
+after the `timeLimit:` call.  The arm64 batch 1951-2000 takes 27 s, shorter
+than the 30 s period; the x86_64 batch takes 76 s.
+
+Fix: `docs/patches/runner-disarm-env-watchdog.patch`.  It stands the
+watchdog down after every test (`testCompleted` true plus a semaphore
+signal) and sets `testCompleted` false at the start of a test.  The file to
+patch is `run_sunit_tests.st` in the scripts/pharo-headless-test submodule,
+a separate repository.  Apply it there: `patch -p0 < ...` from the
+submodule directory after changing the `a/` and `b/` prefixes, or
+`patch run_sunit_tests.st < docs/patches/runner-disarm-env-watchdog.patch`.
+Not yet committed in the submodule.
+
+### Where the time goes in the two slowest tests (lead, not fixed)
+
+TraitTestCase>>testCompositionCopy and testExplicitRequirement make 512 to
+767 calls of `primitiveFlushCacheBySelector` each (PHARO_FLUSH_CENSUS, diag
+build).  The other four tests make none.  Each call flushes the whole JIT:
+`flushJITCaches` calls `JITRuntime::flushCaches`, and that calls
+`unlinkEverything`, which walks every method in the code zone and every send
+site.  `sample` of 12 runs of testCompositionCopy on arm64 (main thread, 619
+samples): unlinkEverything 109, primitiveFlushCacheBySelector itself 83 (the
+scan of `methodCache_`), becomeForwardAll 91, primitiveNew 51,
+sys_icache_invalidate 22, changeClassOf 18.  That is 31 percent in the
+flush path and 15 percent in become.  Cog unlinks only the sends of the one
+selector.  A selector-only flush needs the IC selector slot (slot 18), the
+PMS site patch map, the mega cache and the MCF site and perform caches to
+agree on the selector; it must be done in both architecture backends.  It
+is not a contained change, so it is left as a lead.  It would not remove the
+errors above, because the tests are not the cause.
