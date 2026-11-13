@@ -710,6 +710,8 @@ struct SDLWindowState {
     int width;
     int height;
     std::string title;
+    int x = 0;      // as set by SDL_SetWindowPosition
+    int y = 0;
 };
 
 // Per-texture state
@@ -719,6 +721,8 @@ struct SDLTextureState {
     int height;
     int pitch;
     void* renderer;  // Which renderer owns this texture
+    uint32_t format = 0;   // as given to SDL_CreateTexture, for SDL_QueryTexture
+    int access = 0;
     bool usesDisplaySurface;  // True when LockTexture returned the display surface buffer
 };
 
@@ -731,6 +735,7 @@ struct SDLRendererState {
 static uintptr_t sNextHandle = 0x10000;  // Incrementing unique handles
 static std::unordered_map<void*, SDLWindowState> sWindows;
 static std::unordered_map<void*, SDLTextureState> sTextures;
+static std::unordered_map<std::string, std::string> sHints;   // SDL_SetHint / SDL_GetHint
 static std::unordered_map<void*, SDLRendererState> sRenderers;
 static void* sMainRenderer = nullptr;  // First renderer is the "main" one (renders to display)
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
@@ -765,6 +770,7 @@ static void resetAllFFIState() {
     sNextHandle = 0x10000;
     sWindows.clear();
     sTextures.clear();
+    sHints.clear();
     sRenderers.clear();
     sMainRenderer = nullptr;
     sMainWindow = nullptr;
@@ -949,11 +955,16 @@ int stub_SDL_SetWindowFullscreen(void* window, uint32_t flags) {
 }
 
 void stub_SDL_GetWindowPosition(void* window, int* x, int* y) {
-    if (x) *x = 0;
-    if (y) *y = 0;
+    auto it = sWindows.find(window);
+    if (x) *x = (it != sWindows.end()) ? it->second.x : 0;
+    if (y) *y = (it != sWindows.end()) ? it->second.y : 0;
 }
 
 void stub_SDL_SetWindowPosition(void* window, int x, int y) {
+    auto it = sWindows.find(window);
+    if (it == sWindows.end()) return;
+    it->second.x = x;
+    it->second.y = y;
 }
 
 void stub_SDL_SetWindowIcon(void* window, void* icon) {
@@ -1053,6 +1064,8 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
     state.height = h;
     state.pitch = w * 4;  // 32bpp XRGB
     state.renderer = renderer;
+    state.format = format;
+    state.access = access;
     state.usesDisplaySurface = false;
     sTextures[handle] = state;
     auto rit = sRenderers.find(renderer);
@@ -1651,7 +1664,32 @@ void stub_SDL_QuitSubSystem(uint32_t flags) {
 }
 
 int stub_SDL_SetHint(const char* name, const char* value) {
+    if (!name || !value) return 0;
+    sHints[name] = value;
     return 1;
+}
+
+const char* stub_SDL_GetHint(const char* name) {
+    if (!name) return nullptr;
+    auto it = sHints.find(name);
+    return it == sHints.end() ? nullptr : it->second.c_str();
+}
+
+uint64_t stub_SDL_GetTicks64() {
+    static auto start = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count());
+}
+
+int stub_SDL_QueryTexture(void* texture, uint32_t* format, int* access, int* w, int* h) {
+    auto it = sTextures.find(texture);
+    if (it == sTextures.end()) return -1;
+    if (format) *format = it->second.format;
+    if (access) *access = it->second.access;
+    if (w) *w = it->second.width;
+    if (h) *h = it->second.height;
+    return 0;
 }
 
 int stub_SDL_GL_SetAttribute(int attr, int value) {
@@ -1856,6 +1894,9 @@ void registerSDL2Stubs() {
     registerFunction("SDL_VideoInit", reinterpret_cast<void*>(stub_SDL_VideoInit));
     registerFunction("SDL_VideoQuit", reinterpret_cast<void*>(stub_SDL_VideoQuit));
     registerFunction("SDL_SetHint", reinterpret_cast<void*>(stub_SDL_SetHint));
+    registerFunction("SDL_GetHint", reinterpret_cast<void*>(stub_SDL_GetHint));
+    registerFunction("SDL_GetTicks64", reinterpret_cast<void*>(stub_SDL_GetTicks64));
+    registerFunction("SDL_QueryTexture", reinterpret_cast<void*>(stub_SDL_QueryTexture));
 
     // OpenGL context
     registerFunction("SDL_GL_SetAttribute", reinterpret_cast<void*>(stub_SDL_GL_SetAttribute));
