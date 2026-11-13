@@ -4958,6 +4958,7 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
 
     // Well-known selectors
     visitor(selectors_.doesNotUnderstand);
+    visitor(selectors_.cannotInterpret);   // proxy protocol: a stale copy after a compacting GC made lookup miss the handler
     visitor(selectors_.mustBeBoolean);
     visitor(selectors_.cannotReturn);
     visitor(selectors_.aboutToReturn);
