@@ -41,7 +41,7 @@ Each change was measured with interleaved runs of the old binary
 - `TestTookTooMuchTime` on a changing set of tests (Pharo 13 x86_64): a
   runner defect.  The runner did not disarm the watchdog of the SUnit
   environment after a test that set `timeLimit:`, and the watchdog then
-  signalled a later test.  Fixed in `pharo-headless-test` `7e0c95b`
+  signalled a later test.  Fixed in `pharo-headless-test` `7e0c95b` and the commit after
   ([deferred.md](deferred.md) has the measurement).  The next sweep must
   use an image prepared again with the fixed runner.
 
@@ -76,9 +76,31 @@ Each change was measured with interleaved runs of the old binary
   the package declares the 16-byte `CXString` struct as one pointer;
   `smalltalkweb-myprecious` has a busy loop and a service-name race, and Cog
   under Rosetta does not complete the reconnect while the loop runs.
-- Not done: the full Pharo 14 package run with the fixed harness and the
-  fixed VM (in progress on the arm64 Mac); a package run on a real x86_64
-  host (the Linux x86_64 build is not validated since the merge of `main`).
+- Second package run (fixed harness, VM at `8b93526c`, arm64): 150 packages
+  load, 142 give a result on the two VMs.  Cog 37411 passes, our VM 37309.
+  The differences, each one classified and reviewed:
+  - `moosetechnology-mooseide` hung on our VM.  VM defect, fixed
+    (`d31e40af`): `selectors_.cannotInterpret` was not a GC root, so the
+    `cannotInterpret:` lookup failed after a compacting GC.
+  - `pharo-graphics-pharosdl3` (Cog 108 passes, our VM 7).  Three causes.
+    Our arm64 VM has no `libSDL3` where the image looks for the library
+    (not fixed, a packaging decision).  The VM sent each SDL module to the
+    SDL2 stubs (fixed, `c9c79751`).  BitBlt read a forwarded `Form` bits
+    object (fixed, `c9c79751` and the commit after).  With an arm64
+    `libSDL3` beside the image, the fixed VM gives the Cog result, 108/1/1.
+  - `pharo-graphics-pharo-sdl-experiments` (Cog 27 passes, our VM 21).
+    Open: the SDL2 stub layer has no `SDL_GetHint`, `SDL_GetTicks64`,
+    `SDL_QueryTexture`, `SDL_RenderReadPixels`, `SDL_GetRenderDriverInfo`.
+  - `koendehondt-hera-for-pharo`: harness defect, fixed (`652e163c`).  Cog
+    writes a wide-string FAIL line with NUL bytes.
+  - `exercism-pharo-smalltalk-test-runner`, `opensmock-molecule`,
+    `apptivegrid-soil`, `pharo-graphics-spec-toplo`: package defects or
+    races that Cog shows also.  `newapplesho-google-cloud-smalltalk`: Cog
+    crashes in `libcrypto`.
+  - `pharo-cig` and `smalltalkweb-myprecious`: no change, see below.
+- Not done: the four sweeps on the build with these three fixes (in
+  progress); a package run on a real x86_64 host
+  ([x86-package-run.md](x86-package-run.md)).
 - Open: a block whose home is live on the stack of a different process
   still uses the method fallback (scenario B7; the tested answer matches
   Cog).  `cannotReturnStormGuard` stops a process after 64 handled

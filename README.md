@@ -18,11 +18,9 @@ does not support them.
   and 219 skip.  Pharo 13 (2047 classes, 28077 tests): 27930 pass and 182
   skip.  The tests that do not pass are a live network query and
   timing-dependent tests (docs/WIP.md).
-- Package tests (93 package images, 2535 test classes): 650 s, against
-  1546 s on the Cog VM.  Every class passes at least as much as on Cog,
-  except pharo-cig: its own FFI binding defect stops the run when libclang
-  loads, and Cog cannot load libclang on the test machine
-  (docs/vm-compat-bugs.md).
+- Package tests on Pharo 14 (200 packages, 150 load, 142 give a result on
+  the two VMs): 37309 passes, against 37411 on the Cog VM.  The difference
+  is two SDL packages and one race (docs/WIP.md).
 - Speed: about the same as Cog on large programs.  See
   [docs/benchmarking.md](docs/benchmarking.md).
 - GUI: Metal rendering, menus, touch-to-mouse events, hardware keyboard,
