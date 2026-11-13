@@ -9942,7 +9942,7 @@ size_t Interpreter::validateNLRHomeFrame(size_t homeFrame, Oop expectedHome) {
     // owns that context.  A frame that owns the home context is on the
     // stack, so the home is live.
     const Oop owned = savedFrames_[homeFrame].materializedContext;
-    if (owned.isObject() && !owned.isNil() && owned.rawBits() > 0x10000
+    if (owned.isObject() && !owned.isNil()
             && closure_.isObject() && !closure_.isNil()) {
         ObjectHeader* cl = closure_.asObjectPtr();
         ObjectHeader* oc = owned.asObjectPtr();
@@ -10825,7 +10825,7 @@ void Interpreter::nlrFallbackNote(const char* site, bool liveHome, Oop homeMetho
     static int n = 0;
     if (++n <= 2000000)
         fprintf(stderr, "[NLR-FALLBACK] site=%s liveHome=%d fd=%zu home=%s\n", site, liveHome ? 1 : 0, frameDepth_,
-                (homeMethod.isObject() && homeMethod.rawBits() > 0x10000) ? memory_.selectorOf(homeMethod).c_str() : "?");
+                (homeMethod.isObject() && !homeMethod.isNil()) ? memory_.selectorOf(homeMethod).c_str() : "?");
 }
 
 // Where the live lexical home context `home` is, by identity (never by
@@ -10843,7 +10843,7 @@ void Interpreter::nlrFallbackNote(const char* site, bool liveHome, Oop homeMetho
 // context chain and a LATER activation of the same method is an inline frame.
 Interpreter::HomeSite Interpreter::homeSiteOf(Oop home, size_t& frameIndex) {
     frameIndex = SIZE_MAX;
-    if (!home.isObject() || home.isNil() || home.rawBits() <= 0x10000) return HomeSite::Unknown;
+    if (!home.isObject() || home.isNil()) return HomeSite::Unknown;
     for (size_t i = frameDepth_; i > 0; i--) {
         const Oop mc = savedFrames_[i - 1].materializedContext;
         if (mc.rawBits() == home.rawBits()

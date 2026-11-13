@@ -288,7 +288,8 @@ after every 1000 steps.
 Now `step()` waits for an interrupt point before the periodic check, the
 signal check, the preemption check and the heartbeat yield.  The batch in the
 nested loop also ends at an interrupt point.  `PHARO_SWITCH_AT_ANY_BYTECODE`
-brings back the old behavior in all these places.
+brings back the old behavior in all these places.  The knob has an effect only in a
+build with `-DPHARO_DIAG_KNOBS=ON`.
 
 First try: remove only the cooldown, and leave `step()` as it was.  The
 executor then ran in the open scheduler, and `step()` still switched at any
