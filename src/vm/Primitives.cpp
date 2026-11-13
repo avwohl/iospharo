@@ -34224,6 +34224,45 @@ extern "C" void pharo_tffiWorkerShutdownAll(void) {
     }
 }
 
+// Integer argument of a callout, with the range check of the stock VM
+// (signedNBitValueOf / positiveNBitValueOf in its marshalling): a value
+// outside the C type fails the primitive.  Without the check a value was
+// truncated without an error (scripts/cogdiff/ffirange.st): labs: -12345678901
+// with a 32-bit long answered 539222987.
+// `bits` gets the value in two's complement, extended to 64 bits.
+static bool tffiIntegerArgBits(pharo::ObjectMemory& memory, Oop argOop,
+                               unsigned short ffiType, uint64_t& bits) {
+    int width = 0;
+    bool isSigned = false;
+    switch (ffiType) {
+        case FFI_TYPE_SINT8:  width = 8;  isSigned = true;  break;
+        case FFI_TYPE_UINT8:  width = 8;  break;
+        case FFI_TYPE_SINT16: width = 16; isSigned = true;  break;
+        case FFI_TYPE_UINT16: width = 16; break;
+        case FFI_TYPE_SINT32: width = 32; isSigned = true;  break;
+        case FFI_TYPE_UINT32: width = 32; break;
+        case FFI_TYPE_SINT64: width = 64; isSigned = true;  break;
+        case FFI_TYPE_UINT64: width = 64; break;
+        case FFI_TYPE_INT:    width = static_cast<int>(sizeof(int) * 8); isSigned = true; break;
+        default: return false;
+    }
+    if (isSigned) {
+        int64_t v = 0;
+        if (!trySigned64BitValueOf(memory, argOop, v)) return false;
+        if (width < 64) {
+            const int64_t lim = static_cast<int64_t>(1) << (width - 1);
+            if (v < -lim || v >= lim) return false;
+        }
+        bits = static_cast<uint64_t>(v);
+        return true;
+    }
+    uint64_t u = 0;
+    if (!tryUnsigned64BitValueOf(memory, argOop, u)) return false;
+    if (width < 64 && (u >> width) != 0) return false;
+    bits = u;
+    return true;
+}
+
 // Marshal one Smalltalk argument into task-owned heap storage.  Mirrors the
 // primitiveSameThreadCallout cases, except heap-allocated (the call runs on
 // another thread after this primitive returns) and ByteArrays are copied.
@@ -34282,12 +34321,8 @@ static bool tffiWorkerMarshalArg(pharo::Interpreter& interp,
         case FFI_TYPE_SINT32: case FFI_TYPE_UINT32:
         case FFI_TYPE_SINT64: case FFI_TYPE_UINT64:
         case FFI_TYPE_INT: {
-            int64_t val = 0;
-            if (argOop.isSmallInteger()) {
-                val = argOop.asSmallInteger();
-            } else if (!trySigned64BitValueOf(memory, argOop, val)) {
-                return false;
-            }
+            uint64_t val = 0;
+            if (!tffiIntegerArgBits(memory, argOop, argType->type, val)) return false;
             // libffi reads the exact width from the slot; store the full
             // 64-bit value little-endian-truncated per type width.
             memcpy(argSlot, &val, 8);
@@ -34612,88 +34647,28 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                     memcpy(argSlot, &d, sizeof(double));
                     break;
                 }
-                case FFI_TYPE_SINT8: {
-                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
-                    int8_t v = static_cast<int8_t>(argOop.asSmallInteger());
-                    memcpy(argSlot, &v, sizeof(int8_t));
-                    break;
-                }
-                case FFI_TYPE_UINT8: {
-                    if (argOop.isSmallInteger()) {
-                        uint8_t v = static_cast<uint8_t>(argOop.asSmallInteger());
+                case FFI_TYPE_UINT8:
+                    // A Character goes as its code (below 256).
+                    if (argOop.isCharacter()) {
+                        uint32_t code = static_cast<uint32_t>(argOop.asCharacter());
+                        if (code > 255) return PrimitiveResult::Failure;
+                        uint8_t v = static_cast<uint8_t>(code);
                         memcpy(argSlot, &v, sizeof(uint8_t));
-                    } else if (argOop.isCharacter()) {
-                        uint8_t v = static_cast<uint8_t>(argOop.asCharacter());
-                        memcpy(argSlot, &v, sizeof(uint8_t));
-                    } else {
-                        return PrimitiveResult::Failure;
+                        break;
                     }
-                    break;
-                }
-                case FFI_TYPE_SINT16: {
-                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
-                    int16_t v = static_cast<int16_t>(argOop.asSmallInteger());
-                    memcpy(argSlot, &v, sizeof(int16_t));
-                    break;
-                }
-                case FFI_TYPE_UINT16: {
-                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
-                    uint16_t v = static_cast<uint16_t>(argOop.asSmallInteger());
-                    memcpy(argSlot, &v, sizeof(uint16_t));
-                    break;
-                }
-                case FFI_TYPE_SINT32: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    int32_t v = static_cast<int32_t>(val);
-                    memcpy(argSlot, &v, sizeof(int32_t));
-                    break;
-                }
-                case FFI_TYPE_UINT32: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    uint32_t v = static_cast<uint32_t>(val);
-                    memcpy(argSlot, &v, sizeof(uint32_t));
-                    break;
-                }
-                case FFI_TYPE_SINT64: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    memcpy(argSlot, &val, sizeof(int64_t));
-                    break;
-                }
-                case FFI_TYPE_UINT64: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    uint64_t uval = static_cast<uint64_t>(val);
-                    memcpy(argSlot, &uval, sizeof(uint64_t));
-                    break;
-                }
+                    [[fallthrough]];
+                case FFI_TYPE_SINT8:
+                case FFI_TYPE_SINT16: case FFI_TYPE_UINT16:
+                case FFI_TYPE_SINT32: case FFI_TYPE_UINT32:
+                case FFI_TYPE_SINT64: case FFI_TYPE_UINT64:
                 case FFI_TYPE_INT: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                    // Range-checked as on the stock VM.  x86-64 and arm64
+                    // are little-endian, so the low bytes of the 64-bit
+                    // value are the value of each narrower type.
+                    uint64_t val = 0;
+                    if (!tffiIntegerArgBits(memory_, argOop, cif->arg_types[i]->type, val))
                         return PrimitiveResult::Failure;
-                    }
-                    int v = static_cast<int>(val);
-                    memcpy(argSlot, &v, sizeof(int));
+                    memcpy(argSlot, &val, cif->arg_types[i]->size);
                     break;
                 }
                 case FFI_TYPE_STRUCT: {

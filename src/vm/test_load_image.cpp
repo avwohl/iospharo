@@ -52,6 +52,7 @@ extern "C" void pharo_xtcbShutdown(void);
 #define NOMINMAX
 #endif
 #include <windows.h>   // Vectored Exception Handler crash dump (pharoWinCrashHandler)
+#include <shellapi.h>  // CommandLineToArgvW
 #include <cstdlib>   // _fullpath
 // dirname / realpath shims (no MinGW equivalents).  Only the small subset
 // this file uses: dirname() for the imagePath chdir, realpath(path, nullptr)
@@ -864,6 +865,29 @@ extern "C" size_t g_pinSkipNotObj, g_pinSkipYoung, g_pinSkipPinned, g_pinSkipNoC
 extern "C" size_t g_pinTenuredLow;
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // The C runtime gives argv in the ANSI code page, so an eval text with a
+    // character outside ASCII reached the image as invalid UTF-8.  Take the
+    // UTF-16 command line and convert it to UTF-8, as the stock VM does.
+    static std::vector<std::string> utf8Args;
+    static std::vector<char*> utf8Argv;
+    {
+        int wargc = 0;
+        LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+        if (wargv && wargc == argc) {
+            for (int i = 0; i < wargc; i++) {
+                int n = WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, nullptr, 0, nullptr, nullptr);
+                std::string a8(n > 0 ? static_cast<size_t>(n - 1) : 0, ' ');
+                if (n > 1) WideCharToMultiByte(CP_UTF8, 0, wargv[i], -1, a8.data(), n, nullptr, nullptr);
+                utf8Args.push_back(std::move(a8));
+            }
+            for (auto& a8 : utf8Args) utf8Argv.push_back(a8.data());
+            utf8Argv.push_back(nullptr);
+            argv = utf8Argv.data();
+        }
+        if (wargv) LocalFree(wargv);
+    }
+#endif
 #ifndef _WIN32
     struct sigaction sa;
     sa.sa_sigaction = sigsegvAction;
