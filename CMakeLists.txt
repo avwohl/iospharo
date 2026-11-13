@@ -856,6 +856,35 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>)
     endif()
 
+    # SDL3 shared library for the image package pharo-graphics-pharosdl3.
+    # The image's FFIMacLibraryFinder probes <vm directory>/Plugins (the stock
+    # Cog layout) for libSDL3.dylib; this VM shipped none, so every test of the
+    # package ended with "Cannot locate any of #('libSDL3.dylib' ...)".
+    # scripts/build-sdl3.sh builds a version-pinned library per arch into
+    # third-party-build/sdl3-install/.  Real SDL3 only: the SDL2 static slice
+    # linked into the VM is a different library.  macOS only; iOS has no
+    # dlopen of loose libraries and renders through Metal (docs/sdl3.md).
+    if(APPLE AND NOT IOS)
+        if(CMAKE_OSX_ARCHITECTURES)
+            list(GET CMAKE_OSX_ARCHITECTURES 0 _sdl3_arch)
+        else()
+            set(_sdl3_arch ${CMAKE_HOST_SYSTEM_PROCESSOR})
+        endif()
+        set(_sdl3_lib "${CMAKE_SOURCE_DIR}/third-party-build/sdl3-install/macos-${_sdl3_arch}/lib/libSDL3.0.dylib")
+        if(EXISTS "${_sdl3_lib}")
+            add_custom_command(TARGET test_load_image POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:test_load_image>/Plugins"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sdl3_lib}"
+                    "$<TARGET_FILE_DIR:test_load_image>/Plugins/libSDL3.0.dylib"
+                COMMAND ${CMAKE_COMMAND} -E create_symlink libSDL3.0.dylib
+                    "$<TARGET_FILE_DIR:test_load_image>/Plugins/libSDL3.dylib"
+                VERBATIM)
+        else()
+            message(STATUS "SDL3 library for ${_sdl3_arch} not built; run scripts/build-sdl3.sh to stage Plugins/libSDL3.dylib (pharosdl3 package tests need it)")
+        endif()
+    endif()
+
     # Building just `--target test_load_image` must also stage the fixture
     # libraries the suites FFI-load (the x86 box builds exactly that target;
     # without these deps libtty.so was never produced there and LibTTYTest +

@@ -73,6 +73,9 @@ This downloads source tarballs and builds for iOS device, Simulator, and Mac Cat
 Takes about 15 minutes on first run. Use `--no-crypto` to skip OpenSSL and libssh2
 (libgit2 is always built for local repository support).
 
+SDL3 (for the PharoSDL3 image package, macOS only): run
+`scripts/build-sdl3.sh`, then build again.  See [sdl3.md](sdl3.md).
+
 ### Step 3: Build the app
 
 ```bash

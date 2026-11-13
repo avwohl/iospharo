@@ -73,6 +73,7 @@ cmake --build build
 - [docs/vm-compat-bugs.md](docs/vm-compat-bugs.md): VM defects, open and
   fixed
 - [docs/image_issues.md](docs/image_issues.md): Pharo image defects
+- [docs/sdl3.md](docs/sdl3.md): the SDL3 library for the PharoSDL3 package
 - [docs/credits.md](docs/credits.md): credits and acknowledgements
 
 ## Related
