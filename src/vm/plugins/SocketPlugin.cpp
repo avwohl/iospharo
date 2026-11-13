@@ -16,11 +16,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
-#ifndef _WIN32
-#include <poll.h>
-#endif
 
 // =====================================================================
 // Private socket structure (pointed to by SQSocket.privateSocketPtr)
@@ -247,12 +245,15 @@ static void ioMonitorLoopBody() {
         std::vector<bool> isReadable(snapshot.size(), false);
         std::vector<bool> isWritable(snapshot.size(), false);
 
-#ifndef _WIN32
-        // POSIX: poll(), NOT select().  fd_set is a fixed FD_SETSIZE(=1024)-bit
+        // poll() (WSAPoll on Windows), NOT select().  fd_set is a fixed FD_SETSIZE(=1024)-bit
         // array; FD_SET with a larger fd is out of bounds — glibc's fortify
         // aborted the x86 full-suite run ("bit out of range 0 - FD_SETSIZE")
         // once the process's fd numbers crossed 1024, and macOS corrupts stack
         // memory silently in the same case.  poll() has no fd-value limit.
+        // On Windows an fd_set holds at most FD_SETSIZE (64) sockets and FD_SET
+        // drops the rest without an error, so a socket past the 64th was never
+        // watched: its accept, connect and read waits ran to their timeouts
+        // (smalltalkweb-myprecious, 2026-11-13).  WSAPoll has no such limit.
         std::vector<struct pollfd> pfds;
         std::vector<size_t> pfdIndex;   // pfds[k] (k>=1) -> snapshot index
         pfds.push_back({gWakeReadFd(), POLLIN, 0});
@@ -265,7 +266,7 @@ static void ioMonitorLoopBody() {
             pfdIndex.push_back(i);
         }
 
-        int ready = poll(pfds.data(), (nfds_t)pfds.size(), 100 /*ms*/);
+        int ready = sockPoll(pfds.data(), pfds.size(), 100 /*ms*/);
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SOCKET_LOOP_CENSUS), 0)) {
             static uint64_t iters = 0, wakes = 0, sockReady = 0;
             iters++;
@@ -307,48 +308,6 @@ static void ioMonitorLoopBody() {
             if (pfds[k].revents & (POLLOUT | POLLHUP | POLLERR))
                 isWritable[i] = wantWrite[i];
         }
-#else
-        // Windows: keep select() — winsock fd_set is an array of SOCKET values
-        // bounded by COUNT (FD_SETSIZE=64 sockets by default), not by fd VALUE,
-        // so the POSIX out-of-range hazard doesn't apply.
-        fd_set readfds, writefds;
-        FD_ZERO(&readfds);
-        FD_ZERO(&writefds);
-
-        SOCKET maxfd = gWakeReadFd();
-        FD_SET(gWakeReadFd(), &readfds);
-
-        for (size_t i = 0; i < snapshot.size(); i++) {
-            PrivateSocket* ps = snapshot[i];
-            if (wantRead[i]) {
-                FD_SET(ps->fd, &readfds);
-                if (ps->fd > maxfd) maxfd = ps->fd;
-            }
-            if (wantWrite[i]) {
-                FD_SET(ps->fd, &writefds);
-                if (ps->fd > maxfd) maxfd = ps->fd;
-            }
-        }
-
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; // 100ms timeout
-
-        int ready = select((int)(maxfd + 1), &readfds, &writefds, nullptr, &tv);
-        if (ready <= 0) continue;
-
-        // Drain wake channel
-        if (FD_ISSET(gWakeReadFd(), &readfds)) {
-            drainWake();
-        }
-
-        for (size_t i = 0; i < snapshot.size(); i++) {
-            PrivateSocket* ps = snapshot[i];
-            if (ps->fd == INVALID_SOCKET) continue;
-            if (wantRead[i] && FD_ISSET(ps->fd, &readfds)) isReadable[i] = true;
-            if (wantWrite[i] && FD_ISSET(ps->fd, &writefds)) isWritable[i] = true;
-        }
-#endif
 
         // Process socket events
         for (size_t i = 0; i < snapshot.size(); i++) {
@@ -1192,7 +1151,7 @@ extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
         // poll(), not select(): FD_SET with fd >= FD_SETSIZE is out of bounds
         // (see ioMonitorLoop) and long suite runs push fds past 1024.
         struct pollfd pfd = {ps->fd, POLLIN, 0};
-        int ready = poll(&pfd, 1, 0);
+        int ready = sockPoll(&pfd, 1, 0);
 #else
         fd_set readfds;
         FD_ZERO(&readfds);

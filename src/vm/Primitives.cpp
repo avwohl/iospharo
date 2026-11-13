@@ -5532,6 +5532,16 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
     }
 
+    // `Smalltalk quit: n` (and exitFailure, which is quit: 1) hands the
+    // process exit status to this primitive as its argument.  Keep it for
+    // main to return; the stock VM exits with it.  A deferred quit keeps it
+    // too, and a repeat quit replaces it.
+    if (argCount >= 1) {
+        Oop statusOop = stackValue(0);
+        if (statusOop.isSmallInteger())
+            quitExitStatus_ = static_cast<int>(statusOop.asSmallInteger());
+    }
+
     // A quit taken while a callback is outstanding cannot be honoured here.
     // The C function that invoked the callback — qsort, say — still has frames
     // on the stack expecting the callback to return, and stopping the
@@ -7475,8 +7485,11 @@ PrimitiveResult Interpreter::primitiveExponent(int argCount) {
     // primitiveExponent and primitiveSmallFloatExponent answer.
 
     // Get the exponent using frexp (returns value in range [0.5, 1) and exponent)
-    int exponent;
-    std::frexp(value, &exponent);
+    // C leaves the exponent unspecified for an infinity or a NaN: the C
+    // libraries of macOS, glibc and the stock Windows VM store 0, the
+    // mingw-w64 one stores -1.  Answer -1 on every host, as Cog does.
+    int exponent = 0;
+    if (std::isfinite(value)) std::frexp(value, &exponent);
     // Adjust because frexp returns mantissa in [0.5, 1), Smalltalk expects [1, 2)
     exponent--;
 
@@ -15102,7 +15115,8 @@ PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
 // ===== FILE I/O PRIMITIVES =====
 //
 // Handle shape is ABI: stock Cog's FilePlugin hands the image a ByteArray
-// holding the platform SQFile struct — sessionID (int32 @0), FILE* (@8),
+// holding the platform SQFile struct — sessionID (int32 @0), FILE* (@8;
+// on Windows the Win32 HANDLE, see sqFileHandleWord),
 // writable (@16), lastOp (@17), lastChar (@18), isStdioStream (@19); 24
 // bytes on 64-bit.  Image code legitimately introspects it: Soil's
 // BinaryFileStream extension does `handle pointerAt: 9` to pull out the
@@ -15115,6 +15129,18 @@ PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
 // bytes @4, which stock leaves zero), and cross-check the embedded FILE*
 // against the table on every use so stale or forged handles fail the
 // primitive instead of reaching libc.
+
+// The word at offset 8 of the handle.  The stock Unix VM puts the FILE*
+// there.  The stock Windows VM puts the Win32 HANDLE there, and image code
+// gives that word to FlushFileBuffers and LockFileEx (Soil).  With a FILE* in
+// the word, each such call failed with error 6, ERROR_INVALID_HANDLE.
+static uintptr_t sqFileHandleWord(FILE* file) {
+#ifdef _WIN32
+    return static_cast<uintptr_t>(_get_osfhandle(_fileno(file)));
+#else
+    return reinterpret_cast<uintptr_t>(file);
+#endif
+}
 
 Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
     if (fileSessionID_ == 0) {
@@ -15130,11 +15156,29 @@ Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
     std::memset(b, 0, 24);
     std::memcpy(b, &fileSessionID_, 4);
     std::memcpy(b + 4, &fileId, 4);
-    uintptr_t fp = reinterpret_cast<uintptr_t>(file);
+    uintptr_t fp = sqFileHandleWord(file);
     std::memcpy(b + 8, &fp, 8);
     b[16] = writable ? 1 : 0;
     b[19] = (file == stdin || file == stdout || file == stderr) ? 1 : 0;
     return handle;
+}
+
+// File positions have 64 bits on each host.  On Windows long and off_t have
+// 32 bits, so fseek and ftell cut a position past 2 GB (Soil seeks to object
+// index 2^36 and expects the read there to find the end of the file).
+static inline int pharoFseek64(FILE* f, int64_t pos, int whence) {
+#ifdef _WIN32
+    return _fseeki64(f, pos, whence);
+#else
+    return fseeko(f, static_cast<off_t>(pos), whence);
+#endif
+}
+static inline int64_t pharoFtell64(FILE* f) {
+#ifdef _WIN32
+    return _ftelli64(f);
+#else
+    return static_cast<int64_t>(ftello(f));
+#endif
 }
 
 FILE* Interpreter::fileFromHandle(Oop handleOop, int* outFileId) {
@@ -15143,7 +15187,7 @@ FILE* Interpreter::fileFromHandle(Oop handleOop, int* outFileId) {
     if (file && !filePendingPos_.empty()) {
         auto p = filePendingPos_.find(fileId);
         if (p != filePendingPos_.end()) {
-            fseeko(file, static_cast<off_t>(p->second), SEEK_SET);
+            pharoFseek64(file, p->second, SEEK_SET);
             filePendingPos_.erase(p);
         }
     }
@@ -15175,7 +15219,7 @@ FILE* Interpreter::fileFromHandleNoSync(Oop handleOop, int* outFileId) {
     if (it == openFiles_.end()) return nullptr;
     uintptr_t fp;
     std::memcpy(&fp, b + 8, 8);
-    if (reinterpret_cast<FILE*>(fp) != it->second) return nullptr;  // stale id reuse
+    if (fp != sqFileHandleWord(it->second)) return nullptr;  // stale id reuse
     if (outFileId) *outFileId = fileId;
     return it->second;
 }
@@ -15280,7 +15324,7 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
     }
 
     auto pending = filePendingPos_.find(fileId);
-    long pos = pending != filePendingPos_.end() ? static_cast<long>(pending->second) : ftell(file);
+    int64_t pos = pending != filePendingPos_.end() ? pending->second : pharoFtell64(file);
     if (pos < 0) {
         return PrimitiveResult::Failure;
     }
@@ -15307,35 +15351,97 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
 // every file syscall site.  GetFullPathNameA canonicalizes first because the
 // \\?\ form disables the normalization (./.. , forward slashes, relative paths)
 // that the Win32 path layer would otherwise perform.
-static std::string winLongPath(const std::string& path) {
 #ifdef _WIN32
-    if (path.size() >= 248 && path.rfind("\\\\?\\", 0) != 0) {
-        std::string abs;
-        if (path.size() >= 3 && path[1] == ':' &&
-            (path[2] == '\\' || path[2] == '/')) {
-            // Already an absolute drive path — canonicalize slashes ourselves.
-            // GetFullPathNameA is itself MAX_PATH-limited and FAILS on a long
-            // input (the very case we are here to handle), so an absolute long
-            // path must NOT be routed through it.
-            abs = path;
-            for (char& c : abs) if (c == '/') c = '\\';
+// The image hands the VM every path as UTF-8.  The ANSI (code page) Win32 and
+// CRT entry points mangle any name outside the code page, so each file call
+// here goes through the wide API: convert the UTF-8 path to UTF-16 (stock
+// Cog does the same), then add the long-path prefix on the wide string.
+static std::wstring winWidePath(const std::string& path) {
+    std::wstring w;
+    int n = MultiByteToWideChar(CP_UTF8, 0, path.data(), (int)path.size(), nullptr, 0);
+    if (n > 0) {
+        w.assign((size_t)n, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, path.data(), (int)path.size(), &w[0], n);
+    }
+    if (w.size() >= 248 && w.rfind(L"\\\\?\\", 0) != 0) {
+        std::wstring abs;
+        if (w.size() >= 3 && w[1] == L':' && (w[2] == L'\\' || w[2] == L'/')) {
+            // Already an absolute drive path: GetFullPathNameW is MAX_PATH-limited
+            // on a long input, so canonicalize the slashes ourselves.
+            abs = w;
+            for (wchar_t& c : abs) if (c == L'/') c = L'\\';
         } else {
-            // Relative / drive-relative: GetFullPathNameA is safe only because
-            // the *resolved* result is what is long, not the short input.
-            char full[32768];
-            DWORD n = GetFullPathNameA(path.c_str(), (DWORD)sizeof(full), full, nullptr);
-            if (n != 0 && n < sizeof(full)) abs.assign(full, n);
+            std::vector<wchar_t> full(32768);
+            DWORD m = GetFullPathNameW(w.c_str(), (DWORD)full.size(), full.data(), nullptr);
+            if (m != 0 && m < full.size()) abs.assign(full.data(), m);
         }
         if (!abs.empty()) {
-            if (abs.rfind("\\\\", 0) == 0)         // UNC: \\srv\share -> \\?\UNC\srv\share
-                return "\\\\?\\UNC\\" + abs.substr(2);
-            if (abs.size() >= 2 && abs[1] == ':')  // drive: C:\.. -> \\?\C:\..
-                return "\\\\?\\" + abs;
+            if (abs.rfind(L"\\\\", 0) == 0)         // UNC: \\srv\share -> \\?\UNC\srv\share
+                return L"\\\\?\\UNC\\" + abs.substr(2);
+            if (abs.size() >= 2 && abs[1] == L':')  // drive: C:\.. -> \\?\C:\..
+                return L"\\\\?\\" + abs;
         }
     }
-#endif
-    return path;
+    return w;
 }
+
+static std::string winNarrowUtf8(const wchar_t* w, int len /* -1: NUL-terminated */) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, len, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return std::string();
+    std::string out((size_t)n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, len, &out[0], n, nullptr, nullptr);
+    if (len == -1 && !out.empty()) out.pop_back();   // drop the NUL
+    return out;
+}
+
+static int pharoStat(const std::string& path, struct stat* st, bool = true) {
+    // mingw-w64 declares struct stat and struct _stat64i32 as two tags for one layout.
+    static_assert(sizeof(struct stat) == sizeof(struct _stat64i32), "stat layouts differ");
+    return _wstat(winWidePath(path).c_str(), reinterpret_cast<struct _stat64i32*>(st));
+}
+static int pharoAccess(const std::string& path, int mode) {
+    return _waccess(winWidePath(path).c_str(), mode);
+}
+static int pharoRemove(const std::string& path) {
+    return _wremove(winWidePath(path).c_str());
+}
+static int pharoRename(const std::string& from, const std::string& to) {
+    return _wrename(winWidePath(from).c_str(), winWidePath(to).c_str());
+}
+static int pharoMkdir(const std::string& path) {
+    return _wmkdir(winWidePath(path).c_str());
+}
+static int pharoRmdir(const std::string& path) {
+    return _wrmdir(winWidePath(path).c_str());
+}
+static int pharoChdir(const std::string& path) {
+    return _wchdir(winWidePath(path).c_str());
+}
+static bool pharoGetcwd(std::string& out) {
+    wchar_t buf[32768];
+    if (!_wgetcwd(buf, 32768)) return false;
+    out = winNarrowUtf8(buf, -1);
+    return true;
+}
+#else
+static inline int pharoStat(const std::string& path, struct stat* st, bool follow = true) {
+    return follow ? stat(path.c_str(), st) : lstat(path.c_str(), st);
+}
+static inline int pharoAccess(const std::string& path, int mode) { return access(path.c_str(), mode); }
+static inline int pharoRemove(const std::string& path) { return remove(path.c_str()); }
+static inline int pharoRename(const std::string& from, const std::string& to) {
+    return rename(from.c_str(), to.c_str());
+}
+static inline int pharoMkdir(const std::string& path) { return mkdir(path.c_str(), 0755); }
+static inline int pharoRmdir(const std::string& path) { return rmdir(path.c_str()); }
+static inline int pharoChdir(const std::string& path) { return chdir(path.c_str()); }
+static inline bool pharoGetcwd(std::string& out) {
+    char buf[PATH_MAX];
+    if (!getcwd(buf, sizeof(buf))) return false;
+    out = buf;
+    return true;
+}
+#endif
 
 #ifdef _WIN32
 // Enumerate a directory's entry names via the WIDE Win32 API.  opendir()/
@@ -15352,11 +15458,8 @@ static std::string winLongPath(const std::string& path) {
 // are the real mechanism (stock's Windows FileAttributesPlugin does the
 // same — `isSymlink` answers true there, probed 2026-07-02).
 static bool winIsSymlink(const std::string& path) {
-    std::string lp = winLongPath(path);
-    int wlen = MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, nullptr, 0);
-    if (wlen <= 0) return false;
-    std::wstring wp((size_t)wlen, L' ');
-    MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, &wp[0], wlen);
+    std::wstring wp = winWidePath(path);
+    if (wp.empty()) return false;
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(wp.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -15381,11 +15484,8 @@ static bool winReadSymlinkTarget(const std::string& path, std::string& target) {
         WCHAR  PathBuffer[1];
     } SymlinkReparseBuffer;
 
-    std::string lp = winLongPath(path);
-    int wlen = MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, nullptr, 0);
-    if (wlen <= 0) return false;
-    std::wstring wp((size_t)wlen, L' ');
-    MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, &wp[0], wlen);
+    std::wstring wp = winWidePath(path);
+    if (wp.empty()) return false;
 
     HANDLE h = CreateFileW(wp.c_str(), FILE_READ_ATTRIBUTES,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -15410,31 +15510,23 @@ static bool winReadSymlinkTarget(const std::string& path, std::string& target) {
         nameLen = rb->SubstituteNameLength / sizeof(WCHAR);
         if (nameLen <= 0) return false;
     }
-    int alen = WideCharToMultiByte(CP_UTF8, 0, name, nameLen, nullptr, 0, nullptr, nullptr);
-    if (alen <= 0) return false;
-    target.assign((size_t)alen, ' ');
-    WideCharToMultiByte(CP_UTF8, 0, name, nameLen, &target[0], alen, nullptr, nullptr);
-    return true;
+    target = winNarrowUtf8(name, nameLen);
+    return !target.empty();
 }
 
 static bool winListDir(const std::string& path, std::vector<std::string>& out) {
-    std::string pat = winLongPath(path);
-    if (!pat.empty() && pat.back() != '\\' && pat.back() != '/') pat += '\\';
-    pat += '*';
-    int wlen = MultiByteToWideChar(CP_ACP, 0, pat.c_str(), -1, nullptr, 0);
-    if (wlen <= 0) return false;
-    std::wstring wpat((size_t)wlen, L'\0');
-    MultiByteToWideChar(CP_ACP, 0, pat.c_str(), -1, &wpat[0], wlen);
+    std::wstring wpat = winWidePath(path);
+    if (wpat.empty()) return false;
+    if (wpat.back() != L'\\' && wpat.back() != L'/') wpat += L'\\';
+    wpat += L'*';
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(wpat.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
             continue;
-        int nlen = WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, nullptr, 0, nullptr, nullptr);
-        if (nlen <= 1) continue;
-        std::string name((size_t)(nlen - 1), '\0');
-        WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, &name[0], nlen, nullptr, nullptr);
+        std::string name = winNarrowUtf8(fd.cFileName, -1);
+        if (name.empty()) continue;
         out.push_back(name);
     } while (FindNextFileW(h, &fd));
     FindClose(h);
@@ -15450,8 +15542,7 @@ static FILE* pharoSharedFopen(const char* path, const char* mode) {
     if (wr && !plus) access = GENERIC_WRITE;             // "wb": write-only
     const DWORD disposition = wr ? CREATE_ALWAYS : (ap ? OPEN_ALWAYS : OPEN_EXISTING);
     const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    std::string lp = winLongPath(path);
-    HANDLE h = CreateFileA(lp.c_str(), access, share, nullptr, disposition,
+    HANDLE h = CreateFileW(winWidePath(path).c_str(), access, share, nullptr, disposition,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return nullptr;
     int oflags = _O_BINARY;
@@ -15598,8 +15689,8 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
     auto pending = filePendingPos_.find(fileId);
     if (byteCount >= 4096 && fileIdOop.isObject()
             && fileIdOop.asObjectPtr()->bytes()[16] == 0) {
-        off_t pos = pending != filePendingPos_.end() ? static_cast<off_t>(pending->second)
-                                                     : ftello(file);
+        int64_t pos = pending != filePendingPos_.end() ? pending->second
+                                                       : pharoFtell64(file);
         if (pos >= 0) {
             ssize_t n = pread(fileno(file), bufHdr->bytes() + byteStart, byteCount, pos);
             if (n >= 0) {
@@ -15610,7 +15701,7 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         }
     }
     if (!done && pending != filePendingPos_.end()) {
-        fseeko(file, static_cast<off_t>(pending->second), SEEK_SET);
+        pharoFseek64(file, pending->second, SEEK_SET);
         filePendingPos_.erase(pending);
     }
 #endif
@@ -15665,7 +15756,7 @@ PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
     }
 #endif
     filePendingPos_.erase(fileId);
-    if (fseek(file, static_cast<long>(pos), SEEK_SET) != 0) {
+    if (pharoFseek64(file, static_cast<int64_t>(pos), SEEK_SET) != 0) {
         return PrimitiveResult::Failure;
     }
 
@@ -15683,7 +15774,7 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    int result = remove(winLongPath(filename).c_str());
+    int result = pharoRemove(filename);
 
     // Cog: fail when the delete fails (File class>>primDeleteFile: answers
     // nil then), answer the receiver when it succeeds.
@@ -15720,7 +15811,7 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     file = fileFromHandle(fileIdOop);   // applies a pending position
 
     // Save current position
-    long currentPos = ftell(file);
+    int64_t currentPos = pharoFtell64(file);
     if (currentPos < 0) {
         // Not seekable (a pipe): Cog's sqFileSize answers its -1 as an
         // unsigned 64-bit value, 18446744073709551615, rather than failing,
@@ -15739,14 +15830,14 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     }
 
     // Seek to end
-    if (fseek(file, 0, SEEK_END) != 0) {
+    if (pharoFseek64(file, 0, SEEK_END) != 0) {
         return PrimitiveResult::Failure;
     }
 
-    long size = ftell(file);
+    int64_t size = pharoFtell64(file);
 
     // Restore position
-    fseek(file, currentPos, SEEK_SET);
+    pharoFseek64(file, currentPos, SEEK_SET);
 
     if (size < 0) {
         return PrimitiveResult::Failure;
@@ -15885,7 +15976,7 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (rename(winLongPath(oldName).c_str(), winLongPath(newName).c_str()) != 0) {
+    if (pharoRename(oldName, newName) != 0) {
         osErrorCode_ = errno;
         return PrimitiveResult::Failure;
     }
@@ -15912,11 +16003,7 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-#ifdef _WIN32
-    if (_mkdir(winLongPath(path).c_str()) != 0) {  // Windows _mkdir takes no mode argument
-#else
-    if (mkdir(path.c_str(), 0755) != 0) {
-#endif
+    if (pharoMkdir(path) != 0) {
         // Preserve errno so a future primitiveErrorCode could expose it.
         osErrorCode_ = errno;
         return PrimitiveResult::Failure;
@@ -16040,7 +16127,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     int64_t modTime = 0;
     int64_t createTime = 0;
 
-    if (stat(winLongPath(fullPath).c_str(), &statBuf) == 0) {
+    if (pharoStat(fullPath, &statBuf) == 0) {
         isDir = S_ISDIR(statBuf.st_mode);
         fileSize = isDir ? 0 : statBuf.st_size;
         modTime = statBuf.st_mtime;
@@ -16105,7 +16192,7 @@ Oop Interpreter::directoryEntryArray(const std::string& name, const std::string&
     struct stat st;
     bool isDir = false, isLink = false;
     int64_t size = 0, mtime = 0, ctime = 0, perms = 0;
-    if (stat(winLongPath(fullPath).c_str(), &st) == 0) {
+    if (pharoStat(fullPath, &st) == 0) {
         isDir = S_ISDIR(st.st_mode);
         size = isDir ? 0 : (int64_t)st.st_size;
         mtime = st.st_mtime;
@@ -16154,14 +16241,14 @@ PrimitiveResult Interpreter::primitiveDirectoryEntry(int argCount) {
     if (name.empty()) return PrimitiveResult::Failure;
     if (dir.empty()) dir = "/";
     struct stat dst;
-    if (stat(winLongPath(dir).c_str(), &dst) != 0 || !S_ISDIR(dst.st_mode))
+    if (pharoStat(dir, &dst) != 0 || !S_ISDIR(dst.st_mode))
         return PrimitiveResult::Failure;
     std::string full = dir;
     if (full.back() != '/' && full.back() != '\\') full += '/';
     full += name;
     struct stat st;
     Oop result = memory_.nil();
-    if (stat(winLongPath(full).c_str(), &st) == 0) {
+    if (pharoStat(full, &st) == 0) {
         result = directoryEntryArray(name, full);
         if (result.isNil()) return PrimitiveResult::Failure;
     }
@@ -16240,7 +16327,7 @@ PrimitiveResult Interpreter::primitiveDirectoryDelete(int argCount) {
     }
 
     // rmdir only works on empty directories
-    int result = rmdir(winLongPath(path).c_str());
+    int result = pharoRmdir(path);
 
     // Cog: fail when rmdir fails (File class>>deleteDirectory: then sends
     // primitiveFailed), answer the receiver when it succeeds.
@@ -16263,7 +16350,7 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
         return PrimitiveResult::Failure;
     }
     struct stat statBuf;
-    if (stat(winLongPath(path).c_str(), &statBuf) != 0) {
+    if (pharoStat(path, &statBuf) != 0) {
         return PrimitiveResult::Failure;
     }
     popN(argCount);
@@ -16273,11 +16360,11 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
 // primitiveGetCurrentWorkingDirectory - named primitive (no module)
 // Takes 1 arg: a ByteArray buffer. Fills it with getcwd() result and returns a String.
 PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
-    char buf[1024];
-    if (!getcwd(buf, sizeof(buf))) {
+    std::string cwdStr;
+    if (!pharoGetcwd(cwdStr)) {
         return PrimitiveResult::Failure;
     }
-    Oop result = createStringObject(memory_, std::string(buf));
+    Oop result = createStringObject(memory_, cwdStr);
     if (result.isNil()) {
         return PrimitiveResult::Failure;
     }
@@ -20878,9 +20965,13 @@ void pharoForwardedSignalHandler(int sig) {
 // primitiveSigChldNumber — answer the platform's SIGCHLD number.
 PrimitiveResult Interpreter::primitiveSigChldNumber(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    return PrimitiveResult::Failure;   // no UnixOSProcessPlugin on Windows (as stock Cog)
+#else
     popN(1);
     push(Oop::fromSmallInteger(SIGCHLD));
     return PrimitiveResult::Success;
+#endif
 }
 
 // primitiveForwardSignalToSemaphore — install a handler for `signalNumber`
@@ -20897,6 +20988,10 @@ PrimitiveResult Interpreter::primitiveForwardSignalToSemaphore(int argCount) {
     if (sig <= 0 || sig >= kMaxForwardedSignal || idx <= 0)
         return PrimitiveResult::Failure;
 
+#ifdef _WIN32
+    (void)pharoForwardedSignalHandler;
+    return PrimitiveResult::Failure;   // no POSIX signals on Windows
+#else
     gSigForwardInterp = this;
     gSigSemaIndex[sig] = (sig_atomic_t)idx;
 
@@ -20912,6 +21007,7 @@ PrimitiveResult Interpreter::primitiveForwardSignalToSemaphore(int argCount) {
     popN(static_cast<size_t>(argCount + 1));
     push(semaIndexOop);
     return PrimitiveResult::Success;
+#endif
 }
 
 // primitiveSemaIndexFor — answer the external-semaphore index currently
@@ -20945,6 +21041,9 @@ PrimitiveResult Interpreter::primitiveSemaIndexFor(int argCount) {
 // mumez-pharo-acp (docs/vm-compat-bugs.md #5).
 PrimitiveResult Interpreter::primitiveCreatePipe(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    return PrimitiveResult::Failure;   // no UnixOSProcessPlugin on Windows (as stock Cog)
+#else
     int fds[2];
     if (::pipe(fds) != 0) return PrimitiveResult::Failure;
 
@@ -20991,6 +21090,7 @@ PrimitiveResult Interpreter::primitiveCreatePipe(int argCount) {
     popN(static_cast<size_t>(argCount + 1));
     push(result);
     return PrimitiveResult::Success;
+#endif
 }
 
 // primitiveUnixFileNumber — answer the int fd behind an SQFile handle.
@@ -21014,6 +21114,9 @@ PrimitiveResult Interpreter::primitiveSQFileSetNonBlocking(int argCount) {
     if (!f) return PrimitiveResult::Failure;
     int fd = ::fileno(f);
     if (fd < 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    return PrimitiveResult::Failure;   // no fcntl(O_NONBLOCK) on Windows
+#else
     int flags = ::fcntl(fd, F_GETFL, 0);
     if (flags < 0) return PrimitiveResult::Failure;
     if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
@@ -21021,6 +21124,7 @@ PrimitiveResult Interpreter::primitiveSQFileSetNonBlocking(int argCount) {
     popN(static_cast<size_t>(argCount + 1));
     push(memory_.trueObject());
     return PrimitiveResult::Success;
+#endif
 }
 
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
@@ -24520,8 +24624,17 @@ PrimitiveResult Interpreter::primitiveFindSubstring(int argCount) {
         if (static_cast<size_t>(startIndex - 1) + keySize <= stringSize) {
             const size_t last = stringSize - keySize;
             if (!tab) {
+#ifdef _WIN32
+                // The Windows C runtime has no memmem.
+                const uint8_t* hs = str + startIndex - 1;
+                const uint8_t* he = str + stringSize;
+                const void* hit = keySize == 0 ? hs
+                    : std::search(hs, he, key, key + keySize);
+                if (hit == he && keySize != 0) hit = nullptr;
+#else
                 const void* hit = memmem(str + startIndex - 1, stringSize - (startIndex - 1),
                                          key, keySize);
+#endif
                 if (hit) found = static_cast<const uint8_t*>(hit) - str + 1;
             } else {
                 const uint8_t k0 = tab[key[0]];
@@ -28344,10 +28457,11 @@ PrimitiveResult Interpreter::primitiveSetEnvironment(int argCount) {
 PrimitiveResult Interpreter::primitiveGetCurrentDirectory(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    char buffer[PATH_MAX];
-    char* cwd = getcwd(buffer, sizeof(buffer));
+    std::string cwdStr;
+    bool haveCwd = pharoGetcwd(cwdStr);
+    const char* cwd = cwdStr.c_str();
 
-    if (!cwd) {
+    if (!haveCwd) {
         return PrimitiveResult::Failure;
     }
 
@@ -28373,7 +28487,7 @@ PrimitiveResult Interpreter::primitiveSetCurrentDirectory(int argCount) {
     }
 
     std::string path = extractString(memory_, pathOop);
-    int result = chdir(path.c_str());
+    int result = pharoChdir(path);
 
     popN(2);  // pop path and receiver
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
@@ -32062,7 +32176,7 @@ static bool isBuiltInLibrary(const std::string& path) {
 // Index 13 (1-based) of the file-attributes stat array: the Windows
 // file-attributes bitmask (FILE_ATTRIBUTE_*), which WindowsStore>>isHidden:
 // tests for FILE_ATTRIBUTE_HIDDEN (0x2).  0 on non-Windows (never read there).
-// GetFileAttributesA returns INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) on failure —
+// GetFileAttributesW returns INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) on failure —
 // that has bit 0x2 set and would falsely report hidden, so fall back to
 // FILE_ATTRIBUTE_NORMAL (0x80, not hidden).
 // Both call sites are themselves inside #ifdef _WIN32, so the non-Windows
@@ -32070,7 +32184,7 @@ static bool isBuiltInLibrary(const std::string& path) {
 // on every other platform.  Guard the whole definition instead.
 #ifdef _WIN32
 static int64_t winFileAttributes(const std::string& path) {
-    DWORD a = GetFileAttributesA(winLongPath(path).c_str());
+    DWORD a = GetFileAttributesW(winWidePath(path).c_str());
     if (a == INVALID_FILE_ATTRIBUTES) a = FILE_ATTRIBUTE_NORMAL;
     return static_cast<int64_t>(a);
 }
@@ -32123,7 +32237,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Attributes 13-15 use access()
     if (attrNum >= 13 && attrNum <= 15) {
         int mode = (attrNum == 13) ? R_OK : (attrNum == 14) ? W_OK : X_OK;
-        bool ok = (access(path.c_str(), mode) == 0);
+        bool ok = (pharoAccess(path, mode) == 0);
         // Built-in libraries are readable but not writable/executable
         if (!ok && isBuiltInLibrary(path)) {
             ok = (attrNum == 13);  // readable=true, writable/executable=false
@@ -32140,7 +32254,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         bool isSymlink = winIsSymlink(path);
 #else
         struct stat st;
-        bool isSymlink = (lstat(winLongPath(path).c_str(), &st) == 0) && S_ISLNK(st.st_mode);
+        bool isSymlink = (lstat(path.c_str(), &st) == 0) && S_ISLNK(st.st_mode);
 #endif
         popN(3);
         push(isSymlink ? memory_.trueObject() : memory_.falseObject());
@@ -32165,7 +32279,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         return PrimitiveResult::Success;
 #else
         struct stat lst;
-        if (lstat(winLongPath(path).c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        if (lstat(path.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
             char buf[4096];
             ssize_t n = readlink(path.c_str(), buf, sizeof(buf));
             if (n < 0) {
@@ -32187,7 +32301,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
 
     // Attributes 1-12 use stat()
     struct stat st;
-    if (stat(winLongPath(path).c_str(), &st) != 0) {
+    if (pharoStat(path, &st) != 0) {
         // File doesn't exist on disk — check if it's a built-in library
         if (isBuiltInLibrary(path)) {
             fillSyntheticStat(&st);
@@ -32276,7 +32390,7 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
 
     struct stat st;
-    bool exists = (stat(winLongPath(path).c_str(), &st) == 0);
+    bool exists = (pharoStat(path, &st) == 0);
 
     // Built-in libraries (SDL2/cairo stubs) exist as compiled-in code
     if (!exists && isBuiltInLibrary(path)) {
@@ -32443,7 +32557,7 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         entryPath += '/';
     }
     entryPath += dName;
-    haveStat = (stat(winLongPath(entryPath).c_str(), &st) == 0);
+    haveStat = (pharoStat(entryPath, &st) == 0);
 #else
     struct dirent* entry = nullptr;
     while ((entry = readdir(dir)) != nullptr) {
@@ -32810,7 +32924,7 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
 
     struct stat st;
     bool useLstat = (mask & 4) != 0;
-    int statResult = useLstat ? lstat(winLongPath(path).c_str(), &st) : stat(winLongPath(path).c_str(), &st);
+    int statResult = pharoStat(path, &st, !useLstat);
     if (statResult != 0) {
         // File doesn't exist on disk — check if it's a built-in library
         if (isBuiltInLibrary(path)) {
@@ -32931,9 +33045,9 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         statArray = pop();  // restore statArray
         if (accessArray.isNil()) return PrimitiveResult::Failure;
 
-        bool readable = access(path.c_str(), R_OK) == 0;
-        bool writable = access(path.c_str(), W_OK) == 0;
-        bool executable = access(path.c_str(), X_OK) == 0;
+        bool readable = pharoAccess(path, R_OK) == 0;
+        bool writable = pharoAccess(path, W_OK) == 0;
+        bool executable = pharoAccess(path, X_OK) == 0;
 
         memory_.storePointer(0, accessArray, readable ? memory_.trueObject() : memory_.falseObject());
         memory_.storePointer(1, accessArray, writable ? memory_.trueObject() : memory_.falseObject());
@@ -34236,6 +34350,45 @@ extern "C" void pharo_tffiWorkerShutdownAll(void) {
     }
 }
 
+// Integer argument of a callout, with the range check of the stock VM
+// (signedNBitValueOf / positiveNBitValueOf in its marshalling): a value
+// outside the C type fails the primitive.  Without the check a value was
+// truncated without an error (scripts/cogdiff/ffirange.st): labs: -12345678901
+// with a 32-bit long answered 539222987.
+// `bits` gets the value in two's complement, extended to 64 bits.
+static bool tffiIntegerArgBits(pharo::ObjectMemory& memory, Oop argOop,
+                               unsigned short ffiType, uint64_t& bits) {
+    int width = 0;
+    bool isSigned = false;
+    switch (ffiType) {
+        case FFI_TYPE_SINT8:  width = 8;  isSigned = true;  break;
+        case FFI_TYPE_UINT8:  width = 8;  break;
+        case FFI_TYPE_SINT16: width = 16; isSigned = true;  break;
+        case FFI_TYPE_UINT16: width = 16; break;
+        case FFI_TYPE_SINT32: width = 32; isSigned = true;  break;
+        case FFI_TYPE_UINT32: width = 32; break;
+        case FFI_TYPE_SINT64: width = 64; isSigned = true;  break;
+        case FFI_TYPE_UINT64: width = 64; break;
+        case FFI_TYPE_INT:    width = static_cast<int>(sizeof(int) * 8); isSigned = true; break;
+        default: return false;
+    }
+    if (isSigned) {
+        int64_t v = 0;
+        if (!trySigned64BitValueOf(memory, argOop, v)) return false;
+        if (width < 64) {
+            const int64_t lim = static_cast<int64_t>(1) << (width - 1);
+            if (v < -lim || v >= lim) return false;
+        }
+        bits = static_cast<uint64_t>(v);
+        return true;
+    }
+    uint64_t u = 0;
+    if (!tryUnsigned64BitValueOf(memory, argOop, u)) return false;
+    if (width < 64 && (u >> width) != 0) return false;
+    bits = u;
+    return true;
+}
+
 // Marshal one Smalltalk argument into task-owned heap storage.  Mirrors the
 // primitiveSameThreadCallout cases, except heap-allocated (the call runs on
 // another thread after this primitive returns) and ByteArrays are copied.
@@ -34294,12 +34447,8 @@ static bool tffiWorkerMarshalArg(pharo::Interpreter& interp,
         case FFI_TYPE_SINT32: case FFI_TYPE_UINT32:
         case FFI_TYPE_SINT64: case FFI_TYPE_UINT64:
         case FFI_TYPE_INT: {
-            int64_t val = 0;
-            if (argOop.isSmallInteger()) {
-                val = argOop.asSmallInteger();
-            } else if (!trySigned64BitValueOf(memory, argOop, val)) {
-                return false;
-            }
+            uint64_t val = 0;
+            if (!tffiIntegerArgBits(memory, argOop, argType->type, val)) return false;
             // libffi reads the exact width from the slot; store the full
             // 64-bit value little-endian-truncated per type width.
             memcpy(argSlot, &val, 8);
@@ -34624,88 +34773,28 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
                     memcpy(argSlot, &d, sizeof(double));
                     break;
                 }
-                case FFI_TYPE_SINT8: {
-                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
-                    int8_t v = static_cast<int8_t>(argOop.asSmallInteger());
-                    memcpy(argSlot, &v, sizeof(int8_t));
-                    break;
-                }
-                case FFI_TYPE_UINT8: {
-                    if (argOop.isSmallInteger()) {
-                        uint8_t v = static_cast<uint8_t>(argOop.asSmallInteger());
+                case FFI_TYPE_UINT8:
+                    // A Character goes as its code (below 256).
+                    if (argOop.isCharacter()) {
+                        uint32_t code = static_cast<uint32_t>(argOop.asCharacter());
+                        if (code > 255) return PrimitiveResult::Failure;
+                        uint8_t v = static_cast<uint8_t>(code);
                         memcpy(argSlot, &v, sizeof(uint8_t));
-                    } else if (argOop.isCharacter()) {
-                        uint8_t v = static_cast<uint8_t>(argOop.asCharacter());
-                        memcpy(argSlot, &v, sizeof(uint8_t));
-                    } else {
-                        return PrimitiveResult::Failure;
+                        break;
                     }
-                    break;
-                }
-                case FFI_TYPE_SINT16: {
-                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
-                    int16_t v = static_cast<int16_t>(argOop.asSmallInteger());
-                    memcpy(argSlot, &v, sizeof(int16_t));
-                    break;
-                }
-                case FFI_TYPE_UINT16: {
-                    if (!argOop.isSmallInteger()) return PrimitiveResult::Failure;
-                    uint16_t v = static_cast<uint16_t>(argOop.asSmallInteger());
-                    memcpy(argSlot, &v, sizeof(uint16_t));
-                    break;
-                }
-                case FFI_TYPE_SINT32: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    int32_t v = static_cast<int32_t>(val);
-                    memcpy(argSlot, &v, sizeof(int32_t));
-                    break;
-                }
-                case FFI_TYPE_UINT32: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    uint32_t v = static_cast<uint32_t>(val);
-                    memcpy(argSlot, &v, sizeof(uint32_t));
-                    break;
-                }
-                case FFI_TYPE_SINT64: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    memcpy(argSlot, &val, sizeof(int64_t));
-                    break;
-                }
-                case FFI_TYPE_UINT64: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
-                        return PrimitiveResult::Failure;
-                    }
-                    uint64_t uval = static_cast<uint64_t>(val);
-                    memcpy(argSlot, &uval, sizeof(uint64_t));
-                    break;
-                }
+                    [[fallthrough]];
+                case FFI_TYPE_SINT8:
+                case FFI_TYPE_SINT16: case FFI_TYPE_UINT16:
+                case FFI_TYPE_SINT32: case FFI_TYPE_UINT32:
+                case FFI_TYPE_SINT64: case FFI_TYPE_UINT64:
                 case FFI_TYPE_INT: {
-                    int64_t val = 0;
-                    if (argOop.isSmallInteger()) {
-                        val = argOop.asSmallInteger();
-                    } else if (!trySigned64BitValueOf(memory_, argOop, val)) {
+                    // Range-checked as on the stock VM.  x86-64 and arm64
+                    // are little-endian, so the low bytes of the 64-bit
+                    // value are the value of each narrower type.
+                    uint64_t val = 0;
+                    if (!tffiIntegerArgBits(memory_, argOop, cif->arg_types[i]->type, val))
                         return PrimitiveResult::Failure;
-                    }
-                    int v = static_cast<int>(val);
-                    memcpy(argSlot, &v, sizeof(int));
+                    memcpy(argSlot, &val, cif->arg_types[i]->size);
                     break;
                 }
                 case FFI_TYPE_STRUCT: {

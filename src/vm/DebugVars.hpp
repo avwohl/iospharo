@@ -95,12 +95,13 @@ inline bool mcfEnabled() {
 // (MachineCodeFrames.cpp, activation, return, compile policy) test this;
 // mcfEnabled() stays the test for the arm64 emitter and stubs.
 inline bool mcfMode() {
-#if (defined(__x86_64__) || defined(_M_X64)) && !defined(_WIN32)
-    // The default on x86_64 macOS and Linux since 2026-10-18 (sweeps X1-X4).
+#if defined(__x86_64__) || defined(_M_X64)
+    // The default on x86_64 macOS and Linux since 2026-10-18 (sweeps X1-X4),
+    // and on Windows since 2026-11-13: without machine-code frames the
+    // loops-only policy ran Windows 4-10x slower than with them (MpTcp
+    // testArgPassByReference: 6.5 s against 0.6 s on Cog; the package's 100 ms
+    // response timeout then expired on every `=` round trip).
     return !GET_DEBUG_BOOL(PHARO_NO_X86_MCF) && !GET_DEBUG_BOOL(PHARO_NO_X86_JIT);
-#elif defined(__x86_64__) || defined(_M_X64)
-    // Windows: not built or tested there yet.
-    return GET_DEBUG_BOOL(PHARO_X86_MCF) && !GET_DEBUG_BOOL(PHARO_NO_X86_JIT);
 #else
     return mcfEnabled();
 #endif

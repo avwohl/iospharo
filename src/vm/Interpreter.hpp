@@ -73,7 +73,9 @@
 #include <atomic>
 #include <chrono>
 #include <dlfcn.h>
-#include <execinfo.h>
+#ifndef _WIN32
+#include <execinfo.h>   // Windows: win_compat.h declares backtrace()
+#endif
 #include <csetjmp>
 #include "../platform/win_compat.h"  // sigjmp_buf/backtrace shims on Windows (no-op elsewhere)
 #include <cstdint>
@@ -115,7 +117,12 @@ void eventRingDump();
 inline void eventRec(char kind, uint64_t a, uint64_t b, uint32_t c) {
     if (__builtin_expect(g_eventRing != nullptr, 0)) {
         EventRec& r = g_eventRing[g_eventN++ & (kEventRingSize - 1)];
+#ifdef __APPLE__
         r.t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000;
+#else
+        r.t = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
         r.a = a; r.b = b; r.kind = (uint32_t)kind; r.c = c;
     }
 }
@@ -483,6 +490,10 @@ public:
     // False at exit in eval mode means the eval never completed; see
     // evalReachedQuit_.
     bool evalReachedQuit() const { return evalReachedQuit_; }
+    // The status the image passed to the quit primitive (`Smalltalk quit: n`,
+    // `exitFailure`); 0 when none was passed.  main returns it as the process
+    // exit status, as the stock VM does.
+    int quitExitStatus() const { return quitExitStatus_; }
     const std::vector<std::string>& imageArguments() const { return imageArguments_; }
 
     /// Set/get VM parameters (returned by primitiveGetAttribute at negative indices)
@@ -676,7 +687,8 @@ public:
     // Return type must be sqInt (`long`, see plugins/sqMemoryAccess.h): that is what
     // every VMMaker-generated plugin entry point returns. Declaring it as `int` here
     // made every registration site cast between incompatible function types.
-    using ExternalPrimFunc = long (*)(void);
+    // sqInt (intptr_t): `long` on LP64, `long long` on Win64 (LLP64).
+    using ExternalPrimFunc = intptr_t (*)(void);
     void registerNamedPrimitive(const std::string& module, const std::string& name, ExternalPrimFunc func);
     PrimitiveResult callExternalPrimitive(ExternalPrimFunc fn);
 
@@ -1377,6 +1389,7 @@ private:
     // `return 0`.  A load that did nothing then reported success, which is
     // how XMLParser's x86_64 abort was recorded as `load rc=0` for weeks.
     bool evalReachedQuit_ = false;
+    int quitExitStatus_ = 0;
     // Wall-clock bound on that deferral.  An idle image executes very few
     // bytecodes, so a step-count deadline would never arrive; and if nothing
     // ever consumes the script (no command-line handler was queued) the VM
@@ -4977,7 +4990,8 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
 
     // Well-known selectors
     visitor(selectors_.doesNotUnderstand);
-    visitor(selectors_.cannotInterpret);   // proxy protocol: a stale copy after a compacting GC made lookup miss the handler
+    visitor(selectors_.cannotInterpret);
+    visitor(cannotInterpretClass_);        // set by a lookup, used by the send that follows
     visitor(selectors_.mustBeBoolean);
     visitor(selectors_.cannotReturn);
     visitor(selectors_.aboutToReturn);

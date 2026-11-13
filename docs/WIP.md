@@ -15,6 +15,129 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Package run on a real x86_64 host (2026-11-13, Windows 11)
+
+This is the result of the task list in
+[x86-package-run.md](x86-package-run.md).  The host is a Windows 11
+x86_64 machine (24 cores, 31 GB), and the user chose a native Windows
+run.  The build is MSYS2 CLANG64 (`build-win`).  The reference is the
+stock Windows VM v12.0.6 with the Pharo 14 image.  The Linux x86_64 build
+is still not validated on a real host.
+
+The defects of our VM that this run found are in
+[vm-compat-bugs.md](vm-compat-bugs.md) (first section).  All are fixed on
+`jit`.  The result files are in `docs/results/win-x86-pkg200-2026-11-13/`.
+
+Build and smoke test: the Windows build needed portable includes, a
+portable clock and `intptr_t` for external primitives (`long` has 32 bits
+on Windows).  `42 factorial printString` is correct with the JIT, with
+`PHARO_NO_JIT=1` and with machine-code frames.
+
+Differential scripts (`scripts/cogdiff/run-cogdiff.sh`, new driver): 20
+scripts in 3 modes at the final state: the default (JIT with machine-code
+frames), `PHARO_NO_JIT=1`, and `PHARO_NO_X86_MCF=1`.  `PHARO_NO_MCF=1`
+has no effect on x86_64.  44 of 60 runs are the same as Cog.
+`nlrhome.st` and `callbackstress.st` give the Cog answers in all 3 modes.
+
+The 16 other runs are known differences: the temp of a dead context
+(`ctxdiff`), VM attributes (`sysdiff`), `isRunningCogit` with the JIT off,
+surface ids, and float results where the stock Windows VM is not accurate
+(`primdiff`, `primdiff2`).  New scripts: `ffirange.st`, `utf8path.st`,
+`filepos64.st`.  The last expression of `edgediff.st`, a wait on a new
+Semaphore, does not end on Windows on the two VMs.  The driver leaves the
+expression out with `EDGE_NO_WAIT=1`.
+
+Package run, 200 manifest rows:
+
+- 148 packages load.  52 do not load (arm64 Mac: 151 and 49).
+- First sweep (before the fixes), packages with a result on the two VMs:
+  Cog 32521 passes, our VM 31931.  124 packages were the same.
+- Final sweep (fixed VM and fixed harness, 147 packages, without
+  `unicompute-gemstone-pharo-bridge`): Cog 32521 passes, our VM 32749.
+  138 packages have a result on the two VMs: Cog 32521, our VM 32522.
+  131 of the 138 are the same.  Cog has no result for 9 packages, our VM
+  for 2.
+- The final sweep used machine-code frames, which are now the default on
+  Windows.  This sweep is the validation of that default.
+- The final numbers are one sweep plus a second run of 4 packages
+  (`summary-final.tsv`).  The last fix (64-bit file positions) came after
+  the sweep.  Only `apptivegrid-soil` ran again with that fix.
+
+Load failures by cause (52):
+
+| Count | Cause | Class |
+| ---: | --- | --- |
+| 10 | Buoy baseline: the `loadLocaleData` post-load step fails on Pharo 14 (ba-st family) | package |
+| 9 | Metacello opens the `MCMergeOrLoadWarning` dialog (Zinc, STON, DrTests in the image differ from the repository) and waits for a click until the 600 s limit | harness |
+| 4 | georghagn-tsf-*: the repositories are not public, and the clone waits for credentials | package |
+| 4 | Baseline class not found in the repository (pharo-advent-of-code, pharowiki, pharo-openapi-generator, pharo-agent) | package or manifest |
+| 4 | Code needs methods that Pharo 14 does not have (jslink, pharolink, pharo-archc, spec) | package |
+| 3 | `RPackageOrganizer` is not in Pharo 14 (pharo-enhancements, casino, seekerdebugger) | package |
+| 3 | The group name of the manifest is not in the baseline (bloc, pharo-huggingface, pharo-test-analysis) | manifest |
+| 3 | A name is not found during or after the load (conduit, newtools, pharoaiactions) | package |
+| 3 | The baseline requires a name that it does not define (stargate, superluminal, jadeiteforpharo) | package |
+| 3 | Famix packages without Moose in the image (esope, famixtypescript, famix-cpp) | package |
+| 2 | Repository conflict (iceberg, kendrick) | package |
+| 2 | A file name with a vertical bar cannot be checked out on Windows (pam-gsoc-25-project, coypu) | Windows host |
+| 2 | The baseline needs OSSubprocess, which does not run on Windows (biosmalltalk, viennatalk) | Windows host |
+
+Only the last 4 are specific to Windows.  The 9 dialog cases can
+possibly load with a warning handler in the load expression.  This was
+not tried.
+
+Differences in the final sweep, each with its class:
+
+| Package | Cog | Our VM | Class |
+| --- | --- | --- | --- |
+| pharo-graphics-alexandrie | 144 pass | 140 pass | Cog defect: 4 rotation tests compare the VM `sin` with cairo, and the stock Windows C library has the same error as cairo |
+| pharo-graphics-pharo-sdl-experiments | 27 | 25 | Known limit of our SDL2 stubs (pixel read-back, render driver list) |
+| apptivegrid-soil | 704 | 706 | Our VM permits the delete of an open file (as POSIX); 2 tests fail on Cog |
+| mumez-pharo-agentic-browser | 594 | 596 | Same cause as Soil |
+| koendehondt-hera-for-pharo | 581 | 582 | Package: `testDuration` needs two different timestamps; the Cog clock has 1 ms steps |
+| pharo-llm-pharo-acp | 98 | 99 | Package: same clock cause |
+| pharo-xp-tools-sindarin-dap | 17 | 18 | Package: same clock cause |
+| moosetechnology-mooseide | no result | no result | Package: an unhandled error in a forked process ends the run on the two VMs at the same test (1081 tests run; the failure lists are the same) |
+| smalltalkweb-myprecious | no result (107 pass in a run alone) | no result | Package: `testReconnectsIfOtherSideIsDisconnected` leaks all task workers after a disconnect.  Cog gets a timeout or stops; our VM stops with a service-name error.  All tests before the last test pass on our VM |
+| astares-pharo-os-windows | no result | 151 pass | Package: a test closes the stdout handle of the process in a finalizer, and Cog cannot write its log.  The 5 failures of our VM are the same on Cog when each test runs alone |
+| exercism-pharo-smalltalk-test-runner | no result | 0 pass, 28 errors | Package: reads `ClapCommand` and `RPackageOrganizer`, which Pharo 14 does not have |
+| pharo-rdbms-pharo-sqlite3, rko281-restoreforpharo | no result | errors only | Host: no `sqlite3.dll`.  The error in the finalizer process stops Cog |
+| mumez-redistick, newapplesho-aws-sdk-smalltalk, pharo-nosql-mongotalk | no result | errors | Host: the tests need a Redis, AWS or MongoDB server |
+
+Differences of the first sweep that were defects of our VM (fixed):
+`apptivegrid-soil` (394 tests), `pharo-graphics-pharosdl3` (91 tests),
+`smalltalkweb-myprecious`, `moosetechnology-mooseide`,
+`pharo-graphics-alexandrie` (5 tests), and 3 tests that went over the 50 s
+limit (`pharo-contributions-deeptraverser`, `omarabedelkader-pharo-lexicon`,
+`moosetechnology-famixreplication`).
+
+Differences of the first sweep that were harness defects: `evref-bl-mcp`,
+`pharo-llm-chatpharo` and `omarabedelkader-heuristiccompletion-history`
+(the copy of our VM did not have `libgit2` beside it), 3 FAIL lines of
+`koendehondt-hera-for-pharo` that Cog wrote as 32-bit characters, and
+single Cog failures that a second run did not show (`tinchodias-sauco`,
+`polymathorg-polymath`).  One stock VM start stopped with "Could not
+allocate newSpace in the expected place" (`pharo-rdbms-glorp` load).  The
+second run loaded the package, and the results are the same.
+
+Incident: in the first sweep the stock VM used 17 GB of memory in 35
+seconds in `GbsSessionTest>>testLoginSuccess`
+(`unicompute-gemstone-pharo-bridge`).  I stopped the process by its PID.  The final sweep does not include this package.
+
+Open after this run:
+
+- The Linux x86_64 build has no run on a real host.
+- Our VM is slower than Cog on Windows: 2 to 3 times with machine-code
+  frames on the three slow tests above.
+- `cannotReturnStormGuard` stops `nlrhome.st` unless
+  `PHARO_CANNOT_RETURN_BURST` is raised.  The driver raises the value.
+- The fixes of this run have no arm64 or macOS build yet, and no SUnit
+  sweep.  The non-Windows branches of the file path change were not
+  compiled on this host.
+- The remote `jit` got its own fixes for the SDL3 library, the BitBlt
+  forwarder, the `cannotInterpret:` root and the wide FAIL lines while
+  this run was in progress.  The rebase kept the remote versions of the
+  SDL3 and BitBlt changes.
+
 ## Right now (2026-11-13) -- Pharo 14 package run, six VM fixes, four sweeps done
 
 The four full SUnit sweeps ran at `3a697c16` on `jit`.  `main` is

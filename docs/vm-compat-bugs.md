@@ -29,6 +29,121 @@ After the fix, arm64 and x86_64 both equal Cog.  Not fixed and
 equal to Cog: a pinned boxed Float and a pinned Balloon work buffer fail
 on Cog too.
 
+## FIXED 2026-11-13 — defects found by the package run on Windows x86_64
+
+The Pharo 14 package run (`docs/x86-package-run.md`) ran on a Windows 11
+x86_64 host with the stock Windows VM v12.0.6 as the reference.  The
+results are in [WIP.md](WIP.md).  Each defect below was a difference from
+Cog in a differential script or in a package, and each is fixed on `jit`.
+
+Defects on all hosts:
+
+- **GC root for `cannotInterpret:`.**  `Interpreter::forEachRoot` did not
+  visit `selectors_.cannotInterpret`.  A full GC moved the symbol.  The
+  lookup of `cannotInterpret:` then used the identity hash of a different
+  object and found no method.  The VM sent `doesNotUnderstand:` to an
+  object of a class with a nil method dictionary, and the process stopped
+  in the DNU cascade.  Found with `moosetechnology-mooseide`: the run
+  stopped at test 975 of 1081.  Smallest reproduction, on an image with
+  Mocketry: `o := OrderedCollection new. o stub. Smalltalk garbageCollect.
+  o zork`.  `sendCannotInterpret` also held a class in a C++ local across
+  two allocations.  The class is now on the stack during the allocations.
+- **FFI integer arguments had no range check.**  Cog fails the callout
+  when an integer does not fit the C type.  Our VM truncated the value.
+  Found on Windows, where `long` has 32 bits: `labs: -12345678901`
+  answered 539222987.  Script: `scripts/cogdiff/ffirange.st`.
+- **`Float>>exponent` of an infinity or a NaN.**  The answer came from
+  `frexp`, which gives an unspecified exponent for these values.  The
+  answer is now -1 on each host, as on Cog.
+- **BitBlt read a forwarder.**  A pin of a young object makes a copy in
+  old space and leaves a forwarder until the next scavenge.  A Form whose
+  bits were pinned for an FFI call kept the forwarder in its `bits`
+  field.  `pixelAt:` then read the forwarding word as the first pixel.
+  The BitBlt primitives now follow forwarders in the fields of the
+  receiver to depth 2 while forwarders are in the heap.  Found with
+  `SDL3SurfaceTest>>testFormAsSurface`.
+- **The quit primitive ignored its argument.**  `Smalltalk exitFailure`
+  gave exit status 0.  The status is now the exit status of the process.
+  An unhandled error in a forked process of an eval run now gives exit
+  status 1, as on Cog.
+- **An SDL3 library got the SDL2 stubs.**  Each module with `SDL` in its
+  name was the built-in SDL2 stub library.  Each `SDL_` symbol got an
+  SDL2 stub or a function that answers 0.  SDL3 has the same symbol names
+  with different signatures: `SDL_GetVersion()` wrote through a pointer
+  that the caller did not pass, and the VM stopped with an access
+  violation.  Now only a module with `SDL2` in its name is the stub
+  library.  `pharo-graphics-pharosdl3`: 17 passes before, 108 now, as Cog.
+- **SDL2 stubs.**  `SDL_GetHint`, `SDL_GetTicks64`, `SDL_QueryTexture`
+  and the window position are new.  `pharo-graphics-pharo-sdl-experiments`
+  has 25 passes of 27.  The two other tests read pixels back from a
+  renderer and list render drivers.  The stubs cannot do that (known
+  limit of the stub design).
+
+Defects on Windows only:
+
+- **The socket monitor watched at most 64 sockets.**  The I/O thread used
+  `select()`.  A winsock `fd_set` holds `FD_SETSIZE` (64) sockets, and
+  `FD_SET` drops the rest without an error.  With 62 or more open
+  sockets, an accept, a connect or a read wait ran to its timeout.  The
+  thread now uses `WSAPoll`, as the POSIX build uses `poll`.  Found with
+  `smalltalkweb-myprecious`: 13 timeouts, then no result.
+- **The file handle record held a `FILE*`.**  The stock Windows VM keeps
+  the Win32 `HANDLE` at offset 8 of the SQFile record, and image code
+  gives that value to Win32 functions through FFI.  `apptivegrid-soil`:
+  394 tests failed with error 6 (invalid handle).  Now 705 passes (Cog
+  704).
+- **File paths went through the ANSI code page.**  The image gives paths
+  as UTF-8.  The file primitives gave those bytes to `stat`,
+  `GetFileAttributesA`, `_mkdir` and other ANSI functions.  A name
+  outside the code page became a different name.  The primitives now
+  convert to UTF-16 and call the wide functions.  Script:
+  `scripts/cogdiff/utf8path.st`.  Found with `pharo-graphics-alexandrie`
+  (5 tests).  Not changed: the path of the image file itself and the
+  snapshot path still use ANSI functions.
+- **File positions had 32 bits.**  `long` has 32 bits on Windows, and
+  the position and size primitives used `fseek` and `ftell`.  A position
+  past 2 GB was cut.  The primitives now use `_fseeki64` and `_ftelli64`.
+  Script: `scripts/cogdiff/filepos64.st`.  Found with
+  `SoilBackupTest>>testABackupLeavesOutARegistryEntryThatPointsOutsideTheSegment`.
+- **The command line was in the ANSI code page.**  `main` now builds the
+  arguments as UTF-8 from `GetCommandLineW`.  Before, the VM changed each
+  character of an eval expression that was outside the code page.
+- **Machine-code frames were off.**  The Windows build ran the
+  loops-only JIT policy and was 4 to 10 times slower than with
+  machine-code frames.  Three tests of `smalltalkweb-myprecious` failed
+  because the package has a 100 ms reply timeout.  Three tests in other
+  packages went over the 50 s limit of the runner.  Machine-code
+  frames are now the default on Windows (opt out with
+  `PHARO_NO_X86_MCF=1`).  See [x86-mcf-port.md](x86-mcf-port.md).
+
+Known differences from the stock Windows VM that are not changed:
+
+- Surface ids: the stock Windows VM numbers surfaces from 0.  Our VM
+  numbers them from 1.  The ids are opaque to the image.
+- Clock: `Time primUTCMicrosecondsClock` on the stock Windows VM changes
+  in steps of 1 ms or more.  Our clock has a resolution of 1 microsecond.
+  Three package tests that compare two timestamps fail on Cog and pass
+  on our VM (`HeraResultTestCase>>testDuration`,
+  `ACPIntegrationTest>>testStreamingUpdates`,
+  `DAPHistoryTest>>testMessagesShouldReturnInReverseChronologicalOrder`).
+- Float functions: the stock Windows VM answers 0.0244 for
+  `1.0e308 sin` (the correct value is 0.4534) and
+  `1.2246063538223773e-16` for `Float pi sin` (correct:
+  `1.2246467991473532e-16`).  Our VM gives the correct values.  Four
+  rotation tests of `pharo-graphics-alexandrie` compare the VM result
+  with the result of cairo, which has the same error as the stock VM.
+  The four tests pass on Cog and fail on our VM.  `fractionPart` of -0.0
+  is 0.0 on Cog and -0.0 on our VM.  `sqrt` of negative infinity is NaN
+  on Cog and a DomainError on our VM.
+- Delete of an open file: the stock Windows VM refuses.  Our VM opens
+  files with `FILE_SHARE_DELETE`, so the delete succeeds as on POSIX.
+  Two tests of `mumez-pharo-agentic-browser` fail on Cog and pass on our
+  VM.
+- `primitiveResolverLocalAddress` answers 127.0.0.1.  The stock VM
+  answers the address of the host.
+- An eval expression that raises an error ends with exit status 0 on our
+  VM and 1 on Cog.
+
 ## FIXED 2026-10-17 (`d27dd451`) — ProcessSpecificTest>>testLocalVariable fails 1 run in 3-5 on a fake-GUI image
 
 Root cause: primitive 230 (`relinquishProcessorForMicroseconds:`) hands

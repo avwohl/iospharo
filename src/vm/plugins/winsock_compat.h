@@ -55,6 +55,10 @@
 #define SOCK_EMSGSIZE     WSAEMSGSIZE
 
 static inline int sockClose(SOCKET fd) { return closesocket(fd); }
+// poll() is WSAPoll.  struct pollfd and the POLL* flags come from winsock2.h.
+static inline int sockPoll(struct pollfd* fds, size_t count, int timeoutMs) {
+    return WSAPoll(fds, (ULONG)count, timeoutMs);
+}
 static inline int sockSetNonBlocking(SOCKET fd) {
     u_long mode = 1;
     return ioctlsocket(fd, FIONBIO, &mode);   // 0 on success
@@ -77,6 +81,7 @@ static inline int sockSetNonBlocking(SOCKET fd) {
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -98,6 +103,9 @@ typedef int SOCKET;
 #define SOCK_EMSGSIZE     EMSGSIZE
 
 static inline int sockClose(int fd) { return ::close(fd); }
+static inline int sockPoll(struct pollfd* fds, size_t count, int timeoutMs) {
+    return ::poll(fds, (nfds_t)count, timeoutMs);
+}
 static inline int sockSetNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return -1;

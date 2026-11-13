@@ -22,7 +22,10 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#ifndef _WIN32
 #include <execinfo.h>
+#endif
+#include "../platform/win_compat.h"  // backtrace shims on Windows (no-op elsewhere)
 #include <dlfcn.h>
 #include <functional>
 #ifdef _WIN32
