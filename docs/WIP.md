@@ -15,11 +15,37 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
-## Right now (2026-11-13) -- Pharo 14 package run, six VM fixes, not yet swept
+## Right now (2026-11-13) -- Pharo 14 package run, six VM fixes, four sweeps done
 
-State at `3a697c16` on `jit`.  `main` is still at `d8a36711`.  The four full
-SUnit sweeps for this state were started on the arm64 Mac and are NOT
-complete.  Do not fast-forward `main` before the four sweeps pass.
+The four full SUnit sweeps ran at `3a697c16` on `jit`.  `main` is
+fast-forwarded to `jit` after the sweeps.
+
+| image | arch | pass, recovery pass included | not passed | sweep at `479dc56e` |
+|---|---|---|---|---|
+| Pharo 14 | arm64 | 28197 | 2 | 28198 / 1 |
+| Pharo 13 | arm64 | 27930 | 2 | 27930 / 2 |
+| Pharo 14 | x86_64 | 28199 | 2 | 28200 / 1 |
+| Pharo 13 | x86_64 | 27928 | 6 | 27929 / 5 |
+
+The three changes from the sweeps at `479dc56e` are not VM regressions.
+Each change was measured with interleaved runs of the old binary
+(`d8a36711`), the new binary and stock Cog:
+
+- `FreeTypeCacheTest>>testGlyphAccessIsThreadSafe` (Pharo 14 arm64): a race
+  in the image on the lazy FreeType face.  Old binary 11 failures in 50
+  runs, new binary 11 in 50, Cog 9 errors in 50.
+- `StObjectTranscriptPresenterTest>>testOpenedLogIsSelectedLog` (Pharo 14
+  x86_64): the test process and the Morphic UI process, both at priority
+  40, run `TabSelectorMorph>>updateTabs` on one morph.  The old binary, the
+  new binary and Cog all show the error, at about 3 in 1000 runs on x86_64.
+- `TestTookTooMuchTime` on a changing set of tests (Pharo 13 x86_64): a
+  runner defect.  The runner did not disarm the watchdog of the SUnit
+  environment after a test that set `timeLimit:`, and the watchdog then
+  signalled a later test.  Fixed in `pharo-headless-test` `7e0c95b`
+  ([deferred.md](deferred.md) has the measurement).  The next sweep must
+  use an image prepared again with the fixed runner.
+
+`testQueryGoogle` fails in each sweep, on Cog also (live network query).
 
 - Pharo 14 package run (`scripts/pkg-jit-test/`, 200 manifest rows, stock
   Cog v12.0.6 loads each package): 151 packages load, 49 do not load on
@@ -50,8 +76,8 @@ complete.  Do not fast-forward `main` before the four sweeps pass.
   the package declares the 16-byte `CXString` struct as one pointer;
   `smalltalkweb-myprecious` has a busy loop and a service-name race, and Cog
   under Rosetta does not complete the reconnect while the loop runs.
-- Not done: the four sweeps at `3a697c16`; the full Pharo 14 package run
-  with the fixed harness and the fixed VM; a package run on a real x86_64
+- Not done: the full Pharo 14 package run with the fixed harness and the
+  fixed VM (in progress on the arm64 Mac); a package run on a real x86_64
   host (the Linux x86_64 build is not validated since the merge of `main`).
 - Open: a block whose home is live on the stack of a different process
   still uses the method fallback (scenario B7; the tested answer matches
