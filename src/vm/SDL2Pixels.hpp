@@ -40,16 +40,20 @@ enum PackedOrder : uint32_t {
     kPackedXBGR = 5, kPackedBGRX = 6, kPackedABGR = 7, kPackedBGRA = 8
 };
 
-constexpr uint32_t pixelType(uint32_t f) { return (f >> 24) & 0x0F; }
-constexpr uint32_t pixelOrder(uint32_t f) { return (f >> 20) & 0x0F; }
-constexpr uint32_t pixelLayout(uint32_t f) { return (f >> 16) & 0x0F; }
+// Field layout of a packed SDL pixel format value (SDL_DEFINE_PIXELFORMAT).
+constexpr uint32_t kFormatNibbleMask = 0x0Fu;
 constexpr uint32_t kFormatByteMask = 0xFFu;
-constexpr uint32_t bitsPerPixel(uint32_t f) { return (f >> 8) & kFormatByteMask; }
+constexpr uint32_t kFormatFlagShift = 28, kFormatTypeShift = 24, kFormatOrderShift = 20,
+                   kFormatLayoutShift = 16, kFormatBitsShift = 8;
+constexpr uint32_t pixelType(uint32_t f) { return (f >> kFormatTypeShift) & kFormatNibbleMask; }
+constexpr uint32_t pixelOrder(uint32_t f) { return (f >> kFormatOrderShift) & kFormatNibbleMask; }
+constexpr uint32_t pixelLayout(uint32_t f) { return (f >> kFormatLayoutShift) & kFormatNibbleMask; }
+constexpr uint32_t bitsPerPixel(uint32_t f) { return (f >> kFormatBitsShift) & kFormatByteMask; }
 constexpr uint32_t flagFourCC = 1;
 
 // SDL_ISPIXELFORMAT_FOURCC: a format that is not a flagged enumeration.
-constexpr bool isFourCCValue(uint32_t f) { return f != 0 && ((f >> 28) & 0x0F) != flagFourCC; }
-constexpr uint32_t bytesPerPixel(uint32_t f) { return isFourCCValue(f) ? 0u : (f & 0xFF); }
+constexpr bool isFourCCValue(uint32_t f) { return f != 0 && ((f >> kFormatFlagShift) & kFormatNibbleMask) != flagFourCC; }
+constexpr uint32_t bytesPerPixel(uint32_t f) { return isFourCCValue(f) ? 0u : (f & kFormatByteMask); }
 constexpr bool isIndexed(uint32_t f) { return !isFourCCValue(f) && (pixelType(f) == kTypeIndex1 || pixelType(f) == kTypeIndex4 || pixelType(f) == kTypeIndex8); }
 
 // The channel masks of each packed layout, for the first, second, third and fourth
