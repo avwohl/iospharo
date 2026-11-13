@@ -30623,8 +30623,10 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
     }
 
-    if (!symbolAddr) {
-        // Last resort: dlsym on whatever handle we have
+    if (!symbolAddr && !(ffi::isSDL2ModuleName(moduleName) && symbolName.compare(0, 4, "SDL_") == 0)) {
+        // Last resort: dlsym on whatever handle we have.  Not for an SDL2 symbol
+        // without a stub: a real SDL2 linked into the app would answer it and
+        // crash on the fake window handles.
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 

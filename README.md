@@ -72,6 +72,7 @@ cmake --build build
 - [docs/deferred.md](docs/deferred.md): known gaps and deferred work
 - [docs/vm-compat-bugs.md](docs/vm-compat-bugs.md): VM defects, open and
   fixed
+- [docs/sdl2-stubs.md](docs/sdl2-stubs.md): the SDL2 stub layer and its rules
 - [docs/image_issues.md](docs/image_issues.md): Pharo image defects
 - [docs/sdl3.md](docs/sdl3.md): the SDL3 library for the PharoSDL3 package
 - [docs/credits.md](docs/credits.md): credits and acknowledgements

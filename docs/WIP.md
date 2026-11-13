@@ -104,9 +104,12 @@ tests `testNewProcessTaskRunnerRunsInNewProcessEveryTime`,
     SDL2 stubs (fixed, `c9c79751`).  BitBlt read a forwarded `Form` bits
     object (fixed, `c9c79751` and the commit after).  With an arm64
     `libSDL3` beside the image, the fixed VM gives the Cog result, 108/1/1.
-  - `pharo-graphics-pharo-sdl-experiments` (Cog 27 passes, our VM 21).
-    Open: the SDL2 stub layer has no `SDL_GetHint`, `SDL_GetTicks64`,
-    `SDL_QueryTexture`, `SDL_RenderReadPixels`, `SDL_GetRenderDriverInfo`.
+  - `pharo-graphics-pharo-sdl-experiments` (Cog 27 passes, our VM 21).  The
+    SDL2 stub layer lacked `SDL_GetHint`, `SDL_GetTicks64`, `SDL_QueryTexture`,
+    `SDL_RenderReadPixels`, `SDL_GetRenderDriverInfo`, the window position,
+    and 80 other SDL2 calls that the images make (86 new stubs in all).  Fixed on branch
+    `r6-sdl2-stubs`: see [sdl2-stubs.md](sdl2-stubs.md).  The result is 27/0/0
+    on arm64 and x86_64.  The generic no-op for unknown `SDL_` symbols is gone.
   - `koendehondt-hera-for-pharo`: harness defect, fixed (`652e163c`).  Cog
     writes a wide-string FAIL line with NUL bytes.
   - `exercism-pharo-smalltalk-test-runner`, `opensmock-molecule`,
