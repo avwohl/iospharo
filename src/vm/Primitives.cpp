@@ -15163,13 +15163,31 @@ Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
     return handle;
 }
 
+// File positions have 64 bits on each host.  On Windows long and off_t have
+// 32 bits, so fseek and ftell cut a position past 2 GB (Soil seeks to object
+// index 2^36 and expects the read there to find the end of the file).
+static inline int pharoFseek64(FILE* f, int64_t pos, int whence) {
+#ifdef _WIN32
+    return _fseeki64(f, pos, whence);
+#else
+    return fseeko(f, static_cast<off_t>(pos), whence);
+#endif
+}
+static inline int64_t pharoFtell64(FILE* f) {
+#ifdef _WIN32
+    return _ftelli64(f);
+#else
+    return static_cast<int64_t>(ftello(f));
+#endif
+}
+
 FILE* Interpreter::fileFromHandle(Oop handleOop, int* outFileId) {
     int fileId = -1;
     FILE* file = fileFromHandleNoSync(handleOop, &fileId);
     if (file && !filePendingPos_.empty()) {
         auto p = filePendingPos_.find(fileId);
         if (p != filePendingPos_.end()) {
-            fseeko(file, static_cast<off_t>(p->second), SEEK_SET);
+            pharoFseek64(file, p->second, SEEK_SET);
             filePendingPos_.erase(p);
         }
     }
@@ -15306,7 +15324,7 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
     }
 
     auto pending = filePendingPos_.find(fileId);
-    long pos = pending != filePendingPos_.end() ? static_cast<long>(pending->second) : ftell(file);
+    int64_t pos = pending != filePendingPos_.end() ? pending->second : pharoFtell64(file);
     if (pos < 0) {
         return PrimitiveResult::Failure;
     }
@@ -15671,8 +15689,8 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
     auto pending = filePendingPos_.find(fileId);
     if (byteCount >= 4096 && fileIdOop.isObject()
             && fileIdOop.asObjectPtr()->bytes()[16] == 0) {
-        off_t pos = pending != filePendingPos_.end() ? static_cast<off_t>(pending->second)
-                                                     : ftello(file);
+        int64_t pos = pending != filePendingPos_.end() ? pending->second
+                                                       : pharoFtell64(file);
         if (pos >= 0) {
             ssize_t n = pread(fileno(file), bufHdr->bytes() + byteStart, byteCount, pos);
             if (n >= 0) {
@@ -15683,7 +15701,7 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         }
     }
     if (!done && pending != filePendingPos_.end()) {
-        fseeko(file, static_cast<off_t>(pending->second), SEEK_SET);
+        pharoFseek64(file, pending->second, SEEK_SET);
         filePendingPos_.erase(pending);
     }
 #endif
@@ -15738,7 +15756,7 @@ PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
     }
 #endif
     filePendingPos_.erase(fileId);
-    if (fseek(file, static_cast<long>(pos), SEEK_SET) != 0) {
+    if (pharoFseek64(file, static_cast<int64_t>(pos), SEEK_SET) != 0) {
         return PrimitiveResult::Failure;
     }
 
@@ -15793,7 +15811,7 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     file = fileFromHandle(fileIdOop);   // applies a pending position
 
     // Save current position
-    long currentPos = ftell(file);
+    int64_t currentPos = pharoFtell64(file);
     if (currentPos < 0) {
         // Not seekable (a pipe): Cog's sqFileSize answers its -1 as an
         // unsigned 64-bit value, 18446744073709551615, rather than failing,
@@ -15812,14 +15830,14 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     }
 
     // Seek to end
-    if (fseek(file, 0, SEEK_END) != 0) {
+    if (pharoFseek64(file, 0, SEEK_END) != 0) {
         return PrimitiveResult::Failure;
     }
 
-    long size = ftell(file);
+    int64_t size = pharoFtell64(file);
 
     // Restore position
-    fseek(file, currentPos, SEEK_SET);
+    pharoFseek64(file, currentPos, SEEK_SET);
 
     if (size < 0) {
         return PrimitiveResult::Failure;

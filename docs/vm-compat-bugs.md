@@ -71,6 +71,11 @@ Defects on Windows only:
   `scripts/cogdiff/utf8path.st`.  Found with `pharo-graphics-alexandrie`
   (5 tests).  Not changed: the path of the image file itself and the
   snapshot path still use ANSI functions.
+- **File positions had 32 bits.**  `long` has 32 bits on Windows, and
+  the position and size primitives used `fseek` and `ftell`.  A position
+  past 2 GB was cut.  The primitives now use `_fseeki64` and `_ftelli64`.
+  Script: `scripts/cogdiff/filepos64.st`.  Found with
+  `SoilBackupTest>>testABackupLeavesOutARegistryEntryThatPointsOutsideTheSegment`.
 - **The command line was in the ANSI code page.**  `main` now builds the
   arguments as UTF-8 from `GetCommandLineW`.  Before, the VM changed each
   character of an eval expression that was outside the code page.
