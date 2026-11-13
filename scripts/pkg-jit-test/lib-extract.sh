@@ -25,7 +25,10 @@ pkg_classes() {
 
 # pkg_fails LOG: sorted unique "KIND Class>>selector" lines (KIND is FAIL, ERR or TIMEOUT)
 pkg_fails() {
-    tr '\r' '\n' < "$1" 2>/dev/null \
+    # Stock Cog writes a WideString (a test message with a character above 255)
+    # to stdout as 4 bytes per character, so the whole FAIL line is NUL-padded
+    # and the grep below misses it.  Delete the NULs first.
+    tr -d '\000' < "$1" 2>/dev/null | tr '\r' '\n' \
       | grep -aoE '(FAIL|ERR|TIMEOUT) +[A-Za-z0-9_]+>>[A-Za-z0-9_:]+' \
       | sed -E 's/ +/ /' \
       | LC_ALL=C sort -u
