@@ -1020,7 +1020,6 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     const uint32_t graphicsFlags = flags & kGraphicsApiFlags;
     if (graphicsFlags & (graphicsFlags - 1)) return sdlFailNull("Conflicting window flags specified");
     if (flags & kWindowVulkan) return sdlFailNull(contextNotSupportedText("Vulkan").c_str());
-    if (flags & kWindowOpenGL) return sdlFailNull(contextNotSupportedText("OpenGL").c_str());
     if (flags & kWindowMetal) return sdlFailNull(contextNotSupportedText("Metal").c_str());
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLWindowState state;

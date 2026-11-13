@@ -186,12 +186,15 @@ Two examples of the text are "That operation is not supported" and "No dynamic G
 in current SDL video driver (cocoa)".  `SDL_OpenURL` and the message boxes
 also fail, because the VM has no call that opens a URL or a dialog.
 
-- `SDL_CreateWindow` with the OpenGL, Vulkan or Metal flag fails with
-  "OpenGL support is either not configured in SDL or not available in current
-  SDL video driver (cocoa) or platform" (and the same text for the other two
-  names).  Two of these flags together fail with "Conflicting window flags
-  specified".  The image sets the OpenGL flag only for an OSWindow that asks
-  for GL attributes.  The Morphic world window never sets the flag.
+- `SDL_CreateWindow` with the Vulkan or Metal flag fails with
+  "Vulkan support is either not configured in SDL or not available in current
+  SDL video driver (cocoa) or platform" (and the same text for Metal).  Two
+  graphics API flags together fail with "Conflicting window flags specified".
+  `SDL_CreateWindow` with the OpenGL flag succeeds, as it does in the real
+  libSDL2 with the cocoa driver, because the real call only loads the GL
+  library.  The failure comes at `SDL_GL_CreateContext`.  The Bloc host of the
+  image makes its window with the OpenGL flag and stops with "Invalid window
+  handle" when the call answers NULL (package ducasse-myg, 2026-11-13).
 - `SDL_GL_SetAttribute` stores the value of a known attribute.
   `SDL_GL_GetAttribute` answers the stored value for the attributes that SDL
   keeps in its video device (accelerated visual, retained backing, context
@@ -395,7 +398,7 @@ script calls the function.
 | SDL_CreateTextureFromSurface | SDL_render | partial | yes | 32-bit packed texture formats only (see Known differences) |
 | SDL_CreateThread | SDL_thread | implemented | yes |  |
 | SDL_CreateThreadWithStackSize | SDL_thread | implemented | yes |  |
-| SDL_CreateWindow | SDL_video | partial | yes | OpenGL, Vulkan and Metal flags fail as on a driver without the API |
+| SDL_CreateWindow | SDL_video | partial | yes | Vulkan and Metal flags fail as on a driver without the API; the OpenGL flag succeeds and SDL_GL_CreateContext fails |
 | SDL_CreateWindowAndRenderer | SDL_render | implemented |  |  |
 | SDL_CreateWindowFrom | SDL_video | host lacks | yes | answers the SDL error of a video driver without the feature |
 | SDL_DXGIGetOutputInfo | SDL_system | absent | yes | platform only: Android, Windows, GDK, WinRT, Linux or the UIKit app delegate; real libSDL2 on macOS does not export it |
