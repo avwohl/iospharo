@@ -33,10 +33,10 @@ portable clock and `intptr_t` for external primitives (`long` has 32 bits
 on Windows).  `42 factorial printString` is correct with the JIT, with
 `PHARO_NO_JIT=1` and with machine-code frames.
 
-Differential scripts (`scripts/cogdiff/run-cogdiff.sh`, new driver): 18
-scripts in 3 modes (JIT, `PHARO_NO_JIT=1`, machine-code frames).  On
-Windows `PHARO_NO_MCF=1` had no effect when the run was made, so the third
-mode was `PHARO_X86_MCF=1`.  38 of 54 runs are the same as Cog.
+Differential scripts (`scripts/cogdiff/run-cogdiff.sh`, new driver): 20
+scripts in 3 modes at the final state: the default (JIT with machine-code
+frames), `PHARO_NO_JIT=1`, and `PHARO_NO_X86_MCF=1`.  `PHARO_NO_MCF=1`
+has no effect on x86_64.  44 of 60 runs are the same as Cog.
 `nlrhome.st` and `callbackstress.st` give the Cog answers in all 3 modes.
 
 The 16 other runs are known differences: the temp of a dead context
