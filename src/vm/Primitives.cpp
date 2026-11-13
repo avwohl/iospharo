@@ -17333,7 +17333,7 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     if (!destForm.isObject()) {
         return;
     }
-    Oop bits = memory_.fetchPointer(0, destForm);  // FormBits
+    Oop bits = memory_.followForwarded(memory_.fetchPointer(0, destForm));  // FormBits
 
     // bits can be: Bitmap object (regular Form), SmallInteger (ManualSurface handle),
     // or ExternalAddress (ExternalForm pointer). We can only copy from Bitmap objects.
@@ -24554,7 +24554,7 @@ PrimitiveResult Interpreter::primitivePixelValueAt(int argCount) {
     intptr_t y = yOop.asSmallInteger();
 
     // Get form parameters
-    Oop bits = memory_.fetchPointer(FormBits, formOop);
+    Oop bits = memory_.followForwarded(memory_.fetchPointer(FormBits, formOop));
     intptr_t width = bitBltField(memory_, formOop, FormWidth);
     intptr_t height = bitBltField(memory_, formOop, FormHeight);
     intptr_t depth = bitBltField(memory_, formOop, FormDepth);
@@ -24624,7 +24624,7 @@ PrimitiveResult Interpreter::primitivePixelValueAtPut(int argCount) {
     uint32_t pixelValue = static_cast<uint32_t>(valueOop.asSmallInteger());
 
     // Get form parameters
-    Oop bits = memory_.fetchPointer(FormBits, formOop);
+    Oop bits = memory_.followForwarded(memory_.fetchPointer(FormBits, formOop));
     intptr_t width = bitBltField(memory_, formOop, FormWidth);
     intptr_t height = bitBltField(memory_, formOop, FormHeight);
     intptr_t depth = bitBltField(memory_, formOop, FormDepth);
@@ -24749,13 +24749,13 @@ PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
     intptr_t p4x = warpField(WBP4X), p4y = warpField(WBP4Y);
 
     // Dest form setup
-    Oop dstBits = memory_.fetchPointer(FormBits, destForm);
+    Oop dstBits = memory_.followForwarded(memory_.fetchPointer(FormBits, destForm));
     intptr_t dstWidth = bitBltField(memory_, destForm, FormWidth);
     intptr_t dstHeight = bitBltField(memory_, destForm, FormHeight);
     intptr_t dstDepth = bitBltField(memory_, destForm, FormDepth);
 
     // Source form setup
-    Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
+    Oop srcBits = memory_.followForwarded(memory_.fetchPointer(FormBits, sourceForm));
     intptr_t srcWidth = bitBltField(memory_, sourceForm, FormWidth);
     intptr_t srcHeight = bitBltField(memory_, sourceForm, FormHeight);
     intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
