@@ -1574,6 +1574,7 @@ private:
     // (Members, not static locals, so delete+new resets them for VM relaunch)
     int stepCheckCounter_ = 0;
     bool deferredPeriodicCheck_ = false;
+    bool preemptCheckDeferred_ = false;   // step(): the 10000-bytecode preemption check came due off an interrupt point
     // B-1: set true while driving step() inside jitSistaCallSend so
     // step()'s periodic check skips process-switch-triggering work
     // (timer, signals, preemption).  Always false when JIT is
@@ -4425,13 +4426,6 @@ private:
     // executor processes until livelock (repeat-run wedge, 2026-07-03).
     // Each entry is returned exactly once; extra reads answer nil.
     bool callbackHandedOut_[MaxCallbackDepth] = {};
-    // Parallel stack: the handler process we transferred to in step 5 of
-    // enterInterpreterFromCallback.  primitiveCallbackReturn overwrites the
-    // popped entry with the process that made the return call (the executor
-    // the queue process forked, not the queue process).  The cooldown after
-    // the return runs until that process is no longer active, and the
-    // requeue code compares the active process with it.
-    Oop callbackHandlerStack_[MaxCallbackDepth] = {};
     int callbackDepth_ = 0;
 
     /// Set when primitiveQuit fires while a callback is outstanding. The quit
@@ -4562,12 +4556,6 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     visitor(profileSemaphore_);
     visitor(profileSample_);
     visitor(profilePrimitive_);
-
-    // Callback handler stack — Oops of waiters/handlers during FFI
-    // callbacks back into the VM.
-    for (int i = 0; i < MaxCallbackDepth; ++i) {
-        visitor(callbackHandlerStack_[i]);
-    }
 
     rootTag_ = "world-renderer";
     // World renderer roots (menu bar items, dropdown items)

@@ -378,7 +378,7 @@ The history lives in `docs/history/`; nothing was deleted.
   doubles with a Smalltalk comparator, 49391 callbacks: 175 us per callback
   on ours, 10.7 on Cog.  Profile: ~28% `step()`/`dispatchBytecode`, ~30% full
   GC (`markPhase`, compaction).  Each callback also runs at least one
-  1000-step batch plus a 500-step cooldown, whatever its block needs.
+  1000-step batch (the 500-step cooldown after the return was removed 2026-11-13), whatever its block needs.
   **Scavenge part FIXED the same day:** the batch loop now scavenges when
   eden is full (clearing `needsScavenge_` first, as the interpret()
   checkpoint does -- a first try that did not clear it rescanned after every

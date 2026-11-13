@@ -233,50 +233,79 @@ pointer that is not from `malloc`.  Three checks:
   `private_flags`.  With the patched image 0 of 222 runs aborted (all
   loads).  With the unpatched image 13 of 52 runs aborted.
 
-Hang: VM defect in `enterInterpreterFromCallback`, from `08c94847`.  The
-hung state, read with `pharo_dumpWedgeState` (lldb): the callout process is
-in `clang_visitChildren`; the "Callback queue" process (P70) waits for
-`TFRunner>>stackProtect` inside `executeCallback:`; no process is ready; the
-mutex owner, an "FFICallback" executor (P69), was already gone.  The last
-process switches (`PHARO_XFER_TRACE=1`) show the cause.  The executor
-returns its callback inside `stackProtect critical:`.  After the return it
-runs `valueUnpreemptively`, and that calls `Process>>priority:`.  The image
-code `interpriorityYield:` does `[ p resume ] fork. p suspend`.  A timer
-signal (P80) arrived between `fork` and `suspend`.  The executor then went
-behind its resumer (`preemptionYields` is true, as in Cog), the resumer
-resumed a process that was not suspended, and the executor suspended itself
-with nobody to resume it.  It held `stackProtect` for ever, so the next
-callback blocked for ever.
+Hang: VM defect.  Two differences from Cog caused the hang.
 
-Why `08c94847` exposed this.  The cooldown after a callback return must run
-the end of the process that made the return.  The cooldown compared the
-active process with `callbackHandlerStack_`, and that slot held the "Callback
-queue" process, which only forks the executor.  The executor is never that
-process, so the cooldown ended after one step.  The executor was parked in
-the middle of `valueUnpreemptively` and ran later, in the open scheduler,
-where a timer signal can arrive in the window.  Before `08c94847` the 500
-steps ran the whole end of the executor with no timer check in between.
+In the hung state, the callout process was in `clang_visitChildren`.  The
+"Callback queue" process (priority 70) waited for `TFRunner>>stackProtect`
+in `executeCallback:`.  No process was ready.  The mutex owner, an
+"FFICallback" executor (priority 69), was gone.  The process switch trace
+(`PHARO_XFER_TRACE=1`) of a stuck run shows how the executor got lost.
 
-Fix: `primitiveCallbackReturn` records the process that calls it in the slot
-the cooldown reads.  The cooldown then stops when the executor blocks or ends
-(`SpAthensAdapterTest>>testResizeMakesCanvasResize` keeps its fix: 12 of 12
-with the fix, 5 of 12 before `08c94847`).
+1. The executor returns its callback inside `stackProtect critical:`.  Then
+   it runs `valueUnpreemptively`, which calls `Process>>priority:`.  The
+   image method `ProcessorScheduler>>interpriorityYield:` does
+   `[ p resume ] fork. p suspend`.
+2. A timer signal (the Delay ticker, priority 80) arrived between `fork` and
+   `suspend`.  The executor went behind its resumer, because
+   `preemptionYields` is true, as in Cog.  The resumer resumed a process that
+   was not suspended.  Then the executor ran `suspend`, and nobody resumed it.
+3. The executor held `stackProtect` for ever.  The next callback blocked for
+   ever.
 
-Measured under the same load, 10 runs together, arms interleaved, unpatched
-and patched image as written:
+Difference 1: the return.  Cog's `primitiveCallbackReturn` answers true to the
+process that called it.  Then `ptExitInterpreterToCallback` pops the callout
+process from `SuspendedProcessInCallout`.  It puts the executor on its run
+queue with `putToSleep: ... yieldingIf: preemptionYields`, at the back.  Then
+it transfers to the callout process, and the C code continues in that
+process.
 
-- patched image: `942bcbcf` 6 hangs in 20 runs; the fixed binary 0 in 20.
-- patched image: `08c94847` 8 hangs in 20 runs; its parent `e96d044d` 0 in 20
-  (and 0 in 15 more runs, against 5 in 14 for `942bcbcf`).
-- unpatched image: `942bcbcf` 4 hangs and 6 aborts in 15 runs; the fixed
-  binary 1 hang and 3 aborts in 15 runs, and no hang in 20 later runs.  The
-  one hang was not examined.  Its state is unknown.
-- `PHARO_PREEMPT_NO_YIELD=1` (a preempted process goes to the front) on the
-  diag build: 0 hangs in 15 runs, against 7 in 14 without it.  This confirms
-  the preemption order as the mechanism.
-- Kernel-Tests, UnifiedFFI-Tests, ThreadedFFI-Tests and ThreadedFFI-UFFI-Tests
-  (1337 tests) give the same result with `942bcbcf` and with the fix, twice
-  each: 1335 pass, 2 ERR (the win64 ABI on arm64).
+The executor stays runnable, with its context saved after the primitive.  It
+finishes `returnCallback:` later, as a normal runnable process.  No bytecode
+runs between the return and the callout process.
+
+Our code ran a "cooldown" of up to 500 steps after the primitive.  The aim was
+to let the executor finish its end.  A step count and the identity of the
+active process decided when the cooldown ended.  We removed the cooldown.
+
+`enterInterpreterFromCallback` now stops at the step that ran the primitive.
+It puts the process that made the return on its run queue, as Cog does.
+Then it restores the callout process and returns to C.
+`SpAthensAdapterTest>>testResizeMakesCanvasResize` needs this order: the
+callout process must run before any other process.  Cog has the same order,
+so the note about that test in the next section holds.
+
+Difference 2: the interrupt points.  Cog has the same window in the image
+code, because the executor finishes `returnCallback:` in the open scheduler.
+Cog survives the window.  It services timers, signals and preemption only at
+a frame entry or a back jump, and there is none between `fork` and `suspend`.
+
+Our `interpret()` loop follows this rule (`atInterruptPoint`).  `step()` did
+not follow it.  `step()` runs the Smalltalk side of every FFI callback.  It
+serviced timers and signals every 1024 steps and yielded for the heartbeat at
+any bytecode.  The nested loop in `enterInterpreterFromCallback` did the same
+after every 1000 steps.
+
+Now `step()` waits for an interrupt point before the periodic check, the
+signal check, the preemption check and the heartbeat yield.  The batch in the
+nested loop also ends at an interrupt point.  `PHARO_SWITCH_AT_ANY_BYTECODE`
+brings back the old behavior in all these places.
+
+First try: remove only the cooldown, and leave `step()` as it was.  The
+executor then ran in the open scheduler, and `step()` still switched at any
+bytecode.  The hang became more frequent.
+
+Under load, 7 of 10 and 2 of 8 runs stalled.  The trace above is from one of
+these runs.  The interrupt-point rule in `step()` closes the window.
+
+Measured: `CIG-Tests` on the patched-`CXString` image, 20 runs together (load
+20 to 30 on 10 cores), 4 rounds of 10 runs per arm, arms interleaved, limit
+240 s.  Main (`6efa5c9c`) had 0 hangs in 40 runs.  This fix had 0 hangs in 40
+runs.  Both arms needed 152 s on average for a round.
+
+A reviewer saw 6 hangs in 10 runs with `942bcbcf` and 1 in 10 with `c6f2f802`.
+This session did not reproduce a hang with main.  So the 40 runs do not
+separate the two arms.  The trace of the intermediate build and Cog's source
+give the mechanism.
 
 ## FIXED 2026-11-12 — SpAthensAdapterTest>>testResizeMakesCanvasResize: a callback return ran other processes
 
@@ -312,10 +341,11 @@ process runs.  The ring also shows a 50 ms idle gap before the UI process
 resumed.
 
 Fix (`src/vm/Interpreter.cpp`, `enterInterpreterFromCallback`).  The batch
-loop stops at once when `pendingCallbackReturn_` is set.  The cooldown stops
-as soon as the handler is no longer the active process.  The next process has
-run no bytecode at that point, so the existing code requeues that process in
-front of its band and resumes the callout process.
+loop stops at once when `pendingCallbackReturn_` is set.  The 500-step
+cooldown was removed on 2026-11-13: the loop puts the active process (the
+executor that made the return) back on its run queue and resumes the callout
+process, in the order of Cog's `ptExitInterpreterToCallback`.  See the
+pharo-cig section above.
 
 A test binary that finds no x86_64 `libcairo` fails this test for a second
 reason: Athens never draws.  A new x86_64 build tree needs the Cairo

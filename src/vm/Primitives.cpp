@@ -35258,7 +35258,6 @@ void Interpreter::adoptPendingWorkerCallbacks() {
             continue;
         }
         callbackContextStack_[callbackDepth_] = pending->vmcc;
-        callbackHandlerStack_[callbackDepth_] = memory_.nil();
         callbackHandedOut_[callbackDepth_] = false;
         callbackDepth_++;
         {
@@ -35605,11 +35604,11 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // The return value was already written to the C ret buffer by Smalltalk's
     // TFCallbackInvocation >> writeReturnValue: (via returnHolder → vmcc->stackp → ret).
     //
-    // IMPORTANT: We do NOT siglongjmp here! The Smalltalk caller (TFRunner >>
-    // returnCallback:) holds a mutex (stackProtect) that must be released before
-    // we can unwind. Instead, we set a deferred return flag. The nested interpret
-    // loop in enterInterpreterFromCallback detects this flag after the Smalltalk
-    // code finishes its cleanup, then does the process restore and siglongjmp.
+    // Like Cog's primitiveCallbackReturn, answer true to the calling process
+    // first (TFRunner>>returnCallback: finishes its critical: section later);
+    // enterInterpreterFromCallback then puts the caller back on its run queue,
+    // restores the callout process and returns to C.  This primitive only sets
+    // the flag that the nested loop tests after every step.
     if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
         fprintf(stderr, "[CALLBACK-PRIM-RETURN] callbackDepth=%d\n", callbackDepth_);
         fflush(stderr);
@@ -35685,26 +35684,10 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
         }
     }
 
-    // The process that calls this primitive is the one that has to finish the
-    // return sequence (leave stackProtect's critical:, pop the invocation
-    // stack, run valueUnpreemptively's priority changes).  It is NOT the
-    // process that step 5 of enterInterpreterFromCallback woke: with the
-    // default TFCallbackForkRunStrategy the queue process only forks an
-    // "FFICallback" process, and that process makes this call.  Record the
-    // caller, so the cooldown in enterInterpreterFromCallback waits for the
-    // right process.  (It waited for the queue process, which is never active
-    // here, so it ended after one step and left the caller parked inside that
-    // sequence, see docs/vm-compat-bugs.md.)  The slot sits at callbackDepth_
-    // after the pop above, the index the cooldown reads.
-    if (callbackDepth_ < MaxCallbackDepth) {
-        callbackHandlerStack_[callbackDepth_] = getActiveProcess();
-    }
-
-    // Set deferred return flag — the nested loop will handle the actual longjmp
+    // Set the return flag; the nested loop tests it after each step.
     pendingCallbackReturn_ = vmcc;
 
-    // Return true to Smalltalk so TFRunner >> returnCallback: can release its
-    // mutex and clean up the callbackInvocationStack before we unwind.
+    // Answer true: the callback return succeeded.
     popN(argCount);                // Pop arguments
     pop();                         // Pop receiver
     push(memory_.trueObject());    // Push true (callback return succeeded)

@@ -6971,19 +6971,17 @@ extern int g_callbackSemaphoreIndex;
 bool Interpreter::abandonCallback(VMCallbackContext* vmcc) {
     for (int i = callbackDepth_ - 1; i >= 0; --i) {
         if (callbackContextStack_[i] != vmcc) continue;
-        // Three arrays are indexed in lockstep by callback depth, so all three
+        // Two arrays are indexed in lockstep by callback depth, so both
         // have to be shifted down and the vacated top slot cleared. Missing one
-        // would leave a stale handler process visible to the GC root walk, or a
-        // handed-out flag that suppresses the next callback at that depth.
+        // would leave a handed-out flag that suppresses the next callback at
+        // that depth.
         for (int j = i; j < callbackDepth_ - 1; ++j) {
             callbackContextStack_[j] = callbackContextStack_[j + 1];
             callbackHandedOut_[j]    = callbackHandedOut_[j + 1];
-            callbackHandlerStack_[j] = callbackHandlerStack_[j + 1];
         }
         --callbackDepth_;
         callbackContextStack_[callbackDepth_] = nullptr;
         callbackHandedOut_[callbackDepth_]    = false;
-        callbackHandlerStack_[callbackDepth_] = Oop();
         return true;
     }
     return false;
@@ -7014,7 +7012,6 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // 4. Push vmcc onto callback context stack
     if (callbackDepth_ < MaxCallbackDepth) {
         callbackContextStack_[callbackDepth_] = vmcc;
-        callbackHandlerStack_[callbackDepth_] = memory_.nil();
         callbackHandedOut_[callbackDepth_] = false;
         callbackDepth_++;
     }
@@ -7080,9 +7077,6 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                             // materializeFrameStack again would duplicate work or
                             // double-save contexts. Inline setActive + executeFromContext.
                             setActiveProcess(waiter);
-                            if (callbackDepth_ > 0) {
-                                callbackHandlerStack_[callbackDepth_ - 1] = waiter;
-                            }
                             Oop waiterCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, waiter);
                             memory_.storePointer(ProcessSuspendedContextIndex, waiter, memory_.nil());
                             stackPointer_ = stackBase_;
@@ -7124,11 +7118,11 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     }
 
     // 7. Run a NESTED interpret loop on the C stack.
-    //    primitiveCallbackReturn sets pendingCallbackReturn_ instead of doing
-    //    siglongjmp directly, so the Smalltalk caller can release mutexes and
-    //    clean up. We detect the flag after each batch of steps (giving the
-    //    Smalltalk code time to finish), restore the original process, and
-    //    siglongjmp back to the C trampoline.
+    //    primitiveCallbackReturn sets pendingCallbackReturn_ and answers true
+    //    to the caller (Cog's primitiveCallbackReturn does primitiveEndReturn
+    //    first too).  The loop below stops at the step that ran the primitive,
+    //    puts the calling process back on its run queue, restores the callout
+    //    process and returns to the C caller.
     long nestedStepCount = 0;
     // Raised 10M -> 1B steps (2026-07-03 silent-cap audit): the budget counts
     // steps of ALL processes (the heartbeat round-robins inside this nested
@@ -7151,15 +7145,19 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     long lastDbgStep = 0;
     while (running_) {
         // Stop the batch the moment the handler has called primitiveCallbackReturn.
-        // Cog's primitiveCallbackReturn (StackInterpreterPrimitives>>
-        // primitiveCallbackReturn, "popSameThreadCalloutSuspendedProcess ...
+        // Cog's ptExitInterpreterToCallback ("popSameThreadCalloutSuspendedProcess ...
         // transferTo: suspendedProcess") resumes the callout process at once,
         // with no other process running in between.  The rest of a 1000-step
-        // batch ran whatever the handler's exit made runnable: once the handler
-        // had terminated, that was the front process of the callout process's
-        // own priority band, e.g. a SUnit test process blocked on a semaphore
-        // that the callout process had just signalled.
-        for (int batch = 0; batch < 1000 && running_ && !pendingCallbackReturn_; batch++) {
+        // batch ran whatever the handler's exit made runnable, e.g. a SUnit
+        // test process blocked on a semaphore that the callout process had
+        // just signalled (SpAthensAdapterTest>>testResizeMakesCanvasResize).
+        // The batch ends at an interrupt point: the timer, signal and GC
+        // checks below can switch process, and Cog switches only there.
+        for (int batch = 0;
+             running_ && !pendingCallbackReturn_
+                 && (batch < 1000
+                     || !(atInterruptPoint() || GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)));
+             batch++) {
             step();
             nestedStepCount++;
         }
@@ -7278,49 +7276,30 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             }
             pendingCallbackReturn_ = nullptr;
 
-            // COOLDOWN: Run extra steps so Smalltalk finishes cleanup.
-            // primitiveCallbackReturn returns true inside stackProtect critical:.
-            // The critical: block still needs to: release mutex, pop the
-            // callbackInvocationStack, signal callbackReturnSemaphore, and
-            // the forked process needs to terminate. ~50 bytecodes total,
-            // but we give 500 for safety (process switches, GC, etc.).
-            // The cooldown ends as soon as the handler stops being the active
-            // process (it ended, or blocked, or a higher-priority process
-            // preempted it).  What the scheduler would pick next has not run a
-            // bytecode yet; the code below requeues it and resumes the callout
-            // process, as Cog does at callback return.
-            // (The slot is a GC root, so read it again after each step.)
-            const bool knowHandler = callbackDepth_ < MaxCallbackDepth
-                && callbackHandlerStack_[callbackDepth_].isObject()
-                && !callbackHandlerStack_[callbackDepth_].isNil();
-            for (int cooldown = 0; cooldown < 500 && running_; cooldown++) {
-                step();
-                nestedStepCount++;
-                if (knowHandler && getActiveProcess().rawBits()
-                        != callbackHandlerStack_[callbackDepth_].rawBits())
-                    break;
+            // The process that called primitiveCallbackReturn (the "FFICallback"
+            // executor) is the active process: the batch loop above stops after
+            // the step that completed the primitive, and the primitive has
+            // already answered true to it.  Do what Cog's ptExitInterpreterToCallback
+            // does, in the same order (StackInterpreterPrimitives>>
+            // ptExitInterpreterToCallback):
+            //   popSameThreadCalloutSuspendedProcess
+            //   putToSleep: self activeProcess yieldingIf: preemptionYields
+            //   transferTo: suspendedProcess
+            // The executor is left runnable, with its context saved just after
+            // the primitive.  It finishes `returnCallback:` (leave stackProtect's
+            // critical:, pop the invocation stack, signal
+            // callbackReturnSemaphore) later, in the open scheduler, like any
+            // runnable process.  No step runs between the return and the
+            // callout process, so nothing can preempt the executor part way
+            // and no step count decides when the executor is "done".
+            //
+            // The saved pc must not sit between an ExtendA/ExtendB prefix and the
+            // bytecode it extends: executeFromContext clears extA_/extB_ on
+            // resume.  The step that ran the primitive consumed any prefix of
+            // its send, so inExtension_ is clear here.
+            if (inExtension_) {
+                fprintf(stderr, "[CALLBACK-RETURN] inExtension_ set after the return primitive\n");
             }
-            // The switch below saves the active process's pc and requeues
-            // it.  If the last step() ran an ExtendA/ExtendB prefix, that pc
-            // sits BETWEEN the prefix and the bytecode it extends, and every
-            // executeFromContext zeroes extA_/extB_: on resume a backward
-            // `E1 FF ED xx` runs as a forward jump off the end of the method.
-            // Finish the extended instruction first (each step consumes a
-            // prefix or its consumer, so this terminates).
-            while (inExtension_ && running_) {
-                step();
-                nestedStepCount++;
-            }
-
-            // Save the current process's execution state and re-queue it,
-            // but ONLY if the active process is still the callback handler.
-            // If the handler already called `sem wait` during cooldown, it
-            // transferred away and the active process is now something else
-            // (e.g., the next-highest-priority process legitimately running).
-            // We must NOT putToSleep that process — it's not lost, it's
-            // running. Doing so corrupts its state and causes intermittent
-            // hangs (observed: UI process ending up in an infinite FFI loop
-            // calling SDL_GetVersion when its context was double-queued).
             {
                 Oop savedGcTemp = gcTempOop_;
                 gcTempOop_ = getActiveProcess();
@@ -7331,55 +7310,11 @@ int Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     memory_.storePointer(ProcessSuspendedContextIndex,
                                          currentProcess, currentCtx);
                 }
-                // primitiveCallbackReturn already decremented callbackDepth_,
-                // so the just-popped handler is at slot callbackDepth_
-                // (not callbackDepth_ - 1).
-                Oop savedHandler = (callbackDepth_ < MaxCallbackDepth)
-                    ? callbackHandlerStack_[callbackDepth_]
-                    : memory_.nil();
-                if (callbackDepth_ < MaxCallbackDepth) {
-                    callbackHandlerStack_[callbackDepth_] = memory_.nil();
-                }
-                bool stillHandler = savedHandler.isObject() &&
-                                    !savedHandler.isNil() &&
-                                    savedHandler.rawBits() == currentProcess.rawBits();
-                // Queue the current process so it can resume after we
-                // restore the suspended-in-callout process.  Skip if it's
-                // already on a queue (semaphore wait, etc.) — the
-                // SDL_GetVersion infinite-loop bug fired when we
-                // putToSleep'd a process that was already waiting on a
-                // semaphore, double-queueing it.  Without ANY requeue,
-                // the process is orphaned: context saved but unscheduled,
-                // which kills the SUnit runner main on the first FFI
-                // callback (FFICallbackParametersTest etc.).
-                Oop currentMyList = memory_.fetchPointer(
-                    ProcessMyListIndex, currentProcess);
-                bool alreadyQueued = currentMyList.isObject()
-                    && !currentMyList.isNil()
-                    && currentMyList.rawBits() != memory_.nil().rawBits();
-                if (!alreadyQueued) {
-                    // FRONT of its run queue (putToSleepPreempted), NOT the
-                    // back: this yank is an INVOLUNTARY displacement of a
-                    // process that is usually still mid-cleanup — the 500-step
-                    // cooldown regularly ends inside interpriorityYield:'s
-                    // `[p resume] fork. p suspend` window (the cleanup path
-                    // critical:-release -> valueUnpreemptively ensure ->
-                    // priority: is far longer than 500 steps).  The resumer is
-                    // forked at the SAME priority, so back-appending put the
-                    // yanked process BEHIND its own resumer: the resume was
-                    // spent on a ready process, the later suspend parked it
-                    // forever STILL HOLDING the TFCallbackQueue stackProtect
-                    // mutex, and every subsequent callback wedged (repeat-run
-                    // x4 wedge, root-caused 2026-07-03 via gauntlet6.log
-                    // pc=99-vs-101 trace).  Cog rule: involuntary displacement
-                    // never reorders same-priority processes.
-                    putToSleepPreempted(currentProcess);
-                }
+                // putToSleep: yieldingIf: preemptionYields, as Cog does here.
+                putToSleepPreemptedYieldingIf(currentProcess);
                 if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
-                    fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] active=0x%llx handler=0x%llx stillHandler=%d alreadyQueued=%d\n",
-                            (unsigned long long)currentProcess.rawBits(),
-                            (unsigned long long)savedHandler.rawBits(),
-                            (int)stillHandler, (int)alreadyQueued);
+                    fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] executor=0x%llx\n",
+                            (unsigned long long)currentProcess.rawBits());
                     fflush(stderr);
                 }
             }
@@ -7527,8 +7462,22 @@ bool Interpreter::step() {
     if (periodicCheckDue && inSyncSend_) {
         deferredPeriodicCheck_ = true;
     }
+    // Cog services timers, signals and preemption only at an interrupt point
+    // (a frame entry or a back jump; see atInterruptPoint).  step() hosts
+    // the Smalltalk side of every FFI callback, and image code there relies
+    // on the same rule: a timer signal that landed between `[ p resume ]
+    // fork` and `p suspend` of ProcessorScheduler>>interpriorityYield: left
+    // the callback executor suspended for good while it held
+    // TFRunner>>stackProtect.  Elsewhere: look again at the next bytecode.
     if ((periodicCheckDue || deferredPeriodicCheck_)
-        && !inExtension_ && !inSyncSend_) {
+        && !inExtension_ && !inSyncSend_
+        && !atInterruptPoint()
+        && !GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)) {
+        deferredPeriodicCheck_ = true;
+    }
+    if ((periodicCheckDue || deferredPeriodicCheck_)
+        && !inExtension_ && !inSyncSend_
+        && (atInterruptPoint() || GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE))) {
         deferredPeriodicCheck_ = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
@@ -7612,7 +7561,9 @@ bool Interpreter::step() {
     // Process any pending external semaphore signals (from heartbeat/events).
     // Skip if in extension byte sequence to protect extA_/extB_.
     // Skip during inSyncSend_ — defer until helper-send returns.
-    if (!inExtension_ && !inSyncSend_ && hasPendingSignals()) {
+    // Skip unless at an interrupt point (see above); the signals stay pending.
+    if (!inExtension_ && !inSyncSend_ && hasPendingSignals()
+        && (atInterruptPoint() || GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE))) {
         processPendingSignals();
     }
 
@@ -7620,9 +7571,16 @@ bool Interpreter::step() {
     // yield to a higher-priority or same-priority runnable process.
     // Skip if in extension byte sequence to protect extA_/extB_.
     // Skip during inSyncSend_ — defer until helper-send returns.
+    // Not at an interrupt point: look again at the next bytecode.
     bytecodeCount_++;
-    if (bytecodeCount_ % 10000 == 0 && !inExtension_ && !inSyncSend_) {
-        checkForPreemption();
+    if ((bytecodeCount_ % 10000 == 0 || preemptCheckDeferred_)
+        && !inExtension_ && !inSyncSend_) {
+        if (atInterruptPoint() || GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)) {
+            preemptCheckDeferred_ = false;
+            checkForPreemption();
+        } else {
+            preemptCheckDeferred_ = true;
+        }
     }
 
     // If IP has run past the end of bytecodes, force a return
@@ -7690,6 +7648,10 @@ bool Interpreter::step() {
         // Don't yield between extension bytes (0xE0/0xE1) and their target bytecode.
         if (inExtension_) {
             // Don't consume forceYield - retry on next step
+            goto skip_yield;
+        }
+        // Cog yields only at an interrupt point; retry on the next step.
+        if (!atInterruptPoint() && !GET_DEBUG_BOOL(PHARO_SWITCH_AT_ANY_BYTECODE)) {
             goto skip_yield;
         }
         forceYield_.store(false, std::memory_order_release);
@@ -21648,13 +21610,12 @@ void Interpreter::addFirstLinkToList(Oop process, Oop list) {
 // priority level, and it is the only rotation Cog has -- checkForEvents does
 // none, which is why looking there and finding nothing is misleading.
 //
-// Called from EXACTLY the three sites Cog calls it from: CSSignal, CSResume,
-// CSExitCriticalSection. Our other preemption sources (heartbeat scan, JIT
-// step yield, callback-return requeue) have no Cog counterpart and MUST keep
-// the order-preserving front-append: back-appending the callback-return
-// requeue puts the yanked process behind its own resumer in
-// interpriorityYield:'s [p resume] fork / p suspend window, which stalls the
-// FFI callback suite outright (measured: 120 tests wedge at ~750 steps/s).
+// Called from the sites Cog calls it from: CSSignal, CSResume,
+// CSExitCriticalSection, and the same-thread callback return (Cog's
+// ptExitInterpreterToCallback: putToSleep: activeProcess yieldingIf:
+// preemptionYields).  Our other preemption sources (heartbeat scan, JIT
+// step yield) have no Cog counterpart and MUST keep the order-preserving
+// front-append.
 void Interpreter::putToSleepPreemptedYieldingIf(Oop process) {
     if (preemptionYields()) {
         putToSleep(process);
