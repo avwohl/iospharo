@@ -38,6 +38,7 @@
 #include "../Oop.hpp"
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include "../DebugVars.hpp"
 #include <cstddef>
 #include <atomic>

@@ -20842,9 +20842,13 @@ void pharoForwardedSignalHandler(int sig) {
 // primitiveSigChldNumber — answer the platform's SIGCHLD number.
 PrimitiveResult Interpreter::primitiveSigChldNumber(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    return PrimitiveResult::Failure;   // no UnixOSProcessPlugin on Windows (as stock Cog)
+#else
     popN(1);
     push(Oop::fromSmallInteger(SIGCHLD));
     return PrimitiveResult::Success;
+#endif
 }
 
 // primitiveForwardSignalToSemaphore — install a handler for `signalNumber`
@@ -20861,6 +20865,10 @@ PrimitiveResult Interpreter::primitiveForwardSignalToSemaphore(int argCount) {
     if (sig <= 0 || sig >= kMaxForwardedSignal || idx <= 0)
         return PrimitiveResult::Failure;
 
+#ifdef _WIN32
+    (void)pharoForwardedSignalHandler;
+    return PrimitiveResult::Failure;   // no POSIX signals on Windows
+#else
     gSigForwardInterp = this;
     gSigSemaIndex[sig] = (sig_atomic_t)idx;
 
@@ -20876,6 +20884,7 @@ PrimitiveResult Interpreter::primitiveForwardSignalToSemaphore(int argCount) {
     popN(static_cast<size_t>(argCount + 1));
     push(semaIndexOop);
     return PrimitiveResult::Success;
+#endif
 }
 
 // primitiveSemaIndexFor — answer the external-semaphore index currently
@@ -20909,6 +20918,9 @@ PrimitiveResult Interpreter::primitiveSemaIndexFor(int argCount) {
 // mumez-pharo-acp (docs/vm-compat-bugs.md #5).
 PrimitiveResult Interpreter::primitiveCreatePipe(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    return PrimitiveResult::Failure;   // no UnixOSProcessPlugin on Windows (as stock Cog)
+#else
     int fds[2];
     if (::pipe(fds) != 0) return PrimitiveResult::Failure;
 
@@ -20955,6 +20967,7 @@ PrimitiveResult Interpreter::primitiveCreatePipe(int argCount) {
     popN(static_cast<size_t>(argCount + 1));
     push(result);
     return PrimitiveResult::Success;
+#endif
 }
 
 // primitiveUnixFileNumber — answer the int fd behind an SQFile handle.
@@ -20978,6 +20991,9 @@ PrimitiveResult Interpreter::primitiveSQFileSetNonBlocking(int argCount) {
     if (!f) return PrimitiveResult::Failure;
     int fd = ::fileno(f);
     if (fd < 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    return PrimitiveResult::Failure;   // no fcntl(O_NONBLOCK) on Windows
+#else
     int flags = ::fcntl(fd, F_GETFL, 0);
     if (flags < 0) return PrimitiveResult::Failure;
     if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
@@ -20985,6 +21001,7 @@ PrimitiveResult Interpreter::primitiveSQFileSetNonBlocking(int argCount) {
     popN(static_cast<size_t>(argCount + 1));
     push(memory_.trueObject());
     return PrimitiveResult::Success;
+#endif
 }
 
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
@@ -24484,8 +24501,17 @@ PrimitiveResult Interpreter::primitiveFindSubstring(int argCount) {
         if (static_cast<size_t>(startIndex - 1) + keySize <= stringSize) {
             const size_t last = stringSize - keySize;
             if (!tab) {
+#ifdef _WIN32
+                // The Windows C runtime has no memmem.
+                const uint8_t* hs = str + startIndex - 1;
+                const uint8_t* he = str + stringSize;
+                const void* hit = keySize == 0 ? hs
+                    : std::search(hs, he, key, key + keySize);
+                if (hit == he && keySize != 0) hit = nullptr;
+#else
                 const void* hit = memmem(str + startIndex - 1, stringSize - (startIndex - 1),
                                          key, keySize);
+#endif
                 if (hit) found = static_cast<const uint8_t*>(hit) - str + 1;
             } else {
                 const uint8_t k0 = tab[key[0]];

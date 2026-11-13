@@ -73,7 +73,9 @@
 #include <atomic>
 #include <chrono>
 #include <dlfcn.h>
-#include <execinfo.h>
+#ifndef _WIN32
+#include <execinfo.h>   // Windows: win_compat.h declares backtrace()
+#endif
 #include <csetjmp>
 #include "../platform/win_compat.h"  // sigjmp_buf/backtrace shims on Windows (no-op elsewhere)
 #include <cstdint>
@@ -115,7 +117,12 @@ void eventRingDump();
 inline void eventRec(char kind, uint64_t a, uint64_t b, uint32_t c) {
     if (__builtin_expect(g_eventRing != nullptr, 0)) {
         EventRec& r = g_eventRing[g_eventN++ & (kEventRingSize - 1)];
+#ifdef __APPLE__
         r.t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000;
+#else
+        r.t = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
         r.a = a; r.b = b; r.kind = (uint32_t)kind; r.c = c;
     }
 }
@@ -676,7 +683,8 @@ public:
     // Return type must be sqInt (`long`, see plugins/sqMemoryAccess.h): that is what
     // every VMMaker-generated plugin entry point returns. Declaring it as `int` here
     // made every registration site cast between incompatible function types.
-    using ExternalPrimFunc = long (*)(void);
+    // sqInt (intptr_t): `long` on LP64, `long long` on Win64 (LLP64).
+    using ExternalPrimFunc = intptr_t (*)(void);
     void registerNamedPrimitive(const std::string& module, const std::string& name, ExternalPrimFunc func);
     PrimitiveResult callExternalPrimitive(ExternalPrimFunc fn);
 
