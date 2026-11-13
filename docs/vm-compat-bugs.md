@@ -205,6 +205,79 @@ Two differences are Cog defects, not ours:
   compiles `ByteString>>compareWith:`.  The machine-code primitive does
   not check that the argument is a byte object.  Ours fails the primitive.
 
+## FIXED 2026-11-13 — pharo-cig on Pharo 14: SIGABRT (package) and hang (VM)
+
+Symptom: `CIG-Tests` passed 3 of 3 on an idle machine.  When the machine was
+busy, 4 to 10 runs together, about half of the runs failed in one of two
+ways.  Some runs stopped with SIGABRT, "pointer being freed was not
+allocated".  The other runs hung with the main thread in
+`primitiveRelinquishProcessor` inside `enterInterpreterFromCallback`.  The
+50 s per-test watchdog did not fire.  Stock Cog cannot load libclang on this
+host, so Cog gave no comparison.  The two failures have two different causes.
+
+SIGABRT: package defect, proven.  The abort call is `clang_disposeString`,
+called from `CXString>>dispose` inside the visitor callback of
+`clang_visitChildren`.  The image declares `CXString` as an
+FFIExternalObject (one pointer).  libclang's `CXString` is a 16-byte struct
+by value, `{ void *data; unsigned private_flags; }`.  Our VM does what the
+declaration says: it passes one pointer in x0 and reads one pointer from x0.
+Nobody sets x1, so libffi leaves stale stack data in x1.  libclang reads x1
+as `private_flags`.  When x1 is 1 (`CXS_Malloc`) the callee calls `free` on a
+pointer that is not from `malloc`.  Three checks:
+
+- lldb: set x1 to 1 at the first `clang_disposeString`.  The run then aborts
+  at once, with the same stack as the abort in the sweep.
+- lldb: x1 at `clang_disposeString` in a normal run holds stale values
+  (0x77 to 0x96, a different value as the stack changes); it is never set.
+- Package patch: `CXString` redeclared as a `CXStructure` with `data` and
+  `private_flags`.  With the patched image 0 of 222 runs aborted (all
+  loads).  With the unpatched image 13 of 52 runs aborted.
+
+Hang: VM defect in `enterInterpreterFromCallback`, from `08c94847`.  The
+hung state, read with `pharo_dumpWedgeState` (lldb): the callout process is
+in `clang_visitChildren`; the "Callback queue" process (P70) waits for
+`TFRunner>>stackProtect` inside `executeCallback:`; no process is ready; the
+mutex owner, an "FFICallback" executor (P69), was already gone.  The last
+process switches (`PHARO_XFER_TRACE=1`) show the cause.  The executor
+returns its callback inside `stackProtect critical:`.  After the return it
+runs `valueUnpreemptively`, and that calls `Process>>priority:`.  The image
+code `interpriorityYield:` does `[ p resume ] fork. p suspend`.  A timer
+signal (P80) arrived between `fork` and `suspend`.  The executor then went
+behind its resumer (`preemptionYields` is true, as in Cog), the resumer
+resumed a process that was not suspended, and the executor suspended itself
+with nobody to resume it.  It held `stackProtect` for ever, so the next
+callback blocked for ever.
+
+Why `08c94847` exposed this.  The cooldown after a callback return must run
+the end of the process that made the return.  The cooldown compared the
+active process with `callbackHandlerStack_`, and that slot held the "Callback
+queue" process, which only forks the executor.  The executor is never that
+process, so the cooldown ended after one step.  The executor was parked in
+the middle of `valueUnpreemptively` and ran later, in the open scheduler,
+where a timer signal can arrive in the window.  Before `08c94847` the 500
+steps ran the whole end of the executor with no timer check in between.
+
+Fix: `primitiveCallbackReturn` records the process that calls it in the slot
+the cooldown reads.  The cooldown then stops when the executor blocks or ends
+(`SpAthensAdapterTest>>testResizeMakesCanvasResize` keeps its fix: 12 of 12
+with the fix, 5 of 12 before `08c94847`).
+
+Measured under the same load, 10 runs together, arms interleaved, unpatched
+and patched image as written:
+
+- patched image: `942bcbcf` 6 hangs in 20 runs; the fixed binary 0 in 20.
+- patched image: `08c94847` 8 hangs in 20 runs; its parent `e96d044d` 0 in 20
+  (and 0 in 15 more runs, against 5 in 14 for `942bcbcf`).
+- unpatched image: `942bcbcf` 4 hangs and 6 aborts in 15 runs; the fixed
+  binary 1 hang and 3 aborts in 15 runs, and no hang in 20 later runs.  The
+  one hang was not examined.  Its state is unknown.
+- `PHARO_PREEMPT_NO_YIELD=1` (a preempted process goes to the front) on the
+  diag build: 0 hangs in 15 runs, against 7 in 14 without it.  This confirms
+  the preemption order as the mechanism.
+- Kernel-Tests, UnifiedFFI-Tests, ThreadedFFI-Tests and ThreadedFFI-UFFI-Tests
+  (1337 tests) give the same result with `942bcbcf` and with the fix, twice
+  each: 1335 pass, 2 ERR (the win64 ABI on arm64).
+
 ## FIXED 2026-11-12 — SpAthensAdapterTest>>testResizeMakesCanvasResize: a callback return ran other processes
 
 Symptom: the test failed in every sweep (Pharo 13 and 14, arm64 and x86_64).

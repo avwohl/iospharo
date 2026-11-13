@@ -4426,11 +4426,11 @@ private:
     // Each entry is returned exactly once; extra reads answer nil.
     bool callbackHandedOut_[MaxCallbackDepth] = {};
     // Parallel stack: the handler process we transferred to in step 5 of
-    // enterInterpreterFromCallback. Used at callback-return time to decide
-    // whether to re-queue the current active process: if it's still this
-    // handler (handler didn't wait on the sem during cooldown), putToSleep
-    // it; if it's something else (handler already transferred away via
-    // sem-wait), don't touch the new active.
+    // enterInterpreterFromCallback.  primitiveCallbackReturn overwrites the
+    // popped entry with the process that made the return call (the executor
+    // the queue process forked, not the queue process).  The cooldown after
+    // the return runs until that process is no longer active, and the
+    // requeue code compares the active process with it.
     Oop callbackHandlerStack_[MaxCallbackDepth] = {};
     int callbackDepth_ = 0;
 

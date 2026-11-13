@@ -35685,6 +35685,21 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
         }
     }
 
+    // The process that calls this primitive is the one that has to finish the
+    // return sequence (leave stackProtect's critical:, pop the invocation
+    // stack, run valueUnpreemptively's priority changes).  It is NOT the
+    // process that step 5 of enterInterpreterFromCallback woke: with the
+    // default TFCallbackForkRunStrategy the queue process only forks an
+    // "FFICallback" process, and that process makes this call.  Record the
+    // caller, so the cooldown in enterInterpreterFromCallback waits for the
+    // right process.  (It waited for the queue process, which is never active
+    // here, so it ended after one step and left the caller parked inside that
+    // sequence, see docs/vm-compat-bugs.md.)  The slot sits at callbackDepth_
+    // after the pop above, the index the cooldown reads.
+    if (callbackDepth_ < MaxCallbackDepth) {
+        callbackHandlerStack_[callbackDepth_] = getActiveProcess();
+    }
+
     // Set deferred return flag — the nested loop will handle the actual longjmp
     pendingCallbackReturn_ = vmcc;
 
