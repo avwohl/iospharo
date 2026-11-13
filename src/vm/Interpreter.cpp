@@ -13437,7 +13437,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             primitiveFailed_ = false;
             primFailCode_ = 0;
             newMethod_ = cached->method;
-            PrimitiveResult result = (this->*(cached->primitive))(argCount);
+            PrimitiveResult result = callPrimitive(cached->primitive, primIdx, argCount);
             if (result == PrimitiveResult::Success) {
 #if PHARO_JIT_ENABLED
                 patchJITICAfterSend(cached->method, rcvr, selector);
@@ -13472,7 +13472,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (__builtin_expect(lazyCtxPending_, 0) && lazyPrimNeedsSync(primIdx, argCount))
                 materializeFrameStack();
             if (cached->primitive != nullptr) {
-                result = (this->*(cached->primitive))(argCount);
+                result = callPrimitive(cached->primitive, primIdx, argCount);
                 if (result == PrimitiveResult::Success) {
                     lastPrimitiveIndex_ = primIdx;
                 }
@@ -25516,7 +25516,7 @@ PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCo
             uint64_t spBefore = (uint64_t)stackPointer_;
             void* fpBefore = framePointer_;
             auto switchesBefore = processSwitchCount_;
-            PrimitiveResult result = (this->*prim)(argCount);
+            PrimitiveResult result = callPrimitive(prim, primitiveIndex, argCount);
             // PRIM-SP-AUDIT (PHARO_PRIM_SP_AUDIT): a Success primitive that does
             // NOT switch frames must leave sp decreased by exactly argCount*8
             // (consume receiver+args, push 1 result).  A wrong delta is the

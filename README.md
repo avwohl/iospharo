@@ -73,6 +73,7 @@ cmake --build build
 - [docs/vm-compat-bugs.md](docs/vm-compat-bugs.md): VM defects, open and
   fixed
 - [docs/sdl2-stubs.md](docs/sdl2-stubs.md): the SDL2 stub layer and its rules
+- [docs/pinned-forwarders.md](docs/pinned-forwarders.md): forwarders that a pin leaves in object slots
 - [docs/image_issues.md](docs/image_issues.md): Pharo image defects
 - [docs/sdl3.md](docs/sdl3.md): the SDL3 library for the PharoSDL3 package
 - [docs/credits.md](docs/credits.md): credits and acknowledgements

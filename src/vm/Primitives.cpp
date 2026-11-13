@@ -17545,12 +17545,13 @@ PrimitiveResult Interpreter::primitiveFloat64ArrayAdd(int argCount) {
 // argument: C must get the target's address.  Replaces each forwarder in
 // the slots of `o`, `depth` levels down (the arguments array, then each
 // argument's fields such as a structure's handle).
-void Interpreter::followForwardersDeep(Oop o, int depth) {
-    if (depth <= 0 || !o.isObject() || o.rawBits() < 0x10000) return;
+bool Interpreter::followForwardersDeep(Oop o, int depth) {
+    if (depth <= 0 || !o.isObject() || o.rawBits() < 0x10000) return false;
     ObjectHeader* h = o.asObjectPtr();
     if (h->isForwarded() || !h->isPointersObject() || h->isCompiledMethod()
             || (contextClassIndex_ != 0 && h->classIndex() == contextClassIndex_))
-        return;
+        return false;
+    bool found = false;
     const size_t n = std::min<size_t>(h->slotCount(), 256);
     for (size_t i = 0; i < n; i++) {
         Oop v = h->slotAt(i);
@@ -17558,9 +17559,44 @@ void Interpreter::followForwardersDeep(Oop o, int depth) {
         if (v.asObjectPtr()->isForwarded()) {
             v = memory_.followForwarded(v);
             memory_.storePointer(i, o, v);
+            found = true;
         }
-        followForwardersDeep(v, depth - 1);
+        if (followForwardersDeep(v, depth - 1)) found = true;
     }
+    return found;
+}
+
+// Follow the forwarders in the receiver and arguments and `depth` levels of
+// their fields.  Answers true when a slot or a stack value was rewritten.
+bool Interpreter::followPrimitiveOperands(int argCount, int depth) {
+    bool found = false;
+    for (int i = 0; i <= argCount; i++) {
+        Oop v = stackValue(i);
+        if (v.isObject() && v.rawBits() >= 0x10000 && v.asObjectPtr()->isForwarded()) {
+            v = memory_.followForwarded(v);
+            stackValuePut(i, v);
+            found = true;
+        }
+        if (depth > 0 && followForwardersDeep(v, depth)) found = true;
+    }
+    return found;
+}
+
+PrimitiveResult Interpreter::callPrimitiveWithForwarders(PrimitiveFunc prim, int primIndex, int argCount) {
+    // Spur has no check before the call: its primitives test the format of
+    // their operands, and a forwarder fails that test.  Ours do not all
+    // test (primitiveFindSubstring answered "not found" for a forwarded
+    // body), so a forwarder in the receiver or an argument is followed
+    // first, as executePrimitive does for the primitives it dispatches.
+    followPrimitiveOperands(argCount, 0);
+    PrimitiveResult result = (this->*prim)(argCount);
+    if (result == PrimitiveResult::Failure && primIndex == kPrimExternalCall && g_lazyForwarders
+            && followPrimitiveOperands(argCount, kPrimitiveFollowDepth)) {
+        primFailCode_ = 0;
+        primitiveFailed_ = false;
+        result = (this->*prim)(argCount);
+    }
+    return result;
 }
 
 // externalFunction args primitiveCalloutToFFI -> result

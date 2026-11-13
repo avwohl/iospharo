@@ -1,5 +1,33 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
+## FIXED 2026-11-13 — a primitive met a forwarder that a pin had left in an object slot
+
+Pinning a young object (primitive 184, and each FFI call that takes the
+address of a Bitmap or ByteArray) copies the object to old space and
+leaves the original as a forwarder until the next scavenge.  A slot that
+held the original, such as `Form>>bits`, keeps the forwarder.  Three
+effects were seen:
+
+- BitBlt read the forwarder as pixel data (`Form>>pixelValueAt:` answered
+  86006320).  `fa07c935` and `c9c79751` follow the forwarder at each read
+  of the bits.
+- The send path that calls a cached primitive pointer skipped the check
+  that `executePrimitive` makes.  On x86_64,
+  `findSubstring:in:startingAt:matchTable:` on a pinned String answered 0
+  instead of 7.  `translate:from:to:table:` failed, and the fallback code
+  raised an error.  Cog answers 7 and `'ifmmp'`.
+- An external primitive that failed on a forwarder in a field never
+  retried, as Spur does.
+
+Fix: `Interpreter::callPrimitive` follows the receiver and the arguments
+before each cached primitive call, and an external primitive that fails
+gets the fields of its operands followed to depth 2 and runs once more.
+Details: docs/pinned-forwarders.md.  Test: `scripts/cogdiff/pinforward.st`
+(30 cases).  Before the fix, arm64 gave 1 line and x86_64 gave 2 lines that differ from Cog.
+After the fix, arm64 and x86_64 both equal Cog.  Not fixed and
+equal to Cog: a pinned boxed Float and a pinned Balloon work buffer fail
+on Cog too.
+
 ## FIXED 2026-10-17 (`d27dd451`) — ProcessSpecificTest>>testLocalVariable fails 1 run in 3-5 on a fake-GUI image
 
 Root cause: primitive 230 (`relinquishProcessorForMicroseconds:`) hands

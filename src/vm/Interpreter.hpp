@@ -2168,7 +2168,26 @@ public:
     bool isContextResumeMethod(Oop m);
     bool mcfResumeShortcut();
     void* mcfNonLocalReturn(jit::JITState* st);
-    void followForwardersDeep(Oop o, int depth);
+    bool followForwardersDeep(Oop o, int depth);
+    // Spur's primitive contract for forwarders (StackInterpreter
+    // checkForAndFollowForwardedPrimitiveState; docs/pinned-forwarders.md):
+    // a primitive sees no forwarder as receiver or argument, and an external
+    // or named primitive (BitBlt, the plugins, FFI) that fails while
+    // forwarders exist gets the fields of its operands followed (the slots
+    // are rewritten, so the referrer is fixed for good) and runs once more.
+    // Spur reads the follow depth from a per-primitive table.  With no
+    // forwarder in the heap the cost is one flag test.
+    // callPrimitive is the one entry for every dispatch that calls a
+    // PrimitiveFunc directly.
+    static constexpr int kPrimitiveFollowDepth = 2;   // BitBlt -> Form -> bits
+    static constexpr int kPrimExternalCall = 117;
+    bool followPrimitiveOperands(int argCount, int depth);
+    [[gnu::always_inline]] PrimitiveResult callPrimitive(PrimitiveFunc prim, int primIndex, int argCount) {
+        if (__builtin_expect(g_lazyForwarders, 0))
+            return callPrimitiveWithForwarders(prim, primIndex, argCount);
+        return (this->*prim)(argCount);
+    }
+    [[gnu::noinline]] PrimitiveResult callPrimitiveWithForwarders(PrimitiveFunc prim, int primIndex, int argCount);
     // The NLR through one ensure: frame without the image's unwind protocol
     // (docs/native-nlr-plan.md, "ensure shortcut").  e = the ensure: frame's
     // depth.  ensureShortcutOk is check-only; the commit runs after it.
