@@ -40,7 +40,7 @@ echo "$(date -u +%H:%M:%S) ${#pids[@]} workers running; waiting..."
 wait "${pids[@]}" 2>/dev/null
 
 # Merge worker summaries into one.
-printf 'label\tload\tcog_RESULT\tjit_RESULT\tjit_only_fails\n' > "$BASE_OUT/summary.tsv"
+printf 'label\tload\tcog_RESULT\tjit_RESULT\tjit_only_fails\tcog_exit\tjit_exit\n' > "$BASE_OUT/summary.tsv"
 for w in $(seq 0 $((N - 1))); do
     tail -n +2 "$BASE_OUT/w$w/summary.tsv" 2>/dev/null
 done >> "$BASE_OUT/summary.tsv"

@@ -24,6 +24,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/lib-extract.sh"
 RUNNER="$HERE/run_pkg_tests.st"
 PHARO="${PHARO:-/tmp/h3/pharo}"
 CUSTOM_VM="${CUSTOM_VM:-$HERE/../../build-rel/test_load_image}"
@@ -49,15 +50,18 @@ CUSTOM_VM="$(abspath "$CUSTOM_VM")"
 export PKG_PREFIXES="$PREFIXES"
 printf '%s\n' "${PREFIXES//,/$'\n'}" > /tmp/pkg_prefixes.txt
 
-# Optional PRELUDE .st fileIn'd before the runner on BOTH VMs (same on each, so
-# it never biases the diff) -- used for visual packages to install the headless
-# fake-GUI (scripts/pharo-headless-test/setup_fake_gui.st) so Morphic/Spec tests
-# can run without a display.
+# Optional PRELUDE .st filed in on BOTH VMs (same on each, so it never biases the
+# diff) -- used for visual packages to install the headless fake-GUI
+# (scripts/pharo-headless-test/setup_fake_gui.st) so Morphic/Spec tests can run
+# without a display.  The path goes to the runner in the PKG_PRELUDE env var and
+# the runner files the prelude in itself.  Do NOT paste a statement in front of
+# the runner text: the runner starts with a temp declaration, and Pharo 14
+# rejects a temp declaration after a statement.  A named prelude that does not
+# exist makes the runner print PRELUDE-MISSING and exit with a failure status.
 PRELUDE="${PRELUDE:-}"
-prelude_expr=""
 [ -n "$PRELUDE" ] && PRELUDE="$(abspath "$PRELUDE")"
-[ -n "$PRELUDE" ] && prelude_expr="'$PRELUDE' asFileReference fileIn. "
-EVAL="${prelude_expr}$(cat "$RUNNER")"
+export PKG_PRELUDE="$PRELUDE"
+EVAL="$(cat "$RUNNER")"
 
 # Per-package working directory, used by BOTH arms.
 #
@@ -96,7 +100,8 @@ echo "== $LABEL: stock Cog (budget ${COG_TIMEOUT}s) =="
 (cd "$WD" && timeout "$COG_TIMEOUT" "$PHARO" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_cog.log" 2>&1
 cog_exit=$?
 echo "$cog_exit" > "$OUT/${LABEL}_cog.exit"
-grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_cog.log"
+pkg_classes "$OUT/${LABEL}_cog.log"; pkg_result "$OUT/${LABEL}_cog.log"
+tr '\r' '\n' < "$OUT/${LABEL}_cog.log" | grep -aoE 'PRELUDE-MISSING /[^[:space:][]*' | head -1
 [ "$cog_exit" -ne 0 ] && echo "  (cog exit=$cog_exit$([ "$cog_exit" = 137 ] && echo ' — SIGKILL, most likely the OOM killer')$([ "$cog_exit" = 124 ] && echo ' — timeout')$([ "$cog_exit" = 139 ] && echo ' — SIGSEGV'))"
 
 echo "== $LABEL: custom JIT VM (budget ${JIT_TIMEOUT}s) =="
@@ -104,18 +109,25 @@ echo "== $LABEL: custom JIT VM (budget ${JIT_TIMEOUT}s) =="
 jit_exit=$?
 echo "$jit_exit" > "$OUT/${LABEL}_jit.exit"
 [ "$jit_exit" -ne 0 ] && echo "  (jit exit=$jit_exit$([ "$jit_exit" = 137 ] && echo ' — SIGKILL, most likely the OOM killer')$([ "$jit_exit" = 124 ] && echo ' — timeout')$([ "$jit_exit" = 139 ] && echo ' — SIGSEGV'))"
-# the custom VM interleaves [JIT]/[DIAG] telemetry; filter to the runner's lines
-grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_jit.log" | grep -avE "\[JIT\]"
+# the custom VM interleaves [JIT]/[DIAG] telemetry and echoes the image's stdout
+# with an "[IMAGE] " prefix; the extractors take the runner's lines out of that
+pkg_classes "$OUT/${LABEL}_jit.log"; pkg_result "$OUT/${LABEL}_jit.log"
+tr '\r' '\n' < "$OUT/${LABEL}_jit.log" | grep -aoE 'PRELUDE-MISSING /[^[:space:][]*' | head -1
+for arm in cog jit; do
+    [ -n "$(pkg_result "$OUT/${LABEL}_$arm.log")" ] || \
+        echo "  ($arm: $(pkg_result_cell "$OUT/${LABEL}_$arm.log" "$OUT/${LABEL}_$arm.exit"))"
+done
 
 echo "== $LABEL: parity diff (failures present on ONE VM only) =="
 # normalize FAIL/ERR/TIMEOUT lines to "<KIND> Class>>sel" and compare the sets
-norm() { grep -aE "^(FAIL|ERR|TIMEOUT) " "$1" | sed -E 's/ \[.*//; s/ \(.*//' | sort -u; }
-norm "$OUT/${LABEL}_cog.log" > "$OUT/${LABEL}_cog.fails"
-norm "$OUT/${LABEL}_jit.log" > "$OUT/${LABEL}_jit.fails"
+# (pkg_fails reads the lines out of glued/CR/[IMAGE]-echoed output, dedupes, and
+# sorts with LC_ALL=C; comm needs both inputs in the same sort order.)
+pkg_fails "$OUT/${LABEL}_cog.log" > "$OUT/${LABEL}_cog.fails"
+pkg_fails "$OUT/${LABEL}_jit.log" > "$OUT/${LABEL}_jit.fails"
 echo "--- JIT-only failures (candidate JIT regressions) ---"
-comm -13 "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"
+LC_ALL=C comm -13 "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"
 echo "--- Cog-only failures (baseline issues the JIT does NOT hit) ---"
-comm -23 "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"
+LC_ALL=C comm -23 "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"
 echo "(shared baseline failures are parity, not regressions)"
 
 # Ship this package's results off-box AS SOON AS THEY EXIST.

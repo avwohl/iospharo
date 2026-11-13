@@ -31,6 +31,43 @@ keep-alive lease keeps the box up while a Claude drives it. The 27 `gui` package
 (Spec/Bloc/Roassal/Morphic/…) get the `pharo-headless-test` fake-GUI prelude
 automatically.
 
+## Runner output and log reading
+
+The test code writes to stdout without a newline at the end. The runner line
+can then follow other output on the same line, for example
+`Resources SetUpRESULT pass=34 ...`. Our VM also echoes the image stdout with
+the prefix `[IMAGE] `, and some output has CR line endings. Therefore:
+
+- The runner prints a newline before each CLASSES, RUN, FAIL, ERR, TIMEOUT
+  and RESULT line.
+- The scripts do not use `grep '^RESULT'`. They use the functions in
+  `lib-extract.sh`. Each function changes CR to LF, finds the line text
+  with `grep -aoE` anywhere in a line, removes duplicates, and sorts with
+  `LC_ALL=C`. Sort both inputs the same way before you use `comm`.
+- The runner prints `RUN Class>>selector` before each test. The runner counts a test that sends
+  `halt` as an ERR, because Halt is not an Error.
+- When a VM gives no RESULT line, the summary shows
+  `NO-RESULT last-RUN=Class>>selector exit=N`. The last RUN line is the test
+  that was running when the run ended. The exit status is 124 for a timeout,
+  137 for a kill (often the OOM killer) and 139 for SIGSEGV.
+- `summary.tsv` has the columns `label load cog_RESULT jit_RESULT
+  jit_only_fails cog_exit jit_exit`.
+
+## Fake-GUI prelude
+
+For `gui` packages the driver sets the env var `PKG_PRELUDE` to the path of
+`setup_fake_gui.st`. The runner files the prelude in itself. Do not put the
+prelude text before the runner text: Pharo 14 rejects a temp declaration that
+follows a statement. If `PKG_PRELUDE` names a file that does not exist, the
+runner prints `PRELUDE-MISSING <path>` and exits with a failure status.
+
+## Load step
+
+`run-manifest.sh` runs each package load in a scratch working directory
+(`$OUT/loadwd-<label>`), and removes the directory after the load. A package
+load can write files to the current directory. The load log ends with a line
+`[load exit=N]`, so a load that ends with no error message still has a cause.
+
 ## Why this exists
 
 The custom VM cannot do HTTPS, so it cannot Metacello-load packages. The STOCK
@@ -44,9 +81,13 @@ so any pass-rate divergence is a VM/JIT bug.
 bench_spectrum.st     cross-VM speed spectrum (int/float/recursion/sends/
                       collections/alloc/strings) — emits `BENCH <name> <ms>` lines
 run_pkg_tests.st      generic SUnit runner: runs every non-abstract TestCase
-                      whose package name starts with a prefix in
-                      /tmp/pkg_prefixes.txt; emits a RESULT line + FAIL/ERR detail
+                      whose package name starts with a prefix in PKG_PREFIXES
+                      (or /tmp/pkg_prefixes.txt); emits RUN lines, a RESULT line
+                      and FAIL/ERR/TIMEOUT detail lines
 run-pkg-jit-test.sh   driver: runs a loaded image on both VMs, diffs failures
+run-manifest.sh       driver: loads and tests the packages in a manifest
+run-sweep-parallel.sh driver: runs run-manifest.sh in N workers
+lib-extract.sh        shell functions that read the runner lines out of a VM log
 load_*.st             Metacello load scripts (run on stock pharo, eval --save)
 results/              captured benchmark logs
 ```
