@@ -1,0 +1,201 @@
+label	load	cog_RESULT	jit_RESULT	jit_only_fails	cog_exit	jit_exit
+pharo-contributions-xml-xmlparser	ok	RESULT pass=6020 fail=5 err=2 timeout=0 classes=151	RESULT pass=6020 fail=5 err=2 timeout=0 classes=151	0	0	0
+vonbecmann-earley-parser	ok	RESULT pass=360 fail=0 err=0 timeout=0 classes=59	RESULT pass=360 fail=0 err=0 timeout=0 classes=59	0	0	0
+jecisc-chanel	ok	RESULT pass=329 fail=0 err=40 timeout=0 classes=24	RESULT pass=329 fail=0 err=40 timeout=0 classes=24	0	0	0
+pharo-ai-edit-distances	ok	RESULT pass=123 fail=0 err=0 timeout=0 classes=17	RESULT pass=123 fail=0 err=0 timeout=0 classes=17	0	0	0
+uca-argentina-2026-buscandoelpharo	ok	RESULT pass=124 fail=0 err=0 timeout=0 classes=12	RESULT pass=124 fail=0 err=0 timeout=0 classes=12	0	0	0
+pharo-contributions-deeptraverser	ok	RESULT pass=53 fail=0 err=0 timeout=0 classes=9	RESULT pass=52 fail=0 err=0 timeout=1 classes=9	1	0	0
+ba-st-mole	FAIL	-	-	-	-	-
+ducasse-osc	ok	RESULT pass=16 fail=1 err=0 timeout=0 classes=6	RESULT pass=16 fail=1 err=0 timeout=0 classes=6	0	0	0
+evref-bl-pharocompatibility	ok	RESULT pass=1 fail=0 err=0 timeout=0 classes=1	RESULT pass=1 fail=0 err=0 timeout=0 classes=1	0	0	0
+pharo-containers-containers-array2d	ok	RESULT pass=137 fail=0 err=0 timeout=0 classes=5	RESULT pass=137 fail=0 err=0 timeout=0 classes=5	0	0	0
+romashmyhelskyi-pharoathleteproject	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+akgrant43-geosphere	ok	RESULT pass=6 fail=5 err=0 timeout=0 classes=2	RESULT pass=6 fail=5 err=0 timeout=0 classes=2	1	0	0
+moosetechnology-famix	ok	RESULT pass=1317 fail=4 err=2 timeout=0 classes=130	RESULT pass=1317 fail=4 err=2 timeout=0 classes=130	0	0	0
+ba-st-willow	FAIL	-	-	-	-	-
+moosetechnology-carrefour	FAIL	-	-	-	-	-
+pavel-krivanek-turbo	ok	RESULT pass=265 fail=5 err=0 timeout=0 classes=21	RESULT pass=265 fail=5 err=0 timeout=0 classes=21	0	0	0
+pakarati-pharo-gsoc2025	FAIL	-	-	-	-	-
+juliendelplanque-jrpc	ok	RESULT pass=81 fail=0 err=0 timeout=0 classes=11	RESULT pass=81 fail=0 err=0 timeout=0 classes=11	0	0	0
+moosetechnology-esope	FAIL	-	-	-	-	-
+pharo-contributions-ossubprocess	ok	RESULT pass=7 fail=0 err=119 timeout=0 classes=7	RESULT pass=7 fail=0 err=119 timeout=0 classes=7	0	0	0
+erikonbike-codeparadise	ok	RESULT pass=19 fail=1 err=13 timeout=0 classes=5	RESULT pass=19 fail=1 err=13 timeout=0 classes=5	0	0	0
+lnuittutor-shapesbypharo	ok	RESULT pass=21 fail=0 err=0 timeout=0 classes=5	RESULT pass=21 fail=0 err=0 timeout=0 classes=5	0	0	0
+evref-bl-bitbucketcloud-pharo-api	ok	RESULT pass=15 fail=0 err=0 timeout=0 classes=4	RESULT pass=15 fail=0 err=0 timeout=0 classes=4	0	0	0
+nathanfrund-datastar-pharo-sdk	FAIL	-	-	-	-	-
+pharo-xp-tools-sindarin-dap	ok	RESULT pass=17 fail=1 err=0 timeout=0 classes=3	RESULT pass=18 fail=0 err=0 timeout=0 classes=3	0	0	0
+kentbeck-smalltalkgenie	FAIL	-	-	-	-	-
+pharo-graphics-bloc	FAIL	-	-	-	-	-
+alamvic-druid	ok	RESULT pass=181 fail=1 err=34 timeout=0 classes=27	RESULT pass=181 fail=1 err=34 timeout=0 classes=27	0	0	0
+thalesgroup-geoview	ok	RESULT pass=320 fail=0 err=48 timeout=0 classes=46	RESULT pass=320 fail=0 err=48 timeout=0 classes=46	0	0	0
+mumez-pharo-agentic-browser	ok	RESULT pass=594 fail=5 err=1 timeout=0 classes=33	RESULT pass=596 fail=3 err=1 timeout=0 classes=33	0	0	0
+maxwills-seekerdebugger	FAIL	-	-	-	-	-
+feenkcom-jslink	FAIL	-	-	-	-	-
+mumez-redistick	ok	NO-RESULT last-RUN=RsRedisEndpointTest>>testHSetWithDictionary exit=1	NO-RESULT last-RUN=RsRedisEndpointTest>>testHSetWithDictionary exit=0	0	1	0
+neerja-1984-pam-gsoc-25-project	FAIL	-	-	-	-	-
+eiichiroito-avr-pharo	ok	RESULT pass=1705 fail=0 err=0 timeout=0 classes=158	RESULT pass=1705 fail=0 err=0 timeout=0 classes=158	0	0	0
+terryc321-pharo-advent-of-code	FAIL	-	-	-	-	-
+ba-st-launchpad	FAIL	-	-	-	-	-
+pharo-contributions-cssparser	ok	RESULT pass=78 fail=2 err=0 timeout=0 classes=16	RESULT pass=78 fail=2 err=0 timeout=0 classes=16	0	0	0
+chicoary-pharowiki	FAIL	-	-	-	-	-
+tesonep-parametrizedtests	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+evref-bl-bitbucket-pharo-api	ok	RESULT pass=30 fail=0 err=0 timeout=0 classes=8	RESULT pass=30 fail=0 err=0 timeout=0 classes=8	0	0	0
+gabriel-darbord-opentelemetry-pharo	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+ronsaldo-pharo-newfile	ok	RESULT pass=42 fail=0 err=0 timeout=0 classes=6	RESULT pass=42 fail=0 err=0 timeout=0 classes=6	0	0	0
+reugalabf-datasetutilities4pharo	ok	RESULT pass=26 fail=1 err=10 timeout=0 classes=7	RESULT pass=26 fail=1 err=10 timeout=0 classes=7	0	0	0
+georghagn-tsf-filerotator	FAIL	-	-	-	-	-
+apptivegrid-canopy	ok	RESULT pass=94 fail=0 err=0 timeout=0 classes=12	RESULT pass=94 fail=0 err=0 timeout=0 classes=12	0	0	0
+rko281-restoreforpharo	ok	NO-RESULT last-RUN=SSWReStoreDeleteDependentGeneralCollectionTest>>testDeleteProxiedCollection exit=1	RESULT pass=0 fail=0 err=4716 timeout=0 classes=102	2197	1	0
+polymathorg-polymath	ok	RESULT pass=776 fail=0 err=1 timeout=0 classes=90	RESULT pass=776 fail=0 err=1 timeout=0 classes=90	0	0	0
+opensmock-molecule	ok	RESULT pass=315 fail=0 err=0 timeout=0 classes=29	RESULT pass=315 fail=0 err=0 timeout=0 classes=29	0	0	0
+omarabedelkader-heuristiccompletion-history	ok	RESULT pass=190 fail=0 err=0 timeout=0 classes=21	RESULT pass=186 fail=0 err=4 timeout=0 classes=21	4	0	0
+thalesgroup-geotools	ok	RESULT pass=121 fail=0 err=0 timeout=0 classes=13	RESULT pass=121 fail=0 err=0 timeout=0 classes=13	0	0	0
+evref-bl-github-pharo-api	ok	RESULT pass=46 fail=0 err=4 timeout=0 classes=11	RESULT pass=46 fail=0 err=4 timeout=0 classes=11	0	0	0
+olekscode-microuml	ok	RESULT pass=78 fail=1 err=4 timeout=0 classes=9	RESULT pass=78 fail=1 err=4 timeout=0 classes=9	0	0	0
+punt-labs-postern	ok	RESULT pass=84 fail=2 err=2 timeout=0 classes=8	RESULT pass=84 fail=2 err=2 timeout=0 classes=8	0	0	0
+pharo-xp-tools-debuggingspy	ok	RESULT pass=73 fail=1 err=38 timeout=1 classes=6	RESULT pass=73 fail=1 err=38 timeout=1 classes=6	0	0	0
+tomooda-micromaid	ok	RESULT pass=49 fail=0 err=0 timeout=0 classes=5	RESULT pass=49 fail=0 err=0 timeout=0 classes=5	0	0	0
+omarabedelkader-pharo-lexicon	ok	RESULT pass=51 fail=0 err=0 timeout=0 classes=4	RESULT pass=50 fail=0 err=0 timeout=1 classes=4	1	0	0
+rko281-porpoise	ok	RESULT pass=14 fail=0 err=0 timeout=0 classes=3	RESULT pass=14 fail=0 err=0 timeout=0 classes=3	0	0	0
+jordanmontt-pharo-instrumentation	ok	RESULT pass=4 fail=2 err=11 timeout=0 classes=2	RESULT pass=4 fail=2 err=11 timeout=0 classes=2	0	0	0
+evref-bl-ai4pharo	ok	RESULT pass=3 fail=0 err=0 timeout=0 classes=2	RESULT pass=3 fail=0 err=0 timeout=0 classes=2	0	0	0
+opensmock-pyramid	FAIL	-	-	-	-	-
+fedeloch-ume	ok	RESULT pass=11 fail=0 err=0 timeout=0 classes=4	RESULT pass=11 fail=0 err=0 timeout=0 classes=4	0	0	0
+pharo-cig-unifiedffi	ok	RESULT pass=223 fail=0 err=5 timeout=0 classes=28	RESULT pass=223 fail=0 err=5 timeout=0 classes=28	0	0	0
+kasperosterbye-pharoaiactions	FAIL	-	-	-	-	-
+opensmock-bloc-serialization	FAIL	-	-	-	-	-
+pharo-graphics-pharo-sdl-experiments	ok	RESULT pass=27 fail=0 err=0 timeout=0 classes=4	RESULT pass=21 fail=5 err=1 timeout=0 classes=4	6	0	0
+newapplesho-google-cloud-smalltalk	ok	RESULT pass=36 fail=0 err=0 timeout=0 classes=14	RESULT pass=36 fail=0 err=0 timeout=0 classes=14	0	0	0
+pharo-llm-pharo-huggingface	FAIL	-	-	-	-	-
+pharo-rdbms-glorp	ok	RESULT pass=260 fail=0 err=2 timeout=0 classes=41	RESULT pass=260 fail=0 err=2 timeout=0 classes=41	0	0	0
+vonbecmann-fisher-parser	ok	RESULT pass=288 fail=0 err=0 timeout=0 classes=43	RESULT pass=288 fail=0 err=0 timeout=0 classes=43	0	0	0
+ba-st-hyperspace	FAIL	-	-	-	-	-
+vonbecmann-linked-list	ok	RESULT pass=690 fail=0 err=0 timeout=0 classes=16	RESULT pass=690 fail=0 err=0 timeout=0 classes=16	0	0	0
+rvillemeur-pharomcp	ok	RESULT pass=237 fail=0 err=0 timeout=0 classes=10	RESULT pass=237 fail=0 err=0 timeout=0 classes=10	0	0	0
+svenvc-ztimestamp	ok	RESULT pass=77 fail=1 err=2 timeout=0 classes=4	RESULT pass=77 fail=1 err=2 timeout=0 classes=4	0	0	0
+pharo-llm-pharo-acp	ok	RESULT pass=98 fail=1 err=0 timeout=0 classes=8	RESULT pass=99 fail=0 err=0 timeout=0 classes=8	0	0	0
+newapplesho-twilio-smalltalk	ok	RESULT pass=5 fail=0 err=0 timeout=0 classes=5	RESULT pass=5 fail=0 err=0 timeout=0 classes=5	0	0	0
+georghagn-tsf-scheduler	FAIL	-	-	-	-	-
+fouziray-escapeanalysispharo	ok	RESULT pass=63 fail=9 err=10 timeout=0 classes=5	RESULT pass=63 fail=9 err=10 timeout=0 classes=5	0	0	0
+ducasse-chrysal	ok	RESULT pass=34 fail=0 err=0 timeout=0 classes=3	RESULT pass=34 fail=0 err=0 timeout=0 classes=3	0	0	0
+omarabedelkader-heuristiccompletion-prefix	ok	RESULT pass=2 fail=0 err=0 timeout=0 classes=2	RESULT pass=2 fail=0 err=0 timeout=0 classes=2	0	0	0
+punt-labs-anthropic-sdk-pharo	ok	RESULT pass=902 fail=0 err=32 timeout=0 classes=117	RESULT pass=902 fail=0 err=32 timeout=0 classes=117	0	0	0
+ba-st-stargate	FAIL	-	-	-	-	-
+ba-st-superluminal	FAIL	-	-	-	-	-
+pharo-ai-metrics	ok	RESULT pass=28 fail=0 err=0 timeout=0 classes=19	RESULT pass=28 fail=0 err=0 timeout=0 classes=19	0	0	0
+ba-st-boardwalk	FAIL	-	-	-	-	-
+moosetechnology-famixtagging	ok	RESULT pass=0 fail=0 err=115 timeout=0 classes=12	RESULT pass=0 fail=0 err=115 timeout=0 classes=12	0	0	0
+moosetechnology-famixreplication	ok	RESULT pass=43 fail=0 err=0 timeout=0 classes=8	RESULT pass=42 fail=0 err=0 timeout=1 classes=8	1	0	0
+tomooda-honeyginger	ok	RESULT pass=120 fail=0 err=0 timeout=0 classes=7	RESULT pass=120 fail=0 err=0 timeout=0 classes=7	0	0	0
+pharo-llm-pharo-infer	ok	RESULT pass=28 fail=0 err=0 timeout=0 classes=7	RESULT pass=28 fail=0 err=0 timeout=0 classes=7	0	0	0
+thalesgroup-pharoows	ok	RESULT pass=16 fail=0 err=0 timeout=0 classes=4	RESULT pass=16 fail=0 err=0 timeout=0 classes=4	0	0	0
+georghagn-tsf-nexio	FAIL	-	-	-	-	-
+omarabedelkader-heuristiccompletion-analyser	ok	RESULT pass=32 fail=0 err=0 timeout=0 classes=3	RESULT pass=32 fail=0 err=0 timeout=0 classes=3	0	0	0
+svenvc-neoconsole	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+reugalabf-openweatherapi4pharo	ok	RESULT pass=8 fail=0 err=3 timeout=0 classes=2	RESULT pass=8 fail=0 err=3 timeout=0 classes=2	0	0	0
+pharo-vcs-iceberg	FAIL	-	-	-	-	-
+unicompute-gemstone-pharo-bridge	ok	NO-RESULT last-RUN=GbsSessionTest>>testLoginSuccess exit=1	RESULT pass=359 fail=2 err=22 timeout=0 classes=30	5	1	0
+astares-pharo-os-windows	ok	NO-RESULT last-RUN=WinProcessTest>>testAllProcessIdentifiers exit=1	RESULT pass=151 fail=4 err=1 timeout=0 classes=45	1	1	0
+feenkcom-pharolink	FAIL	-	-	-	-	-
+exercism-pharo-smalltalk-test-runner	ok	NO-RESULT last-RUN=none exit=1	RESULT pass=0 fail=0 err=28 timeout=0 classes=2	18	1	0
+shingarov-pharo-archc	FAIL	-	-	-	-	-
+pharo-graphics-spec-toplo	ok	RESULT pass=40 fail=0 err=0 timeout=0 classes=11	RESULT pass=40 fail=0 err=0 timeout=0 classes=11	0	0	0
+pharo-contributions-mutalk	ok	RESULT pass=336 fail=0 err=1 timeout=0 classes=89	RESULT pass=336 fail=0 err=1 timeout=0 classes=89	0	0	0
+ba-st-buoy	FAIL	-	-	-	-	-
+moosetechnology-fame	ok	RESULT pass=261 fail=0 err=0 timeout=0 classes=25	RESULT pass=261 fail=0 err=0 timeout=0 classes=25	0	0	0
+pharo-ai-moose-linear-algebra	ok	RESULT pass=146 fail=0 err=0 timeout=0 classes=13	RESULT pass=146 fail=0 err=0 timeout=0 classes=13	0	0	0
+svenvc-neojson	ok	RESULT pass=116 fail=0 err=0 timeout=0 classes=11	RESULT pass=116 fail=0 err=0 timeout=0 classes=11	0	0	0
+polymathorg-vector-matrix	ok	RESULT pass=162 fail=0 err=0 timeout=0 classes=9	RESULT pass=162 fail=0 err=0 timeout=0 classes=9	0	0	0
+ducasse-comix2	ok	RESULT pass=33 fail=2 err=0 timeout=0 classes=8	RESULT pass=33 fail=2 err=0 timeout=0 classes=8	0	0	0
+apptivegrid-fluxbase	ok	RESULT pass=315 fail=0 err=0 timeout=0 classes=35	RESULT pass=315 fail=0 err=0 timeout=0 classes=35	0	0	0
+svenvc-neocsv	ok	RESULT pass=66 fail=0 err=0 timeout=0 classes=3	RESULT pass=66 fail=0 err=0 timeout=0 classes=3	0	0	0
+pharo-contributions-singularizepluralize	ok	RESULT pass=180 fail=0 err=0 timeout=0 classes=4	RESULT pass=180 fail=0 err=0 timeout=0 classes=4	0	0	0
+nathanfrund-conduit	FAIL	-	-	-	-	-
+hernanmd-biosmalltalk	FAIL	-	-	-	-	-
+moosetechnology-fast-java	ok	RESULT pass=903 fail=2 err=8 timeout=0 classes=181	RESULT pass=903 fail=2 err=8 timeout=0 classes=181	0	0	0
+evref-bl-mcp	ok	RESULT pass=841 fail=17 err=2 timeout=2 classes=60	RESULT pass=824 fail=27 err=9 timeout=2 classes=60	18	0	0
+pharo-nosql-mongotalk	ok	NO-RESULT last-RUN=MQQueryTest>>testWhere exit=124	NO-RESULT last-RUN=MongoCommandCursorTest>>testCollectionFindWithoutFilterWithLimit exit=124	6	124	124
+pharo-llm-pharo-mcp	ok	RESULT pass=173 fail=0 err=0 timeout=0 classes=18	RESULT pass=173 fail=0 err=0 timeout=0 classes=18	0	0	0
+ba-st-sagan	FAIL	-	-	-	-	-
+j-brant-smacc	ok	RESULT pass=540 fail=0 err=25 timeout=0 classes=9	RESULT pass=540 fail=0 err=25 timeout=0 classes=9	0	0	0
+alkalinan-pharo-openapi-generator	FAIL	-	-	-	-	-
+nathanfrund-blenny	FAIL	-	-	-	-	-
+opensmock-iconography	ok	RESULT pass=6 fail=0 err=52 timeout=0 classes=5	RESULT pass=6 fail=0 err=52 timeout=0 classes=5	0	0	0
+moosetechnology-famix-executionflow	ok	RESULT pass=0 fail=0 err=8 timeout=0 classes=2	RESULT pass=0 fail=0 err=8 timeout=0 classes=2	0	0	0
+noha-jsonwebtoken	ok	RESULT pass=8 fail=0 err=0 timeout=0 classes=2	RESULT pass=8 fail=0 err=0 timeout=0 classes=2	0	0	0
+omarabedelkader-heuristiccompletion-benchmarks	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+evref-bl-pharo-llmapi	ok	RESULT pass=4 fail=0 err=0 timeout=0 classes=2	RESULT pass=4 fail=0 err=0 timeout=0 classes=2	0	0	0
+tomooda-viennatalk	FAIL	-	-	-	-	-
+moosetechnology-mooseide	ok	NO-RESULT last-RUN=MiResultSizeQueryPresenterTest>>testQueryValidity exit=1	NO-RESULT last-RUN=MiNotebookBrowserTest>>testFollowBusTriggersSelectEntity exit=124	0	1	124
+moosetechnology-gitprojecthealth	ok	RESULT pass=9 fail=0 err=0 timeout=0 classes=3	RESULT pass=9 fail=0 err=0 timeout=0 classes=3	0	0	0
+pharo-graphics-alexandrie	ok	RESULT pass=144 fail=0 err=6 timeout=0 classes=27	RESULT pass=135 fail=7 err=8 timeout=0 classes=27	9	0	0
+cormas-cormas	ok	RESULT pass=332 fail=0 err=0 timeout=0 classes=17	RESULT pass=332 fail=0 err=0 timeout=0 classes=17	0	0	0
+ducasse-myg	ok	RESULT pass=74 fail=1 err=5 timeout=0 classes=17	RESULT pass=74 fail=1 err=5 timeout=0 classes=17	0	0	0
+fuhrmanator-famixtypescript	FAIL	-	-	-	-	-
+openponk-fsm-editor	ok	RESULT pass=115 fail=0 err=0 timeout=0 classes=13	RESULT pass=115 fail=0 err=0 timeout=0 classes=13	0	0	0
+opensmock-opensmock	ok	RESULT pass=1060 fail=0 err=0 timeout=0 classes=65	RESULT pass=1060 fail=0 err=0 timeout=0 classes=65	0	0	0
+pharo-ai-graph-algorithms	ok	RESULT pass=176 fail=0 err=0 timeout=0 classes=24	RESULT pass=176 fail=0 err=0 timeout=0 classes=24	0	0	0
+tinchodias-ficus	ok	RESULT pass=51 fail=2 err=0 timeout=0 classes=14	RESULT pass=51 fail=2 err=0 timeout=0 classes=14	0	0	0
+evref-bl-gitlab-pharo-api	ok	RESULT pass=65 fail=0 err=0 timeout=0 classes=14	RESULT pass=65 fail=0 err=0 timeout=0 classes=14	0	0	0
+pharo-project-pharo-beacon	ok	RESULT pass=17 fail=0 err=3 timeout=0 classes=7	RESULT pass=17 fail=0 err=3 timeout=0 classes=7	0	0	0
+pharo-ai-ngrammodel	ok	RESULT pass=81 fail=0 err=0 timeout=0 classes=6	RESULT pass=81 fail=0 err=0 timeout=0 classes=6	0	0	0
+pharo-ai-linear-models	ok	RESULT pass=51 fail=0 err=1 timeout=0 classes=5	RESULT pass=51 fail=0 err=1 timeout=0 classes=5	0	0	0
+nathanfrund-nexus	ok	RESULT pass=17 fail=0 err=0 timeout=0 classes=6	RESULT pass=17 fail=0 err=0 timeout=0 classes=6	0	0	0
+pharo-contributions-methodproxies	ok	RESULT pass=45 fail=0 err=0 timeout=0 classes=4	RESULT pass=45 fail=0 err=0 timeout=0 classes=4	0	0	0
+pharo-ai-data-partitioners	ok	RESULT pass=5 fail=0 err=0 timeout=0 classes=2	RESULT pass=5 fail=0 err=0 timeout=0 classes=2	0	0	0
+pharo-containers-containers-stack	ok	RESULT pass=45 fail=0 err=0 timeout=0 classes=3	RESULT pass=45 fail=0 err=0 timeout=0 classes=3	0	0	0
+pillar-markup-pillar	ok	RESULT pass=18 fail=0 err=9 timeout=0 classes=8	RESULT pass=18 fail=0 err=9 timeout=0 classes=8	0	0	0
+remobidyc-remobidyc	ok	RESULT pass=445 fail=0 err=0 timeout=0 classes=108	RESULT pass=445 fail=0 err=0 timeout=0 classes=108	0	0	0
+kendrickorg-kendrick	FAIL	-	-	-	-	-
+zeroflag-teapot	FAIL	-	-	-	-	-
+ba-st-willow-spinkit	FAIL	-	-	-	-	-
+smalltalkweb-myprecious	ok	RESULT pass=107 fail=0 err=1 timeout=1 classes=4	NO-RESULT last-RUN=MpWebMiddlewareTest>>testRemoteMessageSynchronousSend exit=124	20	0	124
+ba-st-kepler	FAIL	-	-	-	-	-
+svenvc-p3	ok	RESULT pass=23 fail=0 err=70 timeout=3 classes=9	RESULT pass=23 fail=0 err=70 timeout=3 classes=9	0	0	0
+shnarazk-aoc-in-pharo	ok	RESULT pass=7 fail=0 err=13 timeout=0 classes=7	RESULT pass=7 fail=0 err=13 timeout=0 classes=7	0	0	0
+pharo-ai-hierarchical-clustering	ok	RESULT pass=22 fail=0 err=0 timeout=0 classes=4	RESULT pass=22 fail=0 err=0 timeout=0 classes=4	0	0	0
+pharo-ai-gaussian-mixture-model	ok	RESULT pass=5 fail=0 err=4 timeout=0 classes=3	RESULT pass=5 fail=0 err=4 timeout=0 classes=3	0	0	0
+mumez-pharosmalltalkinteropserver	ok	RESULT pass=41 fail=0 err=0 timeout=0 classes=1	RESULT pass=41 fail=0 err=0 timeout=0 classes=1	0	0	0
+pharo-llm-pharo-dataset	ok	RESULT pass=13 fail=0 err=1 timeout=0 classes=3	RESULT pass=13 fail=0 err=1 timeout=0 classes=3	0	0	0
+seandenigris-pharo-enhancements	FAIL	-	-	-	-	-
+pharo-spec-spec	FAIL	-	-	-	-	-
+pharo-llm-chatpharo	ok	RESULT pass=1437 fail=1 err=0 timeout=0 classes=110	RESULT pass=1373 fail=56 err=9 timeout=0 classes=110	64	0	0
+pharo-spec-gtk-bindings	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+pharo-cig-pharo-cig	ok	RESULT pass=279 fail=15 err=48 timeout=0 classes=35	RESULT pass=279 fail=15 err=48 timeout=0 classes=35	0	0	0
+openponk-petrinets	ok	RESULT pass=201 fail=0 err=0 timeout=0 classes=23	RESULT pass=201 fail=0 err=0 timeout=0 classes=23	0	0	0
+driolar-soccertheory-pharo	ok	RESULT pass=78 fail=0 err=13 timeout=0 classes=16	RESULT pass=78 fail=0 err=13 timeout=0 classes=16	0	0	0
+pharo-graphics-pharosdl3	ok	RESULT pass=108 fail=2 err=0 timeout=0 classes=12	RESULT pass=7 fail=1 err=133 timeout=0 classes=12	103	0	0
+mumez-pharo-acp	ok	RESULT pass=236 fail=0 err=11 timeout=0 classes=13	RESULT pass=236 fail=0 err=11 timeout=0 classes=13	0	0	0
+bouraqadi-pharomisc	ok	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	RESULT pass=0 fail=0 err=0 timeout=0 classes=0	0	0	0
+vonbecmann-multi-valued-dictionary	ok	RESULT pass=2136 fail=0 err=0 timeout=0 classes=21	RESULT pass=2136 fail=0 err=0 timeout=0 classes=21	0	0	0
+pharo-ai-decision-tree-model	ok	RESULT pass=103 fail=0 err=0 timeout=0 classes=15	RESULT pass=103 fail=0 err=0 timeout=0 classes=15	0	0	0
+feenkcom-javascriptgenerator	ok	RESULT pass=43 fail=2 err=0 timeout=0 classes=12	RESULT pass=43 fail=2 err=0 timeout=0 classes=12	0	0	0
+pharo-ai-a-priori	ok	RESULT pass=61 fail=0 err=0 timeout=0 classes=11	RESULT pass=61 fail=0 err=0 timeout=0 classes=11	0	0	0
+tinchodias-sauco	ok	RESULT pass=17 fail=0 err=2 timeout=0 classes=6	RESULT pass=17 fail=0 err=2 timeout=0 classes=6	0	0	0
+newapplesho-aws-sdk-smalltalk	ok	NO-RESULT last-RUN=DynamoDBTableTest>>testNullRoundTrip exit=124	NO-RESULT last-RUN=DynamoDBTableTest>>testScanAll exit=124	12	124	124
+apptivegrid-pharodevs	ok	RESULT pass=51 fail=0 err=0 timeout=0 classes=15	RESULT pass=51 fail=0 err=0 timeout=0 classes=15	0	0	0
+pharo-containers-containers-trie	ok	RESULT pass=41 fail=0 err=0 timeout=0 classes=5	RESULT pass=41 fail=0 err=0 timeout=0 classes=5	0	0	0
+pharo-ai-stopwords	ok	RESULT pass=6 fail=0 err=0 timeout=0 classes=4	RESULT pass=6 fail=0 err=0 timeout=0 classes=4	0	0	0
+georghagn-tsf-logger	FAIL	-	-	-	-	-
+pillar-markup-microdown	ok	RESULT pass=1062 fail=2 err=0 timeout=0 classes=73	RESULT pass=1062 fail=2 err=0 timeout=0 classes=73	0	0	0
+koendehondt-hera-for-pharo	ok	RESULT pass=581 fail=5 err=86 timeout=0 classes=100	RESULT pass=582 fail=4 err=86 timeout=0 classes=100	3	0	0
+apptivegrid-soil	ok	RESULT pass=704 fail=6 err=3 timeout=1 classes=46	RESULT pass=313 fail=5 err=411 timeout=2 classes=46	394	0	0
+javierlarre-pharo-test-analysis	FAIL	-	-	-	-	-
+koendehondt-iris-for-pharo	ok	RESULT pass=127 fail=0 err=0 timeout=0 classes=15	RESULT pass=127 fail=0 err=0 timeout=0 classes=15	0	0	0
+ba-st-stardust	FAIL	-	-	-	-	-
+labordep-pharogameye	ok	RESULT pass=82 fail=0 err=0 timeout=0 classes=11	RESULT pass=82 fail=0 err=0 timeout=0 classes=11	0	0	0
+jordanmontt-illimani-memory-profiler	ok	RESULT pass=27 fail=0 err=0 timeout=0 classes=7	RESULT pass=27 fail=0 err=0 timeout=0 classes=7	0	0	0
+mumez-ripple	FAIL	-	-	-	-	-
+moosetechnology-famix-cpp	FAIL	-	-	-	-	-
+stefankrecher-pharocodex	ok	RESULT pass=11 fail=0 err=5 timeout=0 classes=4	RESULT pass=11 fail=0 err=5 timeout=0 classes=4	0	0	0
+moosetechnology-fast	ok	RESULT pass=36 fail=0 err=9 timeout=0 classes=4	RESULT pass=36 fail=0 err=9 timeout=0 classes=4	0	0	0
+neanasteisha-pharotales-books	ok	RESULT pass=21 fail=1 err=0 timeout=0 classes=3	RESULT pass=21 fail=1 err=0 timeout=0 classes=3	0	0	0
+pharo-llm-pharo-agent	FAIL	-	-	-	-	-
+pharo-spec-newtools	FAIL	-	-	-	-	-
+pharo-graphics-roassal	ok	RESULT pass=735 fail=0 err=0 timeout=0 classes=97	RESULT pass=735 fail=0 err=0 timeout=0 classes=97	0	0	0
+gemtalk-jadeiteforpharo	FAIL	-	-	-	-	-
+badetitou-casino	FAIL	-	-	-	-	-
+pharo-llm-pharo-llmstudio	ok	RESULT pass=171 fail=0 err=0 timeout=0 classes=23	RESULT pass=171 fail=0 err=0 timeout=0 classes=23	0	0	0
+olesia32-pharo-spec-components	ok	RESULT pass=163 fail=0 err=0 timeout=0 classes=19	RESULT pass=163 fail=0 err=0 timeout=0 classes=19	0	0	0
+lucretiomsp-coypu	FAIL	-	-	-	-	-
+pharo-rdbms-pharo-sqlite3	ok	NO-RESULT last-RUN=SQLite3BaseConnectionTest>>testBooleanWriteSQLNullThenRead exit=1	RESULT pass=11 fail=0 err=111 timeout=0 classes=7	102	1	0

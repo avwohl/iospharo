@@ -15105,7 +15105,8 @@ PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
 // ===== FILE I/O PRIMITIVES =====
 //
 // Handle shape is ABI: stock Cog's FilePlugin hands the image a ByteArray
-// holding the platform SQFile struct — sessionID (int32 @0), FILE* (@8),
+// holding the platform SQFile struct — sessionID (int32 @0), FILE* (@8;
+// on Windows the Win32 HANDLE, see sqFileHandleWord),
 // writable (@16), lastOp (@17), lastChar (@18), isStdioStream (@19); 24
 // bytes on 64-bit.  Image code legitimately introspects it: Soil's
 // BinaryFileStream extension does `handle pointerAt: 9` to pull out the
@@ -15118,6 +15119,18 @@ PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
 // bytes @4, which stock leaves zero), and cross-check the embedded FILE*
 // against the table on every use so stale or forged handles fail the
 // primitive instead of reaching libc.
+
+// The word at offset 8 of the handle.  The stock Unix VM puts the FILE*
+// there.  The stock Windows VM puts the Win32 HANDLE there, and image code
+// gives that word to FlushFileBuffers and LockFileEx (Soil).  With a FILE* in
+// the word, each such call failed with error 6, ERROR_INVALID_HANDLE.
+static uintptr_t sqFileHandleWord(FILE* file) {
+#ifdef _WIN32
+    return static_cast<uintptr_t>(_get_osfhandle(_fileno(file)));
+#else
+    return reinterpret_cast<uintptr_t>(file);
+#endif
+}
 
 Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
     if (fileSessionID_ == 0) {
@@ -15133,7 +15146,7 @@ Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
     std::memset(b, 0, 24);
     std::memcpy(b, &fileSessionID_, 4);
     std::memcpy(b + 4, &fileId, 4);
-    uintptr_t fp = reinterpret_cast<uintptr_t>(file);
+    uintptr_t fp = sqFileHandleWord(file);
     std::memcpy(b + 8, &fp, 8);
     b[16] = writable ? 1 : 0;
     b[19] = (file == stdin || file == stdout || file == stderr) ? 1 : 0;
@@ -15178,7 +15191,7 @@ FILE* Interpreter::fileFromHandleNoSync(Oop handleOop, int* outFileId) {
     if (it == openFiles_.end()) return nullptr;
     uintptr_t fp;
     std::memcpy(&fp, b + 8, 8);
-    if (reinterpret_cast<FILE*>(fp) != it->second) return nullptr;  // stale id reuse
+    if (fp != sqFileHandleWord(it->second)) return nullptr;  // stale id reuse
     if (outFileId) *outFileId = fileId;
     return it->second;
 }

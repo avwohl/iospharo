@@ -1,0 +1,22 @@
+label	load	cog_RESULT	jit_RESULT	jit_only_fails	cog_exit	jit_exit
+pharo-contributions-deeptraverser	ok	RESULT pass=53 fail=0 err=0 timeout=0 classes=9	RESULT pass=52 fail=0 err=0 timeout=1 classes=9	1	0	0
+koendehondt-hera-for-pharo	ok	RESULT pass=581 fail=5 err=86 timeout=0 classes=100	RESULT pass=582 fail=4 err=86 timeout=0 classes=100	3	0	0
+omarabedelkader-heuristiccompletion-history	ok	RESULT pass=190 fail=0 err=0 timeout=0 classes=21	RESULT pass=190 fail=0 err=0 timeout=0 classes=21	0	0	0
+omarabedelkader-pharo-lexicon	ok	RESULT pass=51 fail=0 err=0 timeout=0 classes=4	RESULT pass=50 fail=0 err=0 timeout=1 classes=4	1	0	0
+pharo-llm-chatpharo	ok	RESULT pass=1437 fail=1 err=0 timeout=0 classes=110	RESULT pass=1437 fail=1 err=0 timeout=0 classes=110	0	0	0
+mumez-pharo-agentic-browser	ok	RESULT pass=594 fail=5 err=1 timeout=0 classes=33	RESULT pass=596 fail=3 err=1 timeout=0 classes=33	0	0	0
+pharo-graphics-pharosdl3	ok	RESULT pass=108 fail=2 err=0 timeout=0 classes=12	RESULT pass=17 fail=21 err=72 timeout=0 classes=12	91	0	0
+pharo-llm-pharo-acp	ok	RESULT pass=98 fail=1 err=0 timeout=0 classes=8	RESULT pass=99 fail=0 err=0 timeout=0 classes=8	0	0	0
+evref-bl-mcp	ok	RESULT pass=841 fail=17 err=2 timeout=2 classes=60	RESULT pass=841 fail=17 err=2 timeout=2 classes=60	0	0	0
+smalltalkweb-myprecious	ok	RESULT pass=107 fail=0 err=1 timeout=1 classes=4	NO-RESULT last-RUN=MpWebMiddlewareTest>>testRemoteMessageSynchronousSend exit=124	20	0	124
+pharo-xp-tools-sindarin-dap	ok	RESULT pass=17 fail=1 err=0 timeout=0 classes=3	RESULT pass=18 fail=0 err=0 timeout=0 classes=3	0	0	0
+astares-pharo-os-windows	ok	NO-RESULT last-RUN=WinProcessTest>>testAllProcessIdentifiers exit=1	RESULT pass=151 fail=4 err=1 timeout=0 classes=45	1	1	0
+exercism-pharo-smalltalk-test-runner	ok	NO-RESULT last-RUN=none exit=1	RESULT pass=0 fail=0 err=28 timeout=0 classes=2	18	1	0
+mumez-redistick	ok	NO-RESULT last-RUN=RsRedisEndpointTest>>testHSetWithDictionary exit=1	NO-RESULT last-RUN=RsRedisEndpointTest>>testHSetWithDictionary exit=0	0	1	0
+rko281-restoreforpharo	ok	NO-RESULT last-RUN=SSWReStoreDefaultWriteTest>>testUnstoreInstancesCollection exit=1	RESULT pass=0 fail=0 err=4716 timeout=0 classes=102	2197	1	0
+apptivegrid-soil	ok	RESULT pass=704 fail=6 err=3 timeout=1 classes=46	RESULT pass=313 fail=5 err=411 timeout=2 classes=46	394	0	0
+moosetechnology-famixreplication	ok	RESULT pass=43 fail=0 err=0 timeout=0 classes=8	RESULT pass=42 fail=0 err=0 timeout=1 classes=8	1	0	0
+moosetechnology-mooseide	ok	NO-RESULT last-RUN=MiResultSizeQueryPresenterTest>>testQueryValidity exit=1	NO-RESULT last-RUN=MiNotebookBrowserTest>>testFollowBusTriggersSelectEntity exit=124	0	1	124
+pharo-graphics-alexandrie	ok	RESULT pass=144 fail=0 err=6 timeout=0 classes=27	RESULT pass=135 fail=7 err=8 timeout=0 classes=27	9	0	0
+pharo-graphics-pharo-sdl-experiments	ok	RESULT pass=27 fail=0 err=0 timeout=0 classes=4	RESULT pass=21 fail=5 err=1 timeout=0 classes=4	6	0	0
+pharo-rdbms-pharo-sqlite3	ok	NO-RESULT last-RUN=SQLite3BaseConnectionTest>>testBooleanWriteSQLNullThenRead exit=1	RESULT pass=11 fail=0 err=111 timeout=0 classes=7	102	1	0
