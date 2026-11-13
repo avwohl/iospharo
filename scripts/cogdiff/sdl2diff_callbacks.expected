@@ -1,0 +1,17 @@
+== threads
+thread created true name 'worker-1'
+thread done true an OrderedCollection('in-thread')
+sem value 1
+id differs true null-id is own true
+status 42
+unnamed ''
+detached ran true
+== timers
+timer id 1
+fired at least 3 true
+remove 1 again 0 bogus 0
+one shot fired 1 remove after finish 0
+== event pushed from a thread
+push from thread 1
+watch ran an OrderedCollection(32900)
+polled 1 32900

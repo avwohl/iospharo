@@ -1,0 +1,4332 @@
+{
+"SDL_AddEventWatch": [
+"SDL_events.h",
+"void",
+"SDL_EventFilter filter, void *userdata"
+],
+"SDL_AddHintCallback": [
+"SDL_hints.h",
+"void",
+"const char *name, SDL_HintCallback callback, void *userdata"
+],
+"SDL_AddTimer": [
+"SDL_timer.h",
+"SDL_TimerID",
+"Uint32 interval, SDL_TimerCallback callback, void *param"
+],
+"SDL_AllocFormat": [
+"SDL_pixels.h",
+"SDL_PixelFormat *",
+"Uint32 pixel_format"
+],
+"SDL_AllocPalette": [
+"SDL_pixels.h",
+"SDL_Palette *",
+"int ncolors"
+],
+"SDL_AllocRW": [
+"SDL_rwops.h",
+"SDL_RWops *",
+"void"
+],
+"SDL_AndroidBackButton": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_AndroidGetActivity": [
+"SDL_system.h",
+"void *",
+"void"
+],
+"SDL_AndroidGetExternalStoragePath": [
+"SDL_system.h",
+"const char *",
+"void"
+],
+"SDL_AndroidGetExternalStorageState": [
+"SDL_system.h",
+"int",
+"void"
+],
+"SDL_AndroidGetInternalStoragePath": [
+"SDL_system.h",
+"const char *",
+"void"
+],
+"SDL_AndroidGetJNIEnv": [
+"SDL_system.h",
+"void *",
+"void"
+],
+"SDL_AndroidRequestPermission": [
+"SDL_system.h",
+"SDL_bool",
+"const char *permission"
+],
+"SDL_AndroidSendMessage": [
+"SDL_system.h",
+"int",
+"Uint32 command, int param"
+],
+"SDL_AndroidShowToast": [
+"SDL_system.h",
+"int",
+"const char* message, int duration, int gravity, int xoffset, int yoffset"
+],
+"SDL_AtomicAdd": [
+"SDL_atomic.h",
+"int",
+"SDL_atomic_t *a, int v"
+],
+"SDL_AtomicCAS": [
+"SDL_atomic.h",
+"SDL_bool",
+"SDL_atomic_t *a, int oldval, int newval"
+],
+"SDL_AtomicCASPtr": [
+"SDL_atomic.h",
+"SDL_bool",
+"void **a, void *oldval, void *newval"
+],
+"SDL_AtomicGet": [
+"SDL_atomic.h",
+"int",
+"SDL_atomic_t *a"
+],
+"SDL_AtomicGetPtr": [
+"SDL_atomic.h",
+"void*",
+"void **a"
+],
+"SDL_AtomicLock": [
+"SDL_atomic.h",
+"void",
+"SDL_SpinLock *lock"
+],
+"SDL_AtomicSet": [
+"SDL_atomic.h",
+"int",
+"SDL_atomic_t *a, int v"
+],
+"SDL_AtomicSetPtr": [
+"SDL_atomic.h",
+"void*",
+"void **a, void* v"
+],
+"SDL_AtomicTryLock": [
+"SDL_atomic.h",
+"SDL_bool",
+"SDL_SpinLock *lock"
+],
+"SDL_AtomicUnlock": [
+"SDL_atomic.h",
+"void",
+"SDL_SpinLock *lock"
+],
+"SDL_AudioInit": [
+"SDL_audio.h",
+"int",
+"const char *driver_name"
+],
+"SDL_AudioQuit": [
+"SDL_audio.h",
+"void",
+"void"
+],
+"SDL_AudioStreamAvailable": [
+"SDL_audio.h",
+"int",
+"SDL_AudioStream *stream"
+],
+"SDL_AudioStreamClear": [
+"SDL_audio.h",
+"void",
+"SDL_AudioStream *stream"
+],
+"SDL_AudioStreamFlush": [
+"SDL_audio.h",
+"int",
+"SDL_AudioStream *stream"
+],
+"SDL_AudioStreamGet": [
+"SDL_audio.h",
+"int",
+"SDL_AudioStream *stream, void *buf, int len"
+],
+"SDL_AudioStreamPut": [
+"SDL_audio.h",
+"int",
+"SDL_AudioStream *stream, const void *buf, int len"
+],
+"SDL_BuildAudioCVT": [
+"SDL_audio.h",
+"int",
+"SDL_AudioCVT * cvt, SDL_AudioFormat src_format, Uint8 src_channels, int src_rate, SDL_AudioFormat dst_format, Uint8 dst_channels, int dst_rate"
+],
+"SDL_CalculateGammaRamp": [
+"SDL_pixels.h",
+"void",
+"float gamma, Uint16 * ramp"
+],
+"SDL_CaptureMouse": [
+"SDL_mouse.h",
+"int",
+"SDL_bool enabled"
+],
+"SDL_ClearComposition": [
+"SDL_keyboard.h",
+"void",
+"void"
+],
+"SDL_ClearError": [
+"SDL_error.h",
+"void",
+"void"
+],
+"SDL_ClearHints": [
+"SDL_hints.h",
+"void",
+"void"
+],
+"SDL_ClearQueuedAudio": [
+"SDL_audio.h",
+"void",
+"SDL_AudioDeviceID dev"
+],
+"SDL_CloseAudio": [
+"SDL_audio.h",
+"void",
+"void"
+],
+"SDL_CloseAudioDevice": [
+"SDL_audio.h",
+"void",
+"SDL_AudioDeviceID dev"
+],
+"SDL_ComposeCustomBlendMode": [
+"SDL_blendmode.h",
+"SDL_BlendMode",
+"SDL_BlendFactor srcColorFactor, SDL_BlendFactor dstColorFactor, SDL_BlendOperation colorOperation, SDL_BlendFactor srcAlphaFactor, SDL_BlendFactor dstAlphaFactor, SDL_BlendOperation alphaOperation"
+],
+"SDL_CondBroadcast": [
+"SDL_mutex.h",
+"int",
+"SDL_cond * cond"
+],
+"SDL_CondSignal": [
+"SDL_mutex.h",
+"int",
+"SDL_cond * cond"
+],
+"SDL_CondWait": [
+"SDL_mutex.h",
+"int",
+"SDL_cond * cond, SDL_mutex * mutex"
+],
+"SDL_CondWaitTimeout": [
+"SDL_mutex.h",
+"int",
+"SDL_cond * cond, SDL_mutex * mutex, Uint32 ms"
+],
+"SDL_ConvertAudio": [
+"SDL_audio.h",
+"int",
+"SDL_AudioCVT * cvt"
+],
+"SDL_ConvertPixels": [
+"SDL_surface.h",
+"int",
+"int width, int height, Uint32 src_format, const void * src, int src_pitch, Uint32 dst_format, void * dst, int dst_pitch"
+],
+"SDL_ConvertSurface": [
+"SDL_surface.h",
+"SDL_Surface *",
+"SDL_Surface * src, const SDL_PixelFormat * fmt, Uint32 flags"
+],
+"SDL_ConvertSurfaceFormat": [
+"SDL_surface.h",
+"SDL_Surface *",
+"SDL_Surface * src, Uint32 pixel_format, Uint32 flags"
+],
+"SDL_CreateColorCursor": [
+"SDL_mouse.h",
+"SDL_Cursor *",
+"SDL_Surface *surface, int hot_x, int hot_y"
+],
+"SDL_CreateCond": [
+"SDL_mutex.h",
+"SDL_cond *",
+"void"
+],
+"SDL_CreateCursor": [
+"SDL_mouse.h",
+"SDL_Cursor *",
+"const Uint8 * data, const Uint8 * mask, int w, int h, int hot_x, int hot_y"
+],
+"SDL_CreateMutex": [
+"SDL_mutex.h",
+"SDL_mutex *",
+"void"
+],
+"SDL_CreateRGBSurface": [
+"SDL_surface.h",
+"SDL_Surface *",
+"Uint32 flags, int width, int height, int depth, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask"
+],
+"SDL_CreateRGBSurfaceFrom": [
+"SDL_surface.h",
+"SDL_Surface *",
+"void *pixels, int width, int height, int depth, int pitch, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask"
+],
+"SDL_CreateRGBSurfaceWithFormat": [
+"SDL_surface.h",
+"SDL_Surface *",
+"Uint32 flags, int width, int height, int depth, Uint32 format"
+],
+"SDL_CreateRGBSurfaceWithFormatFrom": [
+"SDL_surface.h",
+"SDL_Surface *",
+"void *pixels, int width, int height, int depth, int pitch, Uint32 format"
+],
+"SDL_CreateRenderer": [
+"SDL_render.h",
+"SDL_Renderer *",
+"SDL_Window * window, int index, Uint32 flags"
+],
+"SDL_CreateSemaphore": [
+"SDL_mutex.h",
+"SDL_sem *",
+"Uint32 initial_value"
+],
+"SDL_CreateShapedWindow": [
+"SDL_shape.h",
+"\"C\" { extern DECLSPEC SDL_Window *",
+"const char *title,unsigned int x,unsigned int y,unsigned int w,unsigned int h,Uint32 flags"
+],
+"SDL_CreateSoftwareRenderer": [
+"SDL_render.h",
+"SDL_Renderer *",
+"SDL_Surface * surface"
+],
+"SDL_CreateSystemCursor": [
+"SDL_mouse.h",
+"SDL_Cursor *",
+"SDL_SystemCursor id"
+],
+"SDL_CreateTexture": [
+"SDL_render.h",
+"SDL_Texture *",
+"SDL_Renderer * renderer, Uint32 format, int access, int w, int h"
+],
+"SDL_CreateTextureFromSurface": [
+"SDL_render.h",
+"SDL_Texture *",
+"SDL_Renderer * renderer, SDL_Surface * surface"
+],
+"SDL_CreateThread": [
+"SDL_thread.h",
+"SDL_Thread *",
+"SDL_ThreadFunction fn, const char *name, void *data, pfnSDL_CurrentBeginThread pfnBeginThread, pfnSDL_CurrentEndThread pfnEndThread"
+],
+"SDL_CreateThreadWithStackSize": [
+"SDL_thread.h",
+"SDL_Thread *",
+"SDL_ThreadFunction fn, const char *name, const size_t stacksize, void *data, pfnSDL_CurrentBeginThread pfnBeginThread, pfnSDL_CurrentEndThread pfnEndThread"
+],
+"SDL_CreateWindow": [
+"SDL_video.h",
+"SDL_Window *",
+"const char *title, int x, int y, int w, int h, Uint32 flags"
+],
+"SDL_CreateWindowAndRenderer": [
+"SDL_render.h",
+"int",
+"int width, int height, Uint32 window_flags, SDL_Window **window, SDL_Renderer **renderer"
+],
+"SDL_CreateWindowFrom": [
+"SDL_video.h",
+"SDL_Window *",
+"const void *data"
+],
+"SDL_DXGIGetOutputInfo": [
+"SDL_system.h",
+"SDL_bool",
+"int displayIndex, int *adapterIndex, int *outputIndex"
+],
+"SDL_DelEventWatch": [
+"SDL_events.h",
+"void",
+"SDL_EventFilter filter, void *userdata"
+],
+"SDL_DelHintCallback": [
+"SDL_hints.h",
+"void",
+"const char *name, SDL_HintCallback callback, void *userdata"
+],
+"SDL_Delay": [
+"SDL_timer.h",
+"void",
+"Uint32 ms"
+],
+"SDL_DequeueAudio": [
+"SDL_audio.h",
+"Uint32",
+"SDL_AudioDeviceID dev, void *data, Uint32 len"
+],
+"SDL_DestroyCond": [
+"SDL_mutex.h",
+"void",
+"SDL_cond * cond"
+],
+"SDL_DestroyMutex": [
+"SDL_mutex.h",
+"void",
+"SDL_mutex * mutex"
+],
+"SDL_DestroyRenderer": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer"
+],
+"SDL_DestroySemaphore": [
+"SDL_mutex.h",
+"void",
+"SDL_sem * sem"
+],
+"SDL_DestroyTexture": [
+"SDL_render.h",
+"void",
+"SDL_Texture * texture"
+],
+"SDL_DestroyWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_DetachThread": [
+"SDL_thread.h",
+"void",
+"SDL_Thread * thread"
+],
+"SDL_Direct3D9GetAdapterIndex": [
+"SDL_system.h",
+"int",
+"int displayIndex"
+],
+"SDL_DisableScreenSaver": [
+"SDL_video.h",
+"void",
+"void"
+],
+"SDL_DuplicateSurface": [
+"SDL_surface.h",
+"SDL_Surface *",
+"SDL_Surface * surface"
+],
+"SDL_EnableScreenSaver": [
+"SDL_video.h",
+"void",
+"void"
+],
+"SDL_EncloseFPoints": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_FPoint * points, int count, const SDL_FRect * clip, SDL_FRect * result"
+],
+"SDL_EnclosePoints": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_Point * points, int count, const SDL_Rect * clip, SDL_Rect * result"
+],
+"SDL_Error": [
+"SDL_error.h",
+"int",
+"SDL_errorcode code"
+],
+"SDL_EventState": [
+"SDL_events.h",
+"Uint8",
+"Uint32 type, int state"
+],
+"SDL_FillRect": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * dst, const SDL_Rect * rect, Uint32 color"
+],
+"SDL_FillRects": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * dst, const SDL_Rect * rects, int count, Uint32 color"
+],
+"SDL_FilterEvents": [
+"SDL_events.h",
+"void",
+"SDL_EventFilter filter, void *userdata"
+],
+"SDL_FlashWindow": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, SDL_FlashOperation operation"
+],
+"SDL_FlushEvent": [
+"SDL_events.h",
+"void",
+"Uint32 type"
+],
+"SDL_FlushEvents": [
+"SDL_events.h",
+"void",
+"Uint32 minType, Uint32 maxType"
+],
+"SDL_FreeAudioStream": [
+"SDL_audio.h",
+"void",
+"SDL_AudioStream *stream"
+],
+"SDL_FreeCursor": [
+"SDL_mouse.h",
+"void",
+"SDL_Cursor * cursor"
+],
+"SDL_FreeFormat": [
+"SDL_pixels.h",
+"void",
+"SDL_PixelFormat *format"
+],
+"SDL_FreePalette": [
+"SDL_pixels.h",
+"void",
+"SDL_Palette * palette"
+],
+"SDL_FreeRW": [
+"SDL_rwops.h",
+"void",
+"SDL_RWops * area"
+],
+"SDL_FreeSurface": [
+"SDL_surface.h",
+"void",
+"SDL_Surface * surface"
+],
+"SDL_FreeWAV": [
+"SDL_audio.h",
+"void",
+"Uint8 * audio_buf"
+],
+"SDL_GDKGetTaskQueue": [
+"SDL_system.h",
+"int",
+"XTaskQueueHandle * outTaskQueue"
+],
+"SDL_GDKRunApp": [
+"SDL_main.h",
+"int",
+"SDL_main_func mainFunction, void *reserved"
+],
+"SDL_GL_BindTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture *texture, float *texw, float *texh"
+],
+"SDL_GL_CreateContext": [
+"SDL_video.h",
+"SDL_GLContext",
+"SDL_Window * window"
+],
+"SDL_GL_DeleteContext": [
+"SDL_video.h",
+"void",
+"SDL_GLContext context"
+],
+"SDL_GL_ExtensionSupported": [
+"SDL_video.h",
+"SDL_bool",
+"const char *extension"
+],
+"SDL_GL_GetAttribute": [
+"SDL_video.h",
+"int",
+"SDL_GLattr attr, int *value"
+],
+"SDL_GL_GetCurrentContext": [
+"SDL_video.h",
+"SDL_GLContext",
+"void"
+],
+"SDL_GL_GetCurrentWindow": [
+"SDL_video.h",
+"SDL_Window*",
+"void"
+],
+"SDL_GL_GetDrawableSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int *w, int *h"
+],
+"SDL_GL_GetProcAddress": [
+"SDL_video.h",
+"void *",
+"const char *proc"
+],
+"SDL_GL_GetSwapInterval": [
+"SDL_video.h",
+"int",
+"void"
+],
+"SDL_GL_LoadLibrary": [
+"SDL_video.h",
+"int",
+"const char *path"
+],
+"SDL_GL_MakeCurrent": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, SDL_GLContext context"
+],
+"SDL_GL_ResetAttributes": [
+"SDL_video.h",
+"void",
+"void"
+],
+"SDL_GL_SetAttribute": [
+"SDL_video.h",
+"int",
+"SDL_GLattr attr, int value"
+],
+"SDL_GL_SetSwapInterval": [
+"SDL_video.h",
+"int",
+"int interval"
+],
+"SDL_GL_SwapWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_GL_UnbindTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture *texture"
+],
+"SDL_GL_UnloadLibrary": [
+"SDL_video.h",
+"void",
+"void"
+],
+"SDL_GUIDFromString": [
+"SDL_guid.h",
+"SDL_GUID",
+"const char *pchGUID"
+],
+"SDL_GUIDToString": [
+"SDL_guid.h",
+"void",
+"SDL_GUID guid, char *pszGUID, int cbGUID"
+],
+"SDL_GameControllerAddMapping": [
+"SDL_gamecontroller.h",
+"int",
+"const char* mappingString"
+],
+"SDL_GameControllerAddMappingsFromRW": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_RWops * rw, int freerw"
+],
+"SDL_GameControllerClose": [
+"SDL_gamecontroller.h",
+"void",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerEventState": [
+"SDL_gamecontroller.h",
+"int",
+"int state"
+],
+"SDL_GameControllerFromInstanceID": [
+"SDL_gamecontroller.h",
+"SDL_GameController *",
+"SDL_JoystickID joyid"
+],
+"SDL_GameControllerFromPlayerIndex": [
+"SDL_gamecontroller.h",
+"SDL_GameController *",
+"int player_index"
+],
+"SDL_GameControllerGetAppleSFSymbolsNameForAxis": [
+"SDL_gamecontroller.h",
+"const char*",
+"SDL_GameController *gamecontroller, SDL_GameControllerAxis axis"
+],
+"SDL_GameControllerGetAppleSFSymbolsNameForButton": [
+"SDL_gamecontroller.h",
+"const char*",
+"SDL_GameController *gamecontroller, SDL_GameControllerButton button"
+],
+"SDL_GameControllerGetAttached": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetAxis": [
+"SDL_gamecontroller.h",
+"Sint16",
+"SDL_GameController *gamecontroller, SDL_GameControllerAxis axis"
+],
+"SDL_GameControllerGetAxisFromString": [
+"SDL_gamecontroller.h",
+"SDL_GameControllerAxis",
+"const char *str"
+],
+"SDL_GameControllerGetBindForAxis": [
+"SDL_gamecontroller.h",
+"SDL_GameControllerButtonBind",
+"SDL_GameController *gamecontroller, SDL_GameControllerAxis axis"
+],
+"SDL_GameControllerGetBindForButton": [
+"SDL_gamecontroller.h",
+"SDL_GameControllerButtonBind",
+"SDL_GameController *gamecontroller, SDL_GameControllerButton button"
+],
+"SDL_GameControllerGetButton": [
+"SDL_gamecontroller.h",
+"Uint8",
+"SDL_GameController *gamecontroller, SDL_GameControllerButton button"
+],
+"SDL_GameControllerGetButtonFromString": [
+"SDL_gamecontroller.h",
+"SDL_GameControllerButton",
+"const char *str"
+],
+"SDL_GameControllerGetFirmwareVersion": [
+"SDL_gamecontroller.h",
+"Uint16",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetJoystick": [
+"SDL_gamecontroller.h",
+"SDL_Joystick *",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetNumTouchpadFingers": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, int touchpad"
+],
+"SDL_GameControllerGetNumTouchpads": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetPlayerIndex": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetProduct": [
+"SDL_gamecontroller.h",
+"Uint16",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetProductVersion": [
+"SDL_gamecontroller.h",
+"Uint16",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetSensorData": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, SDL_SensorType type, float *data, int num_values"
+],
+"SDL_GameControllerGetSensorDataRate": [
+"SDL_gamecontroller.h",
+"float",
+"SDL_GameController *gamecontroller, SDL_SensorType type"
+],
+"SDL_GameControllerGetSensorDataWithTimestamp": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, SDL_SensorType type, Uint64 *timestamp, float *data, int num_values"
+],
+"SDL_GameControllerGetSerial": [
+"SDL_gamecontroller.h",
+"const char *",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetStringForAxis": [
+"SDL_gamecontroller.h",
+"const char*",
+"SDL_GameControllerAxis axis"
+],
+"SDL_GameControllerGetStringForButton": [
+"SDL_gamecontroller.h",
+"const char*",
+"SDL_GameControllerButton button"
+],
+"SDL_GameControllerGetTouchpadFinger": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, int touchpad, int finger, Uint8 *state, float *x, float *y, float *pressure"
+],
+"SDL_GameControllerGetType": [
+"SDL_gamecontroller.h",
+"SDL_GameControllerType",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerGetVendor": [
+"SDL_gamecontroller.h",
+"Uint16",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerHasAxis": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller, SDL_GameControllerAxis axis"
+],
+"SDL_GameControllerHasButton": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller, SDL_GameControllerButton button"
+],
+"SDL_GameControllerHasLED": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerHasRumble": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerHasRumbleTriggers": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerHasSensor": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller, SDL_SensorType type"
+],
+"SDL_GameControllerIsSensorEnabled": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"SDL_GameController *gamecontroller, SDL_SensorType type"
+],
+"SDL_GameControllerMapping": [
+"SDL_gamecontroller.h",
+"char *",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerMappingForDeviceIndex": [
+"SDL_gamecontroller.h",
+"char *",
+"int joystick_index"
+],
+"SDL_GameControllerMappingForGUID": [
+"SDL_gamecontroller.h",
+"char *",
+"SDL_JoystickGUID guid"
+],
+"SDL_GameControllerMappingForIndex": [
+"SDL_gamecontroller.h",
+"char *",
+"int mapping_index"
+],
+"SDL_GameControllerName": [
+"SDL_gamecontroller.h",
+"const char *",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerNameForIndex": [
+"SDL_gamecontroller.h",
+"const char *",
+"int joystick_index"
+],
+"SDL_GameControllerNumMappings": [
+"SDL_gamecontroller.h",
+"int",
+"void"
+],
+"SDL_GameControllerOpen": [
+"SDL_gamecontroller.h",
+"SDL_GameController *",
+"int joystick_index"
+],
+"SDL_GameControllerPath": [
+"SDL_gamecontroller.h",
+"const char *",
+"SDL_GameController *gamecontroller"
+],
+"SDL_GameControllerPathForIndex": [
+"SDL_gamecontroller.h",
+"const char *",
+"int joystick_index"
+],
+"SDL_GameControllerRumble": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, Uint16 low_frequency_rumble, Uint16 high_frequency_rumble, Uint32 duration_ms"
+],
+"SDL_GameControllerRumbleTriggers": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, Uint16 left_rumble, Uint16 right_rumble, Uint32 duration_ms"
+],
+"SDL_GameControllerSendEffect": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, const void *data, int size"
+],
+"SDL_GameControllerSetLED": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, Uint8 red, Uint8 green, Uint8 blue"
+],
+"SDL_GameControllerSetPlayerIndex": [
+"SDL_gamecontroller.h",
+"void",
+"SDL_GameController *gamecontroller, int player_index"
+],
+"SDL_GameControllerSetSensorEnabled": [
+"SDL_gamecontroller.h",
+"int",
+"SDL_GameController *gamecontroller, SDL_SensorType type, SDL_bool enabled"
+],
+"SDL_GameControllerTypeForIndex": [
+"SDL_gamecontroller.h",
+"SDL_GameControllerType",
+"int joystick_index"
+],
+"SDL_GameControllerUpdate": [
+"SDL_gamecontroller.h",
+"void",
+"void"
+],
+"SDL_GetAndroidSDKVersion": [
+"SDL_system.h",
+"int",
+"void"
+],
+"SDL_GetAssertionHandler": [
+"SDL_assert.h",
+"SDL_AssertionHandler",
+"void **puserdata"
+],
+"SDL_GetAssertionReport": [
+"SDL_assert.h",
+"const SDL_AssertData *",
+"void"
+],
+"SDL_GetAudioDeviceName": [
+"SDL_audio.h",
+"const char *",
+"int index, int iscapture"
+],
+"SDL_GetAudioDeviceSpec": [
+"SDL_audio.h",
+"int",
+"int index, int iscapture, SDL_AudioSpec *spec"
+],
+"SDL_GetAudioDeviceStatus": [
+"SDL_audio.h",
+"SDL_AudioStatus",
+"SDL_AudioDeviceID dev"
+],
+"SDL_GetAudioDriver": [
+"SDL_audio.h",
+"const char *",
+"int index"
+],
+"SDL_GetAudioStatus": [
+"SDL_audio.h",
+"SDL_AudioStatus",
+"void"
+],
+"SDL_GetBasePath": [
+"SDL_filesystem.h",
+"\"C\" { extern DECLSPEC char *",
+"void"
+],
+"SDL_GetCPUCacheLineSize": [
+"SDL_cpuinfo.h",
+"int",
+"void"
+],
+"SDL_GetCPUCount": [
+"SDL_cpuinfo.h",
+"\"C\" { extern DECLSPEC int",
+"void"
+],
+"SDL_GetClipRect": [
+"SDL_surface.h",
+"void",
+"SDL_Surface * surface, SDL_Rect * rect"
+],
+"SDL_GetClipboardText": [
+"SDL_clipboard.h",
+"char *",
+"void"
+],
+"SDL_GetClosestDisplayMode": [
+"SDL_video.h",
+"SDL_DisplayMode *",
+"int displayIndex, const SDL_DisplayMode * mode, SDL_DisplayMode * closest"
+],
+"SDL_GetColorKey": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, Uint32 * key"
+],
+"SDL_GetCurrentAudioDriver": [
+"SDL_audio.h",
+"const char *",
+"void"
+],
+"SDL_GetCurrentDisplayMode": [
+"SDL_video.h",
+"int",
+"int displayIndex, SDL_DisplayMode * mode"
+],
+"SDL_GetCurrentVideoDriver": [
+"SDL_video.h",
+"const char *",
+"void"
+],
+"SDL_GetCursor": [
+"SDL_mouse.h",
+"SDL_Cursor *",
+"void"
+],
+"SDL_GetDefaultAssertionHandler": [
+"SDL_assert.h",
+"SDL_AssertionHandler",
+"void"
+],
+"SDL_GetDefaultAudioInfo": [
+"SDL_audio.h",
+"int",
+"char **name, SDL_AudioSpec *spec, int iscapture"
+],
+"SDL_GetDefaultCursor": [
+"SDL_mouse.h",
+"SDL_Cursor *",
+"void"
+],
+"SDL_GetDesktopDisplayMode": [
+"SDL_video.h",
+"int",
+"int displayIndex, SDL_DisplayMode * mode"
+],
+"SDL_GetDisplayBounds": [
+"SDL_video.h",
+"int",
+"int displayIndex, SDL_Rect * rect"
+],
+"SDL_GetDisplayDPI": [
+"SDL_video.h",
+"int",
+"int displayIndex, float * ddpi, float * hdpi, float * vdpi"
+],
+"SDL_GetDisplayMode": [
+"SDL_video.h",
+"int",
+"int displayIndex, int modeIndex, SDL_DisplayMode * mode"
+],
+"SDL_GetDisplayName": [
+"SDL_video.h",
+"const char *",
+"int displayIndex"
+],
+"SDL_GetDisplayOrientation": [
+"SDL_video.h",
+"SDL_DisplayOrientation",
+"int displayIndex"
+],
+"SDL_GetDisplayUsableBounds": [
+"SDL_video.h",
+"int",
+"int displayIndex, SDL_Rect * rect"
+],
+"SDL_GetError": [
+"SDL_error.h",
+"const char *",
+"void"
+],
+"SDL_GetErrorMsg": [
+"SDL_error.h",
+"char *",
+"char *errstr, int maxlen"
+],
+"SDL_GetEventFilter": [
+"SDL_events.h",
+"SDL_bool",
+"SDL_EventFilter * filter, void **userdata"
+],
+"SDL_GetGlobalMouseState": [
+"SDL_mouse.h",
+"Uint32",
+"int *x, int *y"
+],
+"SDL_GetGrabbedWindow": [
+"SDL_video.h",
+"SDL_Window *",
+"void"
+],
+"SDL_GetHint": [
+"SDL_hints.h",
+"const char *",
+"const char *name"
+],
+"SDL_GetHintBoolean": [
+"SDL_hints.h",
+"SDL_bool",
+"const char *name, SDL_bool default_value"
+],
+"SDL_GetJoystickGUIDInfo": [
+"SDL_joystick.h",
+"void",
+"SDL_JoystickGUID guid, Uint16 *vendor, Uint16 *product, Uint16 *version, Uint16 *crc16"
+],
+"SDL_GetKeyFromName": [
+"SDL_keyboard.h",
+"SDL_Keycode",
+"const char *name"
+],
+"SDL_GetKeyFromScancode": [
+"SDL_keyboard.h",
+"SDL_Keycode",
+"SDL_Scancode scancode"
+],
+"SDL_GetKeyName": [
+"SDL_keyboard.h",
+"const char *",
+"SDL_Keycode key"
+],
+"SDL_GetKeyboardFocus": [
+"SDL_keyboard.h",
+"SDL_Window *",
+"void"
+],
+"SDL_GetKeyboardState": [
+"SDL_keyboard.h",
+"const Uint8 *",
+"int *numkeys"
+],
+"SDL_GetMemoryFunctions": [
+"SDL_stdinc.h",
+"void",
+"SDL_malloc_func *malloc_func, SDL_calloc_func *calloc_func, SDL_realloc_func *realloc_func, SDL_free_func *free_func"
+],
+"SDL_GetModState": [
+"SDL_keyboard.h",
+"SDL_Keymod",
+"void"
+],
+"SDL_GetMouseFocus": [
+"SDL_mouse.h",
+"SDL_Window *",
+"void"
+],
+"SDL_GetMouseState": [
+"SDL_mouse.h",
+"Uint32",
+"int *x, int *y"
+],
+"SDL_GetNumAllocations": [
+"SDL_stdinc.h",
+"int",
+"void"
+],
+"SDL_GetNumAudioDevices": [
+"SDL_audio.h",
+"int",
+"int iscapture"
+],
+"SDL_GetNumAudioDrivers": [
+"SDL_audio.h",
+"int",
+"void"
+],
+"SDL_GetNumDisplayModes": [
+"SDL_video.h",
+"int",
+"int displayIndex"
+],
+"SDL_GetNumRenderDrivers": [
+"SDL_render.h",
+"int",
+"void"
+],
+"SDL_GetNumTouchDevices": [
+"SDL_touch.h",
+"int",
+"void"
+],
+"SDL_GetNumTouchFingers": [
+"SDL_touch.h",
+"int",
+"SDL_TouchID touchID"
+],
+"SDL_GetNumVideoDisplays": [
+"SDL_video.h",
+"int",
+"void"
+],
+"SDL_GetNumVideoDrivers": [
+"SDL_video.h",
+"int",
+"void"
+],
+"SDL_GetOriginalMemoryFunctions": [
+"SDL_stdinc.h",
+"void",
+"SDL_malloc_func *malloc_func, SDL_calloc_func *calloc_func, SDL_realloc_func *realloc_func, SDL_free_func *free_func"
+],
+"SDL_GetPerformanceCounter": [
+"SDL_timer.h",
+"Uint64",
+"void"
+],
+"SDL_GetPerformanceFrequency": [
+"SDL_timer.h",
+"Uint64",
+"void"
+],
+"SDL_GetPixelFormatName": [
+"SDL_pixels.h",
+"const char*",
+"Uint32 format"
+],
+"SDL_GetPlatform": [
+"SDL_platform.h",
+"\"C\" { extern DECLSPEC const char *",
+"void"
+],
+"SDL_GetPointDisplayIndex": [
+"SDL_video.h",
+"int",
+"const SDL_Point * point"
+],
+"SDL_GetPowerInfo": [
+"SDL_power.h",
+"SDL_PowerState",
+"int *secs, int *pct"
+],
+"SDL_GetPrefPath": [
+"SDL_filesystem.h",
+"char *",
+"const char *org, const char *app"
+],
+"SDL_GetPreferredLocales": [
+"SDL_locale.h",
+"SDL_Locale *",
+"void"
+],
+"SDL_GetPrimarySelectionText": [
+"SDL_clipboard.h",
+"char *",
+"void"
+],
+"SDL_GetQueuedAudioSize": [
+"SDL_audio.h",
+"Uint32",
+"SDL_AudioDeviceID dev"
+],
+"SDL_GetRGB": [
+"SDL_pixels.h",
+"void",
+"Uint32 pixel, const SDL_PixelFormat * format, Uint8 * r, Uint8 * g, Uint8 * b"
+],
+"SDL_GetRGBA": [
+"SDL_pixels.h",
+"void",
+"Uint32 pixel, const SDL_PixelFormat * format, Uint8 * r, Uint8 * g, Uint8 * b, Uint8 * a"
+],
+"SDL_GetRectDisplayIndex": [
+"SDL_video.h",
+"int",
+"const SDL_Rect * rect"
+],
+"SDL_GetRelativeMouseMode": [
+"SDL_mouse.h",
+"SDL_bool",
+"void"
+],
+"SDL_GetRelativeMouseState": [
+"SDL_mouse.h",
+"Uint32",
+"int *x, int *y"
+],
+"SDL_GetRenderDrawBlendMode": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_BlendMode *blendMode"
+],
+"SDL_GetRenderDrawColor": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, Uint8 * r, Uint8 * g, Uint8 * b, Uint8 * a"
+],
+"SDL_GetRenderDriverInfo": [
+"SDL_render.h",
+"int",
+"int index, SDL_RendererInfo * info"
+],
+"SDL_GetRenderTarget": [
+"SDL_render.h",
+"SDL_Texture *",
+"SDL_Renderer *renderer"
+],
+"SDL_GetRenderer": [
+"SDL_render.h",
+"SDL_Renderer *",
+"SDL_Window * window"
+],
+"SDL_GetRendererInfo": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_RendererInfo * info"
+],
+"SDL_GetRendererOutputSize": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, int *w, int *h"
+],
+"SDL_GetRevision": [
+"SDL_version.h",
+"const char *",
+"void"
+],
+"SDL_GetRevisionNumber": [
+"SDL_version.h",
+"SDL_DEPRECATED DECLSPEC int",
+"void"
+],
+"SDL_GetScancodeFromKey": [
+"SDL_keyboard.h",
+"SDL_Scancode",
+"SDL_Keycode key"
+],
+"SDL_GetScancodeFromName": [
+"SDL_keyboard.h",
+"SDL_Scancode",
+"const char *name"
+],
+"SDL_GetScancodeName": [
+"SDL_keyboard.h",
+"const char *",
+"SDL_Scancode scancode"
+],
+"SDL_GetShapedWindowMode": [
+"SDL_shape.h",
+"int",
+"SDL_Window *window,SDL_WindowShapeMode *shape_mode"
+],
+"SDL_GetSurfaceAlphaMod": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, Uint8 * alpha"
+],
+"SDL_GetSurfaceBlendMode": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, SDL_BlendMode *blendMode"
+],
+"SDL_GetSurfaceColorMod": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, Uint8 * r, Uint8 * g, Uint8 * b"
+],
+"SDL_GetSystemRAM": [
+"SDL_cpuinfo.h",
+"int",
+"void"
+],
+"SDL_GetTextureAlphaMod": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, Uint8 * alpha"
+],
+"SDL_GetTextureBlendMode": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, SDL_BlendMode *blendMode"
+],
+"SDL_GetTextureColorMod": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, Uint8 * r, Uint8 * g, Uint8 * b"
+],
+"SDL_GetTextureScaleMode": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, SDL_ScaleMode *scaleMode"
+],
+"SDL_GetTextureUserData": [
+"SDL_render.h",
+"void *",
+"SDL_Texture * texture"
+],
+"SDL_GetThreadID": [
+"SDL_thread.h",
+"SDL_threadID",
+"SDL_Thread * thread"
+],
+"SDL_GetThreadName": [
+"SDL_thread.h",
+"const char *",
+"SDL_Thread *thread"
+],
+"SDL_GetTicks": [
+"SDL_timer.h",
+"\"C\" { extern DECLSPEC Uint32",
+"void"
+],
+"SDL_GetTicks64": [
+"SDL_timer.h",
+"Uint64",
+"void"
+],
+"SDL_GetTouchDevice": [
+"SDL_touch.h",
+"SDL_TouchID",
+"int index"
+],
+"SDL_GetTouchDeviceType": [
+"SDL_touch.h",
+"SDL_TouchDeviceType",
+"SDL_TouchID touchID"
+],
+"SDL_GetTouchFinger": [
+"SDL_touch.h",
+"SDL_Finger *",
+"SDL_TouchID touchID, int index"
+],
+"SDL_GetTouchName": [
+"SDL_touch.h",
+"const char*",
+"int index"
+],
+"SDL_GetVersion": [
+"SDL_version.h",
+"void",
+"SDL_version * ver"
+],
+"SDL_GetVideoDriver": [
+"SDL_video.h",
+"const char *",
+"int index"
+],
+"SDL_GetWindowBordersSize": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, int *top, int *left, int *bottom, int *right"
+],
+"SDL_GetWindowBrightness": [
+"SDL_video.h",
+"float",
+"SDL_Window * window"
+],
+"SDL_GetWindowData": [
+"SDL_video.h",
+"void *",
+"SDL_Window * window, const char *name"
+],
+"SDL_GetWindowDisplayIndex": [
+"SDL_video.h",
+"int",
+"SDL_Window * window"
+],
+"SDL_GetWindowDisplayMode": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, SDL_DisplayMode * mode"
+],
+"SDL_GetWindowFlags": [
+"SDL_video.h",
+"Uint32",
+"SDL_Window * window"
+],
+"SDL_GetWindowFromID": [
+"SDL_video.h",
+"SDL_Window *",
+"Uint32 id"
+],
+"SDL_GetWindowGammaRamp": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, Uint16 * red, Uint16 * green, Uint16 * blue"
+],
+"SDL_GetWindowGrab": [
+"SDL_video.h",
+"SDL_bool",
+"SDL_Window * window"
+],
+"SDL_GetWindowICCProfile": [
+"SDL_video.h",
+"void*",
+"SDL_Window * window, size_t* size"
+],
+"SDL_GetWindowID": [
+"SDL_video.h",
+"Uint32",
+"SDL_Window * window"
+],
+"SDL_GetWindowKeyboardGrab": [
+"SDL_video.h",
+"SDL_bool",
+"SDL_Window * window"
+],
+"SDL_GetWindowMaximumSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int *w, int *h"
+],
+"SDL_GetWindowMinimumSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int *w, int *h"
+],
+"SDL_GetWindowMouseGrab": [
+"SDL_video.h",
+"SDL_bool",
+"SDL_Window * window"
+],
+"SDL_GetWindowMouseRect": [
+"SDL_video.h",
+"const SDL_Rect *",
+"SDL_Window * window"
+],
+"SDL_GetWindowOpacity": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, float * out_opacity"
+],
+"SDL_GetWindowPixelFormat": [
+"SDL_video.h",
+"Uint32",
+"SDL_Window * window"
+],
+"SDL_GetWindowPosition": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int *x, int *y"
+],
+"SDL_GetWindowSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int *w, int *h"
+],
+"SDL_GetWindowSizeInPixels": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int *w, int *h"
+],
+"SDL_GetWindowSurface": [
+"SDL_video.h",
+"SDL_Surface *",
+"SDL_Window * window"
+],
+"SDL_GetWindowTitle": [
+"SDL_video.h",
+"const char *",
+"SDL_Window * window"
+],
+"SDL_GetWindowWMInfo": [
+"SDL_syswm.h",
+"SDL_bool",
+"SDL_Window * window, SDL_SysWMinfo * info"
+],
+"SDL_GetYUVConversionMode": [
+"SDL_surface.h",
+"SDL_YUV_CONVERSION_MODE",
+"void"
+],
+"SDL_GetYUVConversionModeForResolution": [
+"SDL_surface.h",
+"SDL_YUV_CONVERSION_MODE",
+"int width, int height"
+],
+"SDL_HapticClose": [
+"SDL_haptic.h",
+"void",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticDestroyEffect": [
+"SDL_haptic.h",
+"void",
+"SDL_Haptic * haptic, int effect"
+],
+"SDL_HapticEffectSupported": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, SDL_HapticEffect * effect"
+],
+"SDL_HapticGetEffectStatus": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, int effect"
+],
+"SDL_HapticIndex": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticName": [
+"SDL_haptic.h",
+"const char *",
+"int device_index"
+],
+"SDL_HapticNewEffect": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, SDL_HapticEffect * effect"
+],
+"SDL_HapticNumAxes": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticNumEffects": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticNumEffectsPlaying": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticOpen": [
+"SDL_haptic.h",
+"SDL_Haptic *",
+"int device_index"
+],
+"SDL_HapticOpenFromJoystick": [
+"SDL_haptic.h",
+"SDL_Haptic *",
+"SDL_Joystick * joystick"
+],
+"SDL_HapticOpenFromMouse": [
+"SDL_haptic.h",
+"SDL_Haptic *",
+"void"
+],
+"SDL_HapticOpened": [
+"SDL_haptic.h",
+"int",
+"int device_index"
+],
+"SDL_HapticPause": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticQuery": [
+"SDL_haptic.h",
+"unsigned int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticRumbleInit": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticRumblePlay": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, float strength, Uint32 length"
+],
+"SDL_HapticRumbleStop": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticRumbleSupported": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticRunEffect": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, int effect, Uint32 iterations"
+],
+"SDL_HapticSetAutocenter": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, int autocenter"
+],
+"SDL_HapticSetGain": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, int gain"
+],
+"SDL_HapticStopAll": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticStopEffect": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, int effect"
+],
+"SDL_HapticUnpause": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic"
+],
+"SDL_HapticUpdateEffect": [
+"SDL_haptic.h",
+"int",
+"SDL_Haptic * haptic, int effect, SDL_HapticEffect * data"
+],
+"SDL_Has3DNow": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasARMSIMD": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasAVX": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasAVX2": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasAVX512F": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasAltiVec": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasClipboardText": [
+"SDL_clipboard.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasColorKey": [
+"SDL_surface.h",
+"SDL_bool",
+"SDL_Surface * surface"
+],
+"SDL_HasEvent": [
+"SDL_events.h",
+"SDL_bool",
+"Uint32 type"
+],
+"SDL_HasEvents": [
+"SDL_events.h",
+"SDL_bool",
+"Uint32 minType, Uint32 maxType"
+],
+"SDL_HasIntersection": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_Rect * A, const SDL_Rect * B"
+],
+"SDL_HasIntersectionF": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_FRect * A, const SDL_FRect * B"
+],
+"SDL_HasLASX": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasLSX": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasMMX": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasNEON": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasPrimarySelectionText": [
+"SDL_clipboard.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasRDTSC": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasSSE": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasSSE2": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasSSE3": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasSSE41": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasSSE42": [
+"SDL_cpuinfo.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasScreenKeyboardSupport": [
+"SDL_keyboard.h",
+"SDL_bool",
+"void"
+],
+"SDL_HasSurfaceRLE": [
+"SDL_surface.h",
+"SDL_bool",
+"SDL_Surface * surface"
+],
+"SDL_HideWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_Init": [
+"SDL.h",
+"\"C\" { SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS | \\ SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_SENSOR \\ ) extern DECLSPEC int",
+"Uint32 flags"
+],
+"SDL_InitSubSystem": [
+"SDL.h",
+"int",
+"Uint32 flags"
+],
+"SDL_IntersectFRect": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_FRect * A, const SDL_FRect * B, SDL_FRect * result"
+],
+"SDL_IntersectFRectAndLine": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_FRect * rect, float *X1, float *Y1, float *X2, float *Y2"
+],
+"SDL_IntersectRect": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_Rect * A, const SDL_Rect * B, SDL_Rect * result"
+],
+"SDL_IntersectRectAndLine": [
+"SDL_rect.h",
+"SDL_bool",
+"const SDL_Rect * rect, int *X1, int *Y1, int *X2, int *Y2"
+],
+"SDL_IsAndroidTV": [
+"SDL_system.h",
+"SDL_bool",
+"void"
+],
+"SDL_IsChromebook": [
+"SDL_system.h",
+"SDL_bool",
+"void"
+],
+"SDL_IsDeXMode": [
+"SDL_system.h",
+"SDL_bool",
+"void"
+],
+"SDL_IsGameController": [
+"SDL_gamecontroller.h",
+"SDL_bool",
+"int joystick_index"
+],
+"SDL_IsScreenKeyboardShown": [
+"SDL_keyboard.h",
+"SDL_bool",
+"SDL_Window *window"
+],
+"SDL_IsScreenSaverEnabled": [
+"SDL_video.h",
+"SDL_bool",
+"void"
+],
+"SDL_IsShapedWindow": [
+"SDL_shape.h",
+"SDL_bool",
+"const SDL_Window *window"
+],
+"SDL_IsTablet": [
+"SDL_system.h",
+"SDL_bool",
+"void"
+],
+"SDL_IsTextInputActive": [
+"SDL_keyboard.h",
+"SDL_bool",
+"void"
+],
+"SDL_IsTextInputShown": [
+"SDL_keyboard.h",
+"SDL_bool",
+"void"
+],
+"SDL_JoystickAttachVirtual": [
+"SDL_joystick.h",
+"int",
+"SDL_JoystickType type, int naxes, int nbuttons, int nhats"
+],
+"SDL_JoystickAttachVirtualEx": [
+"SDL_joystick.h",
+"int",
+"const SDL_VirtualJoystickDesc *desc"
+],
+"SDL_JoystickClose": [
+"SDL_joystick.h",
+"void",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickCurrentPowerLevel": [
+"SDL_joystick.h",
+"SDL_JoystickPowerLevel",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickDetachVirtual": [
+"SDL_joystick.h",
+"int",
+"int device_index"
+],
+"SDL_JoystickEventState": [
+"SDL_joystick.h",
+"int",
+"int state"
+],
+"SDL_JoystickFromInstanceID": [
+"SDL_joystick.h",
+"SDL_Joystick *",
+"SDL_JoystickID instance_id"
+],
+"SDL_JoystickFromPlayerIndex": [
+"SDL_joystick.h",
+"SDL_Joystick *",
+"int player_index"
+],
+"SDL_JoystickGetAttached": [
+"SDL_joystick.h",
+"SDL_bool",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetAxis": [
+"SDL_joystick.h",
+"Sint16",
+"SDL_Joystick *joystick, int axis"
+],
+"SDL_JoystickGetAxisInitialState": [
+"SDL_joystick.h",
+"SDL_bool",
+"SDL_Joystick *joystick, int axis, Sint16 *state"
+],
+"SDL_JoystickGetBall": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, int ball, int *dx, int *dy"
+],
+"SDL_JoystickGetButton": [
+"SDL_joystick.h",
+"Uint8",
+"SDL_Joystick *joystick, int button"
+],
+"SDL_JoystickGetDeviceGUID": [
+"SDL_joystick.h",
+"SDL_JoystickGUID",
+"int device_index"
+],
+"SDL_JoystickGetDeviceInstanceID": [
+"SDL_joystick.h",
+"SDL_JoystickID",
+"int device_index"
+],
+"SDL_JoystickGetDevicePlayerIndex": [
+"SDL_joystick.h",
+"int",
+"int device_index"
+],
+"SDL_JoystickGetDeviceProduct": [
+"SDL_joystick.h",
+"Uint16",
+"int device_index"
+],
+"SDL_JoystickGetDeviceProductVersion": [
+"SDL_joystick.h",
+"Uint16",
+"int device_index"
+],
+"SDL_JoystickGetDeviceType": [
+"SDL_joystick.h",
+"SDL_JoystickType",
+"int device_index"
+],
+"SDL_JoystickGetDeviceVendor": [
+"SDL_joystick.h",
+"Uint16",
+"int device_index"
+],
+"SDL_JoystickGetFirmwareVersion": [
+"SDL_joystick.h",
+"Uint16",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetGUID": [
+"SDL_joystick.h",
+"SDL_JoystickGUID",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetGUIDFromString": [
+"SDL_joystick.h",
+"SDL_JoystickGUID",
+"const char *pchGUID"
+],
+"SDL_JoystickGetGUIDString": [
+"SDL_joystick.h",
+"void",
+"SDL_JoystickGUID guid, char *pszGUID, int cbGUID"
+],
+"SDL_JoystickGetHat": [
+"SDL_joystick.h",
+"Uint8",
+"SDL_Joystick *joystick, int hat"
+],
+"SDL_JoystickGetPlayerIndex": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetProduct": [
+"SDL_joystick.h",
+"Uint16",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetProductVersion": [
+"SDL_joystick.h",
+"Uint16",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetSerial": [
+"SDL_joystick.h",
+"const char *",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetType": [
+"SDL_joystick.h",
+"SDL_JoystickType",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickGetVendor": [
+"SDL_joystick.h",
+"Uint16",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickHasLED": [
+"SDL_joystick.h",
+"SDL_bool",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickHasRumble": [
+"SDL_joystick.h",
+"SDL_bool",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickHasRumbleTriggers": [
+"SDL_joystick.h",
+"SDL_bool",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickInstanceID": [
+"SDL_joystick.h",
+"SDL_JoystickID",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickIsHaptic": [
+"SDL_haptic.h",
+"int",
+"SDL_Joystick * joystick"
+],
+"SDL_JoystickIsVirtual": [
+"SDL_joystick.h",
+"SDL_bool",
+"int device_index"
+],
+"SDL_JoystickName": [
+"SDL_joystick.h",
+"const char *",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickNameForIndex": [
+"SDL_joystick.h",
+"const char *",
+"int device_index"
+],
+"SDL_JoystickNumAxes": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickNumBalls": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickNumButtons": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickNumHats": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickOpen": [
+"SDL_joystick.h",
+"SDL_Joystick *",
+"int device_index"
+],
+"SDL_JoystickPath": [
+"SDL_joystick.h",
+"const char *",
+"SDL_Joystick *joystick"
+],
+"SDL_JoystickPathForIndex": [
+"SDL_joystick.h",
+"const char *",
+"int device_index"
+],
+"SDL_JoystickRumble": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, Uint16 low_frequency_rumble, Uint16 high_frequency_rumble, Uint32 duration_ms"
+],
+"SDL_JoystickRumbleTriggers": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, Uint16 left_rumble, Uint16 right_rumble, Uint32 duration_ms"
+],
+"SDL_JoystickSendEffect": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, const void *data, int size"
+],
+"SDL_JoystickSetLED": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, Uint8 red, Uint8 green, Uint8 blue"
+],
+"SDL_JoystickSetPlayerIndex": [
+"SDL_joystick.h",
+"void",
+"SDL_Joystick *joystick, int player_index"
+],
+"SDL_JoystickSetVirtualAxis": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, int axis, Sint16 value"
+],
+"SDL_JoystickSetVirtualButton": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, int button, Uint8 value"
+],
+"SDL_JoystickSetVirtualHat": [
+"SDL_joystick.h",
+"int",
+"SDL_Joystick *joystick, int hat, Uint8 value"
+],
+"SDL_JoystickUpdate": [
+"SDL_joystick.h",
+"void",
+"void"
+],
+"SDL_LinuxSetThreadPriority": [
+"SDL_system.h",
+"int",
+"Sint64 threadID, int priority"
+],
+"SDL_LinuxSetThreadPriorityAndPolicy": [
+"SDL_system.h",
+"int",
+"Sint64 threadID, int sdlPriority, int schedPolicy"
+],
+"SDL_LoadBMP_RW": [
+"SDL_surface.h",
+"SDL_Surface *",
+"SDL_RWops * src, int freesrc"
+],
+"SDL_LoadDollarTemplates": [
+"SDL_gesture.h",
+"int",
+"SDL_TouchID touchId, SDL_RWops *src"
+],
+"SDL_LoadFile": [
+"SDL_rwops.h",
+"void *",
+"const char *file, size_t *datasize"
+],
+"SDL_LoadFile_RW": [
+"SDL_rwops.h",
+"void *",
+"SDL_RWops *src, size_t *datasize, int freesrc"
+],
+"SDL_LoadFunction": [
+"SDL_loadso.h",
+"void *",
+"void *handle, const char *name"
+],
+"SDL_LoadObject": [
+"SDL_loadso.h",
+"\"C\" { extern DECLSPEC void *",
+"const char *sofile"
+],
+"SDL_LoadWAV_RW": [
+"SDL_audio.h",
+"SDL_AudioSpec *",
+"SDL_RWops * src, int freesrc, SDL_AudioSpec * spec, Uint8 ** audio_buf, Uint32 * audio_len"
+],
+"SDL_LockAudio": [
+"SDL_audio.h",
+"void",
+"void"
+],
+"SDL_LockAudioDevice": [
+"SDL_audio.h",
+"void",
+"SDL_AudioDeviceID dev"
+],
+"SDL_LockJoysticks": [
+"SDL_joystick.h",
+"void",
+"void"
+],
+"SDL_LockMutex": [
+"SDL_mutex.h",
+"int",
+"SDL_mutex * mutex"
+],
+"SDL_LockSensors": [
+"SDL_sensor.h",
+"void",
+"void"
+],
+"SDL_LockSurface": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface"
+],
+"SDL_LockTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, const SDL_Rect * rect, void **pixels, int *pitch"
+],
+"SDL_LockTextureToSurface": [
+"SDL_render.h",
+"int",
+"SDL_Texture *texture, const SDL_Rect *rect, SDL_Surface **surface"
+],
+"SDL_Log": [
+"SDL_log.h",
+"void",
+"SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(1"
+],
+"SDL_LogCritical": [
+"SDL_log.h",
+"void",
+"int category, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_LogDebug": [
+"SDL_log.h",
+"void",
+"int category, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_LogError": [
+"SDL_log.h",
+"void",
+"int category, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_LogGetOutputFunction": [
+"SDL_log.h",
+"void",
+"SDL_LogOutputFunction *callback, void **userdata"
+],
+"SDL_LogGetPriority": [
+"SDL_log.h",
+"SDL_LogPriority",
+"int category"
+],
+"SDL_LogInfo": [
+"SDL_log.h",
+"void",
+"int category, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_LogMessage": [
+"SDL_log.h",
+"void",
+"int category, SDL_LogPriority priority, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(3"
+],
+"SDL_LogMessageV": [
+"SDL_log.h",
+"void",
+"int category, SDL_LogPriority priority, const char *fmt, va_list ap"
+],
+"SDL_LogResetPriorities": [
+"SDL_log.h",
+"void",
+"void"
+],
+"SDL_LogSetAllPriority": [
+"SDL_log.h",
+"void",
+"SDL_LogPriority priority"
+],
+"SDL_LogSetOutputFunction": [
+"SDL_log.h",
+"void",
+"SDL_LogOutputFunction callback, void *userdata"
+],
+"SDL_LogSetPriority": [
+"SDL_log.h",
+"void",
+"int category, SDL_LogPriority priority"
+],
+"SDL_LogVerbose": [
+"SDL_log.h",
+"void",
+"int category, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_LogWarn": [
+"SDL_log.h",
+"void",
+"int category, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_LowerBlit": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * src, SDL_Rect * srcrect, SDL_Surface * dst, SDL_Rect * dstrect"
+],
+"SDL_LowerBlitScaled": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * src, SDL_Rect * srcrect, SDL_Surface * dst, SDL_Rect * dstrect"
+],
+"SDL_MapRGB": [
+"SDL_pixels.h",
+"Uint32",
+"const SDL_PixelFormat * format, Uint8 r, Uint8 g, Uint8 b"
+],
+"SDL_MapRGBA": [
+"SDL_pixels.h",
+"Uint32",
+"const SDL_PixelFormat * format, Uint8 r, Uint8 g, Uint8 b, Uint8 a"
+],
+"SDL_MasksToPixelFormatEnum": [
+"SDL_pixels.h",
+"Uint32",
+"int bpp, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask"
+],
+"SDL_MaximizeWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_MemoryBarrierAcquireFunction": [
+"SDL_atomic.h",
+"void",
+"void"
+],
+"SDL_MemoryBarrierReleaseFunction": [
+"SDL_atomic.h",
+"void",
+"void"
+],
+"SDL_Metal_CreateView": [
+"SDL_metal.h",
+"SDL_MetalView",
+"SDL_Window * window"
+],
+"SDL_Metal_DestroyView": [
+"SDL_metal.h",
+"void",
+"SDL_MetalView view"
+],
+"SDL_Metal_GetDrawableSize": [
+"SDL_metal.h",
+"void",
+"SDL_Window* window, int *w, int *h"
+],
+"SDL_Metal_GetLayer": [
+"SDL_metal.h",
+"void *",
+"SDL_MetalView view"
+],
+"SDL_MinimizeWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_MixAudio": [
+"SDL_audio.h",
+"void",
+"Uint8 * dst, const Uint8 * src, Uint32 len, int volume"
+],
+"SDL_MixAudioFormat": [
+"SDL_audio.h",
+"void",
+"Uint8 * dst, const Uint8 * src, SDL_AudioFormat format, Uint32 len, int volume"
+],
+"SDL_MouseIsHaptic": [
+"SDL_haptic.h",
+"int",
+"void"
+],
+"SDL_NewAudioStream": [
+"SDL_audio.h",
+"SDL_AudioStream *",
+"const SDL_AudioFormat src_format, const Uint8 src_channels, const int src_rate, const SDL_AudioFormat dst_format, const Uint8 dst_channels, const int dst_rate"
+],
+"SDL_NumHaptics": [
+"SDL_haptic.h",
+"int",
+"void"
+],
+"SDL_NumJoysticks": [
+"SDL_joystick.h",
+"int",
+"void"
+],
+"SDL_NumSensors": [
+"SDL_sensor.h",
+"int",
+"void"
+],
+"SDL_OnApplicationDidBecomeActive": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OnApplicationDidChangeStatusBarOrientation": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OnApplicationDidEnterBackground": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OnApplicationDidReceiveMemoryWarning": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OnApplicationWillEnterForeground": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OnApplicationWillResignActive": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OnApplicationWillTerminate": [
+"SDL_system.h",
+"void",
+"void"
+],
+"SDL_OpenAudio": [
+"SDL_audio.h",
+"int",
+"SDL_AudioSpec * desired, SDL_AudioSpec * obtained"
+],
+"SDL_OpenAudioDevice": [
+"SDL_audio.h",
+"SDL_AudioDeviceID",
+"const char *device, int iscapture, const SDL_AudioSpec *desired, SDL_AudioSpec *obtained, int allowed_changes"
+],
+"SDL_OpenURL": [
+"SDL_misc.h",
+"\"C\" { extern DECLSPEC int",
+"const char *url"
+],
+"SDL_PauseAudio": [
+"SDL_audio.h",
+"void",
+"int pause_on"
+],
+"SDL_PauseAudioDevice": [
+"SDL_audio.h",
+"void",
+"SDL_AudioDeviceID dev, int pause_on"
+],
+"SDL_PeepEvents": [
+"SDL_events.h",
+"int",
+"SDL_Event * events, int numevents, SDL_eventaction action, Uint32 minType, Uint32 maxType"
+],
+"SDL_PixelFormatEnumToMasks": [
+"SDL_pixels.h",
+"SDL_bool",
+"Uint32 format, int *bpp, Uint32 * Rmask, Uint32 * Gmask, Uint32 * Bmask, Uint32 * Amask"
+],
+"SDL_PollEvent": [
+"SDL_events.h",
+"int",
+"SDL_Event * event"
+],
+"SDL_PremultiplyAlpha": [
+"SDL_surface.h",
+"int",
+"int width, int height, Uint32 src_format, const void * src, int src_pitch, Uint32 dst_format, void * dst, int dst_pitch"
+],
+"SDL_PumpEvents": [
+"SDL_events.h",
+"void",
+"void"
+],
+"SDL_PushEvent": [
+"SDL_events.h",
+"int",
+"SDL_Event * event"
+],
+"SDL_QueryTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, Uint32 * format, int *access, int *w, int *h"
+],
+"SDL_QueueAudio": [
+"SDL_audio.h",
+"int",
+"SDL_AudioDeviceID dev, const void *data, Uint32 len"
+],
+"SDL_Quit": [
+"SDL.h",
+"void",
+"void"
+],
+"SDL_QuitSubSystem": [
+"SDL.h",
+"void",
+"Uint32 flags"
+],
+"SDL_RWFromConstMem": [
+"SDL_rwops.h",
+"SDL_RWops *",
+"const void *mem, int size"
+],
+"SDL_RWFromFP": [
+"SDL_rwops.h",
+"SDL_RWops *",
+"FILE * fp, SDL_bool autoclose"
+],
+"SDL_RWFromFile": [
+"SDL_rwops.h",
+"SDL_RWops *",
+"const char *file, const char *mode"
+],
+"SDL_RWFromMem": [
+"SDL_rwops.h",
+"SDL_RWops *",
+"void *mem, int size"
+],
+"SDL_RWclose": [
+"SDL_rwops.h",
+"int",
+"SDL_RWops *context"
+],
+"SDL_RWread": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops *context, void *ptr, size_t size, size_t maxnum"
+],
+"SDL_RWseek": [
+"SDL_rwops.h",
+"Sint64",
+"SDL_RWops *context, Sint64 offset, int whence"
+],
+"SDL_RWsize": [
+"SDL_rwops.h",
+"Sint64",
+"SDL_RWops *context"
+],
+"SDL_RWtell": [
+"SDL_rwops.h",
+"Sint64",
+"SDL_RWops *context"
+],
+"SDL_RWwrite": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops *context, const void *ptr, size_t size, size_t num"
+],
+"SDL_RaiseWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_ReadBE16": [
+"SDL_rwops.h",
+"Uint16",
+"SDL_RWops * src"
+],
+"SDL_ReadBE32": [
+"SDL_rwops.h",
+"Uint32",
+"SDL_RWops * src"
+],
+"SDL_ReadBE64": [
+"SDL_rwops.h",
+"Uint64",
+"SDL_RWops * src"
+],
+"SDL_ReadLE16": [
+"SDL_rwops.h",
+"Uint16",
+"SDL_RWops * src"
+],
+"SDL_ReadLE32": [
+"SDL_rwops.h",
+"Uint32",
+"SDL_RWops * src"
+],
+"SDL_ReadLE64": [
+"SDL_rwops.h",
+"Uint64",
+"SDL_RWops * src"
+],
+"SDL_ReadU8": [
+"SDL_rwops.h",
+"Uint8",
+"SDL_RWops * src"
+],
+"SDL_RecordGesture": [
+"SDL_gesture.h",
+"int",
+"SDL_TouchID touchId"
+],
+"SDL_RegisterApp": [
+"SDL_main.h",
+"int",
+"const char *name, Uint32 style, void *hInst"
+],
+"SDL_RegisterEvents": [
+"SDL_events.h",
+"Uint32",
+"int numevents"
+],
+"SDL_RemoveTimer": [
+"SDL_timer.h",
+"SDL_bool",
+"SDL_TimerID id"
+],
+"SDL_RenderClear": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderCopy": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_Texture * texture, const SDL_Rect * srcrect, const SDL_Rect * dstrect"
+],
+"SDL_RenderCopyEx": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_Texture * texture, const SDL_Rect * srcrect, const SDL_Rect * dstrect, const double angle, const SDL_Point *center, const SDL_RendererFlip flip"
+],
+"SDL_RenderCopyExF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_Texture * texture, const SDL_Rect * srcrect, const SDL_FRect * dstrect, const double angle, const SDL_FPoint *center, const SDL_RendererFlip flip"
+],
+"SDL_RenderCopyF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_Texture * texture, const SDL_Rect * srcrect, const SDL_FRect * dstrect"
+],
+"SDL_RenderDrawLine": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, int x1, int y1, int x2, int y2"
+],
+"SDL_RenderDrawLineF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, float x1, float y1, float x2, float y2"
+],
+"SDL_RenderDrawLines": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Point * points, int count"
+],
+"SDL_RenderDrawLinesF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_FPoint * points, int count"
+],
+"SDL_RenderDrawPoint": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, int x, int y"
+],
+"SDL_RenderDrawPointF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, float x, float y"
+],
+"SDL_RenderDrawPoints": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Point * points, int count"
+],
+"SDL_RenderDrawPointsF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_FPoint * points, int count"
+],
+"SDL_RenderDrawRect": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rect"
+],
+"SDL_RenderDrawRectF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_FRect * rect"
+],
+"SDL_RenderDrawRects": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rects, int count"
+],
+"SDL_RenderDrawRectsF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_FRect * rects, int count"
+],
+"SDL_RenderFillRect": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rect"
+],
+"SDL_RenderFillRectF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_FRect * rect"
+],
+"SDL_RenderFillRects": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rects, int count"
+],
+"SDL_RenderFillRectsF": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_FRect * rects, int count"
+],
+"SDL_RenderFlush": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderGeometry": [
+"SDL_render.h",
+"int",
+"SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Vertex *vertices, int num_vertices, const int *indices, int num_indices"
+],
+"SDL_RenderGeometryRaw": [
+"SDL_render.h",
+"int",
+"SDL_Renderer *renderer, SDL_Texture *texture, const float *xy, int xy_stride, const SDL_Color *color, int color_stride, const float *uv, int uv_stride, int num_vertices, const void *indices, int num_indices, int size_indices"
+],
+"SDL_RenderGetClipRect": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer, SDL_Rect * rect"
+],
+"SDL_RenderGetD3D11Device": [
+"SDL_system.h",
+"ID3D11Device*",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderGetD3D12Device": [
+"SDL_system.h",
+"ID3D12Device*",
+"SDL_Renderer* renderer"
+],
+"SDL_RenderGetD3D9Device": [
+"SDL_system.h",
+"IDirect3DDevice9*",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderGetIntegerScale": [
+"SDL_render.h",
+"SDL_bool",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderGetLogicalSize": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer, int *w, int *h"
+],
+"SDL_RenderGetMetalCommandEncoder": [
+"SDL_render.h",
+"void *",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderGetMetalLayer": [
+"SDL_render.h",
+"void *",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderGetScale": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer, float *scaleX, float *scaleY"
+],
+"SDL_RenderGetViewport": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer, SDL_Rect * rect"
+],
+"SDL_RenderGetWindow": [
+"SDL_render.h",
+"SDL_Window *",
+"SDL_Renderer *renderer"
+],
+"SDL_RenderIsClipEnabled": [
+"SDL_render.h",
+"SDL_bool",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderLogicalToWindow": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer, float logicalX, float logicalY, int *windowX, int *windowY"
+],
+"SDL_RenderPresent": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer"
+],
+"SDL_RenderReadPixels": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rect, Uint32 format, void *pixels, int pitch"
+],
+"SDL_RenderSetClipRect": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rect"
+],
+"SDL_RenderSetIntegerScale": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_bool enable"
+],
+"SDL_RenderSetLogicalSize": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, int w, int h"
+],
+"SDL_RenderSetScale": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, float scaleX, float scaleY"
+],
+"SDL_RenderSetVSync": [
+"SDL_render.h",
+"int",
+"SDL_Renderer* renderer, int vsync"
+],
+"SDL_RenderSetViewport": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, const SDL_Rect * rect"
+],
+"SDL_RenderTargetSupported": [
+"SDL_render.h",
+"SDL_bool",
+"SDL_Renderer *renderer"
+],
+"SDL_RenderWindowToLogical": [
+"SDL_render.h",
+"void",
+"SDL_Renderer * renderer, int windowX, int windowY, float *logicalX, float *logicalY"
+],
+"SDL_ReportAssertion": [
+"SDL_assert.h",
+"SDL_AssertState",
+"SDL_AssertData *, const char *, const char *, int) __attribute__((analyzer_noreturn)"
+],
+"SDL_ResetAssertionReport": [
+"SDL_assert.h",
+"void",
+"void"
+],
+"SDL_ResetHint": [
+"SDL_hints.h",
+"SDL_bool",
+"const char *name"
+],
+"SDL_ResetHints": [
+"SDL_hints.h",
+"void",
+"void"
+],
+"SDL_ResetKeyboard": [
+"SDL_keyboard.h",
+"void",
+"void"
+],
+"SDL_RestoreWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_SIMDAlloc": [
+"SDL_cpuinfo.h",
+"void *",
+"const size_t len"
+],
+"SDL_SIMDFree": [
+"SDL_cpuinfo.h",
+"void",
+"void *ptr"
+],
+"SDL_SIMDGetAlignment": [
+"SDL_cpuinfo.h",
+"size_t",
+"void"
+],
+"SDL_SIMDRealloc": [
+"SDL_cpuinfo.h",
+"void *",
+"void *mem, const size_t len"
+],
+"SDL_SaveAllDollarTemplates": [
+"SDL_gesture.h",
+"int",
+"SDL_RWops *dst"
+],
+"SDL_SaveBMP_RW": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, SDL_RWops * dst, int freedst"
+],
+"SDL_SaveDollarTemplate": [
+"SDL_gesture.h",
+"int",
+"SDL_GestureID gestureId,SDL_RWops *dst"
+],
+"SDL_SemPost": [
+"SDL_mutex.h",
+"int",
+"SDL_sem * sem"
+],
+"SDL_SemTryWait": [
+"SDL_mutex.h",
+"int",
+"SDL_sem * sem"
+],
+"SDL_SemValue": [
+"SDL_mutex.h",
+"Uint32",
+"SDL_sem * sem"
+],
+"SDL_SemWait": [
+"SDL_mutex.h",
+"int",
+"SDL_sem * sem"
+],
+"SDL_SemWaitTimeout": [
+"SDL_mutex.h",
+"int",
+"SDL_sem * sem, Uint32 ms"
+],
+"SDL_SensorClose": [
+"SDL_sensor.h",
+"void",
+"SDL_Sensor *sensor"
+],
+"SDL_SensorFromInstanceID": [
+"SDL_sensor.h",
+"SDL_Sensor *",
+"SDL_SensorID instance_id"
+],
+"SDL_SensorGetData": [
+"SDL_sensor.h",
+"int",
+"SDL_Sensor *sensor, float *data, int num_values"
+],
+"SDL_SensorGetDataWithTimestamp": [
+"SDL_sensor.h",
+"int",
+"SDL_Sensor *sensor, Uint64 *timestamp, float *data, int num_values"
+],
+"SDL_SensorGetDeviceInstanceID": [
+"SDL_sensor.h",
+"SDL_SensorID",
+"int device_index"
+],
+"SDL_SensorGetDeviceName": [
+"SDL_sensor.h",
+"const char *",
+"int device_index"
+],
+"SDL_SensorGetDeviceNonPortableType": [
+"SDL_sensor.h",
+"int",
+"int device_index"
+],
+"SDL_SensorGetDeviceType": [
+"SDL_sensor.h",
+"SDL_SensorType",
+"int device_index"
+],
+"SDL_SensorGetInstanceID": [
+"SDL_sensor.h",
+"SDL_SensorID",
+"SDL_Sensor *sensor"
+],
+"SDL_SensorGetName": [
+"SDL_sensor.h",
+"const char *",
+"SDL_Sensor *sensor"
+],
+"SDL_SensorGetNonPortableType": [
+"SDL_sensor.h",
+"int",
+"SDL_Sensor *sensor"
+],
+"SDL_SensorGetType": [
+"SDL_sensor.h",
+"SDL_SensorType",
+"SDL_Sensor *sensor"
+],
+"SDL_SensorOpen": [
+"SDL_sensor.h",
+"SDL_Sensor *",
+"int device_index"
+],
+"SDL_SensorUpdate": [
+"SDL_sensor.h",
+"void",
+"void"
+],
+"SDL_SetAssertionHandler": [
+"SDL_assert.h",
+"void",
+"SDL_AssertionHandler handler, void *userdata"
+],
+"SDL_SetClipRect": [
+"SDL_surface.h",
+"SDL_bool",
+"SDL_Surface * surface, const SDL_Rect * rect"
+],
+"SDL_SetClipboardText": [
+"SDL_clipboard.h",
+"\"C\" { extern DECLSPEC int",
+"const char *text"
+],
+"SDL_SetColorKey": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, int flag, Uint32 key"
+],
+"SDL_SetCursor": [
+"SDL_mouse.h",
+"void",
+"SDL_Cursor * cursor"
+],
+"SDL_SetError": [
+"SDL_error.h",
+"\"C\" { extern DECLSPEC int",
+"SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(1"
+],
+"SDL_SetEventFilter": [
+"SDL_events.h",
+"void",
+"SDL_EventFilter filter, void *userdata"
+],
+"SDL_SetHint": [
+"SDL_hints.h",
+"SDL_bool",
+"const char *name, const char *value"
+],
+"SDL_SetHintWithPriority": [
+"SDL_hints.h",
+"SDL_bool",
+"const char *name, const char *value, SDL_HintPriority priority"
+],
+"SDL_SetMainReady": [
+"SDL_main.h",
+"void",
+"void"
+],
+"SDL_SetMemoryFunctions": [
+"SDL_stdinc.h",
+"int",
+"SDL_malloc_func malloc_func, SDL_calloc_func calloc_func, SDL_realloc_func realloc_func, SDL_free_func free_func"
+],
+"SDL_SetModState": [
+"SDL_keyboard.h",
+"void",
+"SDL_Keymod modstate"
+],
+"SDL_SetPaletteColors": [
+"SDL_pixels.h",
+"int",
+"SDL_Palette * palette, const SDL_Color * colors, int firstcolor, int ncolors"
+],
+"SDL_SetPixelFormatPalette": [
+"SDL_pixels.h",
+"int",
+"SDL_PixelFormat * format, SDL_Palette *palette"
+],
+"SDL_SetPrimarySelectionText": [
+"SDL_clipboard.h",
+"int",
+"const char *text"
+],
+"SDL_SetRelativeMouseMode": [
+"SDL_mouse.h",
+"int",
+"SDL_bool enabled"
+],
+"SDL_SetRenderDrawBlendMode": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, SDL_BlendMode blendMode"
+],
+"SDL_SetRenderDrawColor": [
+"SDL_render.h",
+"int",
+"SDL_Renderer * renderer, Uint8 r, Uint8 g, Uint8 b, Uint8 a"
+],
+"SDL_SetRenderTarget": [
+"SDL_render.h",
+"int",
+"SDL_Renderer *renderer, SDL_Texture *texture"
+],
+"SDL_SetSurfaceAlphaMod": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, Uint8 alpha"
+],
+"SDL_SetSurfaceBlendMode": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, SDL_BlendMode blendMode"
+],
+"SDL_SetSurfaceColorMod": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, Uint8 r, Uint8 g, Uint8 b"
+],
+"SDL_SetSurfacePalette": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, SDL_Palette * palette"
+],
+"SDL_SetSurfaceRLE": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * surface, int flag"
+],
+"SDL_SetTextInputRect": [
+"SDL_keyboard.h",
+"void",
+"const SDL_Rect *rect"
+],
+"SDL_SetTextureAlphaMod": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, Uint8 alpha"
+],
+"SDL_SetTextureBlendMode": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, SDL_BlendMode blendMode"
+],
+"SDL_SetTextureColorMod": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, Uint8 r, Uint8 g, Uint8 b"
+],
+"SDL_SetTextureScaleMode": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, SDL_ScaleMode scaleMode"
+],
+"SDL_SetTextureUserData": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, void *userdata"
+],
+"SDL_SetThreadPriority": [
+"SDL_thread.h",
+"int",
+"SDL_ThreadPriority priority"
+],
+"SDL_SetWindowAlwaysOnTop": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_bool on_top"
+],
+"SDL_SetWindowBordered": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_bool bordered"
+],
+"SDL_SetWindowBrightness": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, float brightness"
+],
+"SDL_SetWindowData": [
+"SDL_video.h",
+"void*",
+"SDL_Window * window, const char *name, void *userdata"
+],
+"SDL_SetWindowDisplayMode": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, const SDL_DisplayMode * mode"
+],
+"SDL_SetWindowFullscreen": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, Uint32 flags"
+],
+"SDL_SetWindowGammaRamp": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, const Uint16 * red, const Uint16 * green, const Uint16 * blue"
+],
+"SDL_SetWindowGrab": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_bool grabbed"
+],
+"SDL_SetWindowHitTest": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, SDL_HitTest callback, void *callback_data"
+],
+"SDL_SetWindowIcon": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_Surface * icon"
+],
+"SDL_SetWindowInputFocus": [
+"SDL_video.h",
+"int",
+"SDL_Window * window"
+],
+"SDL_SetWindowKeyboardGrab": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_bool grabbed"
+],
+"SDL_SetWindowMaximumSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int max_w, int max_h"
+],
+"SDL_SetWindowMinimumSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int min_w, int min_h"
+],
+"SDL_SetWindowModalFor": [
+"SDL_video.h",
+"int",
+"SDL_Window * modal_window, SDL_Window * parent_window"
+],
+"SDL_SetWindowMouseGrab": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_bool grabbed"
+],
+"SDL_SetWindowMouseRect": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, const SDL_Rect * rect"
+],
+"SDL_SetWindowOpacity": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, float opacity"
+],
+"SDL_SetWindowPosition": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int x, int y"
+],
+"SDL_SetWindowResizable": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, SDL_bool resizable"
+],
+"SDL_SetWindowShape": [
+"SDL_shape.h",
+"int",
+"SDL_Window *window,SDL_Surface *shape,SDL_WindowShapeMode *shape_mode"
+],
+"SDL_SetWindowSize": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, int w, int h"
+],
+"SDL_SetWindowTitle": [
+"SDL_video.h",
+"void",
+"SDL_Window * window, const char *title"
+],
+"SDL_SetWindowsMessageHook": [
+"SDL_system.h",
+"void",
+"SDL_WindowsMessageHook callback, void *userdata"
+],
+"SDL_SetYUVConversionMode": [
+"SDL_surface.h",
+"void",
+"SDL_YUV_CONVERSION_MODE mode"
+],
+"SDL_ShowCursor": [
+"SDL_mouse.h",
+"int",
+"int toggle"
+],
+"SDL_ShowMessageBox": [
+"SDL_messagebox.h",
+"int",
+"const SDL_MessageBoxData *messageboxdata, int *buttonid"
+],
+"SDL_ShowSimpleMessageBox": [
+"SDL_messagebox.h",
+"int",
+"Uint32 flags, const char *title, const char *message, SDL_Window *window"
+],
+"SDL_ShowWindow": [
+"SDL_video.h",
+"void",
+"SDL_Window * window"
+],
+"SDL_SoftStretch": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * src, const SDL_Rect * srcrect, SDL_Surface * dst, const SDL_Rect * dstrect"
+],
+"SDL_SoftStretchLinear": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * src, const SDL_Rect * srcrect, SDL_Surface * dst, const SDL_Rect * dstrect"
+],
+"SDL_StartTextInput": [
+"SDL_keyboard.h",
+"void",
+"void"
+],
+"SDL_StopTextInput": [
+"SDL_keyboard.h",
+"void",
+"void"
+],
+"SDL_TLSCleanup": [
+"SDL_thread.h",
+"void",
+"void"
+],
+"SDL_TLSCreate": [
+"SDL_thread.h",
+"SDL_TLSID",
+"void"
+],
+"SDL_TLSGet": [
+"SDL_thread.h",
+"void *",
+"SDL_TLSID id"
+],
+"SDL_TLSSet": [
+"SDL_thread.h",
+"int",
+"SDL_TLSID id, const void *value, void (SDLCALL *destructor)(void*)"
+],
+"SDL_ThreadID": [
+"SDL_thread.h",
+"SDL_threadID",
+"void"
+],
+"SDL_TryLockMutex": [
+"SDL_mutex.h",
+"int",
+"SDL_mutex * mutex"
+],
+"SDL_UIKitRunApp": [
+"SDL_main.h",
+"int",
+"int argc, char *argv[], SDL_main_func mainFunction"
+],
+"SDL_UnionFRect": [
+"SDL_rect.h",
+"void",
+"const SDL_FRect * A, const SDL_FRect * B, SDL_FRect * result"
+],
+"SDL_UnionRect": [
+"SDL_rect.h",
+"void",
+"const SDL_Rect * A, const SDL_Rect * B, SDL_Rect * result"
+],
+"SDL_UnloadObject": [
+"SDL_loadso.h",
+"void",
+"void *handle"
+],
+"SDL_UnlockAudio": [
+"SDL_audio.h",
+"void",
+"void"
+],
+"SDL_UnlockAudioDevice": [
+"SDL_audio.h",
+"void",
+"SDL_AudioDeviceID dev"
+],
+"SDL_UnlockJoysticks": [
+"SDL_joystick.h",
+"void",
+"void"
+],
+"SDL_UnlockMutex": [
+"SDL_mutex.h",
+"int",
+"SDL_mutex * mutex"
+],
+"SDL_UnlockSensors": [
+"SDL_sensor.h",
+"void",
+"void"
+],
+"SDL_UnlockSurface": [
+"SDL_surface.h",
+"void",
+"SDL_Surface * surface"
+],
+"SDL_UnlockTexture": [
+"SDL_render.h",
+"void",
+"SDL_Texture * texture"
+],
+"SDL_UnregisterApp": [
+"SDL_main.h",
+"void",
+"void"
+],
+"SDL_UpdateNVTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, const SDL_Rect * rect, const Uint8 *Yplane, int Ypitch, const Uint8 *UVplane, int UVpitch"
+],
+"SDL_UpdateTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, const SDL_Rect * rect, const void *pixels, int pitch"
+],
+"SDL_UpdateWindowSurface": [
+"SDL_video.h",
+"int",
+"SDL_Window * window"
+],
+"SDL_UpdateWindowSurfaceRects": [
+"SDL_video.h",
+"int",
+"SDL_Window * window, const SDL_Rect * rects, int numrects"
+],
+"SDL_UpdateYUVTexture": [
+"SDL_render.h",
+"int",
+"SDL_Texture * texture, const SDL_Rect * rect, const Uint8 *Yplane, int Ypitch, const Uint8 *Uplane, int Upitch, const Uint8 *Vplane, int Vpitch"
+],
+"SDL_UpperBlit": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * src, const SDL_Rect * srcrect, SDL_Surface * dst, SDL_Rect * dstrect"
+],
+"SDL_UpperBlitScaled": [
+"SDL_surface.h",
+"int",
+"SDL_Surface * src, const SDL_Rect * srcrect, SDL_Surface * dst, SDL_Rect * dstrect"
+],
+"SDL_VideoInit": [
+"SDL_video.h",
+"int",
+"const char *driver_name"
+],
+"SDL_VideoQuit": [
+"SDL_video.h",
+"void",
+"void"
+],
+"SDL_Vulkan_CreateSurface": [
+"SDL_vulkan.h",
+"SDL_bool",
+"SDL_Window *window, VkInstance instance, VkSurfaceKHR* surface"
+],
+"SDL_Vulkan_GetDrawableSize": [
+"SDL_vulkan.h",
+"void",
+"SDL_Window * window, int *w, int *h"
+],
+"SDL_Vulkan_GetInstanceExtensions": [
+"SDL_vulkan.h",
+"SDL_bool",
+"SDL_Window *window, unsigned int *pCount, const char **pNames"
+],
+"SDL_Vulkan_GetVkGetInstanceProcAddr": [
+"SDL_vulkan.h",
+"void *",
+"void"
+],
+"SDL_Vulkan_LoadLibrary": [
+"SDL_vulkan.h",
+"int",
+"const char *path"
+],
+"SDL_Vulkan_UnloadLibrary": [
+"SDL_vulkan.h",
+"void",
+"void"
+],
+"SDL_WaitEvent": [
+"SDL_events.h",
+"int",
+"SDL_Event * event"
+],
+"SDL_WaitEventTimeout": [
+"SDL_events.h",
+"int",
+"SDL_Event * event, int timeout"
+],
+"SDL_WaitThread": [
+"SDL_thread.h",
+"void",
+"SDL_Thread * thread, int *status"
+],
+"SDL_WarpMouseGlobal": [
+"SDL_mouse.h",
+"int",
+"int x, int y"
+],
+"SDL_WarpMouseInWindow": [
+"SDL_mouse.h",
+"void",
+"SDL_Window * window, int x, int y"
+],
+"SDL_WasInit": [
+"SDL.h",
+"Uint32",
+"Uint32 flags"
+],
+"SDL_WinRTGetDeviceFamily": [
+"SDL_system.h",
+"SDL_WinRT_DeviceFamily",
+""
+],
+"SDL_WinRTGetFSPathUNICODE": [
+"SDL_system.h",
+"const wchar_t *",
+"SDL_WinRT_Path pathType"
+],
+"SDL_WinRTGetFSPathUTF8": [
+"SDL_system.h",
+"const char *",
+"SDL_WinRT_Path pathType"
+],
+"SDL_WinRTRunApp": [
+"SDL_main.h",
+"int",
+"SDL_main_func mainFunction, void * reserved"
+],
+"SDL_WriteBE16": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint16 value"
+],
+"SDL_WriteBE32": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint32 value"
+],
+"SDL_WriteBE64": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint64 value"
+],
+"SDL_WriteLE16": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint16 value"
+],
+"SDL_WriteLE32": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint32 value"
+],
+"SDL_WriteLE64": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint64 value"
+],
+"SDL_WriteU8": [
+"SDL_rwops.h",
+"size_t",
+"SDL_RWops * dst, Uint8 value"
+],
+"SDL_abs": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_acos": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_acosf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_asin": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_asinf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_asprintf": [
+"SDL_stdinc.h",
+"int",
+"char **strp, SDL_PRINTF_FORMAT_STRING const char *fmt, ...) SDL_PRINTF_VARARG_FUNC(2"
+],
+"SDL_atan": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_atan2": [
+"SDL_stdinc.h",
+"double",
+"double y, double x"
+],
+"SDL_atan2f": [
+"SDL_stdinc.h",
+"float",
+"float y, float x"
+],
+"SDL_atanf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_atof": [
+"SDL_stdinc.h",
+"double",
+"const char *str"
+],
+"SDL_atoi": [
+"SDL_stdinc.h",
+"int",
+"const char *str"
+],
+"SDL_bsearch": [
+"SDL_stdinc.h",
+"void *",
+"const void *key, const void *base, size_t nmemb, size_t size, int (SDLCALL *compare) (const void *, const void *)"
+],
+"SDL_calloc": [
+"SDL_stdinc.h",
+"void *",
+"size_t nmemb, size_t size"
+],
+"SDL_ceil": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_ceilf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_copysign": [
+"SDL_stdinc.h",
+"double",
+"double x, double y"
+],
+"SDL_copysignf": [
+"SDL_stdinc.h",
+"float",
+"float x, float y"
+],
+"SDL_cos": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_cosf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_crc16": [
+"SDL_stdinc.h",
+"Uint16",
+"Uint16 crc, const void *data, size_t len"
+],
+"SDL_crc32": [
+"SDL_stdinc.h",
+"Uint32",
+"Uint32 crc, const void *data, size_t len"
+],
+"SDL_exp": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_expf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_fabs": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_fabsf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_floor": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_floorf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_fmod": [
+"SDL_stdinc.h",
+"double",
+"double x, double y"
+],
+"SDL_fmodf": [
+"SDL_stdinc.h",
+"float",
+"float x, float y"
+],
+"SDL_free": [
+"SDL_stdinc.h",
+"void",
+"void *mem"
+],
+"SDL_getenv": [
+"SDL_stdinc.h",
+"char *",
+"const char *name"
+],
+"SDL_hid_ble_scan": [
+"SDL_hidapi.h",
+"void",
+"SDL_bool active"
+],
+"SDL_hid_close": [
+"SDL_hidapi.h",
+"void",
+"SDL_hid_device *dev"
+],
+"SDL_hid_device_change_count": [
+"SDL_hidapi.h",
+"Uint32",
+"void"
+],
+"SDL_hid_enumerate": [
+"SDL_hidapi.h",
+"SDL_hid_device_info *",
+"unsigned short vendor_id, unsigned short product_id"
+],
+"SDL_hid_exit": [
+"SDL_hidapi.h",
+"int",
+"void"
+],
+"SDL_hid_free_enumeration": [
+"SDL_hidapi.h",
+"void",
+"SDL_hid_device_info *devs"
+],
+"SDL_hid_get_feature_report": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, unsigned char *data, size_t length"
+],
+"SDL_hid_get_indexed_string": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, int string_index, wchar_t *string, size_t maxlen"
+],
+"SDL_hid_get_manufacturer_string": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, wchar_t *string, size_t maxlen"
+],
+"SDL_hid_get_product_string": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, wchar_t *string, size_t maxlen"
+],
+"SDL_hid_get_serial_number_string": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, wchar_t *string, size_t maxlen"
+],
+"SDL_hid_init": [
+"SDL_hidapi.h",
+"int",
+"void"
+],
+"SDL_hid_open": [
+"SDL_hidapi.h",
+"SDL_hid_device *",
+"unsigned short vendor_id, unsigned short product_id, const wchar_t *serial_number"
+],
+"SDL_hid_open_path": [
+"SDL_hidapi.h",
+"SDL_hid_device *",
+"const char *path, int bExclusive"
+],
+"SDL_hid_read": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, unsigned char *data, size_t length"
+],
+"SDL_hid_read_timeout": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, unsigned char *data, size_t length, int milliseconds"
+],
+"SDL_hid_send_feature_report": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, const unsigned char *data, size_t length"
+],
+"SDL_hid_set_nonblocking": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, int nonblock"
+],
+"SDL_hid_write": [
+"SDL_hidapi.h",
+"int",
+"SDL_hid_device *dev, const unsigned char *data, size_t length"
+],
+"SDL_iPhoneSetAnimationCallback": [
+"SDL_system.h",
+"int",
+"SDL_Window * window, int interval, void (SDLCALL *callback)(void*), void *callbackParam"
+],
+"SDL_iPhoneSetEventPump": [
+"SDL_system.h",
+"void",
+"SDL_bool enabled"
+],
+"SDL_iconv": [
+"SDL_stdinc.h",
+"size_t",
+"SDL_iconv_t cd, const char **inbuf, size_t * inbytesleft, char **outbuf, size_t * outbytesleft"
+],
+"SDL_iconv_close": [
+"SDL_stdinc.h",
+"int",
+"SDL_iconv_t cd"
+],
+"SDL_iconv_open": [
+"SDL_stdinc.h",
+"SDL_iconv_t",
+"const char *tocode, const char *fromcode"
+],
+"SDL_iconv_string": [
+"SDL_stdinc.h",
+"char *",
+"const char *tocode, const char *fromcode, const char *inbuf, size_t inbytesleft"
+],
+"SDL_isalnum": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isalpha": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isblank": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_iscntrl": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isdigit": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isgraph": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_islower": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isprint": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_ispunct": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isspace": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isupper": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_isxdigit": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_itoa": [
+"SDL_stdinc.h",
+"char *",
+"int value, char *str, int radix"
+],
+"SDL_lltoa": [
+"SDL_stdinc.h",
+"char *",
+"Sint64 value, char *str, int radix"
+],
+"SDL_log": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_log10": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_log10f": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_logf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_lround": [
+"SDL_stdinc.h",
+"long",
+"double x"
+],
+"SDL_lroundf": [
+"SDL_stdinc.h",
+"long",
+"float x"
+],
+"SDL_ltoa": [
+"SDL_stdinc.h",
+"char *",
+"long value, char *str, int radix"
+],
+"SDL_malloc": [
+"SDL_stdinc.h",
+"\"C\" { extern DECLSPEC void *",
+"size_t size"
+],
+"SDL_memcmp": [
+"SDL_stdinc.h",
+"int",
+"const void *s1, const void *s2, size_t len"
+],
+"SDL_memcpy": [
+"SDL_stdinc.h",
+"void *",
+"SDL_OUT_BYTECAP(len) void *dst, SDL_IN_BYTECAP(len) const void *src, size_t len"
+],
+"SDL_memmove": [
+"SDL_stdinc.h",
+"void *",
+"SDL_OUT_BYTECAP(len) void *dst, SDL_IN_BYTECAP(len) const void *src, size_t len"
+],
+"SDL_memset": [
+"SDL_stdinc.h",
+"void *",
+"SDL_OUT_BYTECAP(len) void *dst, int c, size_t len"
+],
+"SDL_pow": [
+"SDL_stdinc.h",
+"double",
+"double x, double y"
+],
+"SDL_powf": [
+"SDL_stdinc.h",
+"float",
+"float x, float y"
+],
+"SDL_qsort": [
+"SDL_stdinc.h",
+"void",
+"void *base, size_t nmemb, size_t size, int (SDLCALL *compare) (const void *, const void *)"
+],
+"SDL_realloc": [
+"SDL_stdinc.h",
+"void *",
+"void *mem, size_t size"
+],
+"SDL_round": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_roundf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_scalbn": [
+"SDL_stdinc.h",
+"double",
+"double x, int n"
+],
+"SDL_scalbnf": [
+"SDL_stdinc.h",
+"float",
+"float x, int n"
+],
+"SDL_setenv": [
+"SDL_stdinc.h",
+"int",
+"const char *name, const char *value, int overwrite"
+],
+"SDL_sin": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_sinf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_snprintf": [
+"SDL_stdinc.h",
+"int",
+"SDL_OUT_Z_CAP(maxlen) char *text, size_t maxlen, SDL_PRINTF_FORMAT_STRING const char *fmt, ... ) SDL_PRINTF_VARARG_FUNC(3"
+],
+"SDL_sqrt": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_sqrtf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_sscanf": [
+"SDL_stdinc.h",
+"int",
+"const char *text, SDL_SCANF_FORMAT_STRING const char *fmt, ...) SDL_SCANF_VARARG_FUNC(2"
+],
+"SDL_strcasecmp": [
+"SDL_stdinc.h",
+"int",
+"const char *str1, const char *str2"
+],
+"SDL_strcasestr": [
+"SDL_stdinc.h",
+"char *",
+"const char *haystack, const char *needle"
+],
+"SDL_strchr": [
+"SDL_stdinc.h",
+"char *",
+"const char *str, int c"
+],
+"SDL_strcmp": [
+"SDL_stdinc.h",
+"int",
+"const char *str1, const char *str2"
+],
+"SDL_strdup": [
+"SDL_stdinc.h",
+"char *",
+"const char *str"
+],
+"SDL_strlcat": [
+"SDL_stdinc.h",
+"size_t",
+"SDL_INOUT_Z_CAP(maxlen) char *dst, const char *src, size_t maxlen"
+],
+"SDL_strlcpy": [
+"SDL_stdinc.h",
+"size_t",
+"SDL_OUT_Z_CAP(maxlen) char *dst, const char *src, size_t maxlen"
+],
+"SDL_strlen": [
+"SDL_stdinc.h",
+"size_t",
+"const char *str"
+],
+"SDL_strlwr": [
+"SDL_stdinc.h",
+"char *",
+"char *str"
+],
+"SDL_strncasecmp": [
+"SDL_stdinc.h",
+"int",
+"const char *str1, const char *str2, size_t len"
+],
+"SDL_strncmp": [
+"SDL_stdinc.h",
+"int",
+"const char *str1, const char *str2, size_t maxlen"
+],
+"SDL_strrchr": [
+"SDL_stdinc.h",
+"char *",
+"const char *str, int c"
+],
+"SDL_strrev": [
+"SDL_stdinc.h",
+"char *",
+"char *str"
+],
+"SDL_strstr": [
+"SDL_stdinc.h",
+"char *",
+"const char *haystack, const char *needle"
+],
+"SDL_strtod": [
+"SDL_stdinc.h",
+"double",
+"const char *str, char **endp"
+],
+"SDL_strtokr": [
+"SDL_stdinc.h",
+"char *",
+"char *s1, const char *s2, char **saveptr"
+],
+"SDL_strtol": [
+"SDL_stdinc.h",
+"long",
+"const char *str, char **endp, int base"
+],
+"SDL_strtoll": [
+"SDL_stdinc.h",
+"Sint64",
+"const char *str, char **endp, int base"
+],
+"SDL_strtoul": [
+"SDL_stdinc.h",
+"unsigned long",
+"const char *str, char **endp, int base"
+],
+"SDL_strtoull": [
+"SDL_stdinc.h",
+"Uint64",
+"const char *str, char **endp, int base"
+],
+"SDL_strupr": [
+"SDL_stdinc.h",
+"char *",
+"char *str"
+],
+"SDL_tan": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_tanf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_tolower": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_toupper": [
+"SDL_stdinc.h",
+"int",
+"int x"
+],
+"SDL_trunc": [
+"SDL_stdinc.h",
+"double",
+"double x"
+],
+"SDL_truncf": [
+"SDL_stdinc.h",
+"float",
+"float x"
+],
+"SDL_uitoa": [
+"SDL_stdinc.h",
+"char *",
+"unsigned int value, char *str, int radix"
+],
+"SDL_ulltoa": [
+"SDL_stdinc.h",
+"char *",
+"Uint64 value, char *str, int radix"
+],
+"SDL_ultoa": [
+"SDL_stdinc.h",
+"char *",
+"unsigned long value, char *str, int radix"
+],
+"SDL_utf8strlcpy": [
+"SDL_stdinc.h",
+"size_t",
+"SDL_OUT_Z_CAP(dst_bytes) char *dst, const char *src, size_t dst_bytes"
+],
+"SDL_utf8strlen": [
+"SDL_stdinc.h",
+"size_t",
+"const char *str"
+],
+"SDL_utf8strnlen": [
+"SDL_stdinc.h",
+"size_t",
+"const char *str, size_t bytes"
+],
+"SDL_vasprintf": [
+"SDL_stdinc.h",
+"int",
+"char **strp, const char *fmt, va_list ap"
+],
+"SDL_vsnprintf": [
+"SDL_stdinc.h",
+"int",
+"SDL_OUT_Z_CAP(maxlen) char *text, size_t maxlen, const char *fmt, va_list ap"
+],
+"SDL_vsscanf": [
+"SDL_stdinc.h",
+"int",
+"const char *text, const char *fmt, va_list ap"
+],
+"SDL_wcscasecmp": [
+"SDL_stdinc.h",
+"int",
+"const wchar_t *str1, const wchar_t *str2"
+],
+"SDL_wcscmp": [
+"SDL_stdinc.h",
+"int",
+"const wchar_t *str1, const wchar_t *str2"
+],
+"SDL_wcsdup": [
+"SDL_stdinc.h",
+"wchar_t *",
+"const wchar_t *wstr"
+],
+"SDL_wcslcat": [
+"SDL_stdinc.h",
+"size_t",
+"SDL_INOUT_Z_CAP(maxlen) wchar_t *dst, const wchar_t *src, size_t maxlen"
+],
+"SDL_wcslcpy": [
+"SDL_stdinc.h",
+"size_t",
+"SDL_OUT_Z_CAP(maxlen) wchar_t *dst, const wchar_t *src, size_t maxlen"
+],
+"SDL_wcslen": [
+"SDL_stdinc.h",
+"size_t",
+"const wchar_t *wstr"
+],
+"SDL_wcsncasecmp": [
+"SDL_stdinc.h",
+"int",
+"const wchar_t *str1, const wchar_t *str2, size_t len"
+],
+"SDL_wcsncmp": [
+"SDL_stdinc.h",
+"int",
+"const wchar_t *str1, const wchar_t *str2, size_t maxlen"
+],
+"SDL_wcsstr": [
+"SDL_stdinc.h",
+"wchar_t *",
+"const wchar_t *haystack, const wchar_t *needle"
+]
+}

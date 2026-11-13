@@ -1,0 +1,232 @@
+# Answers of a real libSDL2 (2.32.10, x86_64, SDL_VIDEODRIVER=dummy) to every function of the
+# device families called with null or zero arguments while no device is present.
+# One line per function: name | result | SDL_GetError text after the call.
+# result: an integer, "void", "ptr:null", "ptr:nonnull", "struct:<hex of the first 16 bytes>" or a float.
+# scripts/gen-sdl2-device-stubs.py turns this file into src/vm/SDL2StubsDevices.inc.
+SDL_GameControllerAddMapping|-1|Parameter 'mappingString' is invalid
+SDL_GameControllerAddMappingsFromRW|-1|Invalid RWops
+SDL_GameControllerClose|void|
+SDL_GameControllerEventState|0|
+SDL_GameControllerFromInstanceID|ptr:null|
+SDL_GameControllerFromPlayerIndex|ptr:null|
+SDL_GameControllerGetAppleSFSymbolsNameForAxis|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetAppleSFSymbolsNameForButton|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetAttached|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetAxis|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetAxisFromString|-1|
+SDL_GameControllerGetBindForAxis|struct:000000000000000000000000|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetBindForButton|struct:000000000000000000000000|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetButton|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetButtonFromString|-1|
+SDL_GameControllerGetFirmwareVersion|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetJoystick|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetNumTouchpadFingers|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetNumTouchpads|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetPlayerIndex|-1|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetProduct|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetProductVersion|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetSensorData|-1|That operation is not supported
+SDL_GameControllerGetSensorDataRate|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetSensorDataWithTimestamp|-1|That operation is not supported
+SDL_GameControllerGetSerial|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetStringForAxis|ptr:nonnull|
+SDL_GameControllerGetStringForButton|ptr:nonnull|
+SDL_GameControllerGetTouchpadFinger|-1|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetType|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerGetVendor|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerHasAxis|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerHasButton|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerHasLED|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerHasRumble|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerHasRumbleTriggers|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerHasSensor|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerIsSensorEnabled|0|Parameter 'gamecontroller' is invalid
+SDL_GameControllerMapping|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerMappingForDeviceIndex|ptr:null|There are 0 joysticks available
+SDL_GameControllerMappingForGUID|ptr:null|Mapping not available
+SDL_GameControllerMappingForIndex|ptr:nonnull|
+SDL_GameControllerName|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerNameForIndex|ptr:null|There are 0 joysticks available
+SDL_GameControllerNumMappings|163|
+SDL_GameControllerOpen|ptr:null|Couldn't find mapping for device (0)
+SDL_GameControllerPath|ptr:null|Parameter 'gamecontroller' is invalid
+SDL_GameControllerPathForIndex|ptr:null|There are 0 joysticks available
+SDL_GameControllerRumble|-1|Parameter 'gamecontroller' is invalid
+SDL_GameControllerRumbleTriggers|-1|Parameter 'gamecontroller' is invalid
+SDL_GameControllerSendEffect|-1|Parameter 'gamecontroller' is invalid
+SDL_GameControllerSetLED|-1|Parameter 'gamecontroller' is invalid
+SDL_GameControllerSetPlayerIndex|void|Parameter 'gamecontroller' is invalid
+SDL_GameControllerSetSensorEnabled|-1|That operation is not supported
+SDL_GameControllerTypeForIndex|0|There are 0 joysticks available
+SDL_GameControllerUpdate|void|
+SDL_GetJoystickGUIDInfo|void|
+SDL_GetNumTouchDevices|0|
+SDL_GetNumTouchFingers|0|Unknown touch device id 0, cannot reset
+SDL_GetTouchDevice|0|Unknown touch device index 0
+SDL_GetTouchDeviceType|-1|Unknown touch device id 0, cannot reset
+SDL_GetTouchFinger|ptr:null|Unknown touch device id 0, cannot reset
+SDL_GetTouchName|ptr:null|Unknown touch device
+SDL_HapticClose|void|Haptic: Invalid haptic device identifier
+SDL_HapticDestroyEffect|void|Haptic: Invalid haptic device identifier
+SDL_HapticEffectSupported|-1|Haptic: Invalid haptic device identifier
+SDL_HapticGetEffectStatus|-1|Haptic: Invalid haptic device identifier
+SDL_HapticIndex|-1|Haptic: Invalid haptic device identifier
+SDL_HapticName|ptr:null|Haptic: There are 0 haptic devices available
+SDL_HapticNewEffect|-1|Haptic: Invalid haptic device identifier
+SDL_HapticNumAxes|-1|Haptic: Invalid haptic device identifier
+SDL_HapticNumEffects|-1|Haptic: Invalid haptic device identifier
+SDL_HapticNumEffectsPlaying|-1|Haptic: Invalid haptic device identifier
+SDL_HapticOpen|ptr:null|Haptic: There are 0 haptic devices available
+SDL_HapticOpenFromJoystick|ptr:null|Haptic: There are 0 haptic devices available
+SDL_HapticOpenFromMouse|ptr:null|Haptic: Mouse isn't a haptic device.
+SDL_HapticOpened|0|Haptic: There are 0 haptic devices available
+SDL_HapticPause|-1|Haptic: Invalid haptic device identifier
+SDL_HapticQuery|0|Haptic: Invalid haptic device identifier
+SDL_HapticRumbleInit|-1|Haptic: Invalid haptic device identifier
+SDL_HapticRumblePlay|-1|Haptic: Invalid haptic device identifier
+SDL_HapticRumbleStop|-1|Haptic: Invalid haptic device identifier
+SDL_HapticRumbleSupported|-1|Haptic: Invalid haptic device identifier
+SDL_HapticRunEffect|-1|Haptic: Invalid haptic device identifier
+SDL_HapticSetAutocenter|-1|Haptic: Invalid haptic device identifier
+SDL_HapticSetGain|-1|Haptic: Invalid haptic device identifier
+SDL_HapticStopAll|-1|Haptic: Invalid haptic device identifier
+SDL_HapticStopEffect|-1|Haptic: Invalid haptic device identifier
+SDL_HapticUnpause|-1|Haptic: Invalid haptic device identifier
+SDL_HapticUpdateEffect|-1|Haptic: Invalid haptic device identifier
+SDL_IsGameController|0|There are 0 joysticks available
+SDL_JoystickAttachVirtual|0|
+SDL_JoystickAttachVirtualEx|-1|Parameter 'desc' is invalid
+SDL_JoystickClose|void|Parameter 'joystick' is invalid
+SDL_JoystickCurrentPowerLevel|-1|Parameter 'joystick' is invalid
+SDL_JoystickDetachVirtual|0|
+SDL_JoystickEventState|0|
+SDL_JoystickFromInstanceID|ptr:null|
+SDL_JoystickFromPlayerIndex|ptr:null|
+SDL_JoystickGetAttached|0|Parameter 'joystick' is invalid
+SDL_JoystickGetAxis|0|Parameter 'joystick' is invalid
+SDL_JoystickGetAxisInitialState|0|Parameter 'joystick' is invalid
+SDL_JoystickGetBall|-1|Parameter 'joystick' is invalid
+SDL_JoystickGetButton|0|Parameter 'joystick' is invalid
+SDL_JoystickGetDeviceGUID|struct:00000000000000000000000000000000|There are 0 joysticks available
+SDL_JoystickGetDeviceInstanceID|-1|There are 0 joysticks available
+SDL_JoystickGetDevicePlayerIndex|-1|There are 0 joysticks available
+SDL_JoystickGetDeviceProduct|0|There are 0 joysticks available
+SDL_JoystickGetDeviceProductVersion|0|There are 0 joysticks available
+SDL_JoystickGetDeviceType|1|There are 0 joysticks available
+SDL_JoystickGetDeviceVendor|0|There are 0 joysticks available
+SDL_JoystickGetFirmwareVersion|0|Parameter 'joystick' is invalid
+SDL_JoystickGetGUID|struct:00000000000000000000000000000000|Parameter 'joystick' is invalid
+SDL_JoystickGetGUIDString|void|
+SDL_JoystickGetHat|0|Parameter 'joystick' is invalid
+SDL_JoystickGetPlayerIndex|-1|Parameter 'joystick' is invalid
+SDL_JoystickGetProduct|0|Parameter 'joystick' is invalid
+SDL_JoystickGetProductVersion|0|Parameter 'joystick' is invalid
+SDL_JoystickGetSerial|ptr:null|Parameter 'joystick' is invalid
+SDL_JoystickGetType|1|Parameter 'joystick' is invalid
+SDL_JoystickGetVendor|0|Parameter 'joystick' is invalid
+SDL_JoystickHasLED|0|Parameter 'joystick' is invalid
+SDL_JoystickHasRumble|0|Parameter 'joystick' is invalid
+SDL_JoystickHasRumbleTriggers|0|Parameter 'joystick' is invalid
+SDL_JoystickInstanceID|-1|Parameter 'joystick' is invalid
+SDL_JoystickIsHaptic|-1|
+SDL_JoystickIsVirtual|0|There are 0 joysticks available
+SDL_JoystickName|ptr:null|Parameter 'joystick' is invalid
+SDL_JoystickNameForIndex|ptr:null|There are 0 joysticks available
+SDL_JoystickNumAxes|-1|Parameter 'joystick' is invalid
+SDL_JoystickNumBalls|-1|Parameter 'joystick' is invalid
+SDL_JoystickNumButtons|-1|Parameter 'joystick' is invalid
+SDL_JoystickNumHats|-1|Parameter 'joystick' is invalid
+SDL_JoystickOpen|ptr:null|There are 0 joysticks available
+SDL_JoystickPath|ptr:null|Parameter 'joystick' is invalid
+SDL_JoystickPathForIndex|ptr:null|That operation is not supported
+SDL_JoystickRumble|-1|Parameter 'joystick' is invalid
+SDL_JoystickRumbleTriggers|-1|Parameter 'joystick' is invalid
+SDL_JoystickSendEffect|-1|Parameter 'joystick' is invalid
+SDL_JoystickSetLED|-1|Parameter 'joystick' is invalid
+SDL_JoystickSetPlayerIndex|void|Parameter 'joystick' is invalid
+SDL_JoystickSetVirtualAxis|-1|Parameter 'joystick' is invalid
+SDL_JoystickSetVirtualButton|-1|Parameter 'joystick' is invalid
+SDL_JoystickSetVirtualHat|-1|Parameter 'joystick' is invalid
+SDL_JoystickUpdate|void|
+SDL_LockJoysticks|void|
+SDL_LockSensors|void|
+SDL_MouseIsHaptic|0|
+SDL_NumHaptics|0|
+SDL_NumJoysticks|0|
+SDL_NumSensors|0|
+SDL_SensorClose|void|Sensor hasn't been opened yet
+SDL_SensorFromInstanceID|ptr:null|
+SDL_SensorGetData|-1|Sensor hasn't been opened yet
+SDL_SensorGetDataWithTimestamp|-1|Sensor hasn't been opened yet
+SDL_SensorGetDeviceInstanceID|-1|There are 0 sensors available
+SDL_SensorGetDeviceName|ptr:null|There are 0 sensors available
+SDL_SensorGetDeviceNonPortableType|-1|There are 0 sensors available
+SDL_SensorGetDeviceType|-1|There are 0 sensors available
+SDL_SensorGetInstanceID|-1|Sensor hasn't been opened yet
+SDL_SensorGetName|ptr:null|Sensor hasn't been opened yet
+SDL_SensorGetNonPortableType|-1|Sensor hasn't been opened yet
+SDL_SensorGetType|-1|Sensor hasn't been opened yet
+SDL_SensorOpen|ptr:null|There are 0 sensors available
+SDL_SensorUpdate|void|
+SDL_UnlockJoysticks|void|
+SDL_UnlockSensors|void|
+SDL_AudioInit|0|
+SDL_AudioQuit|void|
+SDL_AudioStreamAvailable|0|
+SDL_AudioStreamClear|void|Parameter 'stream' is invalid
+SDL_AudioStreamFlush|-1|Parameter 'stream' is invalid
+SDL_AudioStreamGet|-1|Parameter 'stream' is invalid
+SDL_AudioStreamPut|-1|Parameter 'stream' is invalid
+SDL_BuildAudioCVT|-1|Parameter 'cvt' is invalid
+SDL_ClearQueuedAudio|void|Invalid audio device ID
+SDL_CloseAudio|void|Invalid audio device ID
+SDL_CloseAudioDevice|void|Invalid audio device ID
+SDL_DequeueAudio|0|Invalid audio device ID
+SDL_FreeAudioStream|void|
+SDL_FreeWAV|void|
+SDL_GetAudioDeviceName|ptr:null|Audio subsystem is not initialized
+SDL_GetAudioDeviceSpec|-1|Parameter 'spec' is invalid
+SDL_GetAudioDeviceStatus|0|Invalid audio device ID
+SDL_GetAudioDriver|ptr:nonnull|
+SDL_GetAudioStatus|0|Invalid audio device ID
+SDL_GetCurrentAudioDriver|ptr:null|
+SDL_GetDefaultAudioInfo|-1|Parameter 'spec' is invalid
+SDL_GetNumAudioDevices|-1|
+SDL_GetNumAudioDrivers|3|
+SDL_GetQueuedAudioSize|0|Invalid audio device ID
+SDL_LoadDollarTemplates|0|
+SDL_LoadWAV_RW|ptr:null|
+SDL_LockAudio|void|Invalid audio device ID
+SDL_LockAudioDevice|void|Invalid audio device ID
+SDL_MixAudio|void|Invalid audio device ID
+SDL_MixAudioFormat|void|
+SDL_NewAudioStream|ptr:null|Parameter 'src_channels' is invalid
+SDL_OpenAudio|-1|Audio subsystem is not initialized
+SDL_OpenAudioDevice|0|Audio subsystem is not initialized
+SDL_PauseAudio|void|Invalid audio device ID
+SDL_PauseAudioDevice|void|Invalid audio device ID
+SDL_QueueAudio|-1|Invalid audio device ID
+SDL_RecordGesture|0|
+SDL_SaveAllDollarTemplates|0|
+SDL_SaveDollarTemplate|-1|Unknown gestureId
+SDL_UnlockAudio|void|Invalid audio device ID
+SDL_UnlockAudioDevice|void|Invalid audio device ID
+SDL_hid_ble_scan|void|
+SDL_hid_close|void|Invalid device
+SDL_hid_device_change_count|1|
+SDL_hid_enumerate|ptr:null|
+SDL_hid_exit|0|
+SDL_hid_free_enumeration|void|
+SDL_hid_get_feature_report|-1|Invalid device
+SDL_hid_get_indexed_string|-1|Invalid device
+SDL_hid_get_manufacturer_string|-1|Invalid device
+SDL_hid_get_product_string|-1|Invalid device
+SDL_hid_get_serial_number_string|-1|Invalid device
+SDL_hid_init|0|
+SDL_hid_open|ptr:null|
+SDL_hid_open_path|ptr:null|
+SDL_hid_read|-1|Invalid device
+SDL_hid_read_timeout|-1|Invalid device
+SDL_hid_send_feature_report|-1|Invalid device
+SDL_hid_set_nonblocking|-1|Invalid device
+SDL_hid_write|-1|Invalid device

@@ -19,6 +19,17 @@
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
 #include "SDL2Raster.hpp"
+#include "SDL2Blit.hpp"
+#include "SDL2Sys.hpp"
+#include "SDL2Base.hpp"
+#include "SDL2RW.hpp"
+#include "SDL2Rect.hpp"
+#include "SDL2Pixels.hpp"
+#include "SDL2Surface.hpp"
+#include "SDL2Audio.hpp"
+#include "SDL2Iconv.hpp"
+#include "SDL2Utf.hpp"
+#include "SDL2Events.hpp"
 #include <algorithm>
 #include <cstdio>     // fopen — dladdr'd to locate the platform's libc directory
 #include <cstdlib>
@@ -717,6 +728,13 @@ struct SDLWindowState {
     int y = 0;
     uint32_t flags = 0;         // SDL_WindowFlags as the image sees them
     sdl2::SurfaceRaw* surface = nullptr;  // SDL_GetWindowSurface, made on demand
+    int minW = 0, minH = 0, maxW = 0, maxH = 0;   // SDL_SetWindowMinimumSize and MaximumSize (0: none)
+    float opacity = 1.0f;                         // SDL_GetWindowOpacity
+    float brightness = 1.0f;                      // SDL_GetWindowBrightness
+    std::unordered_map<std::string, void*> data;  // SDL_SetWindowData
+    bool mouseGrab = false, keyboardGrab = false; // SDL_SetWindowMouseGrab, SDL_SetWindowKeyboardGrab
+    bool hasMouseRect = false;                    // SDL_SetWindowMouseRect
+    sdl2::Rect mouseRect = { 0, 0, 0, 0 };
 };
 
 // Per-texture state
@@ -733,6 +751,18 @@ struct SDLTextureState {
     uint32_t blendMode = 0;       // SDL_BLENDMODE_NONE until SDL_SetTextureBlendMode
     uint8_t rMod = 255, gMod = 255, bMod = 255, aMod = 255;
     bool linear = false;          // SDL_ScaleModeLinear
+    void* userData = nullptr;     // SDL_SetTextureUserData
+    sdl2::SurfaceRaw* lockedSurface = nullptr;   // SDL_LockTextureToSurface
+};
+
+// Viewport, scale, clip and logical size of one render target.
+struct RenderView {
+    double vx = 0, vy = 0, vw = 0, vh = 0;   // viewport in target pixels
+    bool viewportSet = false;                // false: the viewport is the whole target
+    bool clipEnabled = false;
+    double cx = 0, cy = 0, cw = 0, ch = 0;   // clip rectangle in target pixels
+    float sx = 1.0f, sy = 1.0f;              // SDL_RenderSetScale
+    int logicalW = 0, logicalH = 0;          // SDL_RenderSetLogicalSize
 };
 
 // Per-renderer state
@@ -742,24 +772,29 @@ struct SDLRendererState {
     uint8_t drawR = 0, drawG = 0, drawB = 0, drawA = 255;  // SDL default draw colour
     uint32_t drawBlend = 0;          // SDL_BLENDMODE_NONE
     void* target = nullptr;          // SDL_SetRenderTarget texture, or null for the window
-    sdl2::Clip clip;                 // SDL_RenderSetClipRect
+    RenderView view;                 // viewport, scale, clip and logical size of the current target
+    RenderView viewBackup;           // the window state while a texture is the target
+    bool integerScale = false;       // SDL_RenderSetIntegerScale
     uint32_t flags = 0;              // SDL_RendererFlags answered by SDL_GetRendererInfo
     std::vector<uint32_t> backbuffer;  // window pixels (ARGB8888) when no display surface serves
     int backW = 0, backH = 0;
 };
 
 static uintptr_t sNextHandle = 0x10000;  // Incrementing unique handles
+// An unknown window handle is "Invalid window" in SDL (the first line of
+// nearly every window function).
+#define WINDOW_CHECK(w, retval) \
+    if (!sWindows.count(w)) { sdl2::sys::lastError() = "Invalid window"; return retval; }
 static std::unordered_map<void*, SDLWindowState> sWindows;
 static std::unordered_map<void*, SDLTextureState> sTextures;
 static std::unordered_map<void*, SDLRendererState> sRenderers;
-static std::unordered_map<std::string, std::string> sHints;  // SDL_SetHint / SDL_GetHint
-static std::string sLastError;  // SDL_GetError; empty when no call failed
 static void* sMainRenderer = nullptr;  // First renderer is the "main" one (renders to display)
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
 // Pending synthetic window events (SDL2 sends these when window is created/shown)
 static std::queue<uint8_t> sPendingWindowEvents;
+static std::mutex sPendingWindowEventsMx;   // the UI thread pushes resize events, the VM thread pops
 
 // Poll-count based EXPOSED delay — simulates real SDL2 window creation latency.
 // Real SDL2 takes 200-500ms for OS window creation, during which SDL_PollEvent
@@ -777,8 +812,18 @@ static int sMouseX = 0;
 static int sMouseY = 0;
 static uint32_t sMouseButtons = 0;  // SDL button mask (bit 0=left, bit 1=middle, bit 2=right)
 static uint32_t sKeyModState = 0;   // SDL keyboard modifier state
-static bool sTextInputActive = false;  // Text input state (declared here for resetSDL2State)
+// Text input state (declared here for resetSDL2State).  SDL starts it on, unless
+// the host has a screen keyboard (a phone): then the image starts it.
+#if defined(__APPLE__) && TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST
+static bool sTextInputActive = false;
+#else
+static bool sTextInputActive = true;
+#endif
 static bool sSDL2PollEventFlagSet = false;  // Tracks whether SDL_PollEvent has activated event polling
+constexpr int kScancodeCount = 512;           // SDL_NUM_SCANCODES
+static uint8_t sKeyState[kScancodeCount];     // SDL_GetKeyboardState; updated by the host key events
+static int sRelMouseDx = 0, sRelMouseDy = 0;  // motion since the last SDL_GetRelativeMouseState
+static bool sScreenSaverEnabled = false;      // SDL_EnableScreenSaver, SDL_DisableScreenSaver (SDL disables it at video start)
 
 static void resetAllFFIState() {
     sModuleHandleCache.clear();
@@ -790,12 +835,15 @@ static void resetAllFFIState() {
     sWindows.clear();
     sTextures.clear();
     sRenderers.clear();
-    sHints.clear();
-    sLastError.clear();
+    sdl2::base::clearHints();
+    sdl2::sys::lastError().clear();
     sMainRenderer = nullptr;
     sMainWindow = nullptr;
     sSDLRenderingActive = false;
-    while (!sPendingWindowEvents.empty()) sPendingWindowEvents.pop();
+    {
+        std::lock_guard<std::mutex> lk(sPendingWindowEventsMx);
+        while (!sPendingWindowEvents.empty()) sPendingWindowEvents.pop();
+    }
     sWindowCreated = false;
     sPollCountdown = 0;
     g_firstExposedDelivered = false;
@@ -829,8 +877,26 @@ bool ffi_isFirstExposedDelivered() {
 // Called from vm_setDisplaySize when the Metal view resizes.
 // Pushes SIZE_CHANGED + EXPOSED into the SDL event queue so Pharo re-layouts
 // its Forms to match the new display dimensions.
+// The host (a UI thread) reports a new display size here.  This function only
+// records the size.  The VM thread applies it at the next poll
+// (applyNotifiedResize), because the window table and the poll countdown belong
+// to the VM thread.
+static std::atomic<int> sNotifiedWidth{ 0 }, sNotifiedHeight{ 0 };
+static std::atomic<bool> sResizeNotified{ false };
+
 void ffi_notifyDisplayResize(int width, int height) {
+    sNotifiedWidth.store(width, std::memory_order_relaxed);
+    sNotifiedHeight.store(height, std::memory_order_relaxed);
+    sResizeNotified.store(true, std::memory_order_release);
+}
+
+// VM thread: make the SDL window state match the new display size and queue the
+// events that tell the image.
+static void applyNotifiedResize() {
+    if (!sResizeNotified.exchange(false, std::memory_order_acquire)) return;
     if (!sMainWindow) return;
+    const int width = sNotifiedWidth.load(std::memory_order_relaxed);
+    const int height = sNotifiedHeight.load(std::memory_order_relaxed);
 
     // Update the SDL window state to match
     auto wit = sWindows.find(sMainWindow);
@@ -844,42 +910,55 @@ void ffi_notifyDisplayResize(int width, int height) {
     // expiry will deliver SIZE_CHANGED + EXPOSED with the current dimensions.
     if (sPollCountdown > 0) return;
 
+    std::lock_guard<std::mutex> lk(sPendingWindowEventsMx);
     sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
     sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
 }
 
+// The subsystems that are initialized, as SDL_WasInit(0) answers them.  Video
+// and joystick imply events, and the game controller implies the joystick.
+static std::atomic<uint32_t> sInitMask{ 0 };
+constexpr uint32_t kInitJoystick = 0x200, kInitGameController = 0x2000, kInitVideo = 0x20, kInitEvents = 0x4000;
+static void initSubsystems(uint32_t flags) {
+    if (flags & (kInitVideo | kInitJoystick | kInitGameController)) flags |= kInitEvents;
+    if (flags & kInitGameController) flags |= kInitJoystick;
+    sInitMask.fetch_or(flags);
+}
+
 int stub_SDL_Init(uint32_t flags) {
     sSDL2Initialized = true;
+    initSubsystems(flags);
     return 0;
 }
 
 void stub_SDL_Quit() {
     sSDL2Initialized = false;
+    sInitMask.store(0);
 }
 
 void stub_SDL_GetVersion(void* ver) {
     if (ver) {
         uint8_t* v = static_cast<uint8_t*>(ver);
         v[0] = 2;   // major
-        v[1] = 0;   // minor
-        v[2] = 20;  // patch
+        v[1] = 26;  // minor
+        v[2] = 5;   // patch (the SDL release that the headers and the stubs follow, docs/credits.md)
     }
 }
 
 // SDL_GetError answers the message of the last failed call, and an empty
 // string before any call failed (the SDL2 rule).
 static int sdlFail(int result, const char* message) {
-    sLastError = message;
+    sdl2::sys::lastError() = message;
     return result;
 }
 
 static void* sdlFailNull(const char* message) {
-    sLastError = message;
+    sdl2::sys::lastError() = message;
     return nullptr;
 }
 
 const char* stub_SDL_GetError() {
-    return sLastError.c_str();
+    return sdl2::sys::lastError().c_str();
 }
 
 // Window flags (SDL_video.h), named instead of written as hex.
@@ -949,6 +1028,7 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
 }
 
 void stub_SDL_DestroyWindow(void* window) {
+    WINDOW_CHECK(window, )
     auto it = sWindows.find(window);
     if (it == sWindows.end()) return;
     sdl2::freeSurface(it->second.surface);
@@ -968,6 +1048,10 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
         }
     }
 
+    if (!sWindows.count(window)) {
+        sdl2::sys::lastError() = "Invalid window";
+        if (!window) return;   // a null window leaves the outputs alone, as SDL does
+    }
     // For the main window, always return the display surface dimensions
     // so Pharo tracks the actual UIView size (handles resize)
     if (window == sMainWindow && pharo::gDisplaySurface) {
@@ -989,19 +1073,28 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
 }
 
 void stub_SDL_SetWindowSize(void* window, int w, int h) {
+    WINDOW_CHECK(window, )
     auto it = sWindows.find(window);
     if (it != sWindows.end()) {
-        it->second.width = w;
-        it->second.height = h;
+        // The size stays inside the minimum and maximum size of the window.
+        SDLWindowState& s = it->second;
+        if (s.minW && w < s.minW) w = s.minW;
+        if (s.minH && h < s.minH) h = s.minH;
+        if (s.maxW && w > s.maxW) w = s.maxW;
+        if (s.maxH && h > s.maxH) h = s.maxH;
+        s.width = w;
+        s.height = h;
     }
 }
 
 void stub_SDL_SetWindowTitle(void* window, const char* title) {
+    WINDOW_CHECK(window, )
     auto it = sWindows.find(window);
     if (it != sWindows.end()) it->second.title = title ? title : "";
 }
 
 const char* stub_SDL_GetWindowTitle(void* window) {
+    WINDOW_CHECK(window, "")
     auto it = sWindows.find(window);
     if (it == sWindows.end()) return "";
     return it->second.title.c_str();
@@ -1022,38 +1115,46 @@ static uint32_t windowFlagsOf(void* window) {
 }
 
 void stub_SDL_ShowWindow(void* window) {
+    WINDOW_CHECK(window, )
     setWindowFlags(window, kWindowHidden, kWindowShown);
 }
 
 void stub_SDL_HideWindow(void* window) {
+    WINDOW_CHECK(window, )
     setWindowFlags(window, kWindowShown, kWindowHidden);
 }
 
 void stub_SDL_RaiseWindow(void* window) {
+    WINDOW_CHECK(window, )
 }
 
 // A hidden window cannot be minimized, and only a resizable window can be
 // maximized; SDL ignores the call otherwise.
 void stub_SDL_MinimizeWindow(void* window) {
+    WINDOW_CHECK(window, )
     if (windowFlagsOf(window) & kWindowHidden) return;
     setWindowFlags(window, kWindowMaximized, kWindowMinimized);
 }
 
 void stub_SDL_MaximizeWindow(void* window) {
+    WINDOW_CHECK(window, )
     if (!(windowFlagsOf(window) & kWindowResizable)) return;
     setWindowFlags(window, kWindowMinimized, kWindowMaximized);
 }
 
 void stub_SDL_RestoreWindow(void* window) {
+    WINDOW_CHECK(window, )
     setWindowFlags(window, kWindowMinimized | kWindowMaximized, 0);
 }
 
 void stub_SDL_SetWindowBordered(void* window, int bordered) {
+    WINDOW_CHECK(window, )
     if (bordered) setWindowFlags(window, kWindowBorderless, 0);
     else setWindowFlags(window, 0, kWindowBorderless);
 }
 
 void stub_SDL_SetWindowResizable(void* window, int resizable) {
+    WINDOW_CHECK(window, )
     if (resizable) setWindowFlags(window, 0, kWindowResizable);
     else setWindowFlags(window, kWindowResizable, 0);
 }
@@ -1071,6 +1172,7 @@ int stub_SDL_SetWindowInputFocus(void* window) {
 }
 
 uint32_t stub_SDL_GetWindowID(void* window) {
+    WINDOW_CHECK(window, 0)
     return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(window) & 0xFFFFFFFF);
 }
 
@@ -1092,12 +1194,14 @@ int stub_SDL_SetWindowFullscreen(void* window, uint32_t flags) {
 }
 
 void stub_SDL_GetWindowPosition(void* window, int* x, int* y) {
+    WINDOW_CHECK(window, )
     auto it = sWindows.find(window);
     if (x) *x = it == sWindows.end() ? 0 : it->second.x;
     if (y) *y = it == sWindows.end() ? 0 : it->second.y;
 }
 
 void stub_SDL_SetWindowPosition(void* window, int x, int y) {
+    WINDOW_CHECK(window, )
     auto it = sWindows.find(window);
     if (it == sWindows.end()) return;
     it->second.x = resolveWindowPosition(x, it->second.width, displayWidth());
@@ -1105,9 +1209,12 @@ void stub_SDL_SetWindowPosition(void* window, int x, int y) {
 }
 
 void stub_SDL_SetWindowIcon(void* window, void* icon) {
+    WINDOW_CHECK(window, )
 }
 
 int stub_SDL_GetWindowWMInfo(void* window, void* info) {
+    WINDOW_CHECK(window, 0)
+    sdl2::sys::lastError() = "That operation is not supported";   // the answer of a driver without window manager info
     // Return failure — we don't have real WM info on Mac Catalyst.
     // Returning success with zeroed data causes SDLOSXPlatform>>afterSetWindowTitle:
     // to access zeroed struct fields as Smalltalk objects (classIdx=0 crash),
@@ -1245,13 +1352,14 @@ int stub_SDL_GetRenderDriverInfo(int index, void* info) {
 
 int stub_SDL_GetRendererInfo(void* renderer, void* info) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     if (!info) return sdlFail(-1, "Parameter 'info' is invalid");
     fillRendererInfo(static_cast<SDLRendererInfoRaw*>(info), rs->flags);
     return 0;
 }
 
 void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
+    if (!window) return sdl2::sys::invalidParam("window"), nullptr;
     if (!sWindows.count(window)) return sdlFailNull("Invalid window");
     if (index < -1 || index >= kRenderDriverCount) return sdlFailNull("Couldn't find matching render driver");
     void* handle = reinterpret_cast<void*>(sNextHandle++);
@@ -1278,8 +1386,8 @@ static void freeTexture(void* handle) {
 }
 
 void stub_SDL_DestroyRenderer(void* renderer) {
+    if (!sRenderers.count(renderer)) { sdl2::sys::invalidParam("renderer"); return; }
     if (renderer == sMainRenderer) return;
-    if (!sRenderers.count(renderer)) return;
     // SDL destroys the textures of a renderer with the renderer.
     std::vector<void*> owned;
     for (auto& kv : sTextures)
@@ -1290,7 +1398,7 @@ void stub_SDL_DestroyRenderer(void* renderer) {
 
 int stub_SDL_RenderClear(void* renderer) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     if (isDisplayRenderer(renderer, *rs)) return 0;   // see the note above
     sdl2::Pixels dst;
     if (!renderTargetPixels(renderer, *rs, dst)) return sdlFail(-1, "Invalid render target");
@@ -1299,6 +1407,7 @@ int stub_SDL_RenderClear(void* renderer) {
 }
 
 void stub_SDL_RenderPresent(void* renderer) {
+    if (!sRenderers.count(renderer)) { sdl2::sys::invalidParam("renderer"); return; }
     if (!sSDLRenderingActive) {
         sSDLRenderingActive = true;
     }
@@ -1340,6 +1449,7 @@ void stub_SDL_RenderPresent(void* renderer) {
 int stub_SDL_GetRendererOutputSize(void* renderer, int* w, int* h) {
     int rw = displayWidth(), rh = displayHeight();
     SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     if (rs && rs->target) {
         if (SDLTextureState* t = findTexture(rs->target)) { rw = t->width; rh = t->height; }
     } else if (rs && !isDisplayRenderer(renderer, *rs) && sWindows.count(rs->window)) {
@@ -1352,14 +1462,14 @@ int stub_SDL_GetRendererOutputSize(void* renderer, int* w, int* h) {
 
 int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     rs->drawR = r; rs->drawG = g; rs->drawB = b; rs->drawA = a;
     return 0;
 }
 
 int stub_SDL_SetRenderDrawBlendMode(void* renderer, uint32_t mode) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     if (!sdl2::isValidBlendMode(mode)) return sdlFail(-1, "Unsupported blend mode");
     rs->drawBlend = mode;
     return 0;
@@ -1390,104 +1500,583 @@ int stub_SDL_RenderTargetSupported(void* renderer) {
     return findRenderer(renderer) ? 1 : 0;
 }
 
+// ----- Render state: viewport, scale, logical size and clip -----
+//
+// The viewport, the clip rectangle and the logical size live in target pixels
+// (the viewport and the clip are stored multiplied by the scale that was
+// current when they were set, as SDL does).  When the renderer switches to a
+// texture target it keeps the state of the window and starts the texture
+// with a full viewport, no clip, scale 1 and a logical size equal to the
+// texture; it restores the window state when the target goes back to the
+// window.
+
+static bool outputSizeOf(void* handle, const SDLRendererState& rs, int& w, int& h) {
+    w = displayWidth();
+    h = displayHeight();
+    if (rs.target) {
+        SDLTextureState* t = findTexture(rs.target);
+        if (!t) return false;
+        w = t->width; h = t->height;
+    } else if (!isDisplayRenderer(handle, rs) && sWindows.count(rs.window)) {
+        stub_SDL_GetWindowSize(rs.window, &w, &h);
+    }
+    return true;
+}
+
+// The viewport in target pixels as the draw calls use it (integer truncation).
+static sdl2::Rect viewportOf(void* handle, const SDLRendererState& rs) {
+    if (!rs.view.viewportSet) {
+        int w = 0, h = 0;
+        outputSizeOf(handle, rs, w, h);
+        return { 0, 0, w, h };
+    }
+    return { static_cast<int>(rs.view.vx), static_cast<int>(rs.view.vy),
+             static_cast<int>(rs.view.vw), static_cast<int>(rs.view.vh) };
+}
+
+// The surface clip of the draw calls: the viewport, and inside it the clip
+// rectangle (which is relative to the viewport).
+static sdl2::Rect drawClipOf(void* handle, const SDLRendererState& rs, const sdl2::Pixels& dst) {
+    const sdl2::Rect vp = viewportOf(handle, rs);
+    sdl2::Rect clip = vp;
+    if (rs.view.clipEnabled) {
+        const sdl2::Rect c = { static_cast<int>(rs.view.cx) + vp.x, static_cast<int>(rs.view.cy) + vp.y,
+                               static_cast<int>(rs.view.cw), static_cast<int>(rs.view.ch) };
+        sdl2::rect::intersectRect<int>(reinterpret_cast<const sdl2::rect::RectT<int>*>(&vp),
+                                       reinterpret_cast<const sdl2::rect::RectT<int>*>(&c),
+                                       reinterpret_cast<sdl2::rect::RectT<int>*>(&clip));
+    }
+    return sdl2::effectiveClip(dst, &clip);
+}
+
+static void setViewportNull(void* handle, SDLRendererState& rs) {
+    rs.view.viewportSet = false;
+}
+
+static void setViewportRect(SDLRendererState& rs, const sdl2::Rect& r) {
+    rs.view.viewportSet = true;
+    rs.view.vx = static_cast<double>(r.x) * rs.view.sx;
+    rs.view.vy = static_cast<double>(r.y) * rs.view.sy;
+    rs.view.vw = static_cast<double>(r.w) * rs.view.sx;
+    rs.view.vh = static_cast<double>(r.h) * rs.view.sy;
+}
+
+// SDL_SetRenderTarget keeps the window state and starts a texture clean.
 int stub_SDL_SetRenderTarget(void* renderer, void* texture) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
-    if (!texture) { rs->target = nullptr; return 0; }
-    SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
-    if (t->access != kAccessTarget) return sdlFail(-1, "Texture not created with SDL_TEXTUREACCESS_TARGET");
-    if (t->renderer != renderer) return sdlFail(-1, "Texture was not created with this renderer");
+    if (!rs) return sdlFail(-1, "That operation is not supported");   // SDL asks RenderTargetSupported first
+    if (texture) {
+        SDLTextureState* t = findTexture(texture);
+        if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
+        if (t->renderer != renderer) return sdlFail(-1, "Texture was not created with this renderer");
+        if (t->access != kAccessTarget) return sdlFail(-1, "Texture not created with SDL_TEXTUREACCESS_TARGET");
+    }
+    if (texture == rs->target) return 0;
+    if (texture && !rs->target) rs->viewBackup = rs->view;
     rs->target = texture;
+    if (texture) {
+        SDLTextureState* t = findTexture(texture);
+        rs->view = RenderView();
+        rs->view.viewportSet = true;
+        rs->view.vw = t->width;
+        rs->view.vh = t->height;
+        rs->view.logicalW = t->width;
+        rs->view.logicalH = t->height;
+    } else {
+        rs->view = rs->viewBackup;
+    }
     return 0;
 }
 
 int stub_SDL_RenderSetClipRect(void* renderer, const void* rect) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
-    if (!rect) { rs->clip.enabled = false; return 0; }
-    rs->clip.enabled = true;
-    rs->clip.rect = *static_cast<const sdl2::Rect*>(rect);
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    if (!rect) {
+        rs->view.clipEnabled = false;
+        rs->view.cx = rs->view.cy = rs->view.cw = rs->view.ch = 0;
+        return 0;
+    }
+    const sdl2::Rect* r = static_cast<const sdl2::Rect*>(rect);
+    rs->view.clipEnabled = true;
+    rs->view.cx = static_cast<double>(r->x) * rs->view.sx;
+    rs->view.cy = static_cast<double>(r->y) * rs->view.sy;
+    rs->view.cw = static_cast<double>(r->w) * rs->view.sx;
+    rs->view.ch = static_cast<double>(r->h) * rs->view.sy;
     return 0;
 }
 
-// No logical size is ever set, so the answer is the SDL default of 0 x 0.
+void stub_SDL_RenderGetClipRect(void* renderer, void* rect) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) { sdlFail(0, "Parameter 'renderer' is invalid"); return; }
+    if (!rect) return;
+    sdl2::Rect* r = static_cast<sdl2::Rect*>(rect);
+    r->x = static_cast<int>(std::floor(rs->view.cx / rs->view.sx));
+    r->y = static_cast<int>(std::floor(rs->view.cy / rs->view.sy));
+    r->w = static_cast<int>(std::floor(rs->view.cw / rs->view.sx));
+    r->h = static_cast<int>(std::floor(rs->view.ch / rs->view.sy));
+}
+
+int stub_SDL_RenderIsClipEnabled(void* renderer) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(0, "Parameter 'renderer' is invalid");
+    return rs->view.clipEnabled ? 1 : 0;
+}
+
+int stub_SDL_RenderSetViewport(void* renderer, const void* rect) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    if (rect) setViewportRect(*rs, *static_cast<const sdl2::Rect*>(rect));
+    else setViewportNull(renderer, *rs);
+    return 0;
+}
+
+void stub_SDL_RenderGetViewport(void* renderer, void* rect) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) { sdlFail(0, "Parameter 'renderer' is invalid"); return; }
+    if (!rect) return;
+    double x = 0, y = 0, w = 0, h = 0;
+    if (rs->view.viewportSet) { x = rs->view.vx; y = rs->view.vy; w = rs->view.vw; h = rs->view.vh; }
+    else { int iw = 0, ih = 0; outputSizeOf(renderer, *rs, iw, ih); w = iw; h = ih; }
+    sdl2::Rect* r = static_cast<sdl2::Rect*>(rect);
+    r->x = static_cast<int>(std::floor(x / rs->view.sx));
+    r->y = static_cast<int>(std::floor(y / rs->view.sy));
+    r->w = static_cast<int>(std::floor(w / rs->view.sx));
+    r->h = static_cast<int>(std::floor(h / rs->view.sy));
+}
+
+int stub_SDL_RenderSetScale(void* renderer, float sx, float sy) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    rs->view.sx = sx;
+    rs->view.sy = sy;
+    return 0;
+}
+
+void stub_SDL_RenderGetScale(void* renderer, float* sx, float* sy) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) { sdlFail(0, "Parameter 'renderer' is invalid"); return; }
+    if (sx) *sx = rs->view.sx;
+    if (sy) *sy = rs->view.sy;
+}
+
+// The logical size letterboxes (or, with the overscan mode, crops) the logical
+// picture into the target: it sets a viewport and a scale.
+static int updateLogicalSize(void* renderer, SDLRendererState& rs) {
+    if (!rs.view.logicalW || !rs.view.logicalH) return 0;
+    int w = 1, h = 1;
+    if (!outputSizeOf(renderer, rs, w, h)) return sdlFail(-1, "Parameter 'texture' is invalid");
+    const char* mode = sdl2::base::getHint("SDL_RENDER_LOGICAL_SIZE_MODE");
+    const bool overscan = mode && (*mode == '1' || strcasecmp(mode, "overscan") == 0);
+    const float wantAspect = static_cast<float>(rs.view.logicalW) / rs.view.logicalH;
+    const float realAspect = static_cast<float>(w) / h;
+    rs.view.sx = rs.view.sy = 1.0f;   // the viewport below is in target pixels
+    float scale;
+    sdl2::Rect vp = { 0, 0, 0, 0 };
+    if (rs.integerScale) {
+        scale = wantAspect > realAspect ? static_cast<float>(w / rs.view.logicalW)
+                                        : static_cast<float>(h / rs.view.logicalH);
+        if (scale < 1.0f) scale = 1.0f;
+        vp.w = static_cast<int>(std::floor(rs.view.logicalW * scale));
+        vp.x = (w - vp.w) / 2;
+        vp.h = static_cast<int>(std::floor(rs.view.logicalH * scale));
+        vp.y = (h - vp.h) / 2;
+    } else if (std::fabs(wantAspect - realAspect) < 0.0001) {
+        scale = static_cast<float>(w) / rs.view.logicalW;
+        vp = { 0, 0, w, h };
+    } else if (wantAspect > realAspect) {
+        if (overscan) {
+            scale = static_cast<float>(h) / rs.view.logicalH;
+            vp.y = 0; vp.h = h;
+            vp.w = static_cast<int>(std::floor(rs.view.logicalW * scale));
+            vp.x = (w - vp.w) / 2;
+        } else {
+            scale = static_cast<float>(w) / rs.view.logicalW;
+            vp.x = 0; vp.w = w;
+            vp.h = static_cast<int>(std::floor(rs.view.logicalH * scale));
+            vp.y = (h - vp.h) / 2;
+        }
+    } else {
+        if (overscan) {
+            scale = static_cast<float>(w) / rs.view.logicalW;
+            vp.x = 0; vp.w = w;
+            vp.h = static_cast<int>(std::floor(rs.view.logicalH * scale));
+            vp.y = (h - vp.h) / 2;
+        } else {
+            scale = static_cast<float>(h) / rs.view.logicalH;
+            vp.y = 0; vp.h = h;
+            vp.w = static_cast<int>(std::floor(rs.view.logicalW * scale));
+            vp.x = (w - vp.w) / 2;
+        }
+    }
+    setViewportRect(rs, vp);
+    rs.view.sx = scale;
+    rs.view.sy = scale;
+    return 0;
+}
+
+int stub_SDL_RenderSetLogicalSize(void* renderer, int w, int h) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    if (!w || !h) {
+        rs->view.logicalW = rs->view.logicalH = 0;
+        setViewportNull(renderer, *rs);
+        rs->view.sx = rs->view.sy = 1.0f;
+        return 0;
+    }
+    rs->view.logicalW = w;
+    rs->view.logicalH = h;
+    return updateLogicalSize(renderer, *rs);
+}
+
 void stub_SDL_RenderGetLogicalSize(void* renderer, int* w, int* h) {
-    if (w) *w = 0;
-    if (h) *h = 0;
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) { sdlFail(0, "Parameter 'renderer' is invalid"); return; }
+    if (w) *w = rs->view.logicalW;
+    if (h) *h = rs->view.logicalH;
+}
+
+int stub_SDL_RenderSetIntegerScale(void* renderer, int enable) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    rs->integerScale = enable != 0;
+    return updateLogicalSize(renderer, *rs);
+}
+
+int stub_SDL_RenderGetIntegerScale(void* renderer) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) return sdlFail(0, "Parameter 'renderer' is invalid");
+    return rs->integerScale ? 1 : 0;
+}
+
+void stub_SDL_RenderWindowToLogical(void* renderer, int windowX, int windowY, float* logicalX, float* logicalY) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) { sdlFail(0, "Parameter 'renderer' is invalid"); return; }
+    double vx = 0, vy = 0;
+    if (rs->view.viewportSet) { vx = rs->view.vx; vy = rs->view.vy; }
+    if (logicalX) *logicalX = static_cast<float>((static_cast<float>(windowX) - vx) / rs->view.sx);
+    if (logicalY) *logicalY = static_cast<float>((static_cast<float>(windowY) - vy) / rs->view.sy);
+}
+
+void stub_SDL_RenderLogicalToWindow(void* renderer, float logicalX, float logicalY, int* windowX, int* windowY) {
+    SDLRendererState* rs = findRenderer(renderer);
+    if (!rs) { sdlFail(0, "Parameter 'renderer' is invalid"); return; }
+    double vx = 0, vy = 0;
+    if (rs->view.viewportSet) { vx = rs->view.vx; vy = rs->view.vy; }
+    if (windowX) *windowX = static_cast<int>(static_cast<float>((logicalX * rs->view.sx) + vx));
+    if (windowY) *windowY = static_cast<int>(static_cast<float>((logicalY * rs->view.sy) + vy));
 }
 
 int stub_SDL_RenderSetVSync(void* renderer, int vsync) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     if (vsync != 0 && vsync != 1) return sdlFail(-1, "Unsupported vsync interval");
     rs->flags = vsync ? (rs->flags | kRendererPresentVSync) : (rs->flags & ~kRendererPresentVSync);
     return 0;
 }
 
-// SDL_RenderDrawPoint, DrawLine, DrawRect, FillRect and FillRectF share the
-// target lookup and the end-of-drawing update.
-static int drawOnTarget(void* renderer, const std::function<void(SDLRendererState&, const sdl2::Pixels&)>& draw) {
-    SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+// ----- Draw calls -----
+//
+// Every draw call resolves the target, the viewport and the clip once, then
+// draws in target pixels.  A renderer scale other than 1 turns points, lines
+// and rectangles into scaled rectangles, as the SDL software renderer does.
+
+struct DrawTarget {
+    SDLRendererState* rs = nullptr;
     sdl2::Pixels dst;
     bool isDisplay = false;
-    if (!renderTargetPixels(renderer, *rs, dst, &isDisplay)) return sdlFail(-1, "Invalid render target");
-    draw(*rs, dst);
-    finishDrawing(isDisplay);
+    sdl2::Rect vp = { 0, 0, 0, 0 };
+    sdl2::Rect clip = { 0, 0, 0, 0 };
+    sdl2::RGBA color = { 0, 0, 0, 255 };
+    bool scaled = false;
+};
+
+static int beginDraw(void* renderer, DrawTarget& t) {
+    t.rs = findRenderer(renderer);
+    if (!t.rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    if (!renderTargetPixels(renderer, *t.rs, t.dst, &t.isDisplay)) return sdlFail(-1, "Invalid render target");
+    t.vp = viewportOf(renderer, *t.rs);
+    t.clip = drawClipOf(renderer, *t.rs, t.dst);
+    t.color = { t.rs->drawR, t.rs->drawG, t.rs->drawB, t.rs->drawA };
+    t.scaled = t.rs->view.sx != 1.0f || t.rs->view.sy != 1.0f;
     return 0;
 }
 
-static sdl2::RGBA drawColor(const SDLRendererState& rs) {
-    return { rs.drawR, rs.drawG, rs.drawB, rs.drawA };
+static void endDraw(const DrawTarget& t) { finishDrawing(t.isDisplay); }
+
+// A float rectangle in scaled target pixels becomes an integer rectangle at
+// least one pixel wide and high.
+static void fillScaledRect(const DrawTarget& t, float x, float y, float w, float h) {
+    sdl2::Rect r = { static_cast<int>(x), static_cast<int>(y),
+                     std::max(static_cast<int>(w), 1), std::max(static_cast<int>(h), 1) };
+    r.x += t.vp.x;
+    r.y += t.vp.y;
+    sdl2::fillRectClipped(t.dst, t.clip, r, t.color, t.rs->drawBlend);
+}
+
+static void drawPointsOn(const DrawTarget& t, const sdl2::FRect* pts, int count) {
+    const float sx = t.rs->view.sx, sy = t.rs->view.sy;
+    if (t.scaled) {
+        for (int i = 0; i < count; i++) fillScaledRect(t, pts[i].x * sx, pts[i].y * sy, sx, sy);
+        return;
+    }
+    std::vector<sdl2::IPoint> ip(count);
+    for (int i = 0; i < count; i++) ip[i] = { static_cast<int>(pts[i].x) + t.vp.x, static_cast<int>(pts[i].y) + t.vp.y };
+    sdl2::drawPointsClipped(t.dst, t.clip, ip.data(), count, t.color, t.rs->drawBlend);
+}
+
+// One segment of the point method: all pixels of the Bresenham line, as points.
+static void bresenhamPoints(const DrawTarget& t, int x1, int y1, int x2, int y2, bool drawLast) {
+    const int deltax = std::abs(x2 - x1), deltay = std::abs(y2 - y1);
+    int numpixels, d, dinc1, dinc2, xinc1, xinc2, yinc1, yinc2;
+    if (deltax >= deltay) {
+        numpixels = deltax + 1; d = 2 * deltay - deltax; dinc1 = deltay * 2; dinc2 = (deltay - deltax) * 2;
+        xinc1 = 1; xinc2 = 1; yinc1 = 0; yinc2 = 1;
+    } else {
+        numpixels = deltay + 1; d = 2 * deltax - deltay; dinc1 = deltax * 2; dinc2 = (deltax - deltay) * 2;
+        xinc1 = 0; xinc2 = 1; yinc1 = 1; yinc2 = 1;
+    }
+    if (x1 > x2) { xinc1 = -xinc1; xinc2 = -xinc2; }
+    if (y1 > y2) { yinc1 = -yinc1; yinc2 = -yinc2; }
+    if (!drawLast) --numpixels;
+    std::vector<sdl2::FRect> pts;
+    pts.reserve(std::max(numpixels, 0));
+    int x = x1, y = y1;
+    for (int i = 0; i < numpixels; i++) {
+        pts.push_back({ static_cast<float>(x), static_cast<float>(y), 0.f, 0.f });
+        if (d < 0) { d += dinc1; x += xinc1; y += yinc1; }
+        else { d += dinc2; x += xinc2; y += yinc2; }
+    }
+    drawPointsOn(t, pts.data(), static_cast<int>(pts.size()));
+}
+
+static int renderLineMethod() {
+    const char* hint = sdl2::base::getHint("SDL_RENDER_LINE_METHOD");
+    return hint ? atoi(hint) : 0;
+}
+
+static void drawLinesOn(const DrawTarget& t, const sdl2::FRect* pts, int count) {
+    if (renderLineMethod() == 2) {   // SDL_RENDERLINEMETHOD_LINES: poly-line of the surface
+        std::vector<sdl2::IPoint> ip(count);
+        for (int i = 0; i < count; i++) ip[i] = { static_cast<int>(pts[i].x) + t.vp.x, static_cast<int>(pts[i].y) + t.vp.y };
+        if (!t.scaled) {
+            sdl2::drawPolyline(t.dst, t.clip, ip.data(), count, t.color, t.rs->drawBlend);
+            return;
+        }
+    }
+    const float sx = t.rs->view.sx, sy = t.rs->view.sy;
+    const sdl2::Rect logicalView = { 0, 0, static_cast<int>(t.vp.w / sx), static_cast<int>(t.vp.h / sy) };
+    std::vector<sdl2::FRect> rects;
+    bool drewLine = false, drawLast = false;
+    for (int i = 0; i < count - 1; i++) {
+        const bool sameX = pts[i].x == pts[i + 1].x, sameY = pts[i].y == pts[i + 1].y;
+        if (i == count - 2) {
+            if (!drewLine || pts[i + 1].x != pts[0].x || pts[i + 1].y != pts[0].y) drawLast = true;
+        } else if (sameX && sameY) {
+            continue;
+        }
+        const float last = drawLast ? 1.0f : 0.0f;
+        if (sameX) {
+            const float minY = std::min(pts[i].y, pts[i + 1].y), maxY = std::max(pts[i].y, pts[i + 1].y);
+            sdl2::FRect r = { pts[i].x * sx, minY * sy, sx, (maxY - minY + last) * sy };
+            if (!drawLast && pts[i + 1].y < pts[i].y) r.y += sy;
+            rects.push_back(r);
+        } else if (sameY) {
+            const float minX = std::min(pts[i].x, pts[i + 1].x), maxX = std::max(pts[i].x, pts[i + 1].x);
+            sdl2::FRect r = { minX * sx, pts[i].y * sy, (maxX - minX + last) * sx, sy };
+            if (!drawLast && pts[i + 1].x < pts[i].x) r.x += sx;
+            rects.push_back(r);
+        } else {
+            // A segment is cut to the viewport (in unscaled coordinates) with the
+            // integer Cohen-Sutherland clip before it is drawn, so a long line
+            // that leaves the viewport keeps the pixels of the clipped line.
+            int x1 = static_cast<int>(std::roundf(pts[i].x)), y1 = static_cast<int>(std::roundf(pts[i].y));
+            int x2 = static_cast<int>(std::roundf(pts[i + 1].x)), y2 = static_cast<int>(std::roundf(pts[i + 1].y));
+            const int ox2 = x2, oy2 = y2;
+            if (sdl2::rect::intersectRectAndLine<int>(reinterpret_cast<const sdl2::rect::RectT<int>*>(&logicalView), &x1, &y1, &x2, &y2)) {
+                const bool clippedEnd = x2 != ox2 || y2 != oy2;
+                bresenhamPoints(t, x1, y1, x2, y2, drawLast || clippedEnd);
+            }
+        }
+        drewLine = true;
+    }
+    for (const sdl2::FRect& r : rects) fillScaledRect(t, r.x, r.y, r.w, r.h);
+}
+
+static sdl2::FRect viewportSizeF(void* renderer, const SDLRendererState& rs) {
+    const sdl2::Rect vp = viewportOf(renderer, rs);
+    double w = vp.w, h = vp.h;
+    if (rs.view.viewportSet) { w = rs.view.vw; h = rs.view.vh; }
+    return { 0.f, 0.f, static_cast<float>(w / rs.view.sx), static_cast<float>(h / rs.view.sy) };
+}
+
+static void rectOutline(const DrawTarget& t, const sdl2::FRect& r) {
+    const sdl2::FRect p[5] = { { r.x, r.y, 0, 0 }, { r.x + r.w - 1, r.y, 0, 0 }, { r.x + r.w - 1, r.y + r.h - 1, 0, 0 },
+                               { r.x, r.y + r.h - 1, 0, 0 }, { r.x, r.y, 0, 0 } };
+    drawLinesOn(t, p, 5);
+}
+
+static void fillRectsOn(const DrawTarget& t, const sdl2::FRect* rects, int count) {
+    const float sx = t.rs->view.sx, sy = t.rs->view.sy;
+    for (int i = 0; i < count; i++) fillScaledRect(t, rects[i].x * sx, rects[i].y * sy, rects[i].w * sx, rects[i].h * sy);
+}
+
+static std::vector<sdl2::FRect> pointsToF(const sdl2::Rect* ip, int count) {   // SDL_Point has the first two fields of SDL_Rect: use a stride-2 read
+    std::vector<sdl2::FRect> out(count);
+    const int* raw = reinterpret_cast<const int*>(ip);
+    for (int i = 0; i < count; i++) out[i] = { static_cast<float>(raw[2 * i]), static_cast<float>(raw[2 * i + 1]), 0.f, 0.f };
+    return out;
+}
+
+static std::vector<sdl2::FRect> fpointsToF(const float* fp, int count) {
+    std::vector<sdl2::FRect> out(count);
+    for (int i = 0; i < count; i++) out[i] = { fp[2 * i], fp[2 * i + 1], 0.f, 0.f };
+    return out;
+}
+
+static std::vector<sdl2::FRect> rectsToF(const sdl2::Rect* r, int count) {
+    std::vector<sdl2::FRect> out(count);
+    for (int i = 0; i < count; i++) out[i] = { static_cast<float>(r[i].x), static_cast<float>(r[i].y), static_cast<float>(r[i].w), static_cast<float>(r[i].h) };
+    return out;
+}
+
+#define SDL_RENDER_NEED_ARRAY(arr, fname) \
+    if (!(arr)) { return sdlFail(-1, "Parameter '" fname "' is invalid"); }
+
+int stub_SDL_RenderDrawPoints(void* renderer, const void* points, int count) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    SDL_RENDER_NEED_ARRAY(points, "SDL_RenderDrawPoints(): points")
+    if (count < 1) return 0;
+    auto f = pointsToF(static_cast<const sdl2::Rect*>(points), count);
+    drawPointsOn(t, f.data(), count);
+    endDraw(t);
+    return 0;
+}
+
+int stub_SDL_RenderDrawPointsF(void* renderer, const void* points, int count) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    SDL_RENDER_NEED_ARRAY(points, "SDL_RenderDrawPointsF(): points")
+    if (count < 1) return 0;
+    auto f = fpointsToF(static_cast<const float*>(points), count);
+    drawPointsOn(t, f.data(), count);
+    endDraw(t);
+    return 0;
 }
 
 int stub_SDL_RenderDrawPoint(void* renderer, int x, int y) {
-    return drawOnTarget(renderer, [&](SDLRendererState& rs, const sdl2::Pixels& dst) {
-        sdl2::drawPoint(dst, rs.clip, x, y, drawColor(rs), rs.drawBlend);
-    });
+    const int p[2] = { x, y };
+    return stub_SDL_RenderDrawPoints(renderer, p, 1);
+}
+
+int stub_SDL_RenderDrawPointF(void* renderer, float x, float y) {
+    const float p[2] = { x, y };
+    return stub_SDL_RenderDrawPointsF(renderer, p, 1);
+}
+
+int stub_SDL_RenderDrawLines(void* renderer, const void* points, int count) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    SDL_RENDER_NEED_ARRAY(points, "SDL_RenderDrawLines(): points")
+    if (count < 2) return 0;
+    auto f = pointsToF(static_cast<const sdl2::Rect*>(points), count);
+    drawLinesOn(t, f.data(), count);
+    endDraw(t);
+    return 0;
+}
+
+int stub_SDL_RenderDrawLinesF(void* renderer, const void* points, int count) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    SDL_RENDER_NEED_ARRAY(points, "SDL_RenderDrawLinesF(): points")
+    if (count < 2) return 0;
+    auto f = fpointsToF(static_cast<const float*>(points), count);
+    drawLinesOn(t, f.data(), count);
+    endDraw(t);
+    return 0;
 }
 
 int stub_SDL_RenderDrawLine(void* renderer, int x1, int y1, int x2, int y2) {
-    return drawOnTarget(renderer, [&](SDLRendererState& rs, const sdl2::Pixels& dst) {
-        sdl2::drawLine(dst, rs.clip, x1, y1, x2, y2, drawColor(rs), rs.drawBlend);
-    });
+    const int p[4] = { x1, y1, x2, y2 };
+    return stub_SDL_RenderDrawLines(renderer, p, 2);
+}
+
+int stub_SDL_RenderDrawLineF(void* renderer, float x1, float y1, float x2, float y2) {
+    const float p[4] = { x1, y1, x2, y2 };
+    return stub_SDL_RenderDrawLinesF(renderer, p, 2);
+}
+
+int stub_SDL_RenderDrawRectF(void* renderer, const void* rect) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    const sdl2::FRect r = rect ? *static_cast<const sdl2::FRect*>(rect) : viewportSizeF(renderer, *t.rs);
+    rectOutline(t, r);
+    endDraw(t);
+    return 0;
 }
 
 int stub_SDL_RenderDrawRect(void* renderer, const void* rect) {
-    return drawOnTarget(renderer, [&](SDLRendererState& rs, const sdl2::Pixels& dst) {
-        const sdl2::Rect r = rect ? *static_cast<const sdl2::Rect*>(rect) : sdl2::Rect{ 0, 0, dst.w, dst.h };
-        sdl2::drawRectOutline(dst, rs.clip, r, drawColor(rs), rs.drawBlend);
-    });
+    if (!rect) return stub_SDL_RenderDrawRectF(renderer, nullptr);
+    const sdl2::FRect r = rectsToF(static_cast<const sdl2::Rect*>(rect), 1)[0];
+    return stub_SDL_RenderDrawRectF(renderer, &r);
 }
 
-int stub_SDL_RenderFillRect(void* renderer, const void* rect) {
-    return drawOnTarget(renderer, [&](SDLRendererState& rs, const sdl2::Pixels& dst) {
-        const sdl2::Rect r = rect ? *static_cast<const sdl2::Rect*>(rect) : sdl2::Rect{ 0, 0, dst.w, dst.h };
-        sdl2::fillRect(dst, rs.clip, r, drawColor(rs), rs.drawBlend);
-    });
+int stub_SDL_RenderDrawRectsF(void* renderer, const void* rects, int count) {
+    if (!findRenderer(renderer)) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    SDL_RENDER_NEED_ARRAY(rects, "SDL_RenderDrawRectsF(): rects")
+    for (int i = 0; i < count; i++)
+        if (stub_SDL_RenderDrawRectF(renderer, static_cast<const sdl2::FRect*>(rects) + i) < 0) return -1;
+    return 0;
 }
 
-// A float rectangle covers the pixels between its rounded corners, the same
-// rule SDL_RenderCopyF uses.
-static sdl2::Rect roundedRect(const sdl2::FRect& f) {
-    const int x1 = static_cast<int>(std::lround(f.x)), y1 = static_cast<int>(std::lround(f.y));
-    const int x2 = static_cast<int>(std::lround(f.x + f.w)), y2 = static_cast<int>(std::lround(f.y + f.h));
-    return { x1, y1, x2 - x1, y2 - y1 };
+int stub_SDL_RenderDrawRects(void* renderer, const void* rects, int count) {
+    if (!findRenderer(renderer)) return sdlFail(-1, "Parameter 'renderer' is invalid");
+    SDL_RENDER_NEED_ARRAY(rects, "SDL_RenderDrawRects(): rects")
+    for (int i = 0; i < count; i++)
+        if (stub_SDL_RenderDrawRect(renderer, static_cast<const sdl2::Rect*>(rects) + i) < 0) return -1;
+    return 0;
+}
+
+int stub_SDL_RenderFillRectsF(void* renderer, const void* rects, int count) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    SDL_RENDER_NEED_ARRAY(rects, "SDL_RenderFillRectsF(): rects")
+    if (count < 1) return 0;
+    fillRectsOn(t, static_cast<const sdl2::FRect*>(rects), count);
+    endDraw(t);
+    return 0;
+}
+
+int stub_SDL_RenderFillRects(void* renderer, const void* rects, int count) {
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    SDL_RENDER_NEED_ARRAY(rects, "SDL_RenderFillRects(): rects")
+    if (count < 1) return 0;
+    auto f = rectsToF(static_cast<const sdl2::Rect*>(rects), count);
+    fillRectsOn(t, f.data(), count);
+    endDraw(t);
+    return 0;
 }
 
 int stub_SDL_RenderFillRectF(void* renderer, const void* rect) {
-    return drawOnTarget(renderer, [&](SDLRendererState& rs, const sdl2::Pixels& dst) {
-        const sdl2::Rect r = rect ? roundedRect(*static_cast<const sdl2::FRect*>(rect))
-                                  : sdl2::Rect{ 0, 0, dst.w, dst.h };
-        sdl2::fillRect(dst, rs.clip, r, drawColor(rs), rs.drawBlend);
-    });
+    DrawTarget t;
+    if (beginDraw(renderer, t) < 0) return -1;
+    const sdl2::FRect r = rect ? *static_cast<const sdl2::FRect*>(rect) : viewportSizeF(renderer, *t.rs);
+    fillRectsOn(t, &r, 1);
+    endDraw(t);
+    return 0;
+}
+
+int stub_SDL_RenderFillRect(void* renderer, const void* rect) {
+    if (!rect) return stub_SDL_RenderFillRectF(renderer, nullptr);
+    const sdl2::FRect r = rectsToF(static_cast<const sdl2::Rect*>(rect), 1)[0];
+    return stub_SDL_RenderFillRectF(renderer, &r);
 }
 
 void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w, int h) {
     // DO NOT override dimensions -- Pharo's Form uses the same extent for BitBlt stride.
     // Changing the texture size without Pharo knowing causes stride mismatch (diagonal garbage).
-    if (!findRenderer(renderer)) return sdlFailNull("Invalid renderer");
+    if (!findRenderer(renderer)) return sdlFailNull("Parameter 'renderer' is invalid");
     if (!sdl2::formatInfo(format)) return sdlFailNull("Unsupported pixel format");
     if (access < kAccessStatic || access > kAccessTarget) return sdlFailNull("Unknown texture access");
     if (w <= 0 || h <= 0) return sdlFailNull("Texture dimensions can't be 0");
@@ -1504,10 +2093,12 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
     state.format = format;
     state.access = access;
     // SDL_HINT_RENDER_SCALE_QUALITY: "0"/"nearest" or "1"/"linear"/"2"/"best".
-    auto hint = sHints.find("SDL_RENDER_SCALE_QUALITY");
-    if (hint != sHints.end())
-        state.linear = hint->second == "1" || hint->second == "2" ||
-                       hint->second == "linear" || hint->second == "best";
+    // The hint is read through SDL_GetHint, so the environment variable of the
+    // same name counts as in SDL.
+    if (const char* quality = sdl2::base::getHint("SDL_RENDER_SCALE_QUALITY")) {
+        const std::string q = quality;
+        state.linear = q == "1" || q == "2" || q == "linear" || q == "best";
+    }
     sTextures[handle] = state;
     auto rit = sRenderers.find(renderer);
     if (rit != sRenderers.end()) {
@@ -1517,12 +2108,13 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
 }
 
 void stub_SDL_DestroyTexture(void* texture) {
+    if (!sTextures.count(texture)) { sdl2::sys::invalidParam("texture"); return; }
     freeTexture(texture);
 }
 
 int stub_SDL_QueryTexture(void* texture, uint32_t* format, int* access, int* w, int* h) {
     SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
+    if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
     if (format) *format = t->format;
     if (access) *access = t->access;
     if (w) *w = t->width;
@@ -1532,7 +2124,7 @@ int stub_SDL_QueryTexture(void* texture, uint32_t* format, int* access, int* w, 
 
 int stub_SDL_SetTextureBlendMode(void* texture, uint32_t mode) {
     SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
+    if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
     if (!sdl2::isValidBlendMode(mode)) return sdlFail(-1, "Unsupported blend mode");
     t->blendMode = mode;
     return 0;
@@ -1540,21 +2132,21 @@ int stub_SDL_SetTextureBlendMode(void* texture, uint32_t mode) {
 
 int stub_SDL_SetTextureColorMod(void* texture, uint8_t r, uint8_t g, uint8_t b) {
     SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
+    if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
     t->rMod = r; t->gMod = g; t->bMod = b;
     return 0;
 }
 
 int stub_SDL_SetTextureAlphaMod(void* texture, uint8_t a) {
     SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
+    if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
     t->aMod = a;
     return 0;
 }
 
 int stub_SDL_SetTextureScaleMode(void* texture, int mode) {
     SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
+    if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
     t->linear = mode != 0;   // SDL_ScaleModeNearest is 0; Linear and Best both filter
     return 0;
 }
@@ -1562,7 +2154,7 @@ int stub_SDL_SetTextureScaleMode(void* texture, int mode) {
 int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels) {
-        return sdlFail(-1, "Invalid texture");
+        return sdlFail(-1, "Parameter 'texture' is invalid");
     }
     if (it->second.access != kAccessStreaming) {
         return sdlFail(-1, "SDL_LockTexture(): texture must be created with SDL_TEXTUREACCESS_STREAMING");
@@ -1608,6 +2200,10 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
 }
 
 void stub_SDL_UnlockTexture(void* texture) {
+    if (!sTextures.count(texture)) { sdl2::sys::invalidParam("texture"); return; }
+    if (SDLTextureState* locked = findTexture(texture)) {
+        if (locked->lockedSurface) { sdl2::freeSurface(locked->lockedSurface); locked->lockedSurface = nullptr; }
+    }
     // In real SDL2, UnlockTexture uploads modified pixels to the GPU texture.
     // In our stub architecture, copy texture pixels to gDisplaySurface here
     // because the deferred present (useDeferredUpdates → RenderCopy → RenderPresent)
@@ -1647,41 +2243,66 @@ static sdl2::TextureSampling samplingOf(const SDLTextureState& t) {
     return s;
 }
 
-// Shared body of SDL_RenderCopy and SDL_RenderCopyF.  `dst` is null for the
-// whole target.
-static int renderCopy(void* renderer, void* texture, const sdl2::Rect* srcRect, const sdl2::FRect* dst) {
+// Shared body of SDL_RenderCopy, CopyF, CopyEx and CopyExF.  `dst` is null for
+// the whole viewport.  `rotated` is false for the two plain copies.
+static int renderCopyAny(void* renderer, void* texture, const sdl2::Rect* srcRect, const sdl2::FRect* dst,
+                         bool rotated, double angle, const sdl2::FPoint* center, int flip) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     SDLTextureState* t = findTexture(texture);
-    if (!t) return sdlFail(-1, "Invalid texture");
+    if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
+    if (t->renderer != renderer) return sdlFail(-1, "Texture was not created with this renderer");
 
     if (isDisplayRenderer(renderer, *rs)) {
         // The display renderer only records the texture; RenderPresent shows it.
         rs->currentTexture = texture;
         return 0;
     }
-    if (t->renderer != renderer) return sdlFail(-1, "Texture was not created with this renderer");
     rs->currentTexture = texture;
     if (texture == rs->target) return sdlFail(-1, "Can't render a target texture onto itself");
 
-    sdl2::Pixels target;
-    bool isDisplay = false;
-    if (!renderTargetPixels(renderer, *rs, target, &isDisplay)) return sdlFail(-1, "Invalid render target");
-
-    // A source rectangle is cut to the texture, as SDL does; nothing remains
-    // when the two do not meet.
+    // A source rectangle is cut to the texture; nothing remains when the two do not meet.
     sdl2::Rect src = { 0, 0, t->width, t->height };
     if (srcRect) {
         const int x1 = std::max(srcRect->x, 0), y1 = std::max(srcRect->y, 0);
         const int x2 = std::min(srcRect->x + srcRect->w, t->width), y2 = std::min(srcRect->y + srcRect->h, t->height);
-        if (x2 <= x1 || y2 <= y1) return 0;
+        if (x2 <= x1 || y2 <= y1 || srcRect->w <= 0 || srcRect->h <= 0) return 0;
         src = { x1, y1, x2 - x1, y2 - y1 };
     }
-    const sdl2::FRect whole = { 0.f, 0.f, static_cast<float>(target.w), static_cast<float>(target.h) };
-    const sdl2::FRect& d = dst ? *dst : whole;
-    if (!sdl2::copyTexture(target, rs->clip, texturePixels(*t), src, d.x, d.y, d.w, d.h, samplingOf(*t)))
-        return sdlFail(-1, "Unsupported blend mode");
-    finishDrawing(isDisplay);
+    const sdl2::FRect view = viewportSizeF(renderer, *rs);
+    sdl2::FRect d = view;
+    if (dst) {
+        if (!rotated) {
+            // A plain copy of a rectangle outside the viewport draws nothing.
+            const sdl2::rect::RectT<float> a = { dst->x, dst->y, dst->w, dst->h };
+            const sdl2::rect::RectT<float> b = { view.x, view.y, view.w, view.h };
+            if (!sdl2::rect::hasIntersection<float>(&a, &b)) return 0;
+        }
+        d = *dst;
+    }
+
+    DrawTarget dt;
+    if (beginDraw(renderer, dt) < 0) return -1;
+    const float sx = rs->view.sx, sy = rs->view.sy;
+    const sdl2::TextureSampling sampling = samplingOf(*t);
+    const sdl2::Pixels tex = texturePixels(*t);
+    if (!rotated) {
+        // The destination in target pixels: scaled, then cut to whole pixels.
+        const float fx = d.x * sx, fy = d.y * sy, fw = d.w * sx, fh = d.h * sy;
+        const float ix = static_cast<float>(static_cast<int>(fx)) + dt.vp.x, iy = static_cast<float>(static_cast<int>(fy)) + dt.vp.y;
+        if (!sdl2::copyTexture(dt.dst, sdl2::Clip{ true, dt.clip }, tex, src, ix, iy,
+                               static_cast<float>(static_cast<int>(fw)), static_cast<float>(static_cast<int>(fh)), sampling))
+            return sdlFail(-1, "Unsupported blend mode");
+    } else {
+        sdl2::FPoint c = center ? *center : sdl2::FPoint{ d.w / 2.0f, d.h / 2.0f };
+        sdl2::Rect finalRect = { static_cast<int>(d.x), static_cast<int>(d.y), static_cast<int>(d.w), static_cast<int>(d.h) };
+        finalRect.x += dt.vp.x;
+        finalRect.y += dt.vp.y;
+        const bool hasAlpha = tex.fmt && tex.fmt->aMask != 0;
+        if (!sdl2::copyRotated(dt.dst, dt.clip, tex, src, finalRect, angle, c, flip, sampling, hasAlpha, sx, sy))
+            return sdlFail(-1, "Unsupported blend mode");
+    }
+    endDraw(dt);
     return 0;
 }
 
@@ -1689,12 +2310,33 @@ int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstr
     sdl2::FRect f;
     const sdl2::Rect* d = static_cast<const sdl2::Rect*>(dstrect);
     if (d) f = { static_cast<float>(d->x), static_cast<float>(d->y), static_cast<float>(d->w), static_cast<float>(d->h) };
-    return renderCopy(renderer, texture, static_cast<const sdl2::Rect*>(srcrect), d ? &f : nullptr);
+    return renderCopyAny(renderer, texture, static_cast<const sdl2::Rect*>(srcrect), d ? &f : nullptr, false, 0.0, nullptr, 0);
 }
 
 int stub_SDL_RenderCopyF(void* renderer, void* texture, void* srcrect, void* dstrect) {
-    return renderCopy(renderer, texture, static_cast<const sdl2::Rect*>(srcrect),
-                      static_cast<const sdl2::FRect*>(dstrect));
+    return renderCopyAny(renderer, texture, static_cast<const sdl2::Rect*>(srcrect),
+                         static_cast<const sdl2::FRect*>(dstrect), false, 0.0, nullptr, 0);
+}
+
+// With no flip and an angle that is a whole turn, SDL answers with a plain copy.
+int stub_SDL_RenderCopyExF(void* renderer, void* texture, void* srcrect, void* dstrect, double angle,
+                           const void* center, int flip) {
+    if (flip == 0 && static_cast<int>(angle / 360) == angle / 360)
+        return stub_SDL_RenderCopyF(renderer, texture, srcrect, dstrect);
+    return renderCopyAny(renderer, texture, static_cast<const sdl2::Rect*>(srcrect),
+                         static_cast<const sdl2::FRect*>(dstrect), true, angle,
+                         static_cast<const sdl2::FPoint*>(center), flip);
+}
+
+int stub_SDL_RenderCopyEx(void* renderer, void* texture, void* srcrect, void* dstrect, double angle,
+                          const void* center, int flip) {
+    sdl2::FRect f;
+    const sdl2::Rect* d = static_cast<const sdl2::Rect*>(dstrect);
+    if (d) f = { static_cast<float>(d->x), static_cast<float>(d->y), static_cast<float>(d->w), static_cast<float>(d->h) };
+    sdl2::FPoint fc;
+    const int* c = static_cast<const int*>(center);
+    if (c) fc = { static_cast<float>(c[0]), static_cast<float>(c[1]) };
+    return stub_SDL_RenderCopyExF(renderer, texture, srcrect, d ? &f : nullptr, angle, c ? &fc : nullptr, flip);
 }
 
 // Triangles from vertex arrays with a stride, shared by the two geometry calls.
@@ -1702,11 +2344,11 @@ static int renderTriangles(void* renderer, void* texture, const uint8_t* xy, int
                            const uint8_t* color, int colorStride, const uint8_t* uv, int uvStride,
                            int numVertices, const void* indices, int numIndices, int sizeIndices) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     SDLTextureState* t = nullptr;
     if (texture) {
         t = findTexture(texture);
-        if (!t) return sdlFail(-1, "Invalid texture");
+        if (!t) return sdlFail(-1, "Parameter 'texture' is invalid");
         if (t->renderer != renderer) return sdlFail(-1, "Texture was not created with this renderer");
     }
     if (!xy) return sdlFail(-1, "Parameter 'xy' is invalid");
@@ -1725,11 +2367,15 @@ static int renderTriangles(void* renderer, void* texture, const uint8_t* xy, int
     if (t) tex = texturePixels(*t);
     const sdl2::TextureSampling sampling = t ? samplingOf(*t) : sdl2::TextureSampling{};
     const uint32_t blend = t ? t->blendMode : rs->drawBlend;
+    // Vertex positions are scaled by the renderer scale and moved by the viewport.
+    const sdl2::Rect clipRect = drawClipOf(renderer, *rs, target);
+    const sdl2::Rect vp = viewportOf(renderer, *rs);
+    const float scaleX = rs->view.sx, scaleY = rs->view.sy;
 
     auto vertexAt = [&](int i) {
         sdl2::Vertex2D v = {};
         const float* p = reinterpret_cast<const float*>(xy + static_cast<size_t>(i) * xyStride);
-        v.x = p[0]; v.y = p[1];
+        v.x = p[0] * scaleX + vp.x; v.y = p[1] * scaleY + vp.y;
         const uint8_t* c = color + static_cast<size_t>(i) * colorStride;
         v.color = { c[0], c[1], c[2], c[3] };
         if (uv) {
@@ -1751,7 +2397,7 @@ static int renderTriangles(void* renderer, void* texture, const uint8_t* xy, int
         if (ix < 0 || ix >= numVertices) return sdlFail(-1, "Values of 'indices' out of range");
     }
     for (int i = 0; i < count; i += 3) {
-        sdl2::drawTriangle(target, rs->clip, vertexAt(indexAt(i)), vertexAt(indexAt(i + 1)),
+        sdl2::drawTriangle(target, sdl2::Clip{ true, clipRect }, vertexAt(indexAt(i)), vertexAt(indexAt(i + 1)),
                            vertexAt(indexAt(i + 2)), t ? &tex : nullptr, sampling, blend);
     }
     finishDrawing(isDisplay);
@@ -1782,31 +2428,40 @@ int stub_SDL_RenderGeometryRaw(void* renderer, void* texture, const float* xy, i
                            numVertices, indices, numIndices, sizeIndices);
 }
 
+// SDL_RenderReadPixels reads the viewport: the read rectangle is cut to the
+// viewport, and the first pixel of the answer is the first pixel of the cut.
 int stub_SDL_RenderReadPixels(void* renderer, const void* rect, uint32_t format, void* pixels, int pitch) {
     SDLRendererState* rs = findRenderer(renderer);
-    if (!rs) return sdlFail(-1, "Invalid renderer");
+    if (!rs) return sdlFail(-1, "Parameter 'renderer' is invalid");
     if (!pixels) return sdlFail(-1, "Parameter 'pixels' is invalid");
     sdl2::Pixels src;
     if (!renderTargetPixels(renderer, *rs, src)) return sdlFail(-1, "Invalid render target");
     // Format 0 asks for the native format of the target.
     const sdl2::FormatInfo* out = sdl2::formatInfo(format ? format : src.fmt->format);
     if (!out) return sdlFail(-1, "Unsupported pixel format");
-    sdl2::Rect r = { 0, 0, src.w, src.h };
+    sdl2::Rect r = viewportOf(renderer, *rs);
+    uint8_t* dest = static_cast<uint8_t*>(pixels);
     if (rect) {
         const sdl2::Rect* want = static_cast<const sdl2::Rect*>(rect);
-        const int x1 = std::max(want->x, 0), y1 = std::max(want->y, 0);
-        const int x2 = std::min(want->x + want->w, src.w), y2 = std::min(want->y + want->h, src.h);
-        if (x2 <= x1 || y2 <= y1) return 0;
-        r = { x1, y1, x2 - x1, y2 - y1 };
+        sdl2::Rect cut;
+        if (!sdl2::rect::intersectRect<int>(reinterpret_cast<const sdl2::rect::RectT<int>*>(want),
+                                            reinterpret_cast<const sdl2::rect::RectT<int>*>(&r),
+                                            reinterpret_cast<sdl2::rect::RectT<int>*>(&cut)))
+            return 0;
+        if (cut.y > want->y) dest += static_cast<size_t>(pitch) * (cut.y - want->y);
+        if (cut.x > want->x) dest += 4 * static_cast<size_t>(cut.x - want->x);
+        r = cut;
     }
-    sdl2::convertRect(src, r, *out, pixels, pitch);
+    if (r.x < 0 || r.x + r.w > src.w || r.y < 0 || r.y + r.h > src.h)
+        return sdlFail(-1, "Tried to read outside of surface bounds");
+    sdl2::convertRect(src, r, *out, dest, pitch);
     return 0;
 }
 
 int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels || !pixels) {
-        return sdlFail(-1, "Invalid texture");
+        return sdlFail(-1, "Parameter 'texture' is invalid");
     }
 
     int texW = it->second.width;
@@ -1844,8 +2499,14 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
     return 0;
 }
 
-// Forwards events from gEventQueue to SDL event structures for OSSDL2Driver.
-int stub_SDL_PollEvent(void* event) {
+uint32_t stub_SDL_GetTicks();
+
+// Converts ONE pending host event (gEventQueue, or a synthetic window event)
+// into the SDL event structure at `event`.  Answers 0 when none is pending.
+// SDL_PollEvent and SDL_PumpEvents call this until it answers 0 and queue each
+// event through the SDL filter, the watches and the SDL queue.
+static int pollNativeEvent(void* event) {
+    applyNotifiedResize();
     if (!sSDL2PollEventFlagSet) {
         sSDL2PollEventFlagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
@@ -1861,6 +2522,7 @@ int stub_SDL_PollEvent(void* event) {
         int newW, newH;
         if (pharo::gDisplaySurface->applyPendingResize(newW, newH)) {
             ffi_notifyDisplayResize(newW, newH);
+            applyNotifiedResize();   // the VM thread applies it now
         }
     }
 
@@ -1870,9 +2532,17 @@ int stub_SDL_PollEvent(void* event) {
     }
 
     // Deliver pending synthetic window events one at a time
-    if (!sPendingWindowEvents.empty()) {
-        uint8_t windowEventType = sPendingWindowEvents.front();
-        sPendingWindowEvents.pop();
+    uint8_t windowEventType = 0;
+    bool haveWindowEvent = false;
+    {
+        std::lock_guard<std::mutex> lk(sPendingWindowEventsMx);
+        if (!sPendingWindowEvents.empty()) {
+            windowEventType = sPendingWindowEvents.front();
+            sPendingWindowEvents.pop();
+            haveWindowEvent = true;
+        }
+    }
+    if (haveWindowEvent) {
         SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);
         memset(sdlEvent, 0, sizeof(SDL_Event));
         uint32_t windowID = sMainWindow ? stub_SDL_GetWindowID(sMainWindow) : 1;
@@ -1917,6 +2587,7 @@ int stub_SDL_PollEvent(void* event) {
         --sPollCountdown;
         if (sPollCountdown == 0) {
             // Window "creation" complete — deliver initial events like real SDL2
+            std::lock_guard<std::mutex> lk(sPendingWindowEventsMx);
             sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
             sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
             sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
@@ -1978,6 +2649,8 @@ nextEvent:
             sdlEvent->motion.yrel = pharoEvent.arg2 - prevY;
             sdlEvent->motion.state = sdlButtonMask;
             sMouseButtons = sdlButtonMask;
+            sRelMouseDx += sdlEvent->motion.xrel;
+            sRelMouseDy += sdlEvent->motion.yrel;
         } else if (subtype == 1) {
             uint32_t pressed = sdlButtonMask & ~sMouseButtons;
             sMouseButtons = sdlButtonMask;
@@ -2090,6 +2763,7 @@ nextEvent:
         sdlEvent->key.windowID = windowID;
         sdlEvent->key.repeat = 0;
         sdlEvent->key.keysym.scancode = pharoEvent.arg4;
+        if (pharoEvent.arg4 >= 0 && pharoEvent.arg4 < kScancodeCount) sKeyState[pharoEvent.arg4] = subtype == 0 ? 1 : 0;
         sdlEvent->key.keysym.sym = charCode;
         uint16_t sdlMod = 0;
         if (pharoEvent.arg3 & 1) sdlMod |= 0x0001;  // KMOD_LSHIFT
@@ -2115,6 +2789,34 @@ nextEvent:
     return 0;
 }
 
+// Move every pending host event into the SDL queue.  Each event goes through
+// the event filter and the event watches first (SDL2Events.hpp).  This runs on
+// the VM thread, so a Smalltalk callback as filter or watch is a plain
+// same-thread callback.
+static void pumpHostEvents() {
+    SDL_Event converted;
+    while (pollNativeEvent(&converted) != 0) {
+        sdl2::ev::Event queued;
+        static_assert(sizeof(queued) == sizeof(converted), "SDL_Event size");
+        memcpy(&queued, &converted, sizeof(queued));
+        if (sdl2::ev::hostEventDisabled(queued.type)) continue;
+        sdl2::ev::enqueue(queued);
+    }
+}
+
+// SDL_PollEvent answers the oldest queued event.  A null event pointer only
+// asks whether an event is waiting (the pointer check also rejects a stale
+// low address).
+int stub_SDL_PollEvent(void* event) {
+    pumpHostEvents();
+    if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000)
+        return sdl2::ev::queueNotEmpty() ? 1 : 0;
+    sdl2::ev::Event next;
+    if (!sdl2::ev::popFront(next)) return 0;
+    memcpy(event, &next, sizeof(next));
+    return 1;
+}
+
 int stub_SDL_WaitEvent(void* event) {
     // Used by modal event loops (menu dropdown grab loops).
     // Without this, menu dropdowns open and close immediately.
@@ -2132,17 +2834,21 @@ int stub_SDL_WaitEvent(void* event) {
     return 0;
 }
 
+// SDL_PushEvent: filter, watches, then the queue.  1 queued, 0 dropped by the
+// filter, -1 error.  The event timestamp is set to the SDL tick count.
 int stub_SDL_PushEvent(void* event) {
-    return 1;  // Success
+    if (!event) return sdl2::sys::invalidParam("event");
+    return sdl2::ev::pushEvent(static_cast<sdl2::ev::Event*>(event), stub_SDL_GetTicks());
 }
 
 // Clipboard — delegates to platform bridge (which calls Swift/ObjC)
 extern "C" const char* vm_getClipboardText(void);
 extern "C" void vm_setClipboardText(const char* text);
 
+static char* sdlAllocString(const char* s);
 char* stub_SDL_GetClipboardText() {
     const char* text = vm_getClipboardText();
-    return strdup(text ? text : "");
+    return sdlAllocString(text ? text : "");
 }
 
 int stub_SDL_SetClipboardText(const char* text) {
@@ -2155,9 +2861,7 @@ int stub_SDL_HasClipboardText() {
     return (text && text[0] != '\0') ? 1 : 0;
 }
 
-void stub_SDL_free(void* mem) {
-    free(mem);
-}
+void stub_SDL_free(void* mem);   // defined with the memory table (SDL2StubsCore.inc)
 
 // Text input — delegates to platform bridge for iOS keyboard show/hide
 extern "C" void vm_startTextInput(void);
@@ -2165,11 +2869,13 @@ extern "C" void vm_stopTextInput(void);
 
 void stub_SDL_StartTextInput() {
     sTextInputActive = true;
+    sdl2::ev::setTextEventsEnabled(true);
     vm_startTextInput();
 }
 
 void stub_SDL_StopTextInput() {
     sTextInputActive = false;
+    sdl2::ev::setTextEventsEnabled(false);
     vm_stopTextInput();
 }
 
@@ -2183,6 +2889,7 @@ void* stub_SDL_CreateSystemCursor(int id) {
 }
 
 void* stub_SDL_CreateCursor(void* data, void* mask, int w, int h, int hot_x, int hot_y) {
+    if (hot_x < 0 || hot_y < 0 || hot_x >= w || hot_y >= h) return sdlFailNull("Cursor hot spot doesn't lie within cursor");
     static uintptr_t nextCursorHandle = 0x30000;
     return reinterpret_cast<void*>(nextCursorHandle++);
 }
@@ -2193,11 +2900,16 @@ void stub_SDL_SetCursor(void* cursor) {
 void stub_SDL_FreeCursor(void* cursor) {
 }
 
+// SDL_ShowCursor answers the state before the call: 1 shown, 0 hidden; -1 only asks.
+static bool sCursorShown = true;
 int stub_SDL_ShowCursor(int toggle) {
-    return toggle;
+    const bool before = sCursorShown;
+    if (toggle >= 0) sCursorShown = toggle != 0;
+    return before ? 1 : 0;
 }
 
 uint32_t stub_SDL_GetWindowFlags(void* window) {
+    WINDOW_CHECK(window, 0)
     return windowFlagsOf(window);
 }
 
@@ -2209,8 +2921,9 @@ uint32_t stub_SDL_GetWindowFlags(void* window) {
 void* stub_SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
                                 uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask) {
     if (width < 0 || height < 0) return sdlFailNull("Parameter 'width' or 'height' is invalid");
-    const sdl2::FormatInfo* f = sdl2::formatInfo(sdl2::formatFromMasks(depth, Rmask, Gmask, Bmask, Amask));
-    if (!f) return sdlFailNull("Unknown pixel format: only 32-bit surfaces are supported");
+    const uint32_t fmtEnum = sdl2::pix::masksToEnum(depth, Rmask, Gmask, Bmask, Amask);
+    const sdl2::FormatInfo* f = sdl2::formatInfo(fmtEnum);
+    if (!f) return sdlFailNull(fmtEnum ? "Unknown pixel format: only 32-bit surfaces are supported" : "Unknown pixel format");
     sdl2::SurfaceRaw* s = sdl2::createOwnedSurface(width, height, *f);
     return s ? static_cast<void*>(s) : sdlFailNull("Out of memory");
 }
@@ -2226,10 +2939,11 @@ void* stub_SDL_CreateRGBSurfaceWithFormat(uint32_t flags, int width, int height,
 void* stub_SDL_CreateRGBSurfaceFrom(void* pixels, int width, int height, int depth,
                                       int pitch, uint32_t Rmask, uint32_t Gmask,
                                       uint32_t Bmask, uint32_t Amask) {
+    const uint32_t fmtEnum = sdl2::pix::masksToEnum(depth, Rmask, Gmask, Bmask, Amask);
+    const sdl2::FormatInfo* f = sdl2::formatInfo(fmtEnum);
+    if (!f) return sdlFailNull(fmtEnum ? "Unknown pixel format: only 32-bit surfaces are supported" : "Unknown pixel format");
     if (!pixels) return sdlFailNull("Parameter 'pixels' is invalid");
     if (width < 0 || height < 0 || pitch < width * 4) return sdlFailNull("Parameter 'width', 'height' or 'pitch' is invalid");
-    const sdl2::FormatInfo* f = sdl2::formatInfo(sdl2::formatFromMasks(depth, Rmask, Gmask, Bmask, Amask));
-    if (!f) return sdlFailNull("Unknown pixel format: only 32-bit surfaces are supported");
     sdl2::SurfaceRaw* s = sdl2::createSurfaceFrom(pixels, width, height, pitch, *f);
     return s ? static_cast<void*>(s) : sdlFailNull("Out of memory");
 }
@@ -2323,15 +3037,13 @@ int stub_SDL_GetNumDisplayModes(int displayIndex) {
 int stub_SDL_GetDisplayMode(int displayIndex, int modeIndex, void* mode) {
     if (displayIndex != 0) return sdlFail(-1, "displayIndex must be in the range 0 - 0");
     if (modeIndex != 0) return sdlFail(-1, "index must be in the range of 0 - 0");
-    if (!mode) return sdlFail(-1, "Parameter 'mode' is invalid");
-    fillDisplayMode(static_cast<SDLDisplayModeRaw*>(mode));
+    if (mode) fillDisplayMode(static_cast<SDLDisplayModeRaw*>(mode));
     return 0;
 }
 
 int stub_SDL_GetCurrentDisplayMode(int displayIndex, void* mode) {
     if (displayIndex != 0) return sdlFail(-1, "displayIndex must be in the range 0 - 0");
-    if (!mode) return sdlFail(-1, "Parameter 'mode' is invalid");
-    fillDisplayMode(static_cast<SDLDisplayModeRaw*>(mode));
+    if (mode) fillDisplayMode(static_cast<SDLDisplayModeRaw*>(mode));
     return 0;
 }
 
@@ -2369,66 +3081,18 @@ const char* stub_SDL_GetCurrentVideoDriver() {
 #endif
 }
 
-// ----- Devices this layer never has -----
-// The app offers no joystick, game controller or audio device through SDL, so
-// the counts are zero and every open call fails with the SDL message.
-
-int stub_SDL_NumJoysticks() { return 0; }
-
-static int sJoystickEventState = 1;   // SDL_ENABLE until changed
-int stub_SDL_JoystickEventState(int state) {
-    if (state != -1) sJoystickEventState = state;   // -1 is SDL_QUERY
-    return sJoystickEventState;
-}
-
-void* stub_SDL_JoystickOpen(int index) { return sdlFailNull("There are no joysticks available"); }
-void stub_SDL_JoystickClose(void* joystick) {}
-int stub_SDL_JoystickGetAttached(void* joystick) { return 0; }
-int16_t stub_SDL_JoystickGetAxis(void* joystick, int axis) { sLastError = "Invalid joystick"; return 0; }
-uint8_t stub_SDL_JoystickGetButton(void* joystick, int button) { sLastError = "Invalid joystick"; return 0; }
-const char* stub_SDL_JoystickName(void* joystick) { sLastError = "Invalid joystick"; return nullptr; }
-int stub_SDL_JoystickNumAxes(void* joystick) { return sdlFail(-1, "Invalid joystick"); }
-int stub_SDL_JoystickNumBalls(void* joystick) { return sdlFail(-1, "Invalid joystick"); }
-int stub_SDL_JoystickNumButtons(void* joystick) { return sdlFail(-1, "Invalid joystick"); }
-int stub_SDL_JoystickNumHats(void* joystick) { return sdlFail(-1, "Invalid joystick"); }
-
-int stub_SDL_IsGameController(int index) { return 0; }
-void* stub_SDL_GameControllerOpen(int index) { return sdlFailNull("There are no game controllers available"); }
-void stub_SDL_GameControllerClose(void* controller) {}
-int stub_SDL_GameControllerGetAttached(void* controller) { return 0; }
-int16_t stub_SDL_GameControllerGetAxis(void* controller, int axis) { sLastError = "Invalid game controller"; return 0; }
-uint8_t stub_SDL_GameControllerGetButton(void* controller, int button) { sLastError = "Invalid game controller"; return 0; }
-const char* stub_SDL_GameControllerName(void* controller) { sLastError = "Invalid game controller"; return nullptr; }
-const char* stub_SDL_GameControllerNameForIndex(int index) { sLastError = "There are no game controllers available"; return nullptr; }
-
-int stub_SDL_GetNumAudioDevices(int isCapture) { return 0; }
-const char* stub_SDL_GetAudioDeviceName(int index, int isCapture) {
-    sLastError = "No audio device at this index";
-    return nullptr;
-}
-uint32_t stub_SDL_OpenAudioDevice(const char* device, int isCapture, const void* desired,
-                                  void* obtained, int allowedChanges) {
-    sLastError = "No audio device is available";
-    return 0;   // 0 is the failure value of SDL_OpenAudioDevice
-}
-void stub_SDL_CloseAudioDevice(uint32_t device) {}
-void stub_SDL_PauseAudioDevice(uint32_t device, int pauseOn) {}
-int stub_SDL_QueueAudio(uint32_t device, const void* data, uint32_t len) { return sdlFail(-1, "Invalid audio device ID"); }
-uint32_t stub_SDL_GetQueuedAudioSize(uint32_t device) { return 0; }
+// ----- Devices: see SDL2StubsDevices.inc (generated) and SDL2StubsDeviceHand.inc -----
 
 // ----- Small calls -----
 
-void stub_SDL_DisableScreenSaver() {}
+void stub_SDL_DisableScreenSaver() { sScreenSaverEnabled = false; }
 
-// SDL_EventState answers the previous state of an event type, and changes it
-// unless the new state is SDL_QUERY (-1).  The stub poll loop does not filter
-// by it; the app sends only the event types the image handles.
-static std::unordered_map<uint32_t, int> sEventStates;
+// SDL_EventState answers the previous state of an event type and sets the new
+// one unless it is SDL_QUERY (-1).  DISABLE also drops the queued events of the
+// type.  Host events are filtered only for a type that was disabled by a call
+// of this function (SDL2Events.hpp explains why).
 uint8_t stub_SDL_EventState(uint32_t type, int state) {
-    auto it = sEventStates.find(type);
-    const int previous = it == sEventStates.end() ? 1 : it->second;   // SDL_ENABLE by default
-    if (state != -1) sEventStates[type] = state;
-    return static_cast<uint8_t>(previous);
+    return static_cast<uint8_t>(sdl2::ev::eventState(type, state));
 }
 
 static bool sRelativeMouseMode = false;
@@ -2469,7 +3133,9 @@ int stub_SDL_GetNumVideoDisplays() {
 }
 
 int stub_SDL_GetDisplayBounds(int displayIndex, void* rect) {
-    if (rect) {
+    if (displayIndex != 0) return sdlFail(-1, "displayIndex must be in the range 0 - 0");
+    if (!rect) return sdl2::sys::invalidParam("rect");
+    {
         int* r = static_cast<int*>(rect);
         r[0] = 0;     // x
         r[1] = 0;     // y
@@ -2490,7 +3156,9 @@ int stub_SDL_GetDisplayUsableBounds(int displayIndex, void* rect) {
     // Without a proper offset, new windows (debugger, browser) appear under the
     // Pharo menu bar with unreachable title bars.
     static const int kMenuBarHeight = 28;  // Pharo TaskbarMorph default height
-    if (rect) {
+    if (displayIndex != 0) return sdlFail(-1, "displayIndex must be in the range 0 - 0");
+    if (!rect) return sdl2::sys::invalidParam("rect");
+    {
         int* r = static_cast<int*>(rect);
         r[0] = 0;     // x
         r[1] = kMenuBarHeight;     // y — below menu bar
@@ -2536,7 +3204,8 @@ uint64_t stub_SDL_GetPerformanceFrequency() {
 
 // Additional commonly needed SDL2 functions
 uint32_t stub_SDL_WasInit(uint32_t flags) {
-    return sSDL2Initialized ? flags : 0;
+    const uint32_t mask = sInitMask.load();
+    return flags == 0 ? mask : (mask & flags);
 }
 
 int stub_SDL_VideoInit(const char* driver) {
@@ -2547,26 +3216,22 @@ void stub_SDL_VideoQuit() {
 }
 
 int stub_SDL_InitSubSystem(uint32_t flags) {
+    initSubsystems(flags);
     return 0;
 }
 
 void stub_SDL_QuitSubSystem(uint32_t flags) {
+    sInitMask.fetch_and(~flags);
 }
 
-// SDL_SetHint stores the value; SDL_GetHint answers it, or null when the name
-// was never set.  SDL also reads an environment variable of the hint name; that
-// override is not modelled, because the lookup would run on every call.
+// Hints follow SDL_hints.c: priorities, the environment override and the
+// callbacks.  See SDL2Base.hpp for the environment snapshot.
 int stub_SDL_SetHint(const char* name, const char* value) {
-    if (!name) return 0;
-    if (!value) sHints.erase(name);
-    else sHints[name] = value;
-    return 1;   // SDL_TRUE
+    return sdl2::base::setHint(name, value);
 }
 
 const char* stub_SDL_GetHint(const char* name) {
-    if (!name) return nullptr;
-    auto it = sHints.find(name);
-    return it == sHints.end() ? nullptr : it->second.c_str();
+    return sdl2::base::getHint(name);
 }
 
 static std::unordered_map<int, int> sGLAttributes;  // SDL_GL_SetAttribute values
@@ -2587,26 +3252,48 @@ int stub_SDL_GL_GetAttribute(int attr, int* value) {
 
 void* stub_SDL_GL_GetProcAddress(const char* name) {
     // The stub layer loads no GL library, so no entry point can be found.
-    return sdlFailNull("No OpenGL library is loaded");
+    (void)name;
+    sdl2::sys::lastError() = std::string("No dynamic GL support in current SDL video driver (") + stub_SDL_GetCurrentVideoDriver() + ")";
+    return nullptr;
 }
 
 void stub_SDL_GL_GetDrawableSize(void* window, int* w, int* h) {
+    WINDOW_CHECK(window, )
     stub_SDL_GetWindowSize(window, w, h);   // the stub window has a 1:1 pixel scale
 }
 
+// OpenGL cannot exist here.  A window without the OpenGL flag is not an OpenGL
+// window; a window with the flag asks for a GL driver that this video driver
+// does not have.  Both answers are the SDL texts.
+static std::string glNotConfiguredText() {
+    return std::string("OpenGL support is either not configured in SDL or not available in current SDL video driver (") +
+           stub_SDL_GetCurrentVideoDriver() + ") or platform";
+}
+
 void* stub_SDL_GL_CreateContext(void* window) {
-    void* handle = reinterpret_cast<void*>(sNextHandle++);
-    return handle;
+    WINDOW_CHECK(window, nullptr)
+    if (!(sWindows[window].flags & kWindowOpenGL)) return sdlFailNull("The specified window isn't an OpenGL window");
+    sdl2::sys::lastError() = glNotConfiguredText();
+    return nullptr;
 }
 
 void stub_SDL_GL_DeleteContext(void* context) {
+    (void)context;   // no context ever exists
 }
 
 int stub_SDL_GL_MakeCurrent(void* window, void* context) {
-    return 0;
+    if (!window && !context) return 0;   // no window and no context: SDL drops the current context
+    if (window) {
+        WINDOW_CHECK(window, -1)
+        if (!(sWindows[window].flags & kWindowOpenGL)) return sdlFail(-1, "The specified window isn't an OpenGL window");
+    }
+    return sdlFail(-1, glNotConfiguredText().c_str());
 }
 
 void stub_SDL_GL_SwapWindow(void* window) {
+    WINDOW_CHECK(window, )
+    if (!(sWindows[window].flags & kWindowOpenGL)) { sdl2::sys::lastError() = "The specified window isn't an OpenGL window"; return; }
+    sdl2::sys::lastError() = "The specified window has not been made current";
 }
 
 // Exported SDL2 symbols (weak so they don't conflict with real SDL2 if linked)
@@ -2698,6 +3385,30 @@ void* primitiveLoadModule(void* moduleName) {
 #undef SDL_EXPORT
 
 } // extern "C"
+
+// Registrations of the stubs that complete the SDL2 layer (renderer state,
+// events, threads, text and so on).  Kept apart from registerSDL2Stubs so that
+// each family is easy to find.
+#define SDL_REG(name) registerFunction("SDL_" #name, reinterpret_cast<void*>(stub_SDL_##name))
+#include "SDL2StubsCore.inc"
+#include "SDL2StubsVideo.inc"
+#include "SDL2StubsDeviceHand.inc"
+#include "SDL2StubsDevices.inc"
+#include "SDL2StubsSurface.inc"
+static void registerSDL2FullStubs() {
+#include "SDL2Register.inc"
+}
+static void registerSDL2RenderStubs() {
+    SDL_REG(RenderGetClipRect); SDL_REG(RenderIsClipEnabled); SDL_REG(RenderSetViewport);
+    SDL_REG(RenderGetViewport); SDL_REG(RenderSetScale); SDL_REG(RenderGetScale);
+    SDL_REG(RenderSetLogicalSize); SDL_REG(RenderSetIntegerScale); SDL_REG(RenderGetIntegerScale);
+    SDL_REG(RenderWindowToLogical); SDL_REG(RenderLogicalToWindow);
+    SDL_REG(RenderDrawPoints); SDL_REG(RenderDrawPointsF); SDL_REG(RenderDrawPointF);
+    SDL_REG(RenderDrawLines); SDL_REG(RenderDrawLinesF); SDL_REG(RenderDrawLineF);
+    SDL_REG(RenderDrawRectF); SDL_REG(RenderDrawRects); SDL_REG(RenderDrawRectsF);
+    SDL_REG(RenderFillRects); SDL_REG(RenderFillRectsF);
+    SDL_REG(RenderCopyEx); SDL_REG(RenderCopyExF);
+}
 
 void registerSDL2Stubs() {
     // Core initialization
@@ -2852,33 +3563,6 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GetWindowDisplayIndex", reinterpret_cast<void*>(stub_SDL_GetWindowDisplayIndex));
     registerFunction("SDL_GetDisplayDPI", reinterpret_cast<void*>(stub_SDL_GetDisplayDPI));
     registerFunction("SDL_GetCurrentVideoDriver", reinterpret_cast<void*>(stub_SDL_GetCurrentVideoDriver));
-    registerFunction("SDL_NumJoysticks", reinterpret_cast<void*>(stub_SDL_NumJoysticks));
-    registerFunction("SDL_JoystickEventState", reinterpret_cast<void*>(stub_SDL_JoystickEventState));
-    registerFunction("SDL_JoystickOpen", reinterpret_cast<void*>(stub_SDL_JoystickOpen));
-    registerFunction("SDL_JoystickClose", reinterpret_cast<void*>(stub_SDL_JoystickClose));
-    registerFunction("SDL_JoystickGetAttached", reinterpret_cast<void*>(stub_SDL_JoystickGetAttached));
-    registerFunction("SDL_JoystickGetAxis", reinterpret_cast<void*>(stub_SDL_JoystickGetAxis));
-    registerFunction("SDL_JoystickGetButton", reinterpret_cast<void*>(stub_SDL_JoystickGetButton));
-    registerFunction("SDL_JoystickName", reinterpret_cast<void*>(stub_SDL_JoystickName));
-    registerFunction("SDL_JoystickNumAxes", reinterpret_cast<void*>(stub_SDL_JoystickNumAxes));
-    registerFunction("SDL_JoystickNumBalls", reinterpret_cast<void*>(stub_SDL_JoystickNumBalls));
-    registerFunction("SDL_JoystickNumButtons", reinterpret_cast<void*>(stub_SDL_JoystickNumButtons));
-    registerFunction("SDL_JoystickNumHats", reinterpret_cast<void*>(stub_SDL_JoystickNumHats));
-    registerFunction("SDL_IsGameController", reinterpret_cast<void*>(stub_SDL_IsGameController));
-    registerFunction("SDL_GameControllerOpen", reinterpret_cast<void*>(stub_SDL_GameControllerOpen));
-    registerFunction("SDL_GameControllerClose", reinterpret_cast<void*>(stub_SDL_GameControllerClose));
-    registerFunction("SDL_GameControllerGetAttached", reinterpret_cast<void*>(stub_SDL_GameControllerGetAttached));
-    registerFunction("SDL_GameControllerGetAxis", reinterpret_cast<void*>(stub_SDL_GameControllerGetAxis));
-    registerFunction("SDL_GameControllerGetButton", reinterpret_cast<void*>(stub_SDL_GameControllerGetButton));
-    registerFunction("SDL_GameControllerName", reinterpret_cast<void*>(stub_SDL_GameControllerName));
-    registerFunction("SDL_GameControllerNameForIndex", reinterpret_cast<void*>(stub_SDL_GameControllerNameForIndex));
-    registerFunction("SDL_GetNumAudioDevices", reinterpret_cast<void*>(stub_SDL_GetNumAudioDevices));
-    registerFunction("SDL_GetAudioDeviceName", reinterpret_cast<void*>(stub_SDL_GetAudioDeviceName));
-    registerFunction("SDL_OpenAudioDevice", reinterpret_cast<void*>(stub_SDL_OpenAudioDevice));
-    registerFunction("SDL_CloseAudioDevice", reinterpret_cast<void*>(stub_SDL_CloseAudioDevice));
-    registerFunction("SDL_PauseAudioDevice", reinterpret_cast<void*>(stub_SDL_PauseAudioDevice));
-    registerFunction("SDL_QueueAudio", reinterpret_cast<void*>(stub_SDL_QueueAudio));
-    registerFunction("SDL_GetQueuedAudioSize", reinterpret_cast<void*>(stub_SDL_GetQueuedAudioSize));
     registerFunction("SDL_DisableScreenSaver", reinterpret_cast<void*>(stub_SDL_DisableScreenSaver));
     registerFunction("SDL_EventState", reinterpret_cast<void*>(stub_SDL_EventState));
     registerFunction("SDL_SetRelativeMouseMode", reinterpret_cast<void*>(stub_SDL_SetRelativeMouseMode));
@@ -2887,6 +3571,9 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GL_GetAttribute", reinterpret_cast<void*>(stub_SDL_GL_GetAttribute));
     registerFunction("SDL_GL_GetProcAddress", reinterpret_cast<void*>(stub_SDL_GL_GetProcAddress));
     registerFunction("SDL_GL_GetDrawableSize", reinterpret_cast<void*>(stub_SDL_GL_GetDrawableSize));
+
+    registerSDL2RenderStubs();
+    registerSDL2FullStubs();
 }
 
 // ========== FreeType stubs ==========

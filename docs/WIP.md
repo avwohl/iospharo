@@ -233,6 +233,12 @@ tests `testNewProcessTaskRunnerRunsInNewProcessEveryTime`,
     and 80 other SDL2 calls that the images make (86 new stubs in all).  Fixed on branch
     `r6-sdl2-stubs`: see [sdl2-stubs.md](sdl2-stubs.md).  The result is 27/0/0
     on arm64 and x86_64.  The generic no-op for unknown `SDL_` symbols is gone.
+    Branch `r8-sdl2-full` completes the layer: every public SDL 2.26.5 function
+    has a stub or a documented reason (event watches and filters, threads,
+    locks, timers, renderer scale, viewport, logical size and `SDL_RenderCopyEx`,
+    surfaces, pixel formats, audio conversion, no-device families).  The
+    differential scripts in `scripts/cogdiff/sdl2diff_*.st` give the same
+    answers as stock Cog; see [sdl2-stubs.md](sdl2-stubs.md).
   - `koendehondt-hera-for-pharo`: harness defect, fixed (`652e163c`).  Cog
     writes a wide-string FAIL line with NUL bytes.
   - `exercism-pharo-smalltalk-test-runner`, `opensmock-molecule`,

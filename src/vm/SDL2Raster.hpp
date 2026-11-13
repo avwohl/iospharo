@@ -88,7 +88,7 @@ inline const FormatInfo* formatInfo(uint32_t format) {
 // Answers 0 (SDL_PIXELFORMAT_UNKNOWN) for any other combination.
 inline uint32_t formatFromMasks(int depth, uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
     if (depth != 32) return 0;
-    if (r == 0) return kFormatARGB8888;   // no masks given: SDL chooses ARGB8888
+    if (r == 0) return kFormatXRGB8888;   // no masks given: SDL chooses RGB888
     for (const FormatInfo& f : kFormats)
         if (f.rMask == r && f.gMask == g && f.bMask == b && f.aMask == a) return f.format;
     return 0;
@@ -327,7 +327,28 @@ struct TextureSampling {
     uint8_t rMod = 255, gMod = 255, bMod = 255, aMod = 255;
     uint32_t blend = kBlendNone;
     bool linear = false;
+    bool modulated() const { return rMod != 255 || gMod != 255 || bMod != 255 || aMod != 255; }
 };
+
+// SDL_BLENDMODE_BLEND for a texture copy (a surface blit).  The software
+// blitter has two code paths and they round differently.  A picture with
+// per-pixel alpha and no colour or alpha modulation takes the fast path: each
+// term is multiplied and shifted right by 8.  A modulated copy takes the
+// general path: each term is multiplied and divided by 255.  A pixel of alpha 0
+// is skipped and a pixel of alpha 255 is copied on both.  `s` is the source
+// pixel after the modulation.  The result alpha is the source alpha plus the
+// destination alpha that the source leaves.
+inline RGBA blitBlendPixel(RGBA s, RGBA d, bool modulated) {
+    const int A = s.a;
+    if (A == 0) return d;
+    if (A == 255) return s;
+    const int B = 255 - A;
+    auto mix = [&](int sc, int dc) {
+        return static_cast<uint8_t>(modulated ? (sc * A) / 255 + (dc * B) / 255 : ((sc * A) >> 8) + ((dc * B) >> 8));
+    };
+    const int alpha = modulated ? A + (d.a * B) / 255 : A + ((d.a * B) >> 8);
+    return RGBA{ mix(s.r, d.r), mix(s.g, d.g), mix(s.b, d.b), static_cast<uint8_t>(alpha) };
+}
 
 inline RGBA modulate(RGBA c, const TextureSampling& t) {
     auto mul = [](uint8_t a, uint8_t b) { return static_cast<uint8_t>((a * b) / 255); };
@@ -356,6 +377,89 @@ inline RGBA samplePixels(const Pixels& src, const Rect& sr, float u, float v, bo
                  mix(p00.b, p10.b, p01.b, p11.b), mix(p00.a, p10.a, p01.a, p11.a) };
 }
 
+// The source index that a nearest-neighbour scale of `srcLen` pixels to `dstLen`
+// pixels reads for destination index `i`.  This is the fixed point walk of the
+// SDL software scaler: a 16.16 step, started half a step in, truncated.
+inline int nearestSourceIndex(int i, int srcLen, int dstLen) {
+    const uint32_t inc = (static_cast<uint32_t>(srcLen) << 16) / static_cast<uint32_t>(dstLen);
+    const uint32_t pos = inc / 2 + static_cast<uint32_t>(i) * inc;
+    return static_cast<int>(pos >> 16);
+}
+
+// Bilinear scale of `srcRect` to `dw` x `dh` pixels, in the fixed point of the
+// SDL software scaler: 16.16 positions, 7 bit weights, a source of pixel
+// centres, and edge pixels that repeat the border (the left and right "pad"
+// pixels of each axis).
+constexpr int kFixedShift = 16;                 // 16.16 fixed point
+constexpr int kFixedFraction = 0xFFFF;          // its fractional bits
+constexpr int64_t kFixedHalf = 0x8000;          // one half in that scale
+
+struct ScalerAxis { int start, step, leftPad, rightPad; };
+
+inline ScalerAxis scalerAxis(int srcNb, int dstNb) {
+    ScalerAxis a;
+    const int step = static_cast<int>((static_cast<uint32_t>(srcNb) << 16) / static_cast<uint32_t>(dstNb));
+    int x0 = 1 << 15;
+    const int64_t hi = static_cast<int64_t>(step) * (x0 >> 16);
+    const int64_t lo = static_cast<int64_t>(step) * (x0 & kFixedFraction);
+    x0 = static_cast<int>(hi + ((lo + kFixedHalf) >> kFixedShift));
+    x0 -= 1 << 15;
+    a.start = x0;
+    a.step = step;
+    a.leftPad = a.rightPad = 0;
+    int sum = x0;
+    for (int i = 0; i < dstNb; i++) {
+        if (sum < 0) a.leftPad++;
+        else if (static_cast<int>(static_cast<uint32_t>(sum) >> 16) > srcNb - 2) a.rightPad++;
+        sum += step;
+    }
+    return a;
+}
+
+inline std::vector<RGBA> bilinearScale(const Pixels& src, const Rect& sr, int dw, int dh) {
+    constexpr int kPrecision = 7, kFracOne = 1 << kPrecision;
+    std::vector<RGBA> out(static_cast<size_t>(dw) * dh);
+    if (sr.w < 2 || sr.h < 2) {   // a source of one pixel in a direction: repeat it
+        for (int y = 0; y < dh; y++)
+            for (int x = 0; x < dw; x++)
+                out[static_cast<size_t>(y) * dw + x] = src.get(sr.x + std::min(x * sr.w / dw, sr.w - 1), sr.y + std::min(y * sr.h / dh, sr.h - 1));
+        return out;
+    }
+    const ScalerAxis ah = scalerAxis(sr.h, dh), aw = scalerAxis(sr.w, dw);
+    auto mix = [&](RGBA c0, RGBA c1, int f0, int f1) {
+        return RGBA{ static_cast<uint8_t>((f1 * c0.r + f0 * c1.r) >> kPrecision), static_cast<uint8_t>((f1 * c0.g + f0 * c1.g) >> kPrecision),
+                     static_cast<uint8_t>((f1 * c0.b + f0 * c1.b) >> kPrecision), static_cast<uint8_t>((f1 * c0.a + f0 * c1.a) >> kPrecision) };
+    };
+    auto texel = [&](int x, int y) { return src.get(sr.x + x, sr.y + y); };
+    int sumH = ah.start;
+    for (int i = 0; i < dh; i++) {
+        const bool noPad = !(i < ah.leftPad || i > dh - 1 - ah.rightPad);
+        int row = noPad ? static_cast<int>(static_cast<uint32_t>(sumH) >> 16) : (i < ah.leftPad ? 0 : sr.h - 1);
+        const int fh0 = noPad ? static_cast<int>((static_cast<uint32_t>(sumH) >> (16 - kPrecision)) & (kFracOne - 1)) : 0;
+        const int row1 = noPad ? row + 1 : row;
+        sumH += ah.step;
+        const int fh1 = kFracOne - fh0;
+        int sumW = aw.start + aw.leftPad * aw.step;
+        auto bilinear = [&](int x, int fw0) {
+            const int fw1 = kFracOne - fw0;
+            const RGBA left = mix(texel(x, row), texel(x, row1), fh0, fh1);
+            const RGBA right = mix(texel(x + 1, row), texel(x + 1, row1), fh0, fh1);
+            return mix(left, right, fw0, fw1);
+        };
+        int o = 0;
+        for (int k = 0; k < aw.leftPad; k++) out[static_cast<size_t>(i) * dw + o++] = bilinear(0, 0);
+        const int middle = dw - aw.leftPad - aw.rightPad;
+        for (int k = 0; k < middle; k++) {
+            const int x = static_cast<int>(static_cast<uint32_t>(sumW) >> 16);
+            const int fw = static_cast<int>((static_cast<uint32_t>(sumW) >> (16 - kPrecision)) & (kFracOne - 1));
+            sumW += aw.step;
+            out[static_cast<size_t>(i) * dw + o++] = bilinear(x, fw);
+        }
+        for (int k = 0; k < aw.rightPad; k++) out[static_cast<size_t>(i) * dw + o++] = bilinear(sr.w - 2, kFracOne);
+    }
+    return out;
+}
+
 // Copy `srcRect` of `src` into the destination rectangle (float corners, so
 // that RenderCopy and RenderCopyF share one routine).  Answers false when a
 // blend mode of the texture is not valid.
@@ -370,13 +474,22 @@ inline bool copyTexture(const Pixels& dst, const Clip& clip, const Pixels& src,
     const int y1 = static_cast<int>(std::lround(dy)), y2 = static_cast<int>(std::lround(dy + dh));
     const float sx = srcRect.w / dw, sy = srcRect.h / dh;
     const bool unscaled = std::fabs(sx - 1.f) < 1e-6f && std::fabs(sy - 1.f) < 1e-6f;
+    std::vector<RGBA> linearPixels;
+    if (t.linear && !unscaled && x2 > x1 && y2 > y1) linearPixels = bilinearScale(src, srcRect, x2 - x1, y2 - y1);
     for (int y = y1; y < y2; y++) {
         for (int x = x1; x < x2; x++) {
             if (!insideClip(dst, clip, x, y)) continue;
-            const float u = srcRect.x + (x + 0.5f - dx) * sx;
-            const float v = srcRect.y + (y + 0.5f - dy) * sy;
-            const RGBA texel = samplePixels(src, srcRect, u, v, t.linear && !unscaled);
-            dst.put(x, y, blendPixel(spec, modulate(texel, t), dst.get(x, y), fast));
+            RGBA texel;
+            if (t.linear && !unscaled) {
+                texel = linearPixels[static_cast<size_t>(y - y1) * (x2 - x1) + (x - x1)];
+            } else {
+                const int sxi = std::min(nearestSourceIndex(x - x1, srcRect.w, x2 - x1), srcRect.w - 1);
+                const int syi = std::min(nearestSourceIndex(y - y1, srcRect.h, y2 - y1), srcRect.h - 1);
+                texel = src.get(srcRect.x + sxi, srcRect.y + syi);
+            }
+            const RGBA m = modulate(texel, t);
+            dst.put(x, y, t.blend == kBlendBlend ? blitBlendPixel(m, dst.get(x, y), t.modulated())
+                                                  : blendPixel(spec, m, dst.get(x, y), fast));
         }
     }
     return true;
@@ -545,12 +658,20 @@ inline SurfaceRaw* createSurfaceFrom(void* pixels, int w, int h, int pitch, cons
     return s;
 }
 
+// Code that keeps data per surface (SDL2Surface.hpp) sets this to learn when a
+// surface goes away.
+inline void (*&surfaceFreeHook())(const SurfaceRaw*) {
+    static void (*hook)(const SurfaceRaw*) = nullptr;
+    return hook;
+}
+
 // SDL_FreeSurface: drop one reference; free at zero.  A pointer that this
 // layer did not create is ignored, as the fake handles of older callers are.
 inline void freeSurface(SurfaceRaw* s) {
     if (!isSurface(s)) return;
     if (--s->refcount > 0) return;
     surfaceRegistry().erase(s);
+    if (surfaceFreeHook()) surfaceFreeHook()(s);
     if (!(s->flags & kSurfacePreallocated)) free(s->pixels);
     free(s);   // the block starts at the surface
 }

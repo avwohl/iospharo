@@ -1,0 +1,147 @@
+# Functions that the zero-argument sweep must not call.
+SDL_Quit  # ends SDL for the rest of the run
+SDL_QuitSubSystem
+SDL_VideoQuit
+SDL_AudioQuit
+SDL_WaitEvent  # blocks
+SDL_ShowSimpleMessageBox  # opens a dialog on a real window system
+SDL_ShowMessageBox
+SDL_OpenURL
+SDL_Delay
+SDL_SetMemoryFunctions
+SDL_GetMemoryFunctions
+SDL_GetOriginalMemoryFunctions
+SDL_ReportAssertion
+SDL_SetAssertionHandler
+SDL_AtomicLock  # null spin lock: real SDL dereferences it
+SDL_AtomicUnlock
+SDL_AtomicTryLock
+SDL_AtomicAdd
+SDL_AtomicCAS
+SDL_AtomicSet
+SDL_AtomicGet
+SDL_AtomicCASPtr
+SDL_AtomicSetPtr
+SDL_AtomicGetPtr
+SDL_CreateThread  # null function: real SDL jumps to it
+SDL_CreateThreadWithStackSize
+SDL_RWsize  # null stream: real SDL calls through it
+SDL_RWseek
+SDL_RWtell
+SDL_RWread
+SDL_RWwrite
+SDL_RWclose
+SDL_ReadU8
+SDL_ReadLE16
+SDL_ReadBE16
+SDL_ReadLE32
+SDL_ReadBE32
+SDL_ReadLE64
+SDL_ReadBE64
+SDL_WriteU8
+SDL_WriteLE16
+SDL_WriteBE16
+SDL_WriteLE32
+SDL_WriteBE32
+SDL_WriteLE64
+SDL_WriteBE64
+SDL_LoadFile_RW
+SDL_LoadObject  # null path
+SDL_LoadFunction
+SDL_UnloadObject
+SDL_GetRenderDriverInfo
+SDL_LogSetOutputFunction
+SDL_free
+SDL_SIMDFree
+SDL_SIMDRealloc
+SDL_realloc
+SDL_memset  # null destination
+SDL_memmove
+SDL_memcmp
+SDL_memcpy
+SDL_strlen
+SDL_strcmp
+SDL_strncmp
+SDL_strcasecmp
+SDL_strncasecmp
+SDL_strstr
+SDL_strchr
+SDL_strrchr
+SDL_strtol
+SDL_strtoul
+SDL_strtoll
+SDL_strtoull
+SDL_strtod
+SDL_atoi
+SDL_atof
+SDL_strdup
+SDL_strrev
+SDL_strupr
+SDL_strlwr
+SDL_strtokr
+SDL_strlcat
+SDL_strlcpy
+SDL_strcasestr
+SDL_utf8strlen
+SDL_utf8strnlen
+SDL_utf8strlcpy
+SDL_wcslen
+SDL_wcscmp
+SDL_wcsncmp
+SDL_wcsstr
+SDL_wcsdup
+SDL_wcslcpy
+SDL_wcslcat
+SDL_wcscasecmp
+SDL_wcsncasecmp
+SDL_qsort
+SDL_bsearch
+SDL_crc16
+SDL_crc32
+SDL_iconv
+SDL_iconv_string
+SDL_JoystickGetGUIDFromString
+SDL_GUIDFromString
+SDL_ConvertAudio
+SDL_itoa
+SDL_uitoa
+SDL_ltoa
+SDL_ultoa
+SDL_lltoa
+SDL_ulltoa
+SDL_GetErrorMsg
+SDL_Metal_CreateView
+SDL_GL_ExtensionSupported
+SDL_GetPointDisplayIndex
+SDL_GetRectDisplayIndex
+SDL_SoftStretch
+SDL_SoftStretchLinear
+SDL_LowerBlit
+SDL_LowerBlitScaled
+SDL_SetColorKey
+SDL_GetColorKey
+SDL_HasColorKey
+SDL_SetSurfaceAlphaMod
+SDL_SetSurfaceBlendMode
+SDL_SetSurfaceColorMod
+SDL_SetSurfacePalette
+SDL_SetSurfaceRLE
+SDL_HasSurfaceRLE
+SDL_GetRGB
+SDL_GetRGBA
+SDL_PixelFormatEnumToMasks
+SDL_HidapiPlaceholder
+
+SDL_AddEventWatch  # a null watch is called by a later event: crashes later, elsewhere
+SDL_AddTimer  # a null callback is called from the timer thread
+SDL_DelEventWatch
+SDL_RemoveTimer
+SDL_CreateWindowAndRenderer  # crashes or hangs stock libSDL2 with null arguments
+SDL_DuplicateSurface  # crashes or hangs stock libSDL2 with null arguments
+SDL_FilterEvents  # crashes or hangs stock libSDL2 with null arguments
+SDL_LockSurface  # crashes or hangs stock libSDL2 with null arguments
+SDL_OpenAudio  # crashes or hangs stock libSDL2 with null arguments
+SDL_OpenAudioDevice  # crashes or hangs stock libSDL2 with null arguments
+SDL_PushEvent  # crashes or hangs stock libSDL2 with null arguments
+SDL_RenderFlush  # crashes or hangs stock libSDL2 with null arguments
+SDL_UnlockSurface  # crashes or hangs stock libSDL2 with null arguments
