@@ -234,6 +234,28 @@ and in 4 of 20 runs at `d5323560`.
   the package declares the 16-byte `CXString` struct as one pointer;
   `smalltalkweb-myprecious` has a busy loop and a service-name race, and Cog
   under Rosetta does not complete the reconnect while the loop runs.
+- Fourth package run (VM at `32568c4b`, arm64): 151 packages load, 144 give
+  a result on the two VMs.  Cog 37634 passes, our VM 37637.  Our VM gives a
+  result for 147 packages and Cog for 146.
+  - The third run (VM at `04959000`) showed one regression.  The SDL2
+    review fixes made `SDL_CreateWindow` answer NULL for the OpenGL flag.
+    The Bloc window host always sets that flag, so `pharo-graphics-spec-toplo`
+    and `ducasse-myg` stopped with "Invalid window handle" and no RESULT
+    line.  The stub accepts the flag again (`1ad5a041`), as the cocoa driver
+    of libSDL2 does.  The two packages give 40/0/0 and the Cog result again.
+  - The rows where our VM and Cog differ in the fourth run:
+    `smalltalkweb-myprecious` and `pharo-cig-pharo-cig` (no RESULT on our
+    VM, package defects, see below); `moosetechnology-mooseide` (no RESULT
+    on the two VMs: a forked process gets `#result was sent to nil`);
+    `exercism-pharo-smalltalk-test-runner`, `newapplesho-google-cloud-smalltalk`
+    and `pharo-graphics-spec-toplo` (no RESULT on Cog only);
+    `apptivegrid-soil` (one race); and four rows where Cog has one more
+    timeout or failure than our VM.
+  - Two failures that showed only in the third run are tests with random
+    input: `EffectDistributionTest>>test002...` fails about 12 times in 100
+    and `TbBoundsTest>>testAtRandom` about 10 times in 100, at the same
+    rate on our VM and on Cog.  A seeded `Random` sequence is identical on
+    the two VMs.
 - Second package run (fixed harness, VM at `8b93526c`, arm64): 150 packages
   load, 142 give a result on the two VMs.  Cog 37411 passes, our VM 37309.
   The differences, each one classified and reviewed:

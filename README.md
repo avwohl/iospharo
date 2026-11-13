@@ -18,9 +18,9 @@ does not support them.
   and 219 skip.  Pharo 13 (2047 classes, 28077 tests): 27930 pass and 182
   skip.  The tests that do not pass are a live network query and
   timing-dependent tests (docs/WIP.md).
-- Package tests on Pharo 14 (200 packages, 150 load, 142 give a result on
-  the two VMs): 37309 passes, against 37411 on the Cog VM.  The difference
-  is two SDL packages and one race (docs/WIP.md).
+- Package tests on Pharo 14 (200 packages, 151 load, 144 give a result on
+  the two VMs): 37637 passes, against 37634 on the Cog VM.  The remaining
+  differences are package defects and races (docs/WIP.md).
 - Speed: about the same as Cog on large programs.  See
   [docs/benchmarking.md](docs/benchmarking.md).
 - GUI: Metal rendering, menus, touch-to-mouse events, hardware keyboard,
