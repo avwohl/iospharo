@@ -41,6 +41,9 @@ This VM:
   more.  The VM rewrites the slots, so the next use finds the target.
   The constant `kPrimitiveFollowDepth` holds the depth.  The scan reads
   at most 256 slots of an object.
+- The second run applies only to primitive 117.  For a numbered
+  primitive, the VM follows only the receiver and the arguments, not
+  their fields.  This is less than the full Spur rule.
 - The BitBlt and WarpBlt primitives do not fail on a forwarded `bits`:
   they read the slot as a Bitmap.  They call `followForwarded` at each
   read of the bits (`fa07c935`, `c9c79751`).  A new primitive that

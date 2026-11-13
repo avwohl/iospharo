@@ -23,7 +23,8 @@ Fix: `Interpreter::callPrimitive` follows the receiver and the arguments
 before each cached primitive call, and an external primitive that fails
 gets the fields of its operands followed to depth 2 and runs once more.
 Details: docs/pinned-forwarders.md.  Test: `scripts/cogdiff/pinforward.st`
-(30 cases).  Before the fix, arm64 gave 1 line and x86_64 gave 2 lines that differ from Cog.
+(30 cases).  Before the fix, arm64 gave 1 line and x86_64 gave 2 lines
+that differ from Cog.
 After the fix, arm64 and x86_64 both equal Cog.  Not fixed and
 equal to Cog: a pinned boxed Float and a pinned Balloon work buffer fail
 on Cog too.

@@ -29,7 +29,8 @@ scripts/build-sdl3.sh
 The script downloads the tarball, checks the hash, and builds
 `libSDL3.0.dylib` for arm64 and for x86_64.  The files go to
 `third-party-build/sdl3-install/macos-<arch>/lib/`.  The build takes about
-one minute for both arches.
+one minute for both arches.  Run `cmake` again after the script, then
+build: CMake looks for the library at configure time.
 
 `CMakeLists.txt` copies the library for the build arch to
 `<build dir>/Plugins/libSDL3.0.dylib` and makes a `libSDL3.dylib` link beside

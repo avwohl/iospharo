@@ -74,7 +74,8 @@ Takes about 15 minutes on first run. Use `--no-crypto` to skip OpenSSL and libss
 (libgit2 is always built for local repository support).
 
 SDL3 (for the PharoSDL3 image package, macOS only): run
-`scripts/build-sdl3.sh`, then build again.  See [sdl3.md](sdl3.md).
+`scripts/build-sdl3.sh`, then run `cmake` again and build (CMake looks
+for the library at configure time).  See [sdl3.md](sdl3.md).
 
 ### Step 3: Build the app
 

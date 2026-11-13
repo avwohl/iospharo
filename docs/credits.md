@@ -35,10 +35,12 @@ projects.
 - [SMark](https://github.com/smarr/SMark) — benchmark framework for Smalltalk
   (MIT; Copyright 2020 Stefan Marr and others)
 
+**Shared library loaded at run time (macOS only):**
+- [SDL3](https://www.libsdl.org) 3.4.10 — shared library for the PharoSDL3 package, loaded at run time, not linked (zlib); see [sdl3.md](sdl3.md)
+
 **Statically linked libraries (cross-compiled as xcframeworks):**
 - [libffi](https://github.com/libffi/libffi) 3.5.2 — Foreign Function Interface (MIT)
 - [SDL2](https://www.libsdl.org) 2.26.5 — Simple DirectMedia Layer (zlib)
-- [SDL3](https://www.libsdl.org) 3.4.10 — shared library for the PharoSDL3 package, loaded at run time, not linked (zlib); see [sdl3.md](sdl3.md)
 - [cairo](https://cairographics.org) 1.18.2 — 2D graphics (LGPL-2.1 / MPL-1.1)
 - [FreeType](https://freetype.org) 2.13.3 — font rendering (FTL)
 - [pixman](https://cairographics.org) 0.43.4 — pixel manipulation (MIT)
