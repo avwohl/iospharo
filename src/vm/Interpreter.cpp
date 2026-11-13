@@ -10668,15 +10668,21 @@ void Interpreter::returnFromMethodSlow(Oop value) {
         Oop ctx = activeContext_;
         Oop homeCtx = Oop::nil();
         int depth = 0;
+        const Oop lexicalHome = lexicalHomeContextOf(closure_);
+        Oop fallbackCtx = Oop::nil();
         while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
             Oop ctxMethod = memory_.fetchPointer(3, ctx);
-            if (ctxMethod.rawBits() == homeMethodForCR.rawBits()) {
+            if (!lexicalHome.isNil() && ctx.rawBits() == lexicalHome.rawBits()) {
                 homeCtx = ctx;
                 break;
+            }
+            if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethodForCR.rawBits()) {
+                fallbackCtx = ctx;
             }
             ctx = memory_.fetchPointer(0, ctx);
             depth++;
         }
+        if (homeCtx.isNil()) homeCtx = fallbackCtx;
 
         if (homeCtx.isObject() && !homeCtx.isNil()) {
             // Check for unwind (ensure:) contexts between here and home
@@ -10748,6 +10754,25 @@ void Interpreter::killContextsThrough(Oop from, Oop homeCtx) {
         if (ctx.rawBits() == homeCtx.rawBits()) break;
         ctx = next;
     }
+}
+
+// The lexical home of a closure, by identity: Context>>home, i.e. follow
+// outerContext through closureOrNil until a method context.  A method copied
+// out of a trait keeps CompiledBlocks whose outer-code literal is the TRAIT's
+// method, so the CompiledMethod a home context runs need not be the one its
+// blocks name (MCP's TMCPSequencedUpdate>>executeActions: in
+// MCPUpdateClassCommand): the home must be found by context identity, not by
+// comparing methods.  Answers nil when the closure has no usable outerContext.
+Oop Interpreter::lexicalHomeContextOf(Oop closure) {
+    if (!closure.isObject() || closure.isNil() || closure.rawBits() <= 0x10000) return Oop::nil();
+    Oop home = memory_.fetchPointer(0, closure);   // outerContext
+    for (int hops = 0; hops < 256; hops++) {
+        if (!home.isObject() || home.isNil() || home.rawBits() <= 0x10000) return Oop::nil();
+        Oop outerClosure = memory_.fetchPointer(4, home);   // closureOrNil
+        if (!outerClosure.isObject() || outerClosure.isNil() || outerClosure.rawBits() <= 0x10000) return home;
+        home = memory_.fetchPointer(0, outerClosure);
+    }
+    return Oop::nil();
 }
 
 void Interpreter::returnFromBlock() {
@@ -10874,11 +10899,11 @@ void Interpreter::returnFromBlock() {
             // lexical home), in-chain + home method, over the method-oop nearest.
             Oop och = memory_.fetchPointer(0, closure_);
             if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
+            Oop lexicalHome = lexicalHomeContextOf(closure_);
             Oop fallbackCtx = Oop::nil();
             while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                if (!och.isNil() && ctx.rawBits() == och.rawBits()
-                    && ctxMethod.rawBits() == homeMethod.rawBits()) {
+                if (!lexicalHome.isNil() && ctx.rawBits() == lexicalHome.rawBits()) {
                     homeCtx = ctx;
                     break;
                 }

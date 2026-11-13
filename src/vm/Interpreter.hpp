@@ -2108,6 +2108,7 @@ public:
     void* mcfExtSendTarget(jit::JITState* st, uint32_t desc);
     bool mcfPrimMethodCallable(Oop method, int p);
     size_t findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext, Oop methodToExecute);
+    Oop lexicalHomeContextOf(Oop closure);
     Oop blockHomeMethodForNLR(Oop compiledBlock);
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
