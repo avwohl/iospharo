@@ -78,7 +78,8 @@ one_run() {
     if [ -f "$d/fileout.txt" ]; then
         nl_norm < "$d/fileout.txt" > "$d/answer.txt"
     elif [ "$name" = cog ]; then
-        nl_norm < "$d/stdout.txt" > "$d/answer.txt"
+        # the stock VM prints deprecation notices in front of the answer
+        nl_norm < "$d/stdout.txt" | grep -av '^DeprecationPerformedNotification: ' > "$d/answer.txt"
     else
         # Our VM prints the answer on stderr after the marker EVAL-RESULT= at
         # the start of a line.  The echo of the image stdout (each line has

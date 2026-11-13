@@ -7475,8 +7475,11 @@ PrimitiveResult Interpreter::primitiveExponent(int argCount) {
     // primitiveExponent and primitiveSmallFloatExponent answer.
 
     // Get the exponent using frexp (returns value in range [0.5, 1) and exponent)
-    int exponent;
-    std::frexp(value, &exponent);
+    // C leaves the exponent unspecified for an infinity or a NaN: the C
+    // libraries of macOS, glibc and the stock Windows VM store 0, the
+    // mingw-w64 one stores -1.  Answer -1 on every host, as Cog does.
+    int exponent = 0;
+    if (std::isfinite(value)) std::frexp(value, &exponent);
     // Adjust because frexp returns mantissa in [0.5, 1), Smalltalk expects [1, 2)
     exponent--;
 
