@@ -25,7 +25,9 @@ FAKE_GUI="${FAKE_GUI:-$HERE/../pharo-headless-test/setup_fake_gui.st}"
 OUT="${OUT:-/tmp/pkg200}"; mkdir -p "$OUT"
 # The load step runs in a scratch directory (see below), so every path handed to
 # a VM must be absolute.
-abspath() { case "$1" in /*) printf '%s' "$1";; *) printf '%s' "$PWD/$1";; esac; }
+# A bare command name (no slash) is found through PATH and stays as given.
+abspath() { case "$1" in /*) printf '%s' "$1";; */*) printf '%s' "$PWD/$1";; *) printf '%s' "$1";; esac; }
+case "$OUT" in */*) ;; *) OUT="./$OUT";; esac
 OUT="$(abspath "$OUT")"; PHARO="$(abspath "$PHARO")"; BASE_IMAGE="$(abspath "$BASE_IMAGE")"
 CUSTOM_VM="$(abspath "$CUSTOM_VM")"; FAKE_GUI="$(abspath "$FAKE_GUI")"
 SUMMARY="$OUT/summary.tsv"
