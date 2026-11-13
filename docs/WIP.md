@@ -186,6 +186,25 @@ tests `testNewProcessTaskRunnerRunsInNewProcessEveryTime`,
 `StPlaygroundPageTest>>testContents` and
 `testOpenSpotterRefreshesPreviewOnce`, each one known from earlier sweeps.
 
+The four sweeps ran again at `d5323560` (the Windows x86_64 merge and the
+full SDL2 function layer).
+
+| image | arch | pass, recovery pass included | not passed |
+|---|---|---|---|
+| Pharo 14 | arm64 | 28197 | 2 |
+| Pharo 13 | arm64 | 27930 | 2 |
+| Pharo 14 | x86_64 | 28200 | 1 |
+| Pharo 13 | x86_64 | 27932 | 2 |
+
+The tests that did not pass: `testQueryGoogle` (4 sweeps),
+`testOpenSpotterRefreshesPreviewOnce` (1 sweep) and the TaskIt test
+`testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel` (the two
+arm64 sweeps).  The TaskIt test is a known race (`docs/image_issues.md`).
+An interleaved comparison of the batch that contains the TaskIt classes, 20
+runs for each build, gave the same result for the build at `9e22a112`:
+one of the two timing-dependent TaskIt tests failed in 5 of 20 runs there
+and in 4 of 20 runs at `d5323560`.
+
 - Pharo 14 package run (`scripts/pkg-jit-test/`, 200 manifest rows, stock
   Cog v12.0.6 loads each package): 151 packages load, 49 do not load on
   Pharo 14.  First run at `d8a36711`, arm64: Cog 30436 passes, our VM 30414.
