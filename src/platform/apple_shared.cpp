@@ -11,6 +11,13 @@
 
 #include "Platform.hpp"
 
+// CMake defines PHARO_JIT_ENABLED for every source of PharoVMCore.  An
+// undefined macro reads as 0 in #if and would silently drop the W^X flips
+// from a JIT build, so refuse to compile without it.
+#ifndef PHARO_JIT_ENABLED
+#error "PHARO_JIT_ENABLED must be defined (0 or 1) when compiling apple_shared.cpp"
+#endif
+
 #include <sys/mman.h>
 #include <unistd.h>
 #include <libkern/OSCacheControl.h>
@@ -44,7 +51,15 @@ void freeCodeMemory(void* ptr, size_t bytes) {
 // breaks Catalyst (iOS-SDK-targeted) and iOS device builds.  See
 // Platform.hpp for the full rationale.
 
-#if defined(__arm64__)
+//
+// Only a JIT build may name the symbol.  The iOS device SDK does not
+// export _pthread_jit_write_protect_np (checked on the iOS 27.2 SDK: no
+// .tbd under usr/lib lists it; the simulator and macOS SDKs do), and the
+// app links PharoVMCore with -all_load, so an unused reference in this
+// file still fails the device link.  JIT-off slices have no code zone and
+// no caller of makeWritable / makeExecutable.
+
+#if defined(__arm64__) && PHARO_JIT_ENABLED
 extern "C" void pharo_pthread_jit_write_protect_np(int)
     __asm("_pthread_jit_write_protect_np");
 #endif
@@ -62,7 +77,10 @@ static thread_local int g_wxShadowMode = 1;
 int currentWXShadowMode() { return g_wxShadowMode; }
 
 bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
-#if defined(__arm64__)
+#if !PHARO_JIT_ENABLED
+    // No JIT in this build: there is no MAP_JIT region to flip.
+    return false;
+#elif defined(__arm64__)
     pharo_pthread_jit_write_protect_np(0);
     g_wxShadowMode = 0;
     return true;
@@ -75,7 +93,9 @@ bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
 }
 
 bool makeExecutable(void* /*ptr*/, size_t /*bytes*/) {
-#if defined(__arm64__)
+#if !PHARO_JIT_ENABLED
+    return false;   // see makeWritable
+#elif defined(__arm64__)
     pharo_pthread_jit_write_protect_np(1);
     g_wxShadowMode = 1;
     return true;

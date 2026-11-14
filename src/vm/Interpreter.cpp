@@ -1027,9 +1027,11 @@ Interpreter::Interpreter(ObjectMemory& memory)
 {
     // Before any frame record exists: every record, C++ or native, then
     // holds a tempBase (docs/mcf-record-trim-plan.md stage 3).
+#if PHARO_JIT_ENABLED
     jit::g_mcfTbRecord = !GET_DEBUG_BOOL(PHARO_MCF_NO_TB_RECORD);
     // Stage 4: native records carry the ip in their info word.
     jit::g_mcfIpInInfo = !GET_DEBUG_BOOL(PHARO_MCF_NO_IP_IN_INFO);
+#endif
     // Clear method cache
     for (auto& entry : methodCache_) {
         entry.selector = Oop::nil();
@@ -2525,7 +2527,11 @@ void Interpreter::pushSlow(Oop value) {
                         "nowScav=%llu allocCls=%u\n",
                         (unsigned long long)value.rawBits(),
                         memory_.selectorOf(method_).c_str(), frameDepth_,
+#if PHARO_JIT_ENABLED
                         currentJITState_ ? 1 : 0,
+#else
+                        0,
+#endif
                         copies, firstOff,
                         (long long)(stackPointer_ - stackBase_),
                         framePointer_ ? (long long)(framePointer_ - stackBase_) : -1LL,
@@ -2940,7 +2946,11 @@ void Interpreter::dumpCrashState() {
                 ? (long long)(instructionPointer_ - method_.asObjectPtr()->bytes()) : -1LL,
             g_lastResumeExit,
             g_lastResumeMethod ? memory_.selectorOf(Oop::fromRawBits(g_lastResumeMethod)).c_str() : "-",
+#if PHARO_JIT_ENABLED
             (int)inJITResume_);
+#else
+            0);
+#endif
     fprintf(stderr, "[CRASH-STATE] extA_=%d extB_=%d\n", extA_, extB_);
     if (method_.isObject() && instructionPointer_) {
         ObjectHeader* mo = method_.asObjectPtr();
@@ -4884,8 +4894,11 @@ void Interpreter::interpret() {
         Oop rcvr = stackValue(0);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+#if PHARO_JIT_ENABLED
             && !(__builtin_expect(jit::g_blockValueOverridden, 0)
-                 && specialValueNeedsLookup())) {
+                 && specialValueNeedsLookup())
+#endif
+            ) {
             argCount_ = 0;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -4910,8 +4923,11 @@ void Interpreter::interpret() {
         Oop rcvr = stackValue(1);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+#if PHARO_JIT_ENABLED
             && !(__builtin_expect(jit::g_blockValueOverridden, 0)
-                 && specialValueNeedsLookup())) {
+                 && specialValueNeedsLookup())
+#endif
+            ) {
             argCount_ = 1;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -8046,8 +8062,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop rcvr = stackValue(0);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+#if PHARO_JIT_ENABLED
             && !(__builtin_expect(jit::g_blockValueOverridden, 0)
-                 && specialValueNeedsLookup())) {
+                 && specialValueNeedsLookup())
+#endif
+            ) {
             argCount_ = 0;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -8069,8 +8088,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop rcvr = stackValue(1);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+#if PHARO_JIT_ENABLED
             && !(__builtin_expect(jit::g_blockValueOverridden, 0)
-                 && specialValueNeedsLookup())) {
+                 && specialValueNeedsLookup())
+#endif
+            ) {
             argCount_ = 1;
             primitiveFailed_ = false;
             primFailCode_ = 0;
@@ -11141,7 +11163,9 @@ void Interpreter::captureCollapsedFrames(size_t homeFrame, Oop homeCtx) {
     // (trim steps 7-8: native pushes leave the raw fields stale).
     for (size_t k = 0; k <= homeFrame; k++) {
         c.recs[k].savedClosureRaw = recClosure(savedFrames_[k]);
+#if PHARO_JIT_ENABLED
         if (jit::g_mcfLazyCloAct) c.recs[k].savedActiveContextRaw = collapsedActiveCtx_;
+#endif
     }
     c.ctxs.assign(homeFrame + 1, Oop::nil());
     c.stackps.assign(homeFrame, 0);
@@ -11227,7 +11251,9 @@ bool Interpreter::tryRestoreCollapsedFrames() {
     // INV-AC: the restored records' active context.  popFrame used to
     // restore it from the record; under the lazy scheme it keeps
     // activeContext_, which is still the returning (widowed) context here.
+#if PHARO_JIT_ENABLED
     if (jit::g_mcfLazyCloAct) activeContext_ = c.recs[0].savedActiveContextRaw;
+#endif
     lazyCtxPending_ = true;   // EXPERIMENT-MARK
     g_framesRestored++;
     restoreFail(31);   // census: a success
@@ -17387,7 +17413,11 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             && frame.savedMethod.isObject()) {
         std::string psel = memory_.selectorOf(frame.savedMethod);
         if (psel.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos) {
+#if PHARO_JIT_ENABLED
             Oop* jitTB = currentJITState_ ? currentJITState_->tempBase : nullptr;
+#else
+            Oop* jitTB = nullptr;
+#endif
             fprintf(stderr,
                 "[FRAME-PUSH] #%s savedFP+1=%p jitTempBase=%p %s t0=%s\n",
                 psel.c_str(), (void*)(frame.fp() + 1), (void*)jitTB,
@@ -17842,9 +17872,11 @@ bool Interpreter::popFrame() {
     // returnValue's resume and mcfRun's ExitReturn, which read it after
     // this pop (they read the cleared slot before, and looked the code up
     // on every return through C++).
+#if PHARO_JIT_ENABLED
     poppedMcReturn_ = frame.mcReturn;
     poppedMcJM_ = frame.mcJM;
     poppedMcDepth_ = frameDepth_;
+#endif
     frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
 
     // NLR-marker hygiene (cascade-#3 residual, 2026-06-11): scrub the
@@ -18727,6 +18759,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
                             }
                         }
                     }
+#if PHARO_JIT_ENABLED
                     // IC-site dump for the caller (send:to:with:super:):
                     // the objectClass: site's extras word names the guilty
                     // inline bit if a stale/wrong classification hijacked
@@ -18784,6 +18817,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount, Oop lookupCl
                                 memory_.selectorOf(method_).c_str());
                         }
                     }
+#endif
                     // prim-111 ring: did prim 111 produce the corpse?
                     {
                         for (int ri = 0; ri < 256; ri++) {

@@ -760,7 +760,11 @@ private:
         // jit::g_mcfIpInInfo); 2 = a native push from a site whose offset
         // needs more than 16 bits (raw ip and arg count, no tail fields).
         uint8_t* bcEnd() const { return recFull == 1 ? savedBytecodeEndRaw : nullptr; }   // null: derive
+#if PHARO_JIT_ENABLED
         bool ipInInfo() const { return recFull == 0 && jit::g_mcfIpInInfo; }
+#else
+        bool ipInInfo() const { return false; }   // no native pushes: every record is interpreter-built
+#endif
         uint8_t* ip() const {
             return ipInInfo() ? reinterpret_cast<uint8_t*>(savedMethod.rawBits())
                                     + (savedArgCountRaw | (siteNArgs << 8))
@@ -782,10 +786,15 @@ private:
             }
             savedIPRaw = p;
         }
+#if PHARO_JIT_ENABLED
         Oop* fp() const {
             return jit::g_mcfTbRecord ? (savedTB ? savedTB - 1 : nullptr) : savedTB;
         }
         void setFp(Oop* f) { savedTB = jit::g_mcfTbRecord ? (f ? f + 1 : nullptr) : f; }
+#else
+        Oop* fp() const { return savedTB; }
+        void setFp(Oop* f) { savedTB = f; }
+#endif
         Oop* retSlot() const { return recFull == 1 ? materializedRetSlotRaw : nullptr; }
         // Which push built this frame (debug: PHARO_RESUME_EXIT_CHECK names
         // it when a popped frame's method and ip disagree).
@@ -1030,7 +1039,9 @@ private:
     // It sits between the fields a native call and return touch, so the
     // machine code reaches them at fixed offsets from x0 instead of through
     // pointers in the state (mcfInit checks the offsets).
+#if PHARO_JIT_ENABLED
     jit::JITState mcfStateStorage_{};
+#endif
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     // Any thread: make the next interrupt point a checkpoint.  Machine code
@@ -2136,6 +2147,7 @@ public:
     void mcfNotePrimitiveTarget(Oop method, Oop receiver = Oop::fromRawBits(0));
     void* mcfExtSendTarget(jit::JITState* st, uint32_t desc);
     bool mcfPrimMethodCallable(Oop method, int p);
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     size_t findBlockHomeFrame(Oop& homeMethodOop, Oop outerContext, Oop methodToExecute);
     Oop lexicalHomeContextOf(Oop closure);
     Oop lexicalHomeFromContext(Oop outerContext);
@@ -2149,11 +2161,14 @@ public:
     Oop liveLexicalHomeOfRunningBlock();
     void nlrFallbackNote(const char* site, bool liveHome, Oop homeMethod);
     Oop blockHomeMethodForNLR(Oop compiledBlock);
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     void mcfSetBlockHome(Oop closure);
     void mcfCtxSync(jit::JITState* st);
     void mcfCtxFields(jit::JITState* st);
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     std::string eventMethodName(Oop m);
     void eventRecMethods();
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     uint64_t mcfBlockCreate(jit::JITState* st, uint64_t packed);
     void* mcfPerformTarget(jit::JITState* st, int nArgs, uint8_t* ipAfter);
     uint64_t mcfArrayCreate(jit::JITState* st, uint32_t desc);
@@ -2162,8 +2177,10 @@ public:
     bool mcfIsIdentityEquals(Oop method);
     Oop mcfSelectorAtSend(const uint8_t* ip, Oop method);
     bool mcfCacheableOop(Oop m) const;
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     bool atInterruptPoint() const;
     bool ensureFrameAtEntry() const;
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     // Set by returnValue when a return resumed a sender context; mcfRun then
     // continues that context's method in machine code.
     bool mcfReturnedIntoContext_ = false;
@@ -2181,6 +2198,7 @@ public:
     bool isContextResumeMethod(Oop m);
     bool mcfResumeShortcut();
     void* mcfNonLocalReturn(jit::JITState* st);
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     bool followForwardersDeep(Oop o, int depth);
     // Spur's primitive contract for forwarders (StackInterpreter
     // checkForAndFollowForwardedPrimitiveState; docs/pinned-forwarders.md):
@@ -2201,6 +2219,7 @@ public:
         return (this->*prim)(argCount);
     }
     [[gnu::noinline]] PrimitiveResult callPrimitiveWithForwarders(PrimitiveFunc prim, int primIndex, int argCount);
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     // The NLR through one ensure: frame without the image's unwind protocol
     // (docs/native-nlr-plan.md, "ensure shortcut").  e = the ensure: frame's
     // depth.  ensureShortcutOk is check-only; the commit runs after it.
@@ -2215,21 +2234,32 @@ public:
     // fp[0] of a block frame (INV-FP0), nil for a method frame; its active
     // context is activeContext_ (INV-AC).  Native pushes no longer write
     // the raw fields.
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     Oop recClosure(const SavedFrame& f) const {
+#if PHARO_JIT_ENABLED
         if (!jit::g_mcfLazyCloAct || !f.fp() || !f.savedMethod.isObject())
             return f.savedClosureRaw;
         return f.savedMethod.asObjectPtr()->classIndex() == compiledBlockClassIndex_
             ? f.fp()[0] : memory_.nil();
+#else
+        return f.savedClosureRaw;   // no native pushes: the record holds the raw field
+#endif
     }
     Oop recActiveCtx(const SavedFrame& f) const {
+#if PHARO_JIT_ENABLED
         return jit::g_mcfLazyCloAct ? activeContext_ : f.savedActiveContextRaw;
+#else
+        return f.savedActiveContextRaw;
+#endif
     }
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     // The state's closure under the lazy scheme: fp[0] of block code, else
     // nil (tempBase is current at every JIT -> C++ edge).
     void mcfDeriveClosure(jit::JITState& st) const {
         if (!jit::g_mcfLazyCloAct || !st.jitMethod || !st.tempBase) return;
         st.closure = st.jitMethod->isBlock ? st.tempBase[-1] : memory_.nil();
     }
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     // The home method of a frame running `method` with `closure` (nil for a
     // method frame): activateBlock's choice, as mcfSyncRegisters derives it.
     // homeMethod_ is only read by diagnostics; records no longer save it.
@@ -2264,10 +2294,12 @@ public:
         size_t need = (size_t)numTemps + (size_t)(stackDepth > 0 ? stackDepth : 0) + 8;
         return 6 + (need > frame ? need : frame);
     }
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     bool mcfTinyShape(Oop method, uint64_t& prim);
     void mcfFillICAtExit(jit::JITState& st);
     int mcfSpecialSendPrim(jit::JITState& st, jit::JITMethod* jm, void** cont);
     void mcfDeriveView(jit::JITState& st);
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     static constexpr size_t kNlrHomeMemoSize = 64;
     struct NlrHomeMemo { uint64_t code = 0; uint64_t outer = 0; uint64_t home = 0; };
     NlrHomeMemo nlrHomeMemo_[kNlrHomeMemoSize];
@@ -2282,6 +2314,7 @@ public:
         ObjectHeader* mo = method.asObjectPtr();
         return mo->bytes() + mo->compiledCodeByteSize();
     }
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     void mcfVerifyMemo(const SavedFrame& f, const char* site);
     int mcfCallPrimitive(jit::JITState* st, int primIndex, int nArgs);
     void mcfVerifyEq(jit::JITState* st, Oop rcv, Oop arg, Oop answer, uint64_t where);
@@ -2630,6 +2663,7 @@ public:
                         Oop callerMethod = Oop::fromRawBits(0),
                         const Oop* sendSp = nullptr);
 
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     /// Method lookup for T2 inline send helper.
     /// Probes method cache first, falls back to full hierarchy lookup.
     inline Oop lookupMethodForSend(Oop selector, Oop rcvrClass) {
@@ -2639,6 +2673,7 @@ public:
         if (!resolved.isNil()) cacheMethod(selector, rcvrClass, resolved);
         return resolved;
     }
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
 
     /// Push a SavedFrame for a T2 caller whose inline send callee bailed.
     /// Called from jit_t2_send when the callee exits with non-ExitReturn.
@@ -2673,7 +2708,9 @@ public:
     // (the Interpreter object is a session-stable singleton).
 
     void* forceYieldAddr() { return &forceYield_; }
+#endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     void requestStateDump() { pendingStateDump_.store(true, std::memory_order_release); }
+#if PHARO_JIT_ENABLED  // re-open: JIT-only members below
 
 
     jit::JITRuntime& jitRuntime() { return jitRuntime_; }
@@ -4656,7 +4693,10 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         visitor(frame.savedReceiver);
         // Under the lazy scheme (trim steps 7-8) native pushes leave these
         // stale; fp[0] (the stack scan) and activeContext_ are the truth.
-        if (!jit::g_mcfLazyCloAct) {
+#if PHARO_JIT_ENABLED
+        if (!jit::g_mcfLazyCloAct)
+#endif
+        {
             visitor(frame.savedClosureRaw);
             visitor(frame.savedActiveContextRaw);
         }

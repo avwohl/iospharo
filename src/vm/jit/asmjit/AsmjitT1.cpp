@@ -20193,7 +20193,6 @@ size_t asmjitT1Failed()   { return g_failed;   }
 }  // namespace jit
 }  // namespace pharo
 
-#endif  // PHARO_JIT_ENABLED
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 namespace pharo { namespace jit {
@@ -20311,3 +20310,5 @@ void pharo::jit::mcfBuildStubs() {
     }
 #endif
 }
+
+#endif  // PHARO_JIT_ENABLED

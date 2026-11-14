@@ -2929,4 +2929,27 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 }  // namespace sista
 }  // namespace pharo
 
+#else  // !PHARO_JIT_ENABLED
+
+// Same fallback as SistaLowering_arm64.cpp: a JIT-disabled slice (the
+// x86_64 half of the iOS Simulator build) still compiles SistaRuntime.cpp,
+// which calls lower().  Sista is a JIT feature; without the JIT backend the
+// lowerer emits nothing and the method stays in the interpreter.
+namespace pharo {
+namespace sista {
+
+Lowering::Lowering() {}
+Lowering::~Lowering() {}
+
+Lowering::CompiledFn Lowering::lower(const Method&, uint32_t* failedAtValue,
+                                       const uint8_t*, uint32_t,
+                                       std::vector<uint32_t>* outExtraEntryBcOffsets) {
+    if (failedAtValue) *failedAtValue = 0;
+    if (outExtraEntryBcOffsets) outExtraEntryBcOffsets->clear();
+    return nullptr;
+}
+
+}  // namespace sista
+}  // namespace pharo
+
 #endif  // PHARO_JIT_ENABLED

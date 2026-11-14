@@ -65,6 +65,22 @@ jobs:
           find build -maxdepth 2 -name 'test_load_image' -o -maxdepth 2 -name '*.a' \
             | head -5 | grep -q . || { echo "::error::build produced nothing"; exit 1; }
 
+      # The iOS device slice and the iOS Simulator slices compile with the
+      # JIT off (PHARO_JIT_ENABLED=0).  No other build used that
+      # configuration, and it was broken from 2026-08 to 2026-11-14: about
+      # 300 compile errors, found only when someone ran the Xcode build.
+      # This step compiles the same configuration on Linux, so a use of a
+      # JIT-only name outside a guard fails on the push that adds it.  It
+      # cannot see Apple link problems (the app links with -all_load); the
+      # Xcode build is still the only check for those.
+      - name: Build with the JIT off (the iOS configuration)
+        run: |
+          cmake -S . -B build-nojit -DCMAKE_BUILD_TYPE=Release \
+            -DPHARO_WITH_CRYPTO=ON -DPHARO_DISABLE_LTO=ON -DPHARO_JIT_ENABLED=0
+          cmake --build build-nojit -j"$(nproc)"
+          test -x build-nojit/test_load_image \
+            || { echo "::error::JIT-off build produced no test_load_image"; exit 1; }
+
   warpblt-regression:
     name: WarpBlt expression-stack regression
     runs-on: ubuntu-latest

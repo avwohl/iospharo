@@ -5730,8 +5730,12 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 return Oop::fromSmallInteger(22003584);
             case 46: // Machine code zone size; VirtualMachine>>isRunningCogit
                      // tests it > 0.  0 only when the JIT is not running.
+#if PHARO_JIT_ENABLED
                 return Oop::fromSmallInteger(jitInitialized_
                     ? static_cast<int64_t>(jitRuntime_.codeZone().totalBytes()) : 0);
+#else
+                return Oop::fromSmallInteger(0);
+#endif
             case 54: // Free bytes in old space (Cog's totalFreeOldSpace)
                 return Oop::fromSmallInteger(
                     static_cast<int64_t>(memory_.freeOldSpaceBytes()));
