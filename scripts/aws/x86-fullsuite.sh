@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # x86-fullsuite.sh — RUNS ON THE BOX.  Single-config full-suite run of the
-# jit branch @ HEAD on native x86 Linux.  Distilled from sunit-fullsuite-ab.sh
+# work branch @ HEAD on native x86 Linux.  Distilled from sunit-fullsuite-ab.sh
 # (same silent-runner checklist), minus the A/B second config.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2

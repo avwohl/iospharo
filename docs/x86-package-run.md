@@ -55,7 +55,9 @@ cause of each difference.
 
 ## Rules for this session
 
-- Commit to `jit` only.  Pull with rebase before each push.  Do not
-  force-push.  Do not push to `main`.
+- Commit to `main`.  Pull with rebase before each push.  Do not
+  force-push.  The `jit` branch does not exist after 2026-11-14, and `main`
+  has all of its commits.  Do not push a branch with the name `jit`: the
+  push makes the branch again.
 - Do not start a second SUnit sweep or package run while one runs.  The
   runners share files in `/tmp`.

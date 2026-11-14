@@ -14,7 +14,7 @@ name: CI
 
 on:
   push:
-    branches: [main, jit]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -195,7 +195,7 @@ jobs:
       # Those two are already in public history and are allowlisted here.
       #
       # Autosaves no longer reach git at all -- they are git bundles in S3, see
-      # scripts/aws/README.md -- so this is a regression guard.  It fires if
+      # docs/aws-spot-box.md -- so this is a regression guard.  It fires if
       # that behaviour comes back, or if an old dump is merged in.  The
       # signature is read from config.env, so it cannot drift from what
       # preserve.sh actually writes.
@@ -210,7 +210,7 @@ jobs:
             echo "::error::an autosave commit is on this branch — a crash dump is not a commit anyone chose to make:"
             printf '%s\n' "$found"
             echo "Recover what you need from it, then drop it from the branch."
-            echo "See scripts/aws/README.md, 'Why the autosave is not in git'."
+            echo "See docs/aws-spot-box.md, 'Why the autosave is not in git'."
             exit 1
           fi
           echo "no new autosave commits on this branch"

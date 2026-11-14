@@ -17,8 +17,16 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 
 ## Right now (2026-11-14) -- Linux CI green, Apple build repaired and run
 
-`main` and `jit` are the same commit.  Two sets of build defects were
-found and fixed on this day.  No sweep ran on this day.
+The `jit` branch does not exist after this day.  `main` has all commits of
+`jit`, and `main` is the only branch.  Commit to `main` and push `main`.  Do
+not push a branch with the name `jit`: the push makes the branch again.
+
+The checkout on this Mac keeps the directory name `~/src/iospharo-jit`.  The
+older entries in this file that name `jit` tell where a commit was at that
+time.  All of those commits are in `main`.
+
+This day found two sets of build defects and fixed them.  No sweep ran on
+this day.
 
 ### Linux CI (`df0ac300`)
 
@@ -36,13 +44,24 @@ date, and no session did the check.  The last Apple app build before this
 day was at `0f0828a2` (2026-08-17), 432 `src` commits before.
 
 The first build on this day found three defects.  `349e8953` holds the
-three fixes.
+three fixes.  The new CI step then found a fourth defect (below the table).
 
 | # | Defect | Cause | Fix |
 |---|---|---|---|
 | 1 | The JIT-off configuration (`PHARO_JIT_ENABLED=0`: iOS device and iOS Simulator slices) did not compile: about 300 errors in 12 files | Interpreter declarations inside JIT guards in `Interpreter.hpp`, uses of `jit::` names outside guards, and code after the file guard of `AsmjitT1.cpp`.  The machine-code-frame work added them, and no build used the configuration | Guards and guard splits in `Interpreter.hpp`, `Interpreter.cpp`, `Primitives.cpp`, `AsmjitT1.cpp`.  No declaration moved |
 | 2 | The x86_64 half of the iOS Simulator app did not link: `sista::Lowering::lower` not defined | `SistaLowering_arm64.cpp` has a JIT-off fallback, `SistaLowering_x86_64.cpp` had none | The same fallback in the x86_64 file |
 | 3 | The iOS device app did not link: `_pthread_jit_write_protect_np` not defined | The iOS 27.2 device SDK does not export the symbol.  `apple_shared.cpp` named the symbol in all builds, and the app links with `-all_load` | Only a JIT build names the symbol.  The file stops the compile if `PHARO_JIT_ENABLED` is not defined |
+
+The fourth defect: `349e8953` added a CI step that compiles the JIT-off
+configuration on Linux.  The step failed on its first run.  The CI runner
+has Ubuntu 26 with GCC 15, and `Primitives.cpp` uses `std::remove` and 54
+other standard algorithms with no `#include <algorithm>`.  A JIT build gets
+the header through the JIT headers.  A JIT-off build with GCC 15 does not,
+and `std::remove` then means the C function `remove(const char*)`.
+
+The fix is the include.  The first container check of the CI step used
+Ubuntu 24.04 with GCC 13 and did not show the defect.  Use the image of the
+runner (`ubuntu:26.04` now) for a container check.
 
 Checks at the final state of the sources:
 
@@ -53,8 +72,9 @@ Checks at the final state of the sources:
   `42 factorial`, and the WarpBlt probe (1440 calls, 0 errors) are correct.
   The arm64 JIT-off binary gave the same answers as the JIT binary on about
   60 expressions and 15 SUnit classes (1885 tests).
-- Linux in an Ubuntu 24.04 container (GCC 13): JIT-off builds on arm64 and
-  x86_64, the JIT-on build on arm64.  No errors.
+- Linux in containers.  Ubuntu 24.04 (GCC 13): JIT-off builds on arm64 and
+  x86_64, the JIT-on build on arm64.  Ubuntu 26.04 (GCC 15): JIT-off and
+  JIT-on builds on arm64, the JIT-off build on x86_64.  No errors.
 - `scripts/build-libffi.sh`, `scripts/build-sdl2.sh`,
   `scripts/build-third-party.sh`, `scripts/build-xcframework.sh`: all end
   with exit code 0.  `PharoVMCore.xcframework` has the three slices.

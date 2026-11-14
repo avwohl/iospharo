@@ -2,7 +2,7 @@
 # sista-iter.sh — one-command edit→build→test loop for the x86 Sista port.
 #
 # From the worktree after committing a change on the work branch ($WORK_BRANCH,
-# default jit since the x86 work merged 2026-06-17):
+# default main since jit was retired 2026-11-14):
 #   ./scripts/aws/sista-iter.sh            # push, remote incremental build, run with Sista
 #   ./scripts/aws/sista-iter.sh nobuild    # skip build, just re-run the VM
 #

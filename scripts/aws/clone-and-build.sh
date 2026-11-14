@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # clone-and-build.sh — runs ON the instance as user `ubuntu`, after the deploy
 # key has been delivered to ~/.ssh/iospharo-x64-deploy.  Clones the repo, makes
-# the x86 work branch off the latest `jit`, builds the x64 VM, and smoke-tests
+# the x86 work branch off the latest `main`, builds the x64 VM, and smoke-tests
 # it against a freshly downloaded Pharo image.
 set -euxo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../pharo-version.sh" || exit 2
 
 GIT_REMOTE="${GIT_REMOTE:-git@github.com:avwohl/iospharo.git}"
-BASE_BRANCH="${BASE_BRANCH:-jit}"
-WORK_BRANCH="${WORK_BRANCH:-jit}"   # x86 merged into jit; jit-x86 deleted 2026-06-17
+BASE_BRANCH="${BASE_BRANCH:-main}"
+WORK_BRANCH="${WORK_BRANCH:-main}"   # jit retired 2026-11-14; main is the only branch
 REPO=/home/ubuntu/src/iospharo
 
 # --- ssh config so `git` uses the scoped deploy key for github --------------
@@ -43,11 +43,11 @@ git pull --ff-only origin "$BASE_BRANCH"
 # it already contains base; otherwise say so and reset it to base.
 #
 # Note what this guard can and cannot do.  On the x86 config BASE_BRANCH and
-# WORK_BRANCH are BOTH `jit`, so "origin/jit contains origin/jit" is trivially
+# WORK_BRANCH are BOTH `main`, so "origin/main contains origin/main" is trivially
 # true and the else-arm below is unreachable -- the check only bites when a
 # topic WORK_BRANCH has drifted behind base, which is the arm config's shape
 # (jit-arm-linux) and exactly the 2026-08-11 case it was written for.  Against
-# a stale autosave landing on `jit` itself it could do nothing, because such an
+# a stale autosave landing on `main` itself it could do nothing, because such an
 # autosave is a DESCENDANT of base, not behind it.  That hole is closed at the
 # source instead: preserve.sh no longer puts an autosave in git at all.
 if git ls-remote --exit-code --heads origin "$WORK_BRANCH" >/dev/null 2>&1; then

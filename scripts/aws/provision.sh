@@ -120,7 +120,7 @@ else
     # tag (which is exactly how idle boxes got left running for days).  Protection
     # now comes from a keep-alive LEASE that ONLY an actively-working Claude
     # heartbeats -- registered just below, beaten by a PostToolUse hook on the
-    # box, released at teardown.  See scripts/aws/README.md "Keep-alive leases".
+    # box, released at teardown.  See docs/aws-spot-box.md "Keep-alive leases".
     TAGS="ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=$PROJECT_TAG}]"
     VTAGS="ResourceType=volume,Tags=[{Key=Project,Value=$PROJECT_TAG}]"
     SPOT_MARKET='MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}'
@@ -309,7 +309,7 @@ if [ -f "$LEASE_KEY" ]; then
     || echo "WARN: could not install keep-alive hook on box (continuing; box still reapable)"
 else
     echo "WARN: lease key $LEASE_KEY missing -- box will NOT self-heartbeat."
-    echo "      Generate it (see scripts/aws/README.md 'Keep-alive leases') and re-run,"
+    echo "      Generate it (see docs/aws-spot-box.md 'Keep-alive leases') and re-run,"
     echo "      or the box will be reaped after the lease grace window."
 fi
 

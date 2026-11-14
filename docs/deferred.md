@@ -137,6 +137,15 @@ The history lives in `docs/history/`; nothing was deleted.
   survived, and only the spot watcher (which runs as `ubuntu`) ever pushed.
   `idle-shutdown.sh` now drops to `$SPOT_USER` for the preserve.
 
+  Update 2026-11-14: the `jit` branch does not exist after that day.  `main`
+  has all commits of `jit` and is the only branch.  The text below names
+  `jit` because the text is older.
+
+  The text below says that `origin/jit` had no protection.  On 2026-11-14
+  that was wrong: `jit` had protection against force push and deletion, and
+  `main` had none.  `main` has no protection now.  The CI job "Repo hygiene"
+  fails if an autosave commit is on the branch.
+
   The two related exposures are unchanged and still true: `origin/jit` has no
   branch protection, and nothing watches for an autosave landing on it.
   Original text follows.
