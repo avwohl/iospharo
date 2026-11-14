@@ -27,6 +27,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
+#include <cwctype>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -321,7 +323,7 @@ typedef int (*ThreadFunction)(void*);
 enum ThreadPriority : int { kPriorityLow = 0, kPriorityNormal = 1, kPriorityHigh = 2, kPriorityTimeCritical = 3 };
 
 struct Thread {
-    pthread_t handle = nullptr;
+    pthread_t handle{};   // an integer on glibc, a pointer on Darwin
     unsigned long id = 0;
     std::string name;
     bool hasName = false;
