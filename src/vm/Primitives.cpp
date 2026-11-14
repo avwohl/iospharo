@@ -68,6 +68,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #undef nil
 #include "ObjCExceptionGuard.h"
 #endif
+#include <algorithm>   // std::remove, std::sort, ...: not transitive in a JIT-off build (GCC 15)
 #include <thread>
 #include <mutex>
 #include <condition_variable>
