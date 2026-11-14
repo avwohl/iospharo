@@ -452,6 +452,32 @@ This session did not reproduce a hang with main.  So the 40 runs do not
 separate the two arms.  The trace of the intermediate build and Cog's source
 give the mechanism.
 
+Second check of the SIGABRT, at `cc76f82f`, by three independent
+examinations.  Each examination gave the same cause.
+
+- A logger on `ffi_call_SYSV` named the callee of the abort:
+  `clang_disposeString`, after `clang_getCursorDisplayName` and
+  `clang_getCString`.  libclang had returned 0 in x1 for that string.  The
+  call that aborted had 1 in x1, and the `data` pointer was a macro name in
+  libclang's own storage.
+- A dyld interposer logged each `clang_disposeString` call.  In 8 of 8 aborts
+  the last call had 1 in x1 and a `data` pointer that is not a `malloc` block.
+- The unpatched suite aborted in 10 of 12 runs.  The suite with the patch
+  `docs/patches/pharo-cig-cxstring.st` completed 12 of 12 runs with pass=318
+  fail=18 err=6.  No run hung.
+- Stock Cog can run the suite with an x86_64 libclang (the one host copy is
+  in the Android NDK) and gives the same 318/18/6, with the same 24 tests
+  that do not pass.  Cog has the same stale register: the value was 1 in one
+  of 21053 calls, for a string from `malloc`.
+- An FFI probe library with the shapes that CIG uses (struct arguments and
+  returns of 16, 24 and 32 bytes, the visitor callback, a callout in a
+  callback, a GC in a callback) gave the C reference values on our VM and on
+  Cog.  No difference in FFI marshalling was found.
+
+The package run shows no RESULT line for `pharo-cig-pharo-cig` until the
+package has the fix.  `docs/patches/pharo-cig-cxstring-issue.md` is a draft
+of the issue for the package maintainers.
+
 ## FIXED 2026-11-12 — SpAthensAdapterTest>>testResizeMakesCanvasResize: a callback return ran other processes
 
 Symptom: the test failed in every sweep (Pharo 13 and 14, arm64 and x86_64).
