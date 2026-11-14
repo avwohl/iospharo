@@ -58,8 +58,7 @@ Use `scripts/build-sdl3.sh --stage DIR` to make one universal
 (arm64 and x86_64) library with the link in DIR.  For a macOS or Mac Catalyst
 bundle, put the files in `Contents/MacOS/Plugins` (if the VM directory of the
 app is `Contents/MacOS`) or in `Contents/Resources/lib`.  Both places are on
-the image finder list.  This layout was not tested in an app bundle: this
-host has no Xcode, only the Command Line Tools.
+the image finder list.  This layout was not tested in an app bundle.
 
 ## iOS
 

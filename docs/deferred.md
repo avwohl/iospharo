@@ -583,6 +583,20 @@ through their own tables, so a grep for registerNamedPrimitive misses them.
   binary that default-on `becomeForward` and the GC context-reuse changes have
   landed on top of untested. Either add a Windows build job or read that file
   as dated.
+- **The Apple app has no CI job.**  From 2026-08-17 to 2026-11-14 no one
+  built the app, and three build defects collected (`docs/WIP.md`, entry of
+  2026-11-14).  Since 2026-11-14 a Linux CI step compiles the JIT-off
+  configuration (`PHARO_JIT_ENABLED=0`, the iOS device and iOS Simulator
+  configuration).  That step cannot find a link error of the app or an
+  error that only an Apple SDK gives.  Only the three `xcodebuild` commands
+  in `docs/building.md` find those, and a person must run them on a Mac.
+- **The JIT-off build has no SUnit sweep.**  All sweeps use JIT builds.  On
+  2026-11-14 the JIT-off binary gave the same answers as the JIT binary on
+  about 60 expressions and 15 test classes.  The app also ran one Pharo 13
+  image in the iPhone simulator.  That is a small sample.
+- **No run on a real iOS device is on record after build 122.**  GitHub
+  issue #7 (the app stops 0.1 s after the launch of an image on an
+  iPhone 11) is open since 2026-06-08 and has no cause.
 
 ## TestTookTooMuchTime in the x86_64 Pharo 13 sweeps (measured 2026-11-13)
 

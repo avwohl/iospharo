@@ -213,8 +213,16 @@ test with freshly downloaded images, not saved ones.
     xcodebuild -project iospharo.xcodeproj -scheme iospharo \
       -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build
     ./build/test_load_image <image-path>                     # quick VM test
-    timeout 60 open path/to/iospharo.app --args --image /tmp/Pharo.image
-                                                             # auto-launch bypass library
+    timeout 60 "path/to/Pharo Smalltalk.app/Contents/MacOS/Pharo Smalltalk" \
+      --image <image inside the app container>               # auto-launch bypass library
+
+The app is sandboxed.  An image under `/tmp` does NOT work: the path
+resolves, the copy into the sandbox reads nothing, the VM never starts, and
+there is no message (measured 2026-11-14).  Put the image, `.changes` and
+`.sources` in a new directory under the container's `Data/tmp` first; the
+`[CLI] sandbox path:` log line names the container.  Steps are in
+`docs/building.md`, "Start the app on an image from the command line".
+`xcodebuild` needs the Metal Toolchain component (same file, Prerequisites).
 
 Xcode's "Check XCFramework Freshness" build phase auto-runs
 `build-xcframework.sh` if VM sources changed.

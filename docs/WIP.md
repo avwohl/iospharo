@@ -1,4 +1,4 @@
-# WIP — 2026-11-13
+# WIP — 2026-11-14
 
 Current state only. This file was 4882 lines of stacked session entries going
 back to 2026-05-27; on 2026-08-23 it was pruned the same way `docs/deferred.md`
@@ -14,6 +14,78 @@ file:line. If you are looking for something that is not here, read the archive
 before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
+
+## Right now (2026-11-14) -- Linux CI green, Apple build repaired and run
+
+`main` and `jit` are the same commit.  Two sets of build defects were
+found and fixed on this day.  No sweep ran on this day.
+
+### Linux CI (`df0ac300`)
+
+The CI job "Fresh clone builds" failed on each push from `d5323560` to
+`da8e3ab9`.  `9e7582bc` added `pthread_t handle = nullptr` and a use of
+`towlower` with no `<cwctype>` to `src/vm/SDL2Sys.hpp`.  The Apple toolchain
+accepts both, glibc and GCC do not.  `df0ac300` is the fix.  CI is green on
+`main` and `jit` at `df0ac300`.
+
+### Apple build
+
+This Mac (`m4wohl`) has Xcode 27.2 since 2026-10-19.  Text in this file and
+in the memory notes said that the host has no Xcode.  That text was out of
+date, and no session did the check.  The last Apple app build before this
+day was at `0f0828a2` (2026-08-17), 432 `src` commits before.
+
+The first build on this day found three defects.  `349e8953` holds the
+three fixes.
+
+| # | Defect | Cause | Fix |
+|---|---|---|---|
+| 1 | The JIT-off configuration (`PHARO_JIT_ENABLED=0`: iOS device and iOS Simulator slices) did not compile: about 300 errors in 12 files | Interpreter declarations inside JIT guards in `Interpreter.hpp`, uses of `jit::` names outside guards, and code after the file guard of `AsmjitT1.cpp`.  The machine-code-frame work added them, and no build used the configuration | Guards and guard splits in `Interpreter.hpp`, `Interpreter.cpp`, `Primitives.cpp`, `AsmjitT1.cpp`.  No declaration moved |
+| 2 | The x86_64 half of the iOS Simulator app did not link: `sista::Lowering::lower` not defined | `SistaLowering_arm64.cpp` has a JIT-off fallback, `SistaLowering_x86_64.cpp` had none | The same fallback in the x86_64 file |
+| 3 | The iOS device app did not link: `_pthread_jit_write_protect_np` not defined | The iOS 27.2 device SDK does not export the symbol.  `apple_shared.cpp` named the symbol in all builds, and the app links with `-all_load` | Only a JIT build names the symbol.  The file stops the compile if `PHARO_JIT_ENABLED` is not defined |
+
+Checks at the final state of the sources:
+
+- JIT-on trees `build-rel` (arm64) and `build-x86` (x86_64): the `size` line
+  and the sorted symbol list of `test_load_image` are the same as before the
+  fixes.  The fixes do not change a JIT build.
+- JIT-off trees `build-nojit` (arm64) and `build-nojit-x86` (x86_64): build,
+  `42 factorial`, and the WarpBlt probe (1440 calls, 0 errors) are correct.
+  The arm64 JIT-off binary gave the same answers as the JIT binary on about
+  60 expressions and 15 SUnit classes (1885 tests).
+- Linux in an Ubuntu 24.04 container (GCC 13): JIT-off builds on arm64 and
+  x86_64, the JIT-on build on arm64.  No errors.
+- `scripts/build-libffi.sh`, `scripts/build-sdl2.sh`,
+  `scripts/build-third-party.sh`, `scripts/build-xcframework.sh`: all end
+  with exit code 0.  `PharoVMCore.xcframework` has the three slices.
+- `xcodebuild`, Debug: iOS device (arm64, no code signature), iOS Simulator
+  (arm64 and x86_64), Mac Catalyst.  All three: BUILD SUCCEEDED.
+- Mac Catalyst app on a pristine Pharo 13 image, JIT on: `World imageForm`
+  is 1024x736 and shows the menu bar, the Welcome window with its text and
+  logo, and the taskbar.
+- iPhone 18 Pro simulator (iOS 27.2), interpreter only: `World imageForm` is
+  834x624 with the same content.  The simulator screenshot shows the Pharo
+  display behind the gesture help sheet of the app.
+
+Not checked: a real iOS device, Pharo 14 in the app, a signed archive, a
+SUnit sweep of a JIT-off build, GitHub issue #7.  These are in
+[deferred.md](deferred.md) ("Platform validation status").
+
+Facts about the host and the tools:
+
+- The app build needs the Metal Toolchain component of Xcode.  The component
+  was not installed.  `xcodebuild -downloadComponent MetalToolchain`
+  installed the component (839 MB) on this day.
+- The app has a sandbox and cannot read an image in `/tmp`.  The steps for a
+  command-line start are in [building.md](building.md).
+- `Frameworks/` now has the xcframeworks from the build scripts, with iOS,
+  Simulator and Catalyst slices.  Before this day the directory had only
+  the macOS slices from `scripts/build-macos-slices.sh`.
+- CI has a new step that compiles the JIT-off configuration on Linux.
+- `OCSpecialSelectorTest` through `eval` is not stable: one of its four
+  tests gave an error in some runs and not in others, on our JIT binary and
+  on Cog (a different test on Cog).  The sweeps do not show this.  No cause
+  is known.
 
 ## Package run on a real x86_64 host (2026-11-13, Windows 11)
 
@@ -341,8 +413,11 @@ OpenGL flag).  In each sweep the only test that did not pass is
     fails too.
 - Open leads without a reproduction are in [deferred.md](deferred.md)
   ("Open leads from the 2026-11-12 sweeps").
-- Not verified on this host: the Swift app build (no Xcode), the GUI on
-  Pharo 14, the 93-package run on Pharo 14, Windows and Linux.
+- Not verified in that session: the Swift app build, the GUI on
+  Pharo 14, the 93-package run on Pharo 14, Windows and Linux.  (The text
+  here gave "no Xcode" as the reason.  That reason was wrong: this Mac has
+  Xcode since 2026-10-19.  The app build was done on 2026-11-14, see the
+  top of this file.)
 
 ## Earlier (2026-10-16, late) -- x86 at about 2x Cog
 

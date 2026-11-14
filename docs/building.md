@@ -32,6 +32,15 @@ themselves:
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
+The app has one Metal shader.  On Xcode 27.2 the Metal compiler is a
+separate Xcode component (839 MB).  If the app build stops with
+`cannot execute tool 'metal' due to missing Metal Toolchain`, install the
+component:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+```
+
 You also need:
 - **A Pharo 13 or 14 image** — download from https://pharo.org/download
 
@@ -116,3 +125,52 @@ cmake --build build
 # Run headless with a Pharo image
 ./build/test_load_image /path/to/Pharo.image
 ```
+
+### Interpreter-only build (JIT off)
+
+The iOS device slice and the iOS Simulator slices have no JIT
+(`PHARO_JIT_ENABLED=0`).  A JIT-on build does not compile the code of this
+configuration.  After a change in `src/vm`, build the JIT-off configuration
+on the Mac:
+
+```bash
+cmake -B build-nojit -DCMAKE_BUILD_TYPE=Release -DPHARO_JIT_ENABLED=0
+cmake --build build-nojit
+```
+
+CI does the same build on Linux.  CI cannot find a link error of the app,
+because the app links all of `PharoVMCore` (`-all_load`) against the Apple
+SDKs.  To find a link error, build the app for the three destinations:
+
+```bash
+xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug \
+  -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' build
+xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug \
+  -destination 'platform=macOS,variant=Mac Catalyst' build
+```
+
+`CODE_SIGNING_ALLOWED=NO` lets the device build link without a provisioning
+profile.
+
+### Start the app on an image from the command line
+
+The app has a sandbox.  The app cannot read an image in `/tmp`: the app
+finds the path, copies nothing, and the VM does not start.  The app gives no
+message.
+
+1. Start the binary of the app (`Pharo Smalltalk.app/Contents/MacOS/Pharo
+   Smalltalk`) with `--image` and the path of an image file that exists.
+2. Find the line `[CLI] sandbox path:` in the output.  The part of the path
+   before `tmp/cli_image` is the `Data` directory of the app container.
+3. Stop the app.
+4. Make a new directory in `Data/tmp`.  Copy the `.image`, `.changes` and
+   `.sources` files into the new directory.
+5. Start the binary again with `--image` and the path of the copied image.
+
+The app deletes and fills `Data/tmp/cli_image` at each start.  Do not put
+the copies there.
+
+For the iOS Simulator, `xcrun simctl get_app_container <device>
+com.awohl.pharo data` prints the `Data` directory.
