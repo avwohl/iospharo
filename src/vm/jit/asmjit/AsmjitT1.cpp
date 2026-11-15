@@ -8267,7 +8267,7 @@ static uint64_t getSharedReturnPreludeStub() {
 // x5 (the site's IC entry) is preserved: the fallback may exit with it.
 // Any refusal (interrupt countdown, depth, temps) is `br x15` with nothing
 // written but the countdown.
-// Trim step 4: native calls only at depth 1..32768 (one bit test).
+// Trim step 4: native calls only at depth 1..mcfDepthLimit (one compare).
 static bool mcfFusedDepth() {
     static const bool on = !GET_DEBUG_BOOL(PHARO_MCF_NO_FUSED_DEPTH);
     return on;
@@ -8276,7 +8276,7 @@ static bool mcfFusedDepth() {
 static asmjit::Label g_mcfPushSlow, g_mcfPushBack, g_mcfPushFail;
 static std::function<void()> g_mcfPushDepth0;
 // Call after the code that follows emitMcfPushRecord has ended in a branch:
-// depth > 32768 refuses, depth 0 runs the depth-0 body and goes back.
+// depth > mcfDepthLimit refuses, depth 0 runs the depth-0 body and goes back.
 static void emitMcfPushRecordTail(asmjit::a64::Assembler& a) {
     using namespace asmjit::a64;
     if (!g_mcfPushDepth0) return;
@@ -8324,13 +8324,22 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
     // every 1024 calls.  Charging the callee's numBytecodes made a small hot
     // callee exit every ~50 calls, and each exit runs the send through the
     // interpreter.
+    // The fused depth test needs the limit in x8.  When checkCountdown_ and
+    // the limit are adjacent, the countdown load brings it in for free.
+    const bool fusedDepth = mcfFusedDepth() && !GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL);
+    bool limitInX8 = false;
     if (g_mcfStubSkipCtdn) {
         // The perform call stub: pharo_mcf_perform made this test before
         // it removed the selector, and a refusal now would hand the
         // fallback a shifted stack.  The heartbeat sets the countdown from
         // another thread, so a second test can fail where the first passed.
     } else if (::pharo::mcfCtdnReadOnly()) {
-        mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
+        if (fusedDepth && L.pairCtdnLimit) {
+            a.ldp(x11, x8, ptr(x0, L.dirCtdn));    // countdown (low word), depth limit
+            limitInX8 = true;
+        } else {
+            mcfFieldLdr(a, w11, L.dirCtdn, OFF_MCF_CTDN_PTR, x10);
+        }
         a.cmp(w11, asmjit::Imm(1));
         a.b_le(fail);
     } else {
@@ -8381,16 +8390,23 @@ static void emitMcfPushRecord(asmjit::a64::Assembler& a, const asmjit::Label& fa
         a.add(x17, x17, asmjit::Imm(1));           // SmallInteger tag
         a.str(x17, ptr(x16, OBJ_SLOT_0 + 8));      // activeContext_ pc
     };
-    if (mcfFusedDepth() && !GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)) {
-        // One test for depth 0 and for depth > 32768 (trim step 4): depth-1
-        // has bit 15 set in both cases (0 wraps).  The depth-0 body runs
+    if (fusedDepth) {
+        // One test for depth 0 and for depth > the limit (trim step 4): depth-1
+        // is >= the limit in both cases (0 wraps).  The depth-0 body runs
         // out of line (emitMcfPushRecordTail) and comes back here.
         g_mcfPushSlow = a.new_label();
         g_mcfPushBack = a.new_label();
         g_mcfPushDepth0 = depth0Body;
         g_mcfPushFail = fail;
+        // The limit is JITState::mcfDepthLimit, the active process's depth
+        // limit (Interpreter::frameLimit_, at most McfNativeDepthCap): the
+        // old bit-15 test was the constant 32768 and ignored the heap
+        // Context chain under the inline frames.  depth-1 >= limit (unsigned)
+        // refuses from depth limit+1 on; depth 0 wraps to the same branch.
+        if (!limitInX8) a.ldr(x8, ptr(x0, OFF_MCF_DEPTH_LIMIT));
         a.sub(x16, x11, asmjit::Imm(1));
-        a.tbnz(x16, asmjit::Imm(15), g_mcfPushSlow);
+        a.cmp(x16, x8);
+        a.b_hs(g_mcfPushSlow);
         a.bind(g_mcfPushBack);
     } else {
         g_mcfPushDepth0 = nullptr;

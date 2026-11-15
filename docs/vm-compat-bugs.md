@@ -5921,3 +5921,287 @@ Six of our configurations (arm64 and x86_64; JIT, `PHARO_NO_JIT`,
     (`fib: 34`) +0.2%, block-heavy (`do:` loop) +0.3% (noise), 3 million
     non-local returns from a `do:` block +32 instructions per return, +0.8% of
     the run.
+
+## 2026-11-14 -- stack-overflow limit ignored the heap Context chain: FIXED
+
+Symptom 1: `ProcessTest>>testStackOverflow` (Pharo 14) passed on the JIT build.
+On the interpreter-only build it failed with `receiver of "messageText" is nil`,
+under the SUnit runner only. `PHARO_NO_JIT=1` on `build-rel` failed the same way.
+The cause is in the interpreter, not in the `#if PHARO_JIT_ENABLED` guards of
+commit 349e8953.
+
+Symptom 2: a recursion that yields every 2000 levels never overflowed on the JIT
+builds. It ran until the old space was full and the VM exited with OutOfMemory
+(`h2-ytrm-p0.st` on `build-rel`, 42 s).
+
+Cause: `pushFrame` compared `frameDepth_` with `StackOverflowLimit`.
+`frameDepth_` counts inline frames only. `executeFromContext` sets it to 0 at
+every process switch, and the frames that were running stay as a heap Context
+chain. The priority 79 poller of the runner preempts the test process every few
+hundred sends. The recursion therefore never held 56000 inline frames at one time.
+
+The recursion grew the Context chain until the old space was full (22 million
+Contexts, 4 GB, in the probe). The JIT build ran all 56000 calls inside one
+time slice, so the test passed by speed and not by design. Machine code and the
+J2J loops compared `frameDepth_` with a constant, so they had the same defect.
+
+What the limit counts now: the whole depth of the process. That is the inline
+frames (`frameDepth_`) plus the heap Context chain under them
+(`chainDepthBase_`). One member, `frameLimit_`, holds the inline-frame count at
+which the active process reaches the limit. Its value equals `StackOverflowLimit`
+minus the chain base.
+
+`setFrameLimit()` is the only writer. It also copies the value to
+`JITState::mcfDepthLimit` (at most 32768), so machine code reads the same number.
+
+The paths that use `frameLimit_`:
+
+- `pushFrame`: one compare with `frameLimit_`. The compare replaces the old test
+  of `inStackOverflowSignal_`, so the fast path has fewer instructions than before.
+- `tryJITActivation` entry and the two J2J chain loops: refuse the call. The
+  interpreter then runs the send and `pushFrame` decides.
+- The J2J materialize loops: `atFrameLimit()`, which measures again before it
+  drops a frame, so a stale base never drops a frame.
+- Machine code: the x86_64 stubs and the arm64 stub for `perform:` already
+  compared with the `mcfDepthLimit` memory operand. The arm64 fused call test was a bit
+  test on the constant 32768. It now compares `depth - 1` with the limit
+  (`sub`, `cmp`, `b.hs`). The limit comes from `Interpreter::mcfLimit_`, which
+  sits 8 bytes after `checkCountdown_`, so the one `ldp` that loaded the
+  countdown loads the limit too. The test costs 1 more instruction per native
+  call (see Cost). If the two fields are not in `ldp` range, the stub loads
+  the limit with a separate `ldr` (2 more instructions).
+
+How the base stays correct:
+
+- `executeFromContext` is the one place that every resume passes. `setActiveProcess`
+  and `tryReschedule` mark the base stale. The next `executeFromContext` measures the
+  chain of the resumed process once. Another resume (a context return in the same
+  process) adds the inline frames it drops. The value then stays too high and never too low.
+- `transferTo` records the whole depth of the process that it switches out
+  (`chainDepthBase_ + frameDepth_`, read before the VM makes Contexts of the frames)
+  in a table (`processDepth_`, keyed by the Process).
+  See "Process depth table" below.
+  The next resume of that process takes the value and does not walk the chain.
+  The value is an upper bound. A resume that has no value walks the chain
+  (a first run, a switch that did not go through `transferTo`, and a resume
+  after 256 resumes plus one resume for each recorded frame of depth, which
+  bounds a possible under-count). A walk costs 5 ns
+  for each Context: 210 us at depth 40000. The interval grows with the depth,
+  so a deep process walks less often. A fixed interval of 256 resumes cost
+  +21% to +57% wall on 20 to 50 processes at depth 20000 to 40000. The earlier version remembered
+  Context addresses and missed after every timer preemption of a deep process
+  (+247 us per resume, +21% wall in a poller test).
+- `collapseFramesToChain()` replaces `frameDepth_ = 0` after
+  `materializeFrameStack()` (thisContext, blocks, non-local return, segment
+  freeze). The VM counts a recursion that materializes at every level.
+- A base that is too high (the chain shrank by returns or an unwind) costs one
+  walk. When the cheap test trips, `stackDepthExceeded()` measures again, stores
+  the exact base and updates `JITState`. It never gives a false overflow, and machine
+  code does not stay on the slow path. Measured: 1 trip in a
+  40000-deep unwind followed by a 20000-deep recursion, 0 trips without the unwind.
+- While the signal runs (`inStackOverflowSignal_`), `frameLimit_` is 0, so every
+  push reaches `stackDepthExceeded()`. The process may then reach 64192 inline
+  frames and `SignalWholeDepthCap` (120192) in whole depth. The handler search
+  recurses once for each `on:do:` frame. A smaller cap killed the process in a
+  recursion of `on:do:` frames. The flag clears when a measure shows the depth
+  below the limit minus the headroom. A measure of a deep chain costs a walk, so the
+  wait for the next measure grows with the chain (255 trips plus a quarter of
+  the base).
+- The headroom belongs to a process: its `processDepth_` entry has a
+  `headroom` flag. `handleStackOverflow` sets the flag for the active process,
+  and a resume copies the flag to `inStackOverflowSignal_`. A process that
+  has an entry but no flag never gets the headroom from its depth: a second
+  runaway recursion raises its own catchable signal. (The earlier version
+  gave the headroom to any process resumed within 1024 frames of the limit
+  shortly after a signal. A second runaway process then ran to the headroom cap
+  and the VM killed it. Its `ensure:` blocks did not run.)
+- One more process gets the headroom: a process with no entry (never switched
+  out before) that resumes less than `SignalGraceRoom` (1024) frames below the
+  limit, in the first `SignalGraceResumes` (64) resumes after a signal. It is the
+  handler process that `on:fork:return:` starts. Its chain is the signal stack
+  cut a few frames below the limit, and it overflowed again in its first
+  frames (`FFICallback>>valueWithArguments:` after a recursion in a callback,
+  and a recursion below `on:fork:return:`). If the table removes the entry, the process loses its flag.
+  The table removes entries without a flag first.
+- Process depth table. The table is set associative: 2048 sets of 4 ways (8192
+  entries of 24 bytes, 192 KiB in the `Interpreter` object). The set is
+  `(hash ^ (hash >> 11)) & 2047`, where `hash` is the identity hash of the
+  Process. The VM gives Spur identity hashes from a Lehmer generator
+  (`ObjectMemory::generateHash`), so they are 22 random bits and every bit
+  range is usable. A lookup or an insert reads one set. No path (`depthEntry`,
+  `forgetProcessDepth`, `transferTo`, `executeFromContext`) scans the whole table.
+  The entry key is the Process itself, not the hash: two live processes with the
+  same identity hash have two entries. Identity hashes have 22 bits, so a
+  collision exists among a few thousand processes. With a key of 22 bits, the two
+  processes shared one entry (depth, valid flag and headroom flag), and one of
+  two processes that ran the overflow signal was ended without its `Error`.
+  The Process in an entry is a weak root, like the method cache:
+  `forEachRoot` visits it (a GC updates the address) and `purgeDeadCacheRoots`
+  voids the entry of a dead Process, so a dead Process stays collectable.
+  `depthList_` holds the indices of the used ways, so a GC visits only these
+  and not 8192 entries. When a set is full, the VM reuses the first of:
+  a way that is not in use; a way with no headroom and no valid depth; a way with
+  no headroom (its process then walks the chain once at its next resume).
+  If all 4 ways hold a process that runs the overflow signal, the VM reuses the
+  way that the hash of the new process picks. The old process then loses its
+  headroom, and its next overflow raises the catchable signal again. This needs
+  5 processes in the signal state with hashes in one set.
+  The first version had 32 entries and scanned all of them. With 33 or more
+  live processes, each switch-out removed the entry that another process needed,
+  and every resume walked a chain.
+- The change removes `overflowDepth_`. Machine code can no longer run past the
+  limit, so the headroom needs no special start depth.
+- The change removes `pushSavedFrameForT2`. It had no caller. It returned
+  silently at the limit, which would have dropped a frame from the chain.
+
+Checks (2026-11-14, `build-nojit`, `build-rel`, `build-x86`, `build-nojit-x86`):
+
+- `h2-ytrm-p0.st` answers the catchable `Error` `Stack overflow` on all four
+  trees, like stock Cog. The depth of the signal context
+  differs: Cog 56000 or less, ours 56000 to 64000.
+- 52 deep-recursion expressions (`thisContext`, blocks, `ensure:`, `on:do:`,
+  non-local return, with and without yields, stale base) give the same answer
+  on the four trees. A 53rd expression only measures time. The 10 newest ones also match Cog. The older ones differ from
+  Cog as before this change: `e5`, `e5b` and `e16` (Cog overflows below 56000
+  levels) and `e13` (Cog prints no result).
+- Handler process on a cut chain: `k2-glue30-so`, `k2-glue200-so` and the
+  `noso` variants answer `handler=300` (the same as the binary before the change).
+  `f02-cb-outer` (a recursion in a `qsort` callback) answers in 1 s, 5 of 5
+  runs.
+- Two runaway recursions that yield every 50 calls (`o-two-yield`): both
+  answer a caught `Error` on the four trees, with and without a 1 ms `Delay`
+  poller, like Cog. The earlier version answered one `Error` and killed the other
+  process.
+- `ProcessTest`: 47 pass on Pharo 14, 46 pass on Pharo 13, on `build-nojit` and
+  `build-rel`.
+- Batch 1151-1200 (Pharo 14): the results equal the 2026-11-13 baseline on both trees.
+
+Cost (instructions retired, 3 interleaved runs, pre-fix binaries against these):
+
+- `32 benchFib`: -1.1% on `build-nojit`, +0.4% on `build-rel`. `40 benchFib` on
+  `build-rel`: +1.1% instructions (1 per native call) and the same wall time
+  (1.46 s).
+- 5000 `Processor yield` pairs at depth 0, 100, 1000 and 40000 (a second
+  process yields too), `Semaphore` ping-pong at depth 40000 and `32 benchFib`:
+  `build-nojit` -0.9% to -1.1%, `build-rel` -0.4% to +0.5%. The wall time is
+  the same (0.34 s to 0.65 s) at every depth.
+- 36 `benchFib` in a process 40000 frames deep, with a 1 ms `Delay` poller at
+  `userInterruptPriority`. `build-nojit`: 43.87G instructions and 1.58 s after,
+  44.30G and 1.60 s before. `build-rel`: 9.46G and 0.50 s on both.
+
+- Many processes. Case `many-N-D` starts N processes at depth D, and each
+  yields 100 times. The numbers are the median of 3 runs of the whole process on
+  `build-nojit` and `build-rel` (instructions and wall time, pre-fix binary against
+  these). `many-33-2000`: -0.9% / -0.1% instructions,
+  wall 0.63 s to 0.64 s / 0.39 s to 0.39 s. `many-50-2000`: -0.9% / -0.1%.
+  `many-50-1000`: -0.9% / -0.1%. `many-200-2000`: -0.8% / +0.1%.
+  `many-200-20000`: -0.3% / +0.4%, wall 1.38 s to 1.38 s and 1.09 s to 1.10 s.
+  `many-1000-2000`: -0.4% / +0.3%, wall 0.86 s to 0.86 s and 0.59 s to 0.60 s.
+  `many-2000-200`: -0.5% / +0.4%, wall 0.72 s to 0.73 s and 0.46 s to 0.47 s.
+  The in-image time of `many-2000-200` is 5% higher (96 ms to 100 ms): the
+  table of 8192 entries is bigger than the cache can hold for 2000 processes.
+  The 32-entry version took 236 to 246 ms for `many-33-2000` against 13 to 18 ms
+  before the fix. With 512 sets (2048 entries) `many-1000-2000` and
+  `many-2000-200` cost +11% to +20% wall: 2000 processes in 512 sets of 4 put
+  more than 4 processes in many sets, and those sets evicted each other.
+- Deep processes that yield often. Case `m-P-D`: P processes at depth D, each
+  yields 10000 times. With a walk after every 256 resumes, `m-20-20000` cost
+  +30% wall and `q-20-40000-10000` +57% on `build-rel`. With the interval of
+  256 resumes plus one resume for each recorded frame: `m-20-20000` +0.7%
+  instructions and +0.0% wall, `q-20-40000-10000` +0.9% and +0.0%,
+  `m-50-20000` +0.2% and -1.9%, `m-200-20000` +1.4% and +0.0%,
+  `m-1000-20000` +0.8% and -0.2% (`build-rel`). `build-nojit` is within -0.6%
+  to +0.3% instructions and +2.1% wall.
+- Switch cost, `Processor yield` and `Semaphore` ping-pong at depth 0
+  (400000 switches), `build-rel`: +68 M instructions for `yield` (about 170 per
+  switch) and +91 M for `Semaphore` (about 230 per switch), against 350 per
+  switch with the scan of 32 entries. `build-nojit`: -0.3% for both.
+  `fib32`, `yield-40000`, `sem-40000` and the 1 ms poller at depth 40000 are
+  within 1% instructions and 2% wall of the pre-fix binary.
+
+Final validation (2026-11-15):
+
+- Full SUnit sweeps on the final code, compared test by test with the JIT
+  baseline of 2026-11-13. `build-rel` Pharo 14 (28412 tests) and Pharo 13
+  (28077 tests): identical to the baseline. `build-nojit` Pharo 14 (4
+  sweeps) and Pharo 13 (1 sweep): the only differences are the two slow
+  tests in [WIP.md](WIP.md) (entry of 2026-11-14), plus known flakes:
+  `StSpotterTest>>testOpenSpotterRefreshesPreviewOnce` failed in 1 of 4
+  sweeps (it also failed in 1 of 4 pre-fix sweeps) and
+  `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
+  gave an error in 1 of 4 sweeps. It passed in all 4 pre-fix sweeps, but in
+  runs of the class alone on `build-nojit` it failed in 1 of 9 runs on the
+  pre-fix binary and in 1 of 9 runs on the fixed binary
+  (`TKTTimeoutException`). The change is not the cause.
+- `ProcessTest>>testStackOverflow` passed in all 5 Pharo 14 sweeps of the
+  final code. Pharo 13 does not have the test.
+  `SpHorizontalBoxLayoutTest>>testSpSearchInputFieldPresenterResizeCorrectlyWhenWindowWidthDecrease`
+  passed in all 4 interpreter-only Pharo 14 sweeps of the final code. The
+  first version of the fix failed it in 3 of 6 sweeps.  No mechanism was found.
+- `build-x86`, Pharo 14: batches 1-100 (5862 tests) and 1151-1200 (395
+  tests) have no difference from the baseline. `build-nojit-x86`: batch
+  1151-1200 has no difference.
+- A larger time limit shows that the two slow tests are only slow, not wrong:
+  see WIP.md.
+
+Regression test (2026-11-15): `scripts/test_stack_depth_limit.st`, class
+`StackDepthLimitTest`, 11 tests.
+
+- All 11 tests pass on the four trees with Pharo 14, and on `build-rel` and
+  `build-nojit` with Pharo 13. Under the SUnit runner, 3 runs on `build-rel`
+  and 3 runs on `build-nojit` passed all 11 tests.
+- On the two binaries before the fix (`build-rel` and `build-nojit`), 8 of the
+  11 tests fail by assertion in less than 2 s: "the recursion reached the hard
+  bound of 200000 levels and no Error was signalled". Each runaway recursion
+  stops at 200000 levels, so the old defect cannot fill the memory.
+- The 3 other tests are guards against a false overflow (legal recursions of
+  31000 to 40000 levels with many process switches). A build with
+  `StackOverflowLimit` set to 28000 fails these 3 tests and
+  `testLegalRecursionAfterCaughtOverflow` by assertion. That build also fails
+  the non-local-return case of
+  `testPerformBlockAndNonLocalReturnRecursionsOverflow`. That case has 3
+  frames for each level, so the recursion stops below the 10000 levels that
+  the test demands.
+- Stock Cog fails 8 of the 11 tests for a different reason. With
+  `shouldOverflow: true`, Cog signals `Stack overflow` at the first stack
+  page, before 250 levels. The tests are for this VM.
+- No sweep image has the class. To run the class, file the class in
+  (`scripts/README.md`, "VM Behaviour Tests").
+
+Open (not caused by this change, not fixed):
+
+- On x86_64 (`build-x86`, `build-nojit-x86`), 2% to 5% of runs of a
+  multi-process script with a poller wedge: the VM is idle, and a `Delay` of
+  6 s does not end. The reproducer is `scripts/repro/x86-poller-wedge.st`,
+  and the recursion in the reproducer does not overflow the stack. The rate
+  is the same on the binaries before this change: 5 of 150 runs against 6 of
+  150 on `build-x86`, and 6 of 300 against 5 of 300 on `build-nojit-x86`. The
+  defect is therefore older than this change. arm64 had no wedge in 120 runs.
+  A depth table with no eviction (128 sets of 64 ways) wedged in 2 of 250
+  runs, so the depth table is not the cause. The cause is not found. The lead
+  is the timer path or the idle path on x86_64, and the lead is in
+  [deferred.md](deferred.md).
+- `many-3000-2000` on `build-rel` costs +4.5% wall (+70 ms for 123 thousand
+  switches, about 0.6 microsecond per switch). Up to 1000 processes the cost
+  is within 1.4% instructions. The cause is not examined.
+
+Not fixed:
+
+- A young Process that the depth table holds is kept alive by a scavenge
+  (like the method cache for young objects) until a full GC voids the entry.
+  The SUnit classes about weak references pass. No test checks collection
+  after only a scavenge.
+- The GC cost of the weak root (the walk of `depthList_` in each scavenge and
+  full GC) is not measured alone. The whole-process numbers above include it.
+- A context jump to a longer chain that no process switch made (a coroutine
+  library that swaps sender links) is invisible until the next process switch.
+  Until then `chainDepthBase_` is too low. The recorded depths have the same
+  limit. If other code changes the chain of a suspended process, the VM
+  sees the change after 256 resumes of that process plus one for each recorded frame, at the latest.
+- The overflow-signal headroom of a process that has no entry (a handler process
+  whose entry the table removed, or 5 or more processes in one set that all run the signal) depends on the grace
+  rule and can be lost.
+- `TrampolineAsm.S` compares the depth with the constant `SO_LIMIT` (4096). The
+  value is a fixed bound, so it cannot let a chain grow.
+- The Sista helper send pushes frames up to `MaxFrameDepth` and not up to
+  `frameLimit_`. It is a nested C++ call and cannot run across a process switch.

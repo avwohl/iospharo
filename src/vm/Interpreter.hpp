@@ -167,7 +167,7 @@ struct CallbackComplete {
 /// Maximum stack depth.
 ///
 /// Sized against the frame limit the VM actually enforces, not against
-/// MaxFrameDepth: effectiveStackOverflowLimit() is StackOverflowLimit (56000),
+/// MaxFrameDepth: the limit is StackOverflowLimit (56000) in whole process depth,
 /// rising to 56000 + StackOverflowSignalHeadroom = 64192 only while a
 /// stack-overflow signal is being raised. Size against the larger number:
 /// 2097152 / 64192 = 32.7 value-stack slots per frame (37.4 against the 56000
@@ -854,16 +854,32 @@ private:
     // this the #error: send re-hits the guard and we'd hard-kill again, leaking
     // any held critical: mutex -> timer-scheduler-wedge (blocker #2).
     static constexpr size_t StackOverflowSignalHeadroom = 8192;
-    // The limit every frame-pushing path must honor: pushFrame's guard plus
-    // the overflow-signal headroom.  Raw `frameDepth_ >= StackOverflowLimit`
-    // checks in the J2J materialize loops were blind to the headroom, so
-    // DURING stack-overflow signaling they silently dropped saves (frames
-    // vanished from the chain) exactly when the unwind machinery needed them
-    // (2026-07-03 silent-cap audit).  Declared later where members exist.
-    size_t effectiveStackOverflowLimit() const {
-        return StackOverflowLimit
-             + (inStackOverflowSignal_ ? StackOverflowSignalHeadroom : 0);
-    }
+    // Longest sender chain a resume measures.  The chain can be longer than
+    // limit + headroom only if something other than this VM built it; the walk
+    // then stops here and the process is already over the limit.
+    static constexpr size_t ChainWalkCap = 2 * (StackOverflowLimit + StackOverflowSignalHeadroom);
+    // Whole-depth cap while the process holds the signal headroom.  The signal
+    // code (the handler search recurses once per enclosing on:do:, the unwind
+    // blocks) may add as many frames as an ordinary process may hold: before
+    // the limit counted the chain, that was the 64192 inline frames the
+    // headroom allowed after the frame count restarted at 0.  Memory stays
+    // bounded: the whole depth cannot pass this, and the inline frames cannot
+    // pass StackOverflowLimit + StackOverflowSignalHeadroom.
+    static constexpr size_t SignalWholeDepthCap =
+        2 * StackOverflowLimit + StackOverflowSignalHeadroom;
+    static_assert(ChainWalkCap > SignalWholeDepthCap, "a resume must see a chain over the cap");
+    // Native (machine code) calls stop at this many inline frames at most.
+    // The MCF call stubs read the limit from JITState::mcfDepthLimit, which
+    // holds min(frameLimit_, this): the process-relative limit, see below.
+    static constexpr size_t McfNativeDepthCap = 32768;
+    // How often (in cold-path trips) a process that holds the signal headroom
+    // re-measures its depth to see whether the signal is over.
+    static constexpr unsigned SignalRemeasureMask = 255;
+    static constexpr unsigned SignalRemeasureDivisor = 4;
+    // Resumes after an overflow signal during which a process resumed within
+    // SignalGraceRoom frames below the limit gets the headroom.
+    static constexpr size_t SignalGraceRoom = 1024;
+    static constexpr unsigned SignalGraceResumes = 64;
 
     // J2J save frame — stencil-to-stencil call state saved during J2J execution.
     // Used by the ASM trampoline and chain loop J2J path.
@@ -1044,6 +1060,15 @@ private:
 #endif
     Oop activeContext_;  // Current Smalltalk context (for sender chain)
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
+    // min(frameLimit_, McfNativeDepthCap), kept 8 bytes after checkCountdown_ so
+    // the arm64 native call stub loads both with ONE ldp (a separate load of
+    // the limit cost 2 instructions per native call).  Written only by
+    // setFrameLimit(); JITState::mcfDepthLimit holds the same value for the
+    // stubs that read it from the state.
+    // The 64-bit pair (countdown + padding, limit) is one ldp x, x: the
+    // countdown sits in the low 32 bits of the first register.
+    int mcfLimitPad_ = 0;
+    size_t mcfLimit_ = 0;
     // Any thread: make the next interrupt point a checkpoint.  Machine code
     // only reads the countdown (pharo::mcfCtdnReadOnly), so this is how it
     // learns of a heartbeat tick or a signal.  A racing interpreter
@@ -1606,12 +1631,118 @@ private:
     // periodic-check code can read it without #if PHARO_JIT_ENABLED
     // guards everywhere.
     bool inSyncSend_ = false;
-    // True while handleStackOverflow is driving a Smalltalk #error: signal so the
-    // image can unwind (ensure:/ifCurtailed:) instead of a C++ hard-kill. Grants
-    // StackOverflowSignalHeadroom extra frames; cleared on process switch
-    // (executeFromContext) and lazily once frameDepth_ falls back below the soft
-    // limit. See timer-scheduler-wedge memory / blocker #2.
+    // THE DEPTH LIMIT.  The soft limit (StackOverflowLimit) applies to the
+    // whole depth of the active process: the inline frames (frameDepth_) plus
+    // the heap Context chain beneath them (chainDepthBase_).  frameDepth_
+    // alone is not enough: every process switch (executeFromContext) restarts
+    // it at 0 while the preempted frames live on as heap Contexts, so a
+    // process preempted every few hundred sends never reached the limit and
+    // ran an endless recursion into the heap until old space was exhausted.
+    //
+    // frameLimit_ is the one number every frame-pushing path compares with
+    // frameDepth_ (pushFrame, the J2J chain loops, the J2J materialize loops,
+    // tryJITActivation) and machine code reads as JITState::mcfDepthLimit
+    // (min with McfNativeDepthCap): the inline-frame count at which this
+    // process reaches the limit, i.e. StackOverflowLimit - chainDepthBase_.
+    // It is 0 while the process holds the signal headroom, so that every push
+    // reaches stackDepthExceeded().  Rule: frameLimit_ is only ever changed
+    // by setFrameLimit(), which also publishes it to JITState.
+    size_t frameLimit_ = StackOverflowLimit;
+    // Contexts in the active process's sender chain that frameDepth_ does not
+    // count.  Exact when measured (process resume, stackDepthExceeded); after
+    // that only ever too HIGH: a return or unwind makes the chain shorter and
+    // the value stale, never too low.  A too-high value costs one chain walk
+    // when frameLimit_ trips (stackDepthExceeded re-measures) and is never a
+    // false overflow.  collapseFramesToChain() adds the inline frames that a
+    // materialization turns into heap Contexts; executeFromContext adds the
+    // inline frames it discards.
+    size_t chainDepthBase_ = 0;
+    // The active process changed (setActiveProcess, tryReschedule) and the
+    // next executeFromContext must measure the new process's chain.
+    bool chainBaseStale_ = true;
+    // True while handleStackOverflow is driving a Smalltalk #error: signal so
+    // the image can unwind (ensure:/ifCurtailed:) instead of a C++ hard-kill.
+    // Grants StackOverflowSignalHeadroom extra inline frames and up to
+    // SignalWholeDepthCap in whole depth.  Set by handleStackOverflow and by a resume
+    // deeper than the soft limit; cleared by a process switch to a shallower
+    // process and by stackDepthExceeded() when a re-measure shows the depth
+    // below StackOverflowLimit - headroom.  See timer-scheduler-wedge memory /
+    // blocker #2.
     bool inStackOverflowSignal_ = false;
+    unsigned signalTrips_ = 0;   // cold-path trips until the next re-measure in signal mode
+    unsigned signalGrace_ = 0;
+    // Whole depth of each process that was switched out, so a resume need not
+    // walk its sender chain (one cache miss per Context: 210 us at depth
+    // 40000, paid at every resume of a deep process that a timer preempts).
+    // transferTo records chainDepthBase_ + frameDepth_ of the outgoing process
+    // before it materializes the frames: an upper bound of the true depth
+    // (see chainDepthBase_).  The resume of that process takes the value
+    // once (valid is cleared at use), so a value is only used when the last
+    // switch-out of the process went through transferTo.  Every
+    // kDepthRemeasureEvery-th resume walks the chain anyway, which bounds any
+    // under-count a path that drops frames without counting them could cause.
+    // The same entry says whether the process holds the overflow-signal
+    // headroom: the headroom belongs to a process, not to whichever process
+    // is resumed near the limit.  The key is the Process itself, held as a
+    // WEAK root (see forEachRoot and purgeDeadCacheRoots, the same treatment
+    // as the method cache): a GC moves the Oop with the object, and a Process
+    // that died is voided, so the table keeps no dead Process alive
+    // (weak-reference tests see the Process collected).  Two live processes
+    // with the same identity hash (22 bits, so collisions exist among a few
+    // thousand processes) have separate entries: the hash only picks the set.
+    // The table is set-associative: kDepthSets sets of kDepthWays ways, the set
+    // chosen from the identity hash (22 random bits from the LCG, folded so no
+    // bit range is favoured).  A lookup or an insert touches one set (4 entries,
+    // one or two cache lines) and no path scans the whole table.  A full set
+    // evicts, in this order: a way not in use; a way with no headroom and no
+    // valid depth; a way with no headroom (its owner then walks the chain once
+    // at the next resume); and, only if all ways hold a process in
+    // overflow-signal state, the way picked by the hash of the new process (that
+    // old process loses its headroom, and its next overflow raises the
+    // catchable signal again instead of running on the headroom).
+    struct ProcessDepth {
+        uint64_t procBits = 0;    // the Process (weak root); 0 = way not in use
+        uint32_t depth = 0;
+        uint32_t resumes = 0;     // resumes since the chain was last walked
+        bool valid = false;       // depth was recorded by the last switch-out
+        bool headroom = false;    // the process runs the overflow signal
+        bool listed = false;      // index is in depthList_
+    };
+    static constexpr size_t kDepthSets = 2048;   // power of two
+    static constexpr size_t kDepthWays = 4;
+    static constexpr size_t kProcessDepthEntries = kDepthSets * kDepthWays;
+    // A resume walks the chain again after kDepthRemeasureEvery resumes plus
+    // one per kDepthRemeasureDivisor frames of recorded depth: the walk costs
+    // one cache miss per Context, so a deep process walks less often and the
+    // walks stay a small part of the switches.
+    static constexpr unsigned kDepthRemeasureEvery = 256;
+    static constexpr unsigned kDepthRemeasureDivisor = 1;
+    std::array<ProcessDepth, kProcessDepthEntries> processDepth_{};
+    // Indices of the ways that were ever in use, so a GC visits only those
+    // and not the whole table.  A way a purge or a forget freed leaves the
+    // list at the next visit.
+    std::array<uint16_t, kProcessDepthEntries> depthList_{};
+    size_t depthListCount_ = 0;
+    ProcessDepth* depthEntry(Oop process, bool create);
+    void forgetProcessDepth(Oop process);
+    size_t* mcfDepthLimitPtr_ = nullptr;   // &JITState::mcfDepthLimit, once mcfRun made it
+    void setFrameLimit();
+    size_t senderChainLength(Oop context, size_t cap);
+    // Cold part of every depth test: is `depth` inline frames (plus the chain)
+    // at the limit?  Re-measures, repairs a stale base, manages the headroom.
+    bool stackDepthExceeded(size_t depth);
+    // The test for paths that must not refuse falsely (they drop frames or
+    // fail a push): the cheap compare, then the cold re-measure.
+    inline bool atFrameLimit(size_t depth) {
+        return __builtin_expect(depth >= frameLimit_, 0) && stackDepthExceeded(depth);
+    }
+    // The inline frames now live on as heap Contexts (materializeFrameStack
+    // made them): count them in the base and restart frameDepth_.
+    inline void collapseFramesToChain() {
+        chainDepthBase_ += frameDepth_;
+        frameDepth_ = 0;
+        setFrameLimit();
+    }
     bool startupGracePeriod_ = true;
     uint64_t stepCountForDriver_ = 0;
     uint64_t bytecodeCount_ = 0;
@@ -2517,7 +2648,9 @@ public:
         // the ENTRY guard in tryJITActivation is what ships.  Closing this one
         // properly means making ExitStackOverflow raise the image-side signal
         // (or unwind) instead of bouncing back into the same J2J call.
-        if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+        // Refusing here only sends the call through the interpreter, whose
+        // pushFrame re-measures: a stale-high chain base is no false overflow.
+        if (__builtin_expect(frameDepth_ >= frameLimit_, 0)) {
             state->exitReason = jit::ExitStackOverflow;
             return;
         }
@@ -2674,30 +2807,6 @@ public:
         return resolved;
     }
 #if PHARO_JIT_ENABLED  // re-open: JIT-only members below
-
-    /// Push a SavedFrame for a T2 caller whose inline send callee bailed.
-    /// Called from jit_t2_send when the callee exits with non-ExitReturn.
-    inline void pushSavedFrameForT2(Oop method, Oop recv, Oop* tempBase,
-                                     int argCount, uint8_t* ip) {
-        if (frameDepth_ >= StackOverflowLimit) return;
-        Oop nil = memory_.nil();
-        ObjectHeader* methObj = method.asObjectPtr();
-        SavedFrame& frame = savedFrames_[frameDepth_++];
-        frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
-        frame.savedIPRaw = ip;
-        frame.savedBytecodeEndRaw = methObj->bytes() + methObj->byteSize();
-        frame.recFull = 1;
-        frame.savedMethod = method;
-        frame.savedReceiver = recv;
-        frame.savedClosureRaw = nil;
-        frame.savedActiveContextRaw = nil;
-        frame.materializedContext = nil;
-        frame.ctxSynced = false;
-        frame.setFp(tempBase - 1);
-        frame.materializedRetSlotRaw = nullptr;  // Step 7: no callers — clear for safety
-        frame.savedArgCountRaw = argCount;
-        frame.setHomeFrameDepth(SIZE_MAX);
-    }
 
     uint32_t compiledMethodClassIdx() const { return compiledMethodClassIndex_; }
 
@@ -4736,6 +4845,19 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     const bool rootTimed = GET_DEBUG_BOOL(PHARO_SCAV_STATS);
     auto rootNow = [] { return std::chrono::steady_clock::now(); };
     auto rtA = rootTimed ? rootNow() : std::chrono::steady_clock::time_point{};
+    rootTag_ = "process-depth";
+    if (visitCacheRoots) {
+        for (size_t i = 0; i < depthListCount_; ) {
+            ProcessDepth& pd = processDepth_[depthList_[i]];
+            if (pd.procBits == 0) {
+                pd.listed = false;
+                depthList_[i] = depthList_[--depthListCount_];
+                continue;
+            }
+            visitor(*reinterpret_cast<Oop*>(&pd.procBits));
+            i++;
+        }
+    }
     rootTag_ = "method-cache";
     // Method cache (weak cache root — see visitCacheRoots above)
     verifyingSkipped = tableVerify && !g_mcacheMayHoldYoung;

@@ -352,6 +352,9 @@ struct McfFrameLayout {
     // frameDepth_ and currentFrameMaterializedCtx_ adjacent at dirDepth:
     // the native call and return move them with one ldp/stp.
     bool pairDepthCtx = false;
+    // checkCountdown_ and Interpreter::mcfLimit_ (the process-relative depth
+    // limit) 8 bytes apart at dirCtdn: the native call loads both with one ldp.
+    bool pairCtdnLimit = false;
     // A null-memo record precedes savedFrames_[0] (Interpreter::mcfGuardFrame_).
     bool guardOk;
 };

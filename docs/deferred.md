@@ -599,10 +599,71 @@ through their own tables, so a grep for registerNamedPrimitive misses them.
   configuration).  That step cannot find a link error of the app or an
   error that only an Apple SDK gives.  Only the three `xcodebuild` commands
   in `docs/building.md` find those, and a person must run them on a Mac.
-- **The JIT-off build has no SUnit sweep.**  All sweeps use JIT builds.  On
-  2026-11-14 the JIT-off binary gave the same answers as the JIT binary on
-  about 60 expressions and 15 test classes.  The app also ran one Pharo 13
-  image in the iPhone simulator.  That is a small sample.
+- **The JIT-off build has a SUnit sweep, but not in CI.**  Swept on
+  2026-11-14 (`build-nojit`, arm64, interpreter only) on Pharo 13 (28077
+  tests) and Pharo 14 (28412 tests), about 19 minutes each.  Compared with
+  the JIT baseline, the only differences are two slow tests (see the next
+  item), and the known flakes.  Still not covered: no CI job runs the sweep,
+  and no sweep ran on a device or in the iOS simulator (the app ran one
+  Pharo 13 image in the simulator).  Result and settings: `docs/WIP.md`,
+  entry of 2026-11-14.
+- **Two tests time out on the interpreter-only build at the default limit.**
+  `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` (73 s,
+  JIT 13 s) and `ReleaseTest>>testNoShadowedVariablesInMethods` (270 s, JIT
+  46 s) against the 80 s watchdog.  Both answer correctly.  With
+  `SUNIT_TIMEOUT_MULT=6` both passed in a run of the two tests alone.  To
+  close: run a whole sweep of `build-nojit` with `SUNIT_TIMEOUT_MULT=6` and
+  compare with the baseline (not done), then set the value in the sweep
+  launcher.
+- **`StackDepthLimitTest` runs only by hand.**  The class is in
+  `scripts/test_stack_depth_limit.st`, and no sweep image has the class.  To
+  close: file the `scripts/test_*.st` classes in when a sweep image is
+  prepared, and add the classes to the baseline.
+- **x86_64 wedge in 2% to 5% of runs of a multi-process script.**  The
+  reproducer is `scripts/repro/x86-poller-wedge.st`: 13 to 14 processes
+  recurse 20000 levels and yield every 500 levels, and a priority 70 process
+  waits on a 1 ms `Delay` in a loop.  A good run takes 1 to 3 s.  On
+  `build-x86` and `build-nojit-x86`, 2% to 5% of the runs do not end: the VM
+  is idle, the `Delay` timer is not armed, and a `waitTimeoutMilliseconds:`
+  of 6 s does not fire.  Rates with a 14 s limit (2026-11-15):
+  - `build-x86`: 5 of 150 runs at commit `93352576` (before the stack-depth
+    change) and 6 of 150 with the change, with the two binaries in turn.
+  - `build-nojit-x86`: 6 of 300 runs at commit `93352576` and 5 of 300 with
+    the change.
+  - `build-x86` with a variant that overflows the stack: 2 of 100 and 3 of
+    250.  2 of 250 with a depth table that cannot evict.
+  - arm64: 0 of 120 runs.
+  - `build-x86` with a 90 s limit: 7 of 150 runs did not end, and no run
+    ended between 5 s and 90 s.  A wedged run does not recover in 90 s.
+
+  So the stack-depth change and the depth table are not the cause.  Lead: the
+  timer path or the idle path on x86_64 (all x86_64 runs on this Mac are under
+  Rosetta, and no native x86_64 run of the reproducer is on record).  To
+  close: attach lldb to a wedged run, and read the state of the `Delay` timer
+  and the idle path.
+- **`many-3000-2000` costs +4.5% wall on `build-rel`.**  +70 ms for 123
+  thousand switches, about 0.6 microsecond per switch.  Up to 1000 processes
+  the cost is within 1.4% instructions.  Candidates: the depth table with
+  3000 live processes, the first-resume walk of the sender chain, the GC walk
+  of `depthList_`.  To close: count the three with a census and decide.
+- **The weak root of the depth table is untested after a scavenge.**  A
+  young dead Process that the table holds stays alive until a full GC
+  voids the entry (the method cache has the same rule).  The SUnit classes
+  about weak references pass.  To close: write a test that drops a young
+  Process, runs only a scavenge, and checks the weak reference.  Also
+  measure the GC cost of `depthList_` alone (the whole-process numbers include
+  it).
+- **A frame-dropping path that under-counts is repaired late.**  The sender
+  chain is walked again after 256 resumes plus one for each recorded frame
+  (up to about 40000 resumes at depth 40000).  No case with an under-count is
+  known.  To close: write a coroutine-style test that swaps sender links of a
+  suspended process, and decide if the interval is short enough.
+- **Eviction can drop the overflow-signal headroom.**  If all 4 ways of a set
+  hold a process in the signal state and a fifth process switches out, one
+  loses its headroom, and its next overflow raises the catchable signal
+  again.  The case with 40 processes in one set passed on three trees, but
+  nobody counted the evictions.  To close: add an eviction counter to the
+  verifier build and run that case.
 - **No run on a real iOS device is on record after build 122.**  GitHub
   issue #7 (the app stops 0.1 s after the launch of an image on an
   iPhone 11) is open since 2026-06-08 and has no cause.

@@ -5254,7 +5254,7 @@ void Interpreter::interpret() {
                     }
                     Oop c = materializeFrameStack();
                     activeContext_ = c;
-                    frameDepth_ = 0;
+                    collapseFramesToChain();
                 }
             }
             bool selOk = true;
@@ -5273,7 +5273,7 @@ void Interpreter::interpret() {
             if (selOk && (++matN % (uint64_t)GET_DEBUG_INT(PHARO_MAT_AT_CHECKPOINT)) == 0) {
                 Oop c = materializeFrameStack();
                 activeContext_ = c;
-                frameDepth_ = 0;
+                collapseFramesToChain();
             }
         }
 
@@ -7967,7 +7967,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             contextToPush = materializeFrameStack();
             activeContext_ = contextToPush;
             currentFrameMaterializedCtx_ = memory_.nil();
-            frameDepth_ = 0;
+            collapseFramesToChain();
         }
         push(contextToPush);
         break;
@@ -10475,7 +10475,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                     if (frameDepth_ > 0) {
                         Oop materializedCtx = materializeFrameStack();
                         activeContext_ = materializedCtx;
-                        frameDepth_ = 0;
+                        collapseFramesToChain();
                     }
 
                     // Check for unwind (ensure:) contexts between here and home.
@@ -10755,7 +10755,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
         if (frameDepth_ > 0) {
             Oop topCtx = materializeFrameStack();
             activeContext_ = topCtx;
-            frameDepth_ = 0;
+            collapseFramesToChain();
         }
         // Back up IP past return bytecode to prevent dead code execution
         if (method_.isObject() && instructionPointer_ > method_.asObjectPtr()->bytes()) {
@@ -10998,7 +10998,7 @@ void Interpreter::returnFromBlock() {
         }
         Oop topCtx = materializeFrameStack();
         activeContext_ = topCtx;
-        frameDepth_ = 0;
+        collapseFramesToChain();
         // closure_ is still valid — fall through to context-based NLR
     }
 
@@ -11080,7 +11080,7 @@ void Interpreter::returnFromBlock() {
     if (frameDepth_ > 0) {
         Oop topCtx = materializeFrameStack();
         activeContext_ = topCtx;
-        frameDepth_ = 0;
+        collapseFramesToChain();
     }
     // Back up IP past return bytecode to prevent dead code execution
     if (method_.isObject() && instructionPointer_ > method_.asObjectPtr()->bytes()) {
@@ -11344,7 +11344,8 @@ bool Interpreter::nlrSegmentFreeze(size_t h, Oop value) {
         }
     }
     activeContext_ = topCtx;
-    frameDepth_ = 0;
+    chainDepthBase_ += b;   // the frozen frames below b are still this process's frames
+    collapseFramesToChain();
     g.armed = true;
     lazyCtxPending_ |= 2;
     if (GET_DEBUG_BOOL(PHARO_NLR_SEG_EAGER)) nlrSegmentDeopt();   // the mechanics, no laziness
@@ -11633,7 +11634,7 @@ bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
     collapsedActiveCtx_ = activeContext_;   // INV-AC: every record's, before the collapse
     Oop topCtx = materializeFrameStack();
     activeContext_ = topCtx;
-    frameDepth_ = 0;
+    collapseFramesToChain();
     Oop homeCtx = topCtx;
     for (size_t i = 0; i < hops; i++) {
         if (!homeCtx.isObject() || homeCtx.isNil()) break;
@@ -11756,7 +11757,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
         if (frameDepth_ > 0) {
             Oop topCtx = materializeFrameStack();
             activeContext_ = topCtx;
-            frameDepth_ = 0;
+            collapseFramesToChain();
         }
         // ARM/JIT fix (2026-07-04): send `homeCtx return: value through:
         // ensureCtx` — the SECOND step of the stock protocol — instead of
@@ -14423,6 +14424,8 @@ void Interpreter::handleStackOverflow(int argCount) {
     // resort (this process is genuinely unrecoverable).
     if (inStackOverflowSignal_) {
         inStackOverflowSignal_ = false;
+        setFrameLimit();
+        forgetProcessDepth(getActiveProcess());
         terminateAndSwitchProcess();
         return;
     }
@@ -14471,6 +14474,10 @@ void Interpreter::handleStackOverflow(int argCount) {
                            + std::chrono::seconds(60);
     }
     inStackOverflowSignal_ = true;
+    depthEntry(activeProc, true)->headroom = true;
+    signalGrace_ = SignalGraceResumes;
+    signalTrips_ = SignalRemeasureMask;
+    setFrameLimit();
     // Pharo 14 / pharo-vm v12 stack-overflow protocol (Cog:
     // StackInterpreter>>handleStackOverflow).  When the active process has
     // shouldOverflow == true and the image defines #stackOverflow in special
@@ -17330,30 +17337,17 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // produced by pushFrame's FP computation.
     if (__builtin_expect(traceSpCorrupt_, 0)) reportSpCorruptAtPush(method, argCount);
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
-    // catches both infinite recursion (soft) and hard overflow. Hot path is the
-    // single compare below; only while DRIVING the overflow-recovery terminate
-    // (rare) do we raise the limit by StackOverflowSignalHeadroom so the image's
-    // ensure:/ifCurtailed: unwind machinery can run above the soft limit. The flag
-    // is cleared on the ensuing process switch (executeFromContext) — terminate
-    // always switches, so no process keeps running with it set.
-    size_t overflowLimit = StackOverflowLimit;
-    if (__builtin_expect(inStackOverflowSignal_, 0)) {
-        // The overflow now raises a CATCHABLE Error, so a handler can recover
-        // and the process keeps running — the flag is no longer guaranteed to
-        // be cleared by an ensuing process switch (terminate always switched;
-        // `on: Error do:` does not).  Drop the emergency headroom once the
-        // stack has unwound clear of the cap, or this process would keep the
-        // raised limit forever and a LATER, unrelated overflow would take the
-        // "overflow while already signalling" branch and be hard-killed
-        // uncatchably — the exact behaviour this change removes.
-        if (frameDepth_ + StackOverflowSignalHeadroom < StackOverflowLimit)
-            inStackOverflowSignal_ = false;
-        else
-            overflowLimit += StackOverflowSignalHeadroom;
-    }
-    if (__builtin_expect(frameDepth_ >= overflowLimit, 0)) {
-        reportFrameOverflow(method, argCount);   // cold, out of line
-        return false;
+    // catches both infinite recursion (soft) and hard overflow.  The hot path
+    // is the single compare below against frameLimit_, the inline-frame count
+    // at which this process reaches the limit (see Interpreter.hpp: the limit
+    // counts the heap Context chain beneath the inline frames too, and rises
+    // by StackOverflowSignalHeadroom only while the overflow signal runs).
+    // Everything rare is in stackDepthExceeded().
+    if (__builtin_expect(frameDepth_ >= frameLimit_, 0)) {
+        if (stackDepthExceeded(frameDepth_)) {
+            reportFrameOverflow(method, argCount);   // cold, out of line
+            return false;
+        }
     }
 
     // Save any cached materialized context for the current frame into the saved frame.
@@ -17508,6 +17502,139 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // (0xF5 storeTemp after 0xF8 callPrimitive), matching the reference VM's behavior.
 
     return true;  // Successfully created frame
+}
+
+// Number of Contexts on the sender chain starting at `context`, counting
+// `context` itself, stopping at the first non-Context link or at `cap`.
+size_t Interpreter::senderChainLength(Oop context, size_t cap) {
+    // A process switch walks the whole chain of the resumed process, so the
+    // loop keeps its invariants in locals: the Context class index, nil, and
+    // one header read per link.  Every object of the Context class has at
+    // least the six fixed slots, so slot 0 (the sender) needs no bounds test.
+    const uint32_t ctxIdx = contextClassIndex_;
+    if (ctxIdx == 0) return 0;
+    const uint64_t nilBits = memory_.nil().rawBits();
+    size_t n = 0;
+    while (n < cap) {
+        const uint64_t bits = context.rawBits();
+        if (bits == 0 || bits == nilBits || !context.isObject()) break;
+        ObjectHeader* h = context.asObjectPtr();
+        if (h->classIndex() != ctxIdx) break;
+        n++;
+        context = h->slotAt(0);
+    }
+    return n;
+}
+
+// The depth entry of `process` (see Interpreter.hpp), or nullptr.  `create`
+// makes one, evicting an entry that holds nothing a resume needs first.
+Interpreter::ProcessDepth* Interpreter::depthEntry(Oop process, bool create) {
+    const uint32_t hash = memory_.identityHashOf(process);
+    const size_t setIdx = (hash ^ (hash >> 11)) & (kDepthSets - 1);
+    ProcessDepth* set = &processDepth_[setIdx * kDepthWays];
+    const uint64_t bits = process.rawBits();
+    for (size_t w = 0; w < kDepthWays; w++)
+        if (set[w].procBits == bits) return &set[w];
+    if (!create) return nullptr;
+    // Choose the way to reuse: unused, then nothing a resume needs, then no
+    // headroom.  If every way holds a process in overflow-signal state, the
+    // way the new hash picks (see the block comment in Interpreter.hpp).
+    ProcessDepth* noNeed = nullptr;
+    ProcessDepth* noHeadroom = nullptr;
+    const size_t start = (hash >> 11) & (kDepthWays - 1);
+    ProcessDepth* victim = nullptr;
+    for (size_t i = 0; i < kDepthWays && !victim; i++) {
+        ProcessDepth& e = set[(start + i) & (kDepthWays - 1)];
+        if (e.procBits == 0) victim = &e;
+        else if (!e.headroom) {
+            if (!e.valid) { if (!noNeed) noNeed = &e; }
+            else if (!noHeadroom) noHeadroom = &e;
+        }
+    }
+    if (!victim) victim = noNeed ? noNeed : noHeadroom ? noHeadroom : &set[start];
+    const bool listed = victim->listed;
+    *victim = ProcessDepth{};
+    victim->procBits = bits;
+    victim->listed = true;
+    if (!listed) depthList_[depthListCount_++] = (uint16_t)(victim - &processDepth_[0]);
+    return victim;
+}
+
+void Interpreter::forgetProcessDepth(Oop process) {
+    if (ProcessDepth* e = depthEntry(process, false)) {
+        const bool listed = e->listed;
+        *e = ProcessDepth{};
+        e->listed = listed;
+    }
+}
+
+// The only writer of frameLimit_.  See the block comment in Interpreter.hpp.
+void Interpreter::setFrameLimit() {
+    frameLimit_ = inStackOverflowSignal_ ? 0
+        : (StackOverflowLimit > chainDepthBase_ ? StackOverflowLimit - chainDepthBase_ : 0);
+#if PHARO_JIT_ENABLED
+    if (mcfDepthLimitPtr_) {
+        // PHARO_MCF_NO_FUSED_DEPTH keeps the older, lower cap of the unfused test.
+        const size_t cap = GET_DEBUG_BOOL(PHARO_MCF_NO_FUSED_DEPTH)
+            ? StackOverflowLimit - 64 : McfNativeDepthCap;
+        *mcfDepthLimitPtr_ = std::min(frameLimit_, cap);
+        mcfLimit_ = *mcfDepthLimitPtr_;
+    }
+#endif
+}
+
+// The cheap test (depth >= frameLimit_) tripped.  `depth` is the inline-frame
+// count the caller wants to reach.  Returns true if the active process really
+// is at the limit.  Otherwise the cached base was stale (the chain shrank by
+// returns or an unwind since it was measured), or the process holds the signal
+// headroom: this repairs frameLimit_ and answers false.
+[[gnu::noinline, gnu::cold]] bool Interpreter::stackDepthExceeded(size_t depth) {
+    auto measure = [&]() {
+        Oop below = activeContext_;
+        if (!isContextObject(below)) {
+            // J2J activations leave activeContext_ nil: the context active
+            // before the inline frames were pushed is the first non-nil saved
+            // one (the same anchor materializeFrameStack uses).
+            below = memory_.nil();
+            for (size_t fi = 0; fi < frameDepth_; fi++) {
+                Oop saved = recActiveCtx(savedFrames_[fi]);
+                if (isContextObject(saved)) { below = saved; break; }
+            }
+        }
+        chainDepthBase_ = senderChainLength(below, ChainWalkCap);
+        chainBaseStale_ = false;
+    };
+    if (inStackOverflowSignal_) {
+        // On the headroom: the inline frames may reach limit + headroom and the
+        // whole depth SignalWholeDepthCap.  frameLimit_ is 0, so every push
+        // comes here; a re-measure every few trips tells whether the signal is
+        // over (the process unwound below the limit).
+        const bool fits = depth < StackOverflowLimit + StackOverflowSignalHeadroom
+                       && depth + chainDepthBase_ < SignalWholeDepthCap;
+        if (fits && signalTrips_ > 0) {
+            signalTrips_--;
+            return false;
+        }
+        measure();
+        // A deep chain costs a walk per measure: wait in proportion, so the
+        // walks stay a small part of the work a signal handler does.
+        signalTrips_ = SignalRemeasureMask + chainDepthBase_ / SignalRemeasureDivisor;
+        if (depth + chainDepthBase_ + StackOverflowSignalHeadroom < StackOverflowLimit) {
+            inStackOverflowSignal_ = false;
+            if (ProcessDepth* e = depthEntry(getActiveProcess(), false)) e->headroom = false;
+            setFrameLimit();
+            return false;
+        }
+        return depth >= StackOverflowLimit + StackOverflowSignalHeadroom
+            || depth + chainDepthBase_ >= SignalWholeDepthCap;
+    }
+    measure();
+    if (depth + chainDepthBase_ >= StackOverflowLimit) {
+        setFrameLimit();   // the measured base is exact: later trips stay cheap
+        return true;
+    }
+    setFrameLimit();
+    return false;
 }
 
 // pushFrame's stack-overflow report, out of line so the hot push does not
@@ -20074,7 +20201,7 @@ void Interpreter::createBlock() {
         outerContextForBlock = materializeFrameStack();
         block = pop();
         activeContext_ = outerContextForBlock;
-        frameDepth_ = 0;  // Reset after materialization to prevent duplicate contexts
+        collapseFramesToChain();  // Reset after materialization to prevent duplicate contexts
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     // GC SAFETY: method_ is a GC root, so method_.asObjectPtr() is always valid
@@ -21303,7 +21430,7 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
         outerContextForBlock = materializeFrameStack();
         block = pop();
         activeContext_ = outerContextForBlock;
-        frameDepth_ = 0;  // Reset after materialization to prevent duplicate contexts
+        collapseFramesToChain();  // Reset after materialization to prevent duplicate contexts
     }
     memory_.storePointer(0, block, outerContextForBlock);  // outerContext
     // GC SAFETY: method_ is a GC root, so method_.asObjectPtr() is always valid
@@ -21660,6 +21787,7 @@ void Interpreter::terminateCurrentProcess() {
             break;
         }
     }
+    forgetProcessDepth(currentProcess);
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -21708,6 +21836,7 @@ void Interpreter::setActiveProcess(Oop process) {
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     memory_.storePointer(SchedulerActiveProcessIndex, scheduler, process);
+    chainBaseStale_ = true;   // executeFromContext measures the new process's chain
 }
 
 void Interpreter::addLastLinkToList(Oop process, Oop list) {
@@ -23190,6 +23319,15 @@ void Interpreter::transferTo(Oop newProcess) {
     // trigger GC compaction. After compaction, all C++ locals holding Oops are
     // stale. We store newProcess in a GC-root member field to protect it, and
     // re-derive oldProcess from getActiveProcess() after.
+    // The outgoing process's whole depth, for its next resume (see
+    // processDepth_).  Read before the frames are materialized and frameDepth_
+    // is reset.  Not when the base belongs to an earlier process (a switch
+    // that has not reached executeFromContext yet).
+    if (!chainBaseStale_) {
+        ProcessDepth* out = depthEntry(oldProcess, true);
+        out->depth = std::min(chainDepthBase_ + frameDepth_, ChainWalkCap);
+        out->valid = true;
+    }
     Oop savedNewProcess = gcTempOop_;  // Save previous value
     gcTempOop_ = newProcess;  // Protect from GC (gcTempOop_ is a GC root)
     Oop contextToSave = materializeFrameStack();
@@ -23401,6 +23539,7 @@ bool Interpreter::tryReschedule() {
 
         // Update the active process in scheduler
         memory_.storePointer(1, scheduler, process);
+        chainBaseStale_ = true;   // executeFromContext measures the new process's chain
 
         // Reset stack for new process
         stackPointer_ = stackBase_;
@@ -24444,6 +24583,8 @@ bool Interpreter::executeFromContext(Oop context) {
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
         inStackOverflowSignal_ = false;
+        chainBaseStale_ = true;
+        setFrameLimit();
         return false;
     }
     g_sigsegvRecoveryEnabled = 1;
@@ -24452,9 +24593,12 @@ bool Interpreter::executeFromContext(Oop context) {
 
     // Reset interpreter stack - each context execution starts fresh
     // The context object stores the Smalltalk stack state, which we'll restore below
+    // The inline frames being dropped are above the new context: if this is no
+    // process switch, the chain base below them stays an upper bound by
+    // adding them (see the depth limit comment in Interpreter.hpp).
+    const size_t droppedFrames = frameDepth_;
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
-    inStackOverflowSignal_ = false;  // fresh process never inherits overflow-signal headroom
     // The frame we are about to build IS this context's activation, so the
     // current frame OWNS it: later materializations must re-sync THIS object,
     // not allocate a fresh one.  Disowning it here left the context frozen at
@@ -24548,6 +24692,49 @@ bool Interpreter::executeFromContext(Oop context) {
     }
 
     activeContext_ = context;  // Track for sender chain on return
+    // The depth limit counts the whole process: the heap chain under the
+    // inline frames.  A resumed process is measured (one chain walk); a
+    // context return in the same process keeps the base as an upper bound.
+    // This is the one place every resume passes (transferTo, tryReschedule,
+    // terminateAndSwitchProcess, the inline switches in the callback paths,
+    // enterInterpreterFromCallback, the startup paths).
+    if (chainBaseStale_) {
+        chainBaseStale_ = false;
+        // The depth of a process that transferTo switched out is on record:
+        // no walk.  Any other resume (first run, a switch that bypassed
+        // transferTo, every kDepthRemeasureEvery-th resume) walks the chain.
+        Oop proc = getActiveProcess();
+        ProcessDepth* e = depthEntry(proc, false);
+        if (e && e->valid && e->resumes < kDepthRemeasureEvery + e->depth / kDepthRemeasureDivisor) {
+            chainDepthBase_ = e->depth;
+            e->resumes++;
+        } else {
+            chainDepthBase_ = std::min(senderChainLength(context, ChainWalkCap), ChainWalkCap);
+            if (e) e->resumes = 0;
+        }
+        if (e) e->valid = false;
+        // The overflow-signal headroom belongs to the process that runs the
+        // signal (its entry).  One more process gets it: a process seen for
+        // the first time within SignalGraceRoom frames of the limit shortly
+        // after a signal.  Only a chain cut from the overflowed process starts
+        // that deep (the handler process that on:fork:return: starts runs on
+        // the signal stack cut a few frames under the limit), and it needs
+        // room to run its handler.  A process that was switched out before
+        // (a second runaway recursion) has an entry and gets no headroom
+        // from its depth: its own overflow raises its own catchable signal.
+        bool headroom = e && e->headroom;
+        if (!e && signalGrace_ > 0
+                && chainDepthBase_ + SignalGraceRoom >= StackOverflowLimit) {
+            depthEntry(proc, true)->headroom = true;
+            headroom = true;
+        }
+        if (signalGrace_ > 0) signalGrace_--;
+        inStackOverflowSignal_ = headroom;
+        signalTrips_ = SignalRemeasureMask;
+    } else {
+        chainDepthBase_ += droppedFrames;
+    }
+    setFrameLimit();
     // Claim ownership: this frame's materialized form IS `context` (see the
     // note at the top of this function).
     currentFrameMaterializedCtx_ = context;
@@ -26359,6 +26546,15 @@ void Interpreter::purgeDeadCacheRoots() {
     size_t mcPurged = 0, jmPurged = 0, icPurged = 0,
            cmPurged = 0, fmPurged = 0, t2Purged = 0, qPurged = 0;
 
+    // 0. Process depth table: void the entry of a dead Process.
+    for (size_t i = 0; i < depthListCount_; i++) {
+        ProcessDepth& pd = processDepth_[depthList_[i]];
+        if (deadBits(pd.procBits)) {
+            pd = ProcessDepth{};
+            pd.listed = true;   // still in depthList_; the next visit drops it
+        }
+    }
+
     // 1. Method cache: void entries with a dead selector/class/method.
     // (afterGC flushes the whole cache post-fullGC anyway; this exists
     // for sweepGC and for the update pass, which run before that flush.)
@@ -27978,7 +28174,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
             int rsDone = 0;
             bool rsFailed = false;
             for (int rsI = 0; rsI < state.j2jDepth; rsI++) {
-                if (frameDepth_ >= effectiveStackOverflowLimit()) { rsFailed = true; break; }
+                if (atFrameLimit(frameDepth_)) { rsFailed = true; break; }
                 SavedFrame& rsF = savedFrames_[frameDepth_++];
                 rsF.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                 rsF.pushSite = "push@L25518";
@@ -28461,7 +28657,7 @@ void Interpreter::tryJITResumeInCallerSlow() {
 
                     // Stack overflow check
                     if (__builtin_expect(
-                            frameDepth_ + rj2jDepth >= effectiveStackOverflowLimit(),
+                            frameDepth_ + rj2jDepth >= frameLimit_,
                             0)) {
                         rj2jDepth--;
                         state.exitReason = jit::ExitStackOverflow;
@@ -28684,12 +28880,12 @@ void Interpreter::tryJITResumeInCallerSlow() {
             // Materialize remaining J2J saves if trampoline bailed with depth>0
             if (rj2jDepth > 0) {
                 for (int i = 0; i < rj2jDepth; i++) {
-                    if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                    if (atFrameLimit(frameDepth_)) {
                         static int matCapWarns0 = 0;
                         if (matCapWarns0++ < 10)
                             fprintf(stderr, "[MAT-CAP] s0: frameDepth %zu hit effective "
                                     "limit %zu - remaining J2J saves dropped\n",
-                                    frameDepth_, effectiveStackOverflowLimit());
+                                    frameDepth_, frameLimit_);
                         break;
                     }
                     J2JSave& save = rj2jSaves[i];
@@ -32578,7 +32774,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // Lazy frame: just increment local depth, no SavedFrame write.
                 // frameDepth_ is synced back to the member at loop exit.
-                if (__builtin_expect(localFrameDepth >= effectiveStackOverflowLimit(), 0)) {
+                if (__builtin_expect(localFrameDepth >= frameLimit_, 0)) {
                     j2jDepth--;
                     state.exitReason = jit::ExitStackOverflow;
                     break;
@@ -33032,12 +33228,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             ? &j2jPool_[j2jStateBase]
             : j2jStack;
         for (int i = 0; i < state.j2jDepth; i++) {
-            if (frameDepth_ >= effectiveStackOverflowLimit()) {
+            if (atFrameLimit(frameDepth_)) {
                         static int matCapWarns1 = 0;
                         if (matCapWarns1++ < 10)
                             fprintf(stderr, "[MAT-CAP] s1: frameDepth %zu hit effective "
                                     "limit %zu - remaining J2J saves dropped\n",
-                                    frameDepth_, effectiveStackOverflowLimit());
+                                    frameDepth_, frameLimit_);
                         break;
                     }
             J2JSave& save = stateSaves[i];
@@ -33342,12 +33538,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (state.j2jDepth > 0) {
                     J2JSave* _stateSaves = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                     for (int i = 0; i < state.j2jDepth; i++) {
-                        if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                        if (atFrameLimit(frameDepth_)) {
                         static int matCapWarns2 = 0;
                         if (matCapWarns2++ < 10)
                             fprintf(stderr, "[MAT-CAP] s2: frameDepth %zu hit effective "
                                     "limit %zu - remaining J2J saves dropped\n",
-                                    frameDepth_, effectiveStackOverflowLimit());
+                                    frameDepth_, frameLimit_);
                         break;
                     }
                         J2JSave& save = _stateSaves[i];
@@ -35232,12 +35428,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 if (state.j2jDepth > 0) {
                                     J2JSave* _stateSaves3 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                                     for (int i = 0; i < state.j2jDepth; i++) {
-                                        if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                                        if (atFrameLimit(frameDepth_)) {
                         static int matCapWarns3 = 0;
                         if (matCapWarns3++ < 10)
                             fprintf(stderr, "[MAT-CAP] s3: frameDepth %zu hit effective "
                                     "limit %zu - remaining J2J saves dropped\n",
-                                    frameDepth_, effectiveStackOverflowLimit());
+                                    frameDepth_, frameLimit_);
                         break;
                     }
                                         J2JSave& save = _stateSaves3[i];
@@ -35363,7 +35559,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         ObjectHeader* sMO = savedMethod.isObject() && savedMethod.rawBits() != 0
                             ? savedMethod.asObjectPtr()
                             : nullptr;
-                        if (sMO && frameDepth_ < effectiveStackOverflowLimit()) {
+                        if (sMO && !atFrameLimit(frameDepth_)) {
                             SavedFrame& frame = savedFrames_[frameDepth_++];
                             frame.mcReturn = nullptr;   // a slot reused from an older frame keeps its memo otherwise
                             frame.pushSite = "push@L32786";
@@ -35501,12 +35697,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         if (state.j2jDepth > 0) {
                             J2JSave* _stateSaves4 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                             for (int i = 0; i < state.j2jDepth; i++) {
-                                if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                                if (atFrameLimit(frameDepth_)) {
                         static int matCapWarns4 = 0;
                         if (matCapWarns4++ < 10)
                             fprintf(stderr, "[MAT-CAP] s4: frameDepth %zu hit effective "
                                     "limit %zu - remaining J2J saves dropped\n",
-                                    frameDepth_, effectiveStackOverflowLimit());
+                                    frameDepth_, frameLimit_);
                         break;
                     }
                                 J2JSave& save = _stateSaves4[i];

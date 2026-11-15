@@ -17,6 +17,130 @@ Routing to the durable docs is in the header of `docs/deferred.md`.
 
 ## Right now (2026-11-14) -- Linux CI green, Apple build repaired and run
 
+### Stack-depth fix and interpreter-only sweeps (committed 2026-11-15)
+
+The change that this block describes is one commit on `main`, made on
+2026-11-15.  The commit has these files: `src/vm/Interpreter.cpp`,
+`src/vm/Interpreter.hpp`, `src/vm/jit/JITMethod.hpp`,
+`src/vm/jit/MachineCodeFrames.cpp`, `src/vm/jit/asmjit/AsmjitT1.cpp`, three
+files in `docs/`, `scripts/test_stack_depth_limit.st`,
+`scripts/repro/x86-poller-wedge.st` and `scripts/README.md`.
+
+The stack-depth defect (full text in
+[vm-compat-bugs.md](vm-compat-bugs.md), entry "2026-11-14 -- stack-overflow
+limit ignored the heap Context chain"):
+
+- The depth limit counted only the inline frames since the last process
+  switch.  The scheduler preempts some recursions often.  Such a recursion
+  never reached the limit, and the heap Context chain grew until the old
+  space was full.
+- `ProcessTest>>testStackOverflow` failed in both builds for this reason.
+  The JIT build passed only because the recursion ended inside one time slice.
+- The limit now counts the whole depth of the process (`frameLimit_`).  A
+  table of 8192 entries records the depth of each process at a switch, so a
+  resume does not walk the sender chain.  The key of an entry is the
+  Process, and the VM holds the Process as a weak root.
+
+First interpreter-only sweeps (JIT off, the iOS configuration), before the
+fix, compared test by test with the arm64 JIT baseline of 2026-11-13 on the
+same image files:
+
+| Image | Tests | JIT | Interpreter | Wall time |
+|---|---|---|---|---|
+| Pharo 13 | 28077 | 27945 pass, 1 fail | 27943 pass, 1 fail, 2 timeout | about 19 min |
+| Pharo 14 | 28412 | 28241 pass, 1 fail | 28238 pass, 1 fail, 2 error, 1 timeout | about 19 min |
+
+The one fail on every build is `ZnClientTest>>testQueryGoogle` (live network).
+
+Two tests are slow only on the interpreter.  The runner has an 80 s
+watchdog:
+
+- `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft`:
+  interpreter 73 s, JIT 13 s.
+- `ReleaseTest>>testNoShadowedVariablesInMethods`: interpreter 270 s, JIT
+  46 s.
+
+The ratio is 5.6 to 5.9.  Both tests answer correctly when no limit applies.
+With `SUNIT_TIMEOUT_MULT=6`, both tests passed on Pharo 13 and Pharo 14 (two
+runs of the two tests alone, 411 s and 425 s wall).  The whole-suite sweep
+with this value was not run.
+
+How to run an interpreter-only sweep.  The image is a prepped image (see
+`CLAUDE.md`, "Running Pharo test suites").  `TOTAL` is 2159 for Pharo 14 and
+2052 for Pharo 13:
+
+```
+rm -f /tmp/sunit_timeout_scale.txt /tmp/sunit_class_names.txt \
+      /tmp/sunit_method_names.txt /tmp/sunit_run_completed.txt /tmp/sunit_batch.txt
+cp scripts/pharo-headless-test/test_classes.txt /tmp/sunit_test_classes.txt
+PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000 \
+PHARO_MAX_OLD_SPACE_MB=12288 SUNIT_TIMEOUT_MULT=1 \
+TOTAL=2159 STEP=50 PER_BATCH_TIMEOUT=7200 RETRY_DAMAGED=1 RETRY_STEP=5 \
+  caffeinate -i scripts/sunit-sweep.sh build-nojit/test_load_image <image> <outdir>
+```
+
+These are the settings of all sweeps of 2026-11-13 to 2026-11-15.  With
+`SUNIT_TIMEOUT_MULT=6` the two slow tests do not time out.  Run one VM at a
+time, and start no build during a sweep.
+
+Final validation on 2026-11-15, before the commit (the final code, four
+trees built):
+
+- `build-rel`, Pharo 14 and Pharo 13: both sweeps are identical to the JIT
+  baseline of 2026-11-13 (28241 and 27945 pass, 1 fail each).
+- `build-nojit`, Pharo 14, four sweeps: 28238 to 28239 pass, 1 or 2 fail, 1
+  or 2 error, 1 timeout.  The two slow tests are the expected differences.
+  Two flaky tests give the other differences, one time each:
+  - `StSpotterTest>>testOpenSpotterRefreshesPreviewOnce` failed in one
+    sweep.  The test also failed in one of four pre-fix sweeps.
+  - `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
+    gave an error in one sweep.  The test passed in four of four pre-fix
+    sweeps.  In runs of the class alone, the test failed in 1 of 9 runs on
+    the pre-fix binary and in 1 of 9 runs on the fixed binary.  The change
+    is not the cause.
+- `build-nojit`, Pharo 13, one sweep: 27943 pass, 1 fail, 2 timeout (the two
+  slow tests).
+- `ProcessTest>>testStackOverflow` passed in all five Pharo 14 sweeps (Pharo
+  13 does not have the test).
+  `SpHorizontalBoxLayoutTest>>testSpSearchInputFieldPresenterResizeCorrectlyWhenWindowWidthDecrease`
+  passed in all four interpreter-only Pharo 14 sweeps (the first version of
+  the fix failed it in 3 of 6 sweeps).
+- `build-x86`, Pharo 14: batches 1-100 (5862 tests) and 1151-1200 (395 tests)
+  have no difference from the baseline.  `build-nojit-x86`: batch 1151-1200
+  has no difference.
+- Linux in containers (`ubuntu:26.04`, GCC 15.2.0): JIT on and JIT off, on
+  arm64 and amd64: 4 builds, no error.  Apple: `scripts/build-xcframework.sh`
+  exit 0 (5 slices).  `xcodebuild` iOS Simulator and Mac Catalyst: BUILD
+  SUCCEEDED.
+- Regression test: `scripts/test_stack_depth_limit.st` (class
+  `StackDepthLimitTest`, 11 tests).  All tests pass on the four trees.  8
+  tests fail on the two binaries before the fix.  The 3 other tests fail on a
+  build with the limit set to 28000.  No sweep image has the class.
+- Speed (median of 3 interleaved runs against the pre-fix binary): up to 1000
+  processes, at most +1.4% instructions and about 3% wall at most (the wall
+  clock has a 10 ms step, and both signs occur).  `many-3000-2000`
+  on `build-rel` +4.5% wall.  Details are in the vm-compat-bugs entry.
+
+Not checked:
+
+- A Pharo 13 x86 run, and a full x86 sweep (only the Pharo 14 batches above
+  ran on the x86 trees).
+- `xcodebuild` for an iOS device destination (the device slice was built by
+  the xcframework script only).
+- The cause of the flaky
+  `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
+  (a `TKTTimeoutException` in about 1 of 9 runs on the interpreter-only
+  build, with and without the change).
+- The cause of the x86_64 wedge in 2% to 5% of runs of a multi-process
+  script with a poller.  The defect is open and older than this change (the
+  rate is the same on the binaries before the change).  The
+  reproducer is `scripts/repro/x86-poller-wedge.st`, and the lead is in
+  [deferred.md](deferred.md).
+- The GC cost of the weak root alone, and the collection of a dead Process
+  after only a scavenge.
+- No sweep in CI and no run on an iOS device.
+
+
 The `jit` branch does not exist after this day.  `main` has all commits of
 `jit`, and `main` is the only branch.  Commit to `main` and push `main`.  Do
 not push a branch with the name `jit`: the push makes the branch again.
@@ -25,8 +149,8 @@ The checkout on this Mac keeps the directory name `~/src/iospharo-jit`.  The
 older entries in this file that name `jit` tell where a commit was at that
 time.  All of those commits are in `main`.
 
-This day found two sets of build defects and fixed them.  No sweep ran on
-this day.
+This day found two sets of build defects and fixed them.  The sweeps of the
+JIT-off build and the stack-depth fix are in the first block of this entry.
 
 ### Linux CI (`df0ac300`)
 
@@ -87,8 +211,9 @@ Checks at the final state of the sources:
   834x624 with the same content.  The simulator screenshot shows the Pharo
   display behind the gesture help sheet of the app.
 
-Not checked: a real iOS device, Pharo 14 in the app, a signed archive, a
-SUnit sweep of a JIT-off build, GitHub issue #7.  These are in
+Not checked: a real iOS device, Pharo 14 in the app, a signed archive,
+GitHub issue #7.  (A SUnit sweep of a JIT-off build ran later on this day;
+see the first block.)  These are in
 [deferred.md](deferred.md) ("Platform validation status").
 
 Facts about the host and the tools:

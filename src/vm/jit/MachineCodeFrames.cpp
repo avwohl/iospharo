@@ -222,7 +222,7 @@ Oop Interpreter::mcfThisContext(jit::JITState* st) {
         ctx = materializeFrameStack();
         activeContext_ = ctx;
         currentFrameMaterializedCtx_ = memory_.nil();
-        frameDepth_ = 0;
+        collapseFramesToChain();
     }
     return ctx;
 }
@@ -2029,12 +2029,15 @@ void Interpreter::mcfInit() {
         L.dirActCtx = direct(&activeContext_, 8);
         L.dirCtdn = direct(&checkCountdown_, 4);
         L.dirYield = direct(forceYieldAddr(), 1);
+        L.pairCtdnLimit = L.dirCtdn != jit::kMcfNoDirect
+            && L.dirCtdn % 8 == 0 && L.dirCtdn >= -512 && L.dirCtdn <= 504
+            && direct(&mcfLimit_, 8) == L.dirCtdn + 8;
         L.pairDepthCtx = L.dirDepth != jit::kMcfNoDirect && L.dirMatCtx == L.dirDepth + 8
             && L.dirDepth % 8 == 0 && L.dirDepth >= -512 && L.dirDepth <= 496
             && GET_DEBUG_BOOL(PHARO_MCF_PAIRED_DEPTH);   // opt-in: see the plan's stage 1 note
         if (GET_DEBUG_BOOL(PHARO_MCF_CENSUS))
-            fprintf(stderr, "[MCF-LAYOUT] depth=%d matctx=%d actctx=%d ctdn=%d yield=%d pairDepthCtx=%d (yield at %td)\n",
-                    L.dirDepth, L.dirMatCtx, L.dirActCtx, L.dirCtdn, L.dirYield, (int)L.pairDepthCtx,
+            fprintf(stderr, "[MCF-LAYOUT] depth=%d matctx=%d actctx=%d ctdn=%d yield=%d pairDepthCtx=%d pairCtdnLimit=%d (yield at %td)\n",
+                    L.dirDepth, L.dirMatCtx, L.dirActCtx, L.dirCtdn, L.dirYield, (int)L.pairDepthCtx, (int)L.pairCtdnLimit,
                     reinterpret_cast<const char*>(forceYieldAddr()) - base);
     }
     jit::g_mcfMegaCache = jitRuntime_.megaCache();
@@ -2671,11 +2674,12 @@ void Interpreter::mcfRun(jit::JITMethod* jm, void* entry) {
         c.mcfMatCtxPtr = &currentFrameMaterializedCtx_;
         c.mcfActiveCtxPtr = &activeContext_;
         c.mcfCheckCountdownPtr = &checkCountdown_;
-        // The fused depth test (trim step 4) calls natively only up to
-        // depth 32768; pharo_mcf_perform must not answer a call the stub
-        // then refuses.
-        c.mcfDepthLimit = GET_DEBUG_BOOL(PHARO_MCF_NO_FUSED_DEPTH)
-            ? StackOverflowLimit - 64 : 32768;
+        // Native calls stop at this inline-frame count: the active process's
+        // depth limit (frameLimit_, process-relative) up to McfNativeDepthCap.
+        // setFrameLimit() keeps the value current; pharo_mcf_perform must
+        // not answer a call the stub then refuses.
+        mcfDepthLimitPtr_ = &c.mcfDepthLimit;
+        setFrameLimit();
         c.mcfEpochPtr = &jit::g_mcCodeEpoch;
         c.mcfCallCache = jit::g_mcfCallCache;
         c.mcfCallStubAddr = jit::g_mcfCallStub;

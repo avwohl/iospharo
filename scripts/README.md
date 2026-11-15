@@ -90,6 +90,13 @@ pass in `pharo-headless-test/run_sunit_tests.st`.
   `..` as a real child, so `deleteAll` and any other tree walk climbed toward the
   filesystem root and never came back. On a VM without the fix this class cannot
   complete at all, because its own tearDown is a `deleteAll`.
+- `test_stack_depth_limit.st` — the stack-depth limit counts the whole depth of
+  a process. A recursion that a yield partner or a Delay poller switches out
+  often must get a catchable Error. Before the fix, the VM counted only the
+  frames since the last switch and the Context chain filled old space. Each
+  runaway recursion stops at 200000 levels, so a VM with the defect fails an
+  assertion and does not exhaust memory. Stock Cog fails the overflow tests: it
+  signals at a stack page, at a depth of a few hundred frames.
 - `test_traits.st`, `test_network.st`, `test_menu_items.st`
 
 Run one against our VM:
