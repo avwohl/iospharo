@@ -145,6 +145,14 @@ The `jit` branch does not exist after this day.  `main` has all commits of
 `jit`, and `main` is the only branch.  Commit to `main` and push `main`.  Do
 not push a branch with the name `jit`: the push makes the branch again.
 
+Since 2026-11-15 GitHub protects `main`: GitHub refuses a force push to
+`main` and refuses the deletion of `main`.  The protection also applies to
+the owner of the repository.  A normal push works as before.  No status
+check and no review is necessary.  To rewrite the history of `main`, first
+set the protection to off (repository settings, "Branches"), and set the
+protection to on again after the push.  Read the state with
+`gh api repos/avwohl/iospharo/branches/main/protection`.
+
 The checkout on this Mac keeps the directory name `~/src/iospharo-jit`.  The
 older entries in this file that name `jit` tell where a commit was at that
 time.  All of those commits are in `main`.

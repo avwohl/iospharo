@@ -143,8 +143,11 @@ The history lives in `docs/history/`; nothing was deleted.
 
   The text below says that `origin/jit` had no protection.  On 2026-11-14
   that was wrong: `jit` had protection against force push and deletion, and
-  `main` had none.  `main` has no protection now.  The CI job "Repo hygiene"
-  fails if an autosave commit is on the branch.
+  `main` had none.  Since 2026-11-15 `main` has protection against force
+  push and deletion, and the protection also applies to the owner of the
+  repository.  A normal push is not affected, so the protection does not
+  stop the stale-tree push that the text below describes.  The CI job "Repo
+  hygiene" fails if an autosave commit is on the branch.
 
   The two related exposures are unchanged and still true: `origin/jit` has no
   branch protection, and nothing watches for an autosave landing on it.
