@@ -21,12 +21,16 @@ B. Test files that no repository and no archive holds (BioBEDTest 8 tests with
    assertions name (4801 and 1323 features).  The GFF3 data is synthetic: it
    tests the parser on the format and on the counts, not on real miRBase lines.
 
-C. BioGtUnixSubprocessTest (7 tests): the class GtUnixSubprocess belongs to
-   Glamorous Toolkit and is not in Pharo.  The test runs on a GT image only.
-   The stand-in class GtUnixSubprocess answers shellCommand:, runAndWait,
-   stdout and stderr on top of OSSUnixSubprocess (loaded for this package).
-   BioAbstractAdapter chooses BioGtUnixSubprocess only when GtImage exists, so
-   the choice of the adapter does not change.
+C. BioGtUnixSubprocessTest (7 tests): BioGtUnixSubprocess sends to the class
+   GtUnixSubprocess (and GtSubprocessWithInMemoryOutput), which only Glamorous
+   Toolkit has.  No repository of the run holds the class, and the Pharo 14
+   image does not.  The test checks an adapter for another distribution of
+   Pharo, so the test cannot work here.  setUp of the test class skips the test
+   with that reason when the class is absent.  testProviderClass compares a
+   Symbol only, runs on any image, and stays.  No stand-in class is made: a
+   class of that name in the image makes BioGtUnixSubprocess a valid adapter,
+   and other tests (BioCutadaptWrapperTest, BioNCBIBlastClientTest) then
+   choose it and fail on GtSubprocessWithInMemoryOutput.
 
 D. BioPathwayTest (10 tests) and BioOntologyTest (2 tests) send #metabolite:,
    #protein:, #gene: and #id:name:type: to BioSpecies.  BioSpecies is the class
@@ -65,6 +69,22 @@ Smalltalk globals at: #PkgFixRewrite put: [ :clsName :sel :oldText :newText | | 
 				value: [ :source | source includesSubstring: oldText ]
 				value: ((cls >> sel) sourceCode copyReplaceAll: oldText with: newText) ]
 		ifFalse: [ fix value: clsName value: sel value: [ :source | false ] value: '' ] ].
+
+"A second helper: compile a method when it is absent or when its source differs. Stays in the global for the time of the file-in, like PkgFixRewrite."
+Smalltalk globals at: #PkgFixPut put: [ :clsName :sel :protocol :newSource | | cls |
+	cls := resolve value: clsName.
+	cls ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [
+					((cls >> sel) sourceCode = newSource)
+						ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already as wanted)'; lf; flush ]
+						ifFalse: [
+							cls compile: newSource classified: (cls >> sel) protocolName.
+							Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ]
+				ifFalse: [
+					cls compile: newSource classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
 
 "=== A. test files from the zip ==="
 
@@ -131,10 +151,19 @@ add value: #BioBEDTest value: #writeBEDFixtures value: 'running' value:
 		''chr1 200 400 m2 0 +''.
 		''chr1 600 800 m3 0 +'' }'.
 
-add value: #BioBEDTest value: #setUp value: 'running' value:
+(Smalltalk globals at: #PkgFixPut) value: #BioBEDTest value: #setUp value: 'running' value:
 'setUp
 	super setUp.
 	self writeBEDFixtures'.
+
+(Smalltalk globals at: #PkgFixPut) value: #BioBEDTest value: #tearDown value: 'running' value:
+'tearDown
+	"Remove the files that setUp wrote, and the directory when nothing else is in the directory."
+	| directory |
+	directory := ''/tmp/bed'' asFileReference.
+	#(''test_bed12.bed'' ''test_bed6.bed'' ''test_merge.bed'') do: [ :name | (directory / name) ensureDelete ].
+	(directory exists and: [ directory children isEmpty ]) ifTrue: [ directory ensureDelete ].
+	super tearDown'.
 
 add value: #BioMAFTest value: #writeMAFFixture value: 'running' value:
 'writeMAFFixture
@@ -156,10 +185,19 @@ add value: #BioMAFTest value: #writeMAFFixture value: 'running' value:
 		''APC 324 5 112175770 112175770 + Nonsense_Mutation SNP C T T TCGA-AB-3456'' }
 			do: [ :line | stream nextPutAll: (line copyReplaceAll: '' '' with: String tab); lf ] ]'.
 
-add value: #BioMAFTest value: #setUp value: 'running' value:
+(Smalltalk globals at: #PkgFixPut) value: #BioMAFTest value: #setUp value: 'running' value:
 'setUp
 	super setUp.
 	self writeMAFFixture'.
+
+(Smalltalk globals at: #PkgFixPut) value: #BioMAFTest value: #tearDown value: 'running' value:
+'tearDown
+	"Remove the file that setUp wrote, and the directory when nothing else is in the directory."
+	| directory |
+	directory := ''/tmp/maf_test'' asFileReference.
+	(directory / ''test.maf'') ensureDelete.
+	(directory exists and: [ directory children isEmpty ]) ifTrue: [ directory ensureDelete ].
+	super tearDown'.
 
 add value: #'BioGFF3Test class' value: #ensureFixturesIn: value: 'fixtures' value:
 'ensureFixturesIn: aDirectory
@@ -217,36 +255,13 @@ fix value: #BioGFF3Test value: #baseDirectory
 	self class ensureFixturesIn: directory.
 	^ directory'.
 
-"=== C. GtUnixSubprocess stand-in ==="
+"=== C. BioGtUnixSubprocessTest is a test for Glamorous Toolkit ==="
 
-(Smalltalk globals includesKey: #GtUnixSubprocess) ifFalse: [
-	(Object << #GtUnixSubprocess
-		slots: { #command. #stdout. #stderr };
-		package: 'BioSmalltalk-GtSubprocess-Stand-In';
-		yourself) install ].
-
-add value: #GtUnixSubprocess value: #shellCommand: value: 'running' value:
-'shellCommand: aString
-	command := aString'.
-
-add value: #GtUnixSubprocess value: #runAndWait value: 'running' value:
-'runAndWait
-	"Run the command with /bin/sh and wait for the end. stdout and stderr hold the output."
-	OSSUnixSubprocess new
-		shellCommand: command;
-		redirectStdout;
-		redirectStderr;
-		runAndWaitOnExitDo: [ :process :outString :errString |
-			stdout := outString.
-			stderr := errString ]'.
-
-add value: #GtUnixSubprocess value: #stdout value: 'accessing' value:
-'stdout
-	^ stdout ifNil: [ '''' ]'.
-
-add value: #GtUnixSubprocess value: #stderr value: 'accessing' value:
-'stderr
-	^ stderr ifNil: [ '''' ]'.
+(Smalltalk globals at: #PkgFixPut) value: #BioGtUnixSubprocessTest value: #setUp value: 'running' value:
+'setUp
+	super setUp.
+	((self selector beginsWith: ''testExecute'') and: [ (Smalltalk globals includesKey: #GtUnixSubprocess) not ])
+		ifTrue: [ self skip: ''BioGtUnixSubprocess is an adapter for Glamorous Toolkit: the class GtUnixSubprocess exists only in a Glamorous Toolkit image, so the test cannot run on a Pharo image'' ]'.
 
 "=== D. BioSpecies is BioPathwaySpecies in the pathway and ontology tests ==="
 
@@ -373,3 +388,4 @@ fix value: #BioCutadaptWrapperTest value: #testExecuteWithFiltering
 	self assert: (result result includesSubstring: ''Total reads processed'')'.
 
 Smalltalk globals removeKey: #PkgFixRewrite ifAbsent: [ ].
+Smalltalk globals removeKey: #PkgFixPut ifAbsent: [ ].

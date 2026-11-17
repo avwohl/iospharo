@@ -1,0 +1,18 @@
+# Tests that cannot apply on a Pharo 14 image.  One test for each line:
+# Class>>selector, or Class>>* for each test of the class.  A line that starts
+# with # has the proof.
+#
+# BioGtUnixSubprocessTest tests BioGtUnixSubprocess, an adapter for the class
+# GtUnixSubprocess of Glamorous Toolkit (another distribution of Pharo).  The
+# adapter also uses GtSubprocessWithInMemoryOutput.  No repository of the
+# package run and no package of Pharo 14 has the two classes (a search of all
+# clones and of the image sources, 2026-11-17).  The setUp of the test class
+# skips the 7 tests that start a subprocess when GtUnixSubprocess is absent;
+# testProviderClass runs and passes.
+BioGtUnixSubprocessTest>>testExecuteCommandChained
+BioGtUnixSubprocessTest>>testExecuteCommandEcho
+BioGtUnixSubprocessTest>>testExecuteCommandFailureReturnsErrorOutput
+BioGtUnixSubprocessTest>>testExecuteCommandParameter
+BioGtUnixSubprocessTest>>testExecuteCommandPipeline
+BioGtUnixSubprocessTest>>testExecuteCommandQuotedParameter
+BioGtUnixSubprocessTest>>testExecuteCommandStderrOutput

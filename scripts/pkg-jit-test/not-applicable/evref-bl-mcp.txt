@@ -1,0 +1,8 @@
+# Tests that cannot apply on a Pharo 14 image.  One test for each line:
+# Class>>selector, or Class>>* for each test of the class.  A line that starts
+# with # has the proof.
+#
+# The test needs the World to step the Transcript.  The test skips itself
+# with "The world no longer steps the Transcript." when the image does not do
+# that.  Pharo 14: WorldState>>runStepMethodsIn: does not send stepGlobal.
+MCPToolStructuredOutputTest>>testEvaluateTakesTheStepTheWorldGivesTheTranscript
