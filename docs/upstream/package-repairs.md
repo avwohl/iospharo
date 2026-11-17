@@ -895,3 +895,56 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Result: 1477 of 1477 pass on the two VMs, in a run from a new load.
 - For the owners of Famix: the two code defects are in Famix.
 
+## ReStore (`rko281/ReStoreForPharo`, row 74)
+
+- State before: 2358 tests.  Stock Cog: 2355 pass, 1 failure, 1 error, 1
+  expected failure.  Our VM: 2356 pass, 1 failure, 1 expected failure.
+- Causes:
+  - `SSWReStoreTypeTest>>testVeryLargeString` (error on stock Cog only).
+    The dependency Pharo-SQLite3 gives the bytes of a text to
+    `sqlite3_bind_text` with the destructor `SQLITE_STATIC`.  With that
+    value SQLite keeps the pointer and reads the bytes at the step.  The
+    bytes are a ByteArray that nothing holds after the call.  The test
+    allocates 10 MB between the bind and the step, the collector of Cog uses
+    the memory again, and SQLite stores other bytes.  Our VM did not use the
+    memory again in that time.  The defect is in Pharo-SQLite3, and each
+    text bind has it.  The repair gives `SQLITE_TRANSIENT`, so SQLite makes
+    a copy.
+  - `SSWReStoreBlockIfNilQueryTest>>testSelectSimpleObjectWithFunctionIfNil`
+    has the mark of an expected failure, and the test passes (an unexpected
+    pass is a failure).  The mark goes.
+  - `SSWReStoreGeneralTest>>test01Events` (expected failure).  The test
+    needs the events of a list model of Dolphin Smalltalk.  The Pharo port
+    uses an OrderedCollection, which sends no event.  The test now sends the
+    event that the list model sends.  The mark goes.
+  - `SSWReStoreDefaultWriteTest>>testRefreshExistingObjects` failed on
+    stock Cog in one run of two.  ReStore keeps the objects that it reads in
+    a cache with weak values.  The test asserts that an object still shows
+    an old value, and the address of the object is a proxy that loads
+    later.  When the collector runs between the setUp and the test, the
+    object is read again and its proxy loads the new value.  With a process
+    that forces a scavenge each millisecond the test failed in 13 of 30 runs
+    on stock Cog.  The repair reads the value before the other session
+    writes.  A sibling test gets the same line.  After the repair: 0
+    failures in 30 such runs on each VM.
+- Repair here: `fixes/rko281-restoreforpharo.st` (7 entries).
+- Result: 2358 of 2358 pass on the two VMs, in a run from a new load.
+- For the owners: the bind defect is in `rko281/Pharo-SQLite3` and in
+  `pharo-rdbms/Pharo-SQLite3`, which has the same code.
+
+## pharo-test-analysis (`JavierLarre/pharo-test-analysis`, row 90)
+
+- State before: `LOAD-FAIL` (`Name not found: FirstToFix-Tests`).
+- Causes:
+  - The group `Tests` of the baseline names a package that the repository
+    does not have.  `patches/javierlarre-pharo-test-analysis.patch` names
+    the two test packages that exist.
+  - `TSDFakeTests` and `TSDSubFakeTests` are data for other tests, and their
+    `setUp` skips on purpose.  `fixtures/javierlarre-pharo-test-analysis.txt`
+    names them.
+  - 4 tests: `RTDHelperVisitor` does not understand `messages`.  A commit of
+    the package made the class a subclass of Object, and the class lost the
+    method that it had from its old superclass.
+    `fixes/javierlarre-pharo-test-analysis.st` adds the method.
+- Result: 71 of 71 pass on the two VMs, in a run from a new load.
+
