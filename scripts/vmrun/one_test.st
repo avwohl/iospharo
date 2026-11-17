@@ -16,6 +16,9 @@
  Morphic UI manager and the fake-GUI World cycle, when the image has them."
 [ (UIManager default class == MorphicUIManager) ifFalse: [ MorphicUIManager new beDefault ] ] on: Error do: [ :e | ].
 [ (Smalltalk globals at: #FakeGUI ifAbsent: [ nil ]) ifNotNil: [ :fg | fg perform: #startCycleLoop ] ] on: Error do: [ :e | ].
+"One Morphic actor at a time: a World cycle of another process waits while this process can run (setup_fake_gui.st, Step 3b)."
+[ (Smalltalk globals at: #FakeGUI ifAbsent: [ nil ]) ifNotNil: [ :fg |
+	(fg respondsTo: #testProcess:) ifTrue: [ fg perform: #testProcess: with: Processor activeProcess ] ] ] on: Error do: [ :e | ].
 lines := ('runtest_args.txt' asFileReference readStreamDo: [ :s | s contents ]) lines
 	collect: [ :l | l trimBoth ] thenSelect: [ :l | l notEmpty ].
 limit := 120.

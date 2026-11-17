@@ -7,7 +7,7 @@ LaunchpadRootCommandTest>>set:to:during: and ConfigurationFromEnvironmentProvide
 call these three methods, so a Deprecation reaches the test (seen:
 testHandlingStartGreeterApplicationWithMixedConfiguration).  The three methods
 answer through OSEnvironment current, which is what 'environment' answers.
-The same change belongs in Buoy (see ba-st-launchpad.md)."
+The same change belongs in Buoy (see docs/upstream/package-repairs.md)."
 
 fix value: #OSPlatform value: #environmentAt:ifPresent:ifAbsent:
 	value: [ :source | source includesSubstring: 'self environment' ]

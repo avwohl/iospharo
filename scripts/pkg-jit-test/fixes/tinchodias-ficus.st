@@ -1,5 +1,5 @@
 "Ficus (tinchodias/Ficus, mini): two tests that do not pass on both VMs.
-See tinchodias-ficus.md.
+See docs/upstream/package-repairs.md.
 
 1. FiSetSimpleChangesTest>>testUpdate is marked <expectedFailure>.  The
    conversion FiSet>>editFromSimpleChange: answers a FiSubEdit for an update

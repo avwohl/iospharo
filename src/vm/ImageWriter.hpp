@@ -39,7 +39,7 @@ class ImageWriter {
 public:
     SaveResult save(const std::string& path, ObjectMemory& memory,
                     const SpurImageHeader& originalHeader,
-                    uint32_t lastHash, int screenWidth, int screenHeight);
+                    uint64_t lastHash, int screenWidth, int screenHeight);
 
 private:
     /// Convert a single 64-bit value from iOS tag format back to standard Spur.

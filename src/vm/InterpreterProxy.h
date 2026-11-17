@@ -32,10 +32,16 @@ void initializeJPEGReadWriter2Plugin(pharo::Interpreter* interp);
 // Initialize SocketPlugin (TCP sockets)
 void initializeSocketPlugin(pharo::Interpreter* interp);
 
+// Initialize NewFilePlugin (file/directory access with offsets, memory mapping)
+void initializeNewFilePlugin(pharo::Interpreter* interp);
+
 // Initialize SqueakSSL (crypto — compiled only when PHARO_WITH_CRYPTO=1)
 #if PHARO_WITH_CRYPTO
 void initializeSqueakSSL(pharo::Interpreter* interp);
 #endif
+
+// Close every NewFilePlugin file and directory, unmap every mapping, clear the table
+void newFilePluginShutdown();
 
 // Reset the proxy for VM relaunch (clears interpreter/memory pointers)
 void resetInterpreterProxy();

@@ -1,0 +1,13 @@
+diff --git a/src/BaselineOfPillar/BaselineOfPillar.class.st b/src/BaselineOfPillar/BaselineOfPillar.class.st
+index d032eb70..8247c56d 100644
+--- a/src/BaselineOfPillar/BaselineOfPillar.class.st
++++ b/src/BaselineOfPillar/BaselineOfPillar.class.st
+@@ -98,7 +98,7 @@ BaselineOfPillar >> microdown: spec [
+ 
+ 	spec
+ 		baseline: 'Microdown'
+-		with: [ spec repository: 'github://pillar-markup/Microdown:v2.11.2/src' ]
++		with: [ spec repository: 'github://pillar-markup/Microdown:dev/src' ]
+ ]
+ 
+ { #category : 'dependencies' }

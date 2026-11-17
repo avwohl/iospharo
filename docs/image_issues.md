@@ -492,7 +492,10 @@ The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-imag
 | `27-atomic-shared-queue-wakeups.st` | `AtomicSharedQueue`, `WaitfreeQueue`, new `AtomicSharedQueueTest` | A reader loses a wake-up; a terminated reader leaves the queue locked | image code | section "TaskIt worker pool" above |
 | `28-simple-formatter-comments.st` | `OCSimpleFormatter`, `OCParseCodeSnippetTest>>testSimpleFormattedCode` (23 skips) | The simple formatter dropped the comments of an expression, of a block and of a brace array | image code and test | none |
 | `29-code-importer-snippets.st` | `CodeImporterCodeSnippetTest>>testCodeImporter` (3 skips) | Skip for an empty source, and a stale skip mark for the source ` ]` | test | none |
-| `30-ffi-callback-from-other-thread.st` | `TFUFFICallbackTest>>testCallbacksInOtherThread` (1 skip) | Stock Cog stops when a callback of the same-thread runner comes from another thread; the skip now is only for a VM without the repair | Cog, test | `upstream/README.md` |
+| `30-ffi-callback-from-other-thread.st` | `TFUFFICallbackTest>>testCallbacksInOtherThread` (1 skip) | Stock Cog stops when a callback of the same-thread runner comes from another thread; the skip now is only for a VM without the repair | Cog, test | `upstream/cog-changes.md` |
+| `31-rename-class-changes.st` | `RBNamespace>>renameClass:to:around:`, two tests that count the changes of a rename | A rename of a class loses the changes of the methods that name the class | image code and test | section "Defects that the package run found" below |
+| `32-duration-wait-rounds-up.st` | `Duration>>asDelay`, new `DurationTest>>testAsDelayDoesNotRoundDown` | A wait for a Duration can end up to 1 millisecond before the Duration has passed | image code | section "Defects that the package run found" below |
+| `33-metalink-uninstall-order.st` | `MetaLinkInstaller>>uninstallFromAllAnonymousNodes:`, `MetaLinkNodesMapper>>findNodeLike:forObject:`, two new tests of `LinkInstallerTest` | The uninstall of an object-specific link skips a node when two nodes collide in the node set of the link; a later uninstall for the same object removes the method two times (`KeyNotFound`) | image code | section "Defects that the package run found" |
 
 ### The code snippet skips (2026-11-17, repaired)
 
@@ -517,6 +520,60 @@ Open, found on the way: the parser loses comments.  The source
 `1 "A" true "B" false "C" nil "D" self "E" super "F" thisContext "G"` gives
 an AST with the comments A, E, F and G only.  The formatter cannot print a
 comment that the AST does not have.
+
+### Defects that the package run found (2026-11-17, repaired)
+
+The tests of the image do not show the first two defects.  Tests of packages
+of the 200-package run showed them.  The third defect showed in some sweeps
+of our VM only, and is in this list because the same work found it.
+
+- `RBNamespace>>renameClass:to:around:` (entry 31, found by Chanel).  The
+  method adds the rename change to the changes of the namespace and keeps
+  the old value of `changes`.  Then the method runs the block and puts the
+  old value back.  The method never makes the rename change the current
+  `changes`, so the code that puts the old value back has no effect.  The sibling method
+  `perform:onlyWithChange:` has that line.  The method changes that the
+  block records are then siblings of the rename change and keep the old
+  class name.  After the rename, `ReClassChange>>changeClass` answers nil for
+  them (`receiver of includesSelector: is nil`).
+- `Duration>>asDelay` (entry 32, found by the Tasks package of PharoMisc).
+  The method makes a Delay for `self asMilliSeconds` milliseconds, and
+  `asMilliSeconds` rounds down.  A wait for 99.98 milliseconds ends after 99
+  milliseconds.  `scripts/cogdiff/delay_accuracy.st` measures the shortest
+  of 40 such waits: 921 microseconds before its time on our VM, and 4629
+  microseconds after its time on stock Cog.  The stock VM ends each Delay 1
+  to 6 milliseconds late on this machine, and that hides the defect.  The
+  repair rounds up.  `BlockClosure>>valueWithin:onTimeout:` uses
+  `asMilliSeconds` in the same way for its time limit.  No test shows a
+  defect there, and the method has no change.
+- The uninstall of an object-specific link (entry 33).
+  `LinkInstallerTest>>testLinkOnTempVarForObject` failed in 2 of 13 sweep
+  batches of our VM with `KeyNotFound: key #methodWithTempVarAccess not found
+  in MethodDictionary`, and never in 80 runs of the class alone.  The defect
+  is in the image and does not depend on the VM:
+  - `MetaLinkInstaller>>uninstallFromAllAnonymousNodes:` walks the node set
+    of the link (an IdentitySet) and removes each node from that set in the
+    loop.  When two nodes collide in the set, the removal of the first moves
+    the second into the slot that the walk has left, and the walk skips the
+    second node.  The installer then keeps that node in its node mapper for
+    the object.
+  - `MetaLinkNodesMapper>>findNodeLike:forObject:` answers the first node of
+    the object that is equivalent to the given node.  The old node of a
+    skipped uninstall is equivalent to the node at the same position of a
+    later installation.  When the old node comes first, the installer
+    removes the method of the anonymous class too early, and the last
+    uninstall removes the method again.
+  - `scripts/cogdiff/metalink_uninstall_order.st` shows the defect on an
+    image with no repair.  With a forced order of the set, stock Cog and our
+    VM give the `KeyNotFound`.  With the order of the identity hashes, 12 of
+    300 rounds on stock Cog and 9 of 300 rounds on our VM give the
+    `KeyNotFound`.
+  - The order of a set depends on identity hashes, and the hashes depend on
+    the objects that the tests before made.  That is why one sweep batch
+    failed and the class alone did not.
+  - The repair walks a copy, and the mapper answers the given node itself
+    when the object has that node.  Two new tests of `LinkInstallerTest`
+    force the order with an IdentitySet subclass.
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 

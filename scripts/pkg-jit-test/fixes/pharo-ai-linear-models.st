@@ -18,7 +18,7 @@ testExactFitDoubleVariable start with 'self skip' (upstream commit 8bab733:
 skip hides a defect of the package or of PolyMath; the tests get their real
 bodies back.  The single-variable body is the one of the superclass test.  The
 double-variable body is the commented-out test of the same method.  If the two
-tests then fail, see the diagnostics in pharo-ai-linear-models.md."
+tests then fail, see docs/upstream/package-repairs.md."
 
 fix value: #LapackLibrary value: #macLibraryName
 	value: [ :source | (source includesSubstring: '/usr/lib/liblapack.dylib') not ]

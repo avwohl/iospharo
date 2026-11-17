@@ -47,6 +47,18 @@ private path. On our VM set `PHARO_EVAL_NO_SUNIT_MARKER=1` for each `eval`.
   the Morphic one.
 - The fake-GUI cycle loop is started (`FakeGUI startCycleLoop`), when the image
   has it. Spec and Morph tests wait for a World cycle.
+- The runner gives its process to the fake GUI (`FakeGUI testProcess:`).
+  `setup_fake_gui.st` changes `MorphicRenderLoop>>doOneCycle`: a process that
+  is not the test process starts no World cycle while the test process is
+  ready to run. Morphic is not safe for two processes. Without this rule the
+  UI process ran a layout in the middle of the work of a test:
+  `StMethodBrowserTest` failed in 7 of 80 class runs on stock Cog, and one
+  sweep batch stopped. With the rule, 30 of 30 class runs on stock Cog and 10
+  of 10 on our VM are clean. The rule acts when a cycle starts. A test
+  process that wakes in the middle of a cycle of another process can still
+  run inside that cycle.
+- A `Halt` in a test (a `halt` that the author left in the code) is an error
+  of the test. Without a handler the headless image exits.
 - The file `pharo.version` is written beside the image. A Pharo installation
   has this file. `ReleaseTest>>testPharoVersionFileExists` reads it.
 - For `ReleaseTest>>testUnknownProcesses` the runner stops the fake-GUI cycle

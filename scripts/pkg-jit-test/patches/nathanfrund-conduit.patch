@@ -1,0 +1,18 @@
+diff --git a/src/BaselineOfConduit/BaselineOfConduit.class.st b/src/BaselineOfConduit/BaselineOfConduit.class.st
+index 5bea6e5..3051517 100644
+--- a/src/BaselineOfConduit/BaselineOfConduit.class.st
++++ b/src/BaselineOfConduit/BaselineOfConduit.class.st
+@@ -17,11 +17,11 @@ BaselineOfConduit >> baseline: spec [
+ 			"2. Your Packages"
+ 			spec
+ 				package: 'Conduit-Core' with: [ spec requires: #( 'Mustache' ) ];
+-				package: 'ConduitCore-Tests'
++				package: 'Conduit-Tests'
+ 				with: [ spec requires: #( 'Conduit-Core' ) ].
+ 
+ 			"3. Groups (Convenience for the user)"
+ 			spec
+ 				group: 'default' with: #( 'Conduit-Core' );
+-				group: 'Tests' with: #( 'ConduitCore-Tests' ) ]
++				group: 'Tests' with: #( 'Conduit-Tests' ) ]
+ ]

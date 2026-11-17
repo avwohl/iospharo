@@ -152,6 +152,12 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweepcogp14-new3` | patched Cog, entries 25 to 30 | 39370 | 0 | 87 | 1 | entries 28 to 30 turn 27 skips into passes |
 | `sweep14-new6` | ours, entries 25 to 30 | - | - | - | - | 2 batches stopped with a segmentation fault, see below |
 | `sweep14-new7` | ours, perform-cache repair, entries 25 to 30 | 39370 | 0 | 87 | 1 | no batch stopped; interactive pass 135 of 135 |
+| `sweep14-new9` | ours, socket options as in the stock VM | 39369 | 2 | 87 | 1 | 39459 tests; the 2 failures are the rename tests that entry 31 (first form) broke |
+| `sweepcogp14-new4` | patched Cog, no gate | 38491 | 2 | 87 | 1 | 38582 tests: 1 batch stopped with "index out of range" in the UI process (the harness race); 1 error |
+| `sweepcogp14-new5` | patched Cog, gate (first form), entry 31 | 39370 | 0 | 87 | 1 | 1 error: the rename test, repaired in the last form of entry 31 |
+| `sweep14-new10` | ours, gate (first form), file plugin | 39337 | 0 | 87 | 1 | 34 errors: the rename test, and 33 of `LinkInstallerTest` (entry 33) |
+| `sweepcogp14-new6` | patched Cog, gate, entries 31 to 33 | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped |
+| `sweep14-new11` | ours, gate, entries 31 to 33, socket options, file plugin, hash generator | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass as on the patched Cog |
 
 Defects that these sweeps showed, each with its repair:
 
@@ -184,6 +190,20 @@ Defects that these sweeps showed, each with its repair:
   entry with no compiled code (the two stopped batches of `sweep14-new6`).
   The defect was old, and the new image entries made it show.  Fixed in
   `AsmjitT1.cpp`.  Text: [vm-compat-bugs.md](vm-compat-bugs.md).
+- The fake GUI let two processes run World cycles and test code at the same
+  time (the stopped batch of `sweepcogp14-new4`, and `StMethodBrowserTest` in
+  7 of 80 class runs on stock Cog).  `setup_fake_gui.st` now has a gate:
+  `MorphicRenderLoop>>doOneCycle` starts no cycle of another process while
+  the test process is ready to run.  With the gate, 30 of 30 class runs on
+  stock Cog and 10 of 10 on our VM are clean.
+- The uninstall of an object-specific MetaLink depends on the order of a set
+  (the 33 errors of `sweep14-new10`).  The defect is in the image, and stock
+  Cog has it too (`scripts/cogdiff/metalink_uninstall_order.st`).  The
+  repair is `scripts/image-fixes/33-metalink-uninstall-order.st`.
+- Our VM made identity hashes with a 32-bit state and did not read the start
+  value from the image header.  The sequence of hashes was not the sequence
+  of Cog, so the order of hashed collections differed between the VMs.
+  Fixed in `ObjectMemory`.  Text: [vm-compat-bugs.md](vm-compat-bugs.md).
 
 ### The 200-package run (started 2026-11-17)
 
@@ -199,24 +219,36 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-Rows 1 to 11, after the repairs of the day (the record of each repair is
+State on 2026-11-17 at 11:40, rows 1 to 50 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)):
 
-| Package | Tests | Result on the two VMs |
-|---|---|---|
-| XML-XMLParser | 6027 | equal: 6022 pass.  The fixes file turned 110 skips on (file and HTTP tests).  Open: 3 tests with a dead DTD address (new addresses written, not run yet), 2 skips |
-| Avr-Pharo | 1705 | all pass |
-| glorp | 262 | all pass with the fixes file (before: 2 errors) |
-| mutalk | 369 | our VM: 364 pass; the 4 that fail are fixture tests that fail on purpose (the class list now leaves them out), 1 skip.  Stock Cog did not finish: a recursion with no end filled 6 GB (fixes file written, not run yet) |
-| OpenSmock | 1060 | all pass |
-| PharoMisc | 225 | equal: 160 pass, 41 fail, 24 errors.  The code is for Pharo 12 (branch `pharo12`): removed API of the image |
-| earley-parser | 360 | all pass |
-| Pharo-Advent-Of-Code | - | the load works from the patched clone; the class list did not find the repository under its name (corrected, not run yet) |
-| fisher-parser | 288 | all pass |
-| Buoy | 363 | equal: 362 pass, 1 fail (`OrderedDictionaryExtensionsTest>>testEquals`).  The load works with the patch |
-| graph-algorithms | 176 | all pass |
+- 42 rows are clean: each test passes on stock Cog and on our VM.  21 of
+  them needed a repair: a fixes file, a patch of the package, a locked
+  dependency, or a corrected manifest row.
+- Rows that are not clean yet: OSC (1 failure), Hyperspace (1 failure),
+  Comix2 (1 failure), PharoWiki (7 skips), aws-sdk-smalltalk (20 tests need
+  a local AWS emulator), opentelemetry-pharo (the row loads no test
+  package), PharoMisc and pharo-newfile (see below).  Row 51 names a
+  repository that is gone.
 
-No test of these rows has a result on our VM that is not the result on Cog.
+The package run found these defects outside the packages:
+
+| Defect | Where | Found by | State |
+|---|---|---|---|
+| The socket option primitives knew 6 names and gave a false success for each other name; a new socket had no `SO_REUSEADDR` | our VM | PharoMisc (multicast tests) | repaired in `SocketPlugin.cpp`; `sweep14-new11` is clean |
+| No `NewFilePlugin` | our VM | pharo-newfile (8 tests skip on our VM only) | ported (POSIX side), reviewed two times; the row passes 42 of 42 on the two VMs; `sweep14-new11` is clean |
+| `RBNamespace>>renameClass:to:around:` loses method changes | Pharo image | Chanel | image fix 31 |
+| `Duration>>asDelay` rounds down, so a wait can end early | Pharo image | PharoMisc (Tasks) | image fix 32 |
+| The uninstall of an object-specific MetaLink skips a node when two nodes collide in a set, and a later uninstall removes a method two times | Pharo image | a sweep of our VM (`LinkInstallerTest`, 2 of 13 batches) | image fix 33; the two new tests fail before and pass after on the two VMs |
+| The identity hash generator used 32-bit arithmetic and did not read its start value from the image header | our VM | the work on the row above (the order of hashed collections differed from Cog) | repaired in `ObjectMemory`; `sweep14-new11` is clean |
+| The stock `NewFilePlugin` reads past a buffer, writes into an Array and into a read-only object, and stops the VM for a copy of a closed handle | stock Cog | `scripts/cogdiff/newfile_plugin_checks.st` and `newfile_plugin_ours_checks.st` | open: no Cog change is written |
+| `Socket>>setPort:` on a port in use gives no error | stock Cog | PharoMisc | local branch `fix/socket-listen-bind-result`, tested on the patched Cog |
+| `SO_RCVBUF` 65536 becomes 8 MB; `SO_LINGER` cannot be set | stock Cog | `scripts/cogdiff/socket_options.st` | local branch `fix/socket-option-values`, tested on the patched Cog |
+| Segmentation fault in the garbage collector in `TkThreadTest>>testFinalization` after the multicast tests bind their sockets | stock Cog | PharoMisc | open, cause not known |
+| A load in a headless image waits at a dialog (merge or load; credentials) | our package driver | Hyperspace, row 51 | the driver answers the warning and uses the non-interactive credentials provider |
+
+The first two rows are the only tests of rows 1 to 50 with a result on our
+VM that is not the result on Cog.
 
 Found by the MuTalk row and open: our VM signals an error at a recursion
 depth of 56000 frames, and Cog has no such limit
@@ -233,28 +265,49 @@ scavenge can move more than that to the old space, and
 A change for Cog (low space when the old space cannot grow and has less free
 space than the size of the new space) is not written yet.
 
-Cog changes in work:
+Cog changes in work (each one is a local branch of `~/src/pharo-vm`; nothing
+is pushed):
 
-- A callback from another thread with the same-thread FFI runner: the change
-  is written (`docs/upstream/cog-same-thread-runner-callback-from-other-thread.patch`,
-  branch `fix/same-thread-runner-callback-from-other-thread`), not built and
-  not tested yet.  With the change, `TFUFFICallbackTest>>testCallbacksInOtherThread`
-  can lose its skip.
-- The low-space signal at the old-space limit: not written.
+- A callback from another thread with the same-thread FFI runner: written,
+  built and tested (`docs/upstream/cog-same-thread-runner-callback-from-other-thread.patch`,
+  branch `fix/same-thread-runner-callback-from-other-thread`).  The patched
+  Cog passes `TFUFFICallbackTest>>testCallbacksInOtherThread`.
+- A failed `bind` of the listen primitives gives an error: written, built
+  and tested with `scripts/cogdiff/socket_bind_in_use.st` (branch
+  `fix/socket-listen-bind-result`).  The sweep of the patched Cog with the
+  change is in work.
+- Socket option values (an integer of 5 or more digits, `SO_LINGER`):
+  written, built and tested: the patched Cog and our VM give the same answer
+  for the 72 calls of `scripts/cogdiff/socket_options.st` (branch
+  `fix/socket-option-values`).
+- The low-space signal at the old-space limit: written and reviewed, not
+  built (branch `fix/low-space-signal-before-old-space-limit`, the change
+  needs a VMMaker run).
+- The segmentation fault in the garbage collector in the PharoMisc row: the
+  cause is not known.
 - The segmentation fault of `MorphicWindowManagerTest` in an interactive
   session (1 of 3 runs): not started.
 
 Not done, in order:
 
-1. Run the sweep of the patched Cog with the image of this moment (entries
-   25 and 26), and the TaskIt loops on stock Cog with the repair.
-2. Run rows 12 to 200 of the package manifest, then repair each row that
-   does not pass (the package, our VM, or Cog).  Open rows: mutalk on Cog,
-   Pharo-Advent-Of-Code, Buoy, PharoMisc, the skips of XMLParser.
-3. Add the interactive pass to the sweep.
-4. Do the same work for Pharo 13 (first sweep with the old runner: 27894
+1. Run rows 51 to 200 of the package manifest (in work), then repair each
+   row that does not pass (the package, our VM, or Cog).
+2. `StMethodBrowserTest` failed in about 1 class run of 10 on stock Cog.  The
+   cause is in our harness: the fake GUI lets the Morphic UI process run a
+   World cycle in the middle of the work of the test process (a nested
+   `TabSelectorMorph>>updateTabs`, recorded 2026-11-17).  The repair is
+   written and in test: `MorphicRenderLoop>>doOneCycle` starts no cycle of
+   another process while the test process is ready to run
+   (`/tmp/pharo-work/patchwork/setup_fake_gui.gate.st`; the two runners
+   register the test process).  With the first form of the repair, 90 of 90
+   class runs on stock Cog were clean, and a full sweep of the patched Cog
+   had no batch that stopped.  The repair is not in
+   `scripts/pharo-headless-test/setup_fake_gui.st` yet.  Known limit: the
+   rule acts when a cycle starts, so a test process that wakes in the middle
+   of a cycle of another process can still run inside that cycle.
+3. Do the same work for Pharo 13 (first sweep with the old runner: 27894
    passes of 28077, 2 failures, 131 skips, 50 expected failures).
-5. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
+4. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
    the sweeps of this day.
 6. Fix the two open Cog defects.
 

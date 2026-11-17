@@ -1,0 +1,73 @@
+From 39104295636e8ebdbc53dba7b2c3fd7e1355d8f1 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 12:56:27 -0500
+Subject: [PATCH] Spur: signal low space before old space reaches its limit
+
+With --maxOldSpaceSize (or when the OS refuses a new segment), a process that
+allocates with no end stops the VM with 'Could not allocate new object in the
+old space', and the image gets no low space signal.
+
+sufficientSpaceAfterGC: reported low space only when the free old space was
+below the threshold of the image (lowSpaceThreshold, 400000 bytes in Pharo).
+One scavenge can tenure more than that, and copyToOldSpace:bytes:format: then
+stops the VM.
+
+Now, when old space cannot grow, space is low as soon as the free old space is
+less than two new spaces: one for the next scavenge, and one for the low space
+watcher of the image and the unwind of the process that the watcher stops.
+Before that answer the method runs one full GC if old space has grown by more
+than a new space since the last one, so that garbage does not count as use.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../VMMaker/SpurMemoryManager.class.st        | 27 ++++++++++++++-----
+ 1 file changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/SpurMemoryManager.class.st b/smalltalksrc/VMMaker/SpurMemoryManager.class.st
+index 3c5ab99d6..abe149566 100644
+--- a/smalltalksrc/VMMaker/SpurMemoryManager.class.st
++++ b/smalltalksrc/VMMaker/SpurMemoryManager.class.st
+@@ -13006,7 +13006,7 @@ SpurMemoryManager >> sufficientSpaceAfterGC: numBytes [
+ 	 which is a stop-the-world a young generation reclaimer.  In Spur
+ 	 we run the scavenger.  Answer if space is not low."
+ 
+-	| heapSizePostGC |
++	| heapSizePostGC cannotGrow lowMark |
+ 	self assert: numBytes = 0.
+ 	self scavengingGCTenuringIf: TenureByAge.
+ 	heapSizePostGC := segmentManager totalOldSpaceCapacity
+@@ -13014,12 +13014,25 @@ SpurMemoryManager >> sufficientSpaceAfterGC: numBytes [
+ 	(heapSizePostGC - heapSizeAtPreviousGC) asFloat
+ 	/ heapSizeAtPreviousGC >= heapGrowthToSizeGCRatio ifTrue: [
+ 		self fullGC ].
+-	[
+-	totalFreeOldSpace < growHeadroom and: [
+-		(self growOldSpaceByAtLeast: 0 callingOperation: 'ensuring sufficient space after GC')
+-			notNil ] ] whileTrue: [
+-		totalFreeOldSpace >= growHeadroom ifTrue: [ ^ true ] ].
+-	lowSpaceThreshold > totalFreeOldSpace ifTrue: [ "space is low"
++	"When old space cannot grow (maxOldSpaceSize, or the OS refuses a segment), the
++	 scavenger stops the VM (copyToOldSpace:bytes:format:) as soon as one scavenge
++	 tenures more than the free old space.  So space is low when old space cannot
++	 take two new spaces: one for the next scavenge, and one for the low space
++	 watcher and the unwind of the process that the watcher stops."
++	lowMark := scavenger newSpaceCapacity * 2.
++	cannotGrow := false.
++	[ totalFreeOldSpace < (growHeadroom max: lowMark) and: [ cannotGrow not ] ] whileTrue: [
++		(self growOldSpaceByAtLeast: 0 callingOperation: 'ensuring sufficient space after GC') isNil
++			ifTrue: [ cannotGrow := true ] ].
++	(cannotGrow and: [ lowSpaceThreshold > 0 and: [ totalFreeOldSpace < lowMark ] ]) ifTrue: [
++		"Old space can hold garbage that no full GC has seen: the test of the ratio
++		 above is relative to the last GC.  Collect one time before the answer that
++		 space is low."
++		heapSizePostGC := segmentManager totalOldSpaceCapacity - totalFreeOldSpace.
++		heapSizePostGC > (heapSizeAtPreviousGC + scavenger newSpaceCapacity) ifTrue: [
++			self fullGC ] ].
++	(lowSpaceThreshold > totalFreeOldSpace or: [
++		 cannotGrow and: [ lowSpaceThreshold > 0 and: [ totalFreeOldSpace < lowMark ] ] ]) ifTrue: [ "space is low"
+ 		lowSpaceThreshold := 0. "avoid signalling low space twice"
+ 		^ false ].
+ 	^ true
+-- 
+2.54.0 (Apple Git-157)
+

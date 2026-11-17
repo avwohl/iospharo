@@ -206,26 +206,41 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   the directory `Pharo`.  `patches/bouraqadi-pharomisc.patch` adds `/Pharo`
   to that repository line in the three baselines, and the row now loads
   them: 361 tests.
-- NetworkExtras, multicast sockets.  The 14 tests that failed on our VM only
+- NetworkExtras, multicast sockets.  13 tests failed on our VM only.  They
   showed a defect of our VM: the socket option primitives knew 6 option
   names and gave a false success for each other name
-  ([vm-compat-bugs.md](../vm-compat-bugs.md)).  The tests also showed two
+  ([vm-compat-bugs.md](../vm-compat-bugs.md)).  The tests also showed these
   defects of the package:
-  - `NeMulticastSocket>>group:port:` binds the group port and sets no reuse
-    option, and the tests make two sockets on one group port.  The stock VM
+  - Two sockets on one port.  The tests make the sender as a second
+    `NeMulticastSocket` on the port of the receiver, and
+    `NeMulticastSocket>>group:port:` always binds the port.  The stock VM
     does not report the failed bind of the second socket
-    (`scripts/cogdiff/socket_bind_in_use.st`), so the tests passed there.
-    The method now sets `SO_REUSEADDR` and `SO_REUSEPORT` before the bind.
+    (`scripts/cogdiff/socket_bind_in_use.st`), so the sender stayed unbound
+    there with no error, and the tests passed.  Our VM reports
+    `Address already in use`.  The fixes file adds a socket that only sends
+    (`NeMulticastSocket class>>sendToGroup:port:`: no bind, no group
+    membership), and the tests use it for the sender.  A first repair (the
+    reuse options before the bind) was wrong: three sockets then listen on
+    one port, and the system gives a unicast datagram to only one of them.
+  - `NeUdpUnicastSocketTest>>testCloseWhileReceiving` sends a datagram,
+    closes the receiver, and expects that the reader gets no data.  The
+    datagram is in the buffer of the receiver before the close, so the
+    reader can get it.  The test passed on the stock VM in each run and
+    failed on our VM in some runs.  The test now sends no datagram: a reader
+    that waits gets `ConnectionClosed` when the socket closes.
   - `NeMulticastSocketTest>>testInterface` was an expected failure that ends
     with `self fail: #todo`.  The fixes file has the finished test and the
     two accessors of `IP_MULTICAST_IF` that the test needs.
 - Tasks, `TkThreadTest>>testPeriodFixedDuration`: the cause is a defect of
   the Pharo image, `Duration>>asDelay`.  See
   [pharo-image-repairs-2026-11-17.md](pharo-image-repairs-2026-11-17.md).
-- State of the row with 12 baselines (2026-11-17, in work): our VM 360 of
-  361 pass.  Stock Cog stops with a segmentation fault in its garbage
-  collector after the multicast tests.  Open: that fault, and
-  `testRestartAfterStop` of the multicast server tests on the two VMs.
+- Result of the row with 12 baselines: 361 of 361 pass on the two VMs.
+- Open, in stock Cog: a segmentation fault in its garbage collector.  The
+  fault came with the first repair of the multicast tests (the reuse
+  options, three sockets on one port).  Stock Cog stopped in
+  `TkThreadTest>>testFinalization`, in 3 runs of 3.  The fixes file of commit
+  `5053c46f` gives that state.  With the repair of this section the fault
+  does not show.  The cause is not known.
 
 ## Chanel (`jecisc/Chanel`, row 13)
 
@@ -347,8 +362,15 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Hyperspace also loads Zinc from GitHub, and the image has Zinc.  The load
   stopped at a dialog ("merge or load") until the time limit.  The package
   run now answers that warning with "load" (`headless_load` in
-  `run-one-package.sh`).  State: 197 tests, 196 pass, 1 fail on the two VMs.
-  The failure is open.
+  `run-one-package.sh`).
+- Hyperspace, `ZnUrlHyperspaceExtensionsTest>>testStartLimit`: the test
+  expects that one URL is equal to `?limit=10&start=1` and to
+  `?start=1&limit=10`.  The query of a `ZnUrl` is an ordered dictionary, and
+  `OrderedDictionary>>=` of Pharo 14 compares the order of the keys (the
+  cause of the Buoy `testEquals` repair too).  `fixes/ba-st-hyperspace.st`
+  compares the first form as a set of associations and keeps the second
+  assertion.
+- Hyperspace result: 197 of 197 pass on the two VMs.
 
 ## PharoWiki (`chicoary/PharoWiki`, row 26)
 
@@ -358,5 +380,248 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Repair: `patches/chicoary-pharowiki.patch` adds `src/.properties` with the
   Tonel format and removes `src/.filetree`.
 - State with the patch: the load works.  77 tests, 70 pass, 7 skip on the two
-  VMs.  The 7 skips are open.
+  VMs.
+- 2 skips (`PWikiGeneratorRegistryTest`): the tests skip when the Epicea log
+  of the session has no class addition, which is the state of a new image.
+  The tests now install an Epicea monitor with one class addition for the
+  time of the test.
+- 5 skips (`PWikiGeneratorTest`): each test starts with `self skip`, with
+  no reason in the source.  The tests make the page of `Point` with a scan
+  of the image for the senders and implementors of each selector.
+  `fixes/chicoary-pharowiki.st` gives `PWikiGenerator` a setter for its
+  extractor, the tests use an extractor with no scan, and the skips go.
+- Result: 77 of 77 pass on the two VMs.
+
+## Launchpad (`ba-st/Launchpad`, row 14)
+
+- The package loads Buoy.  See the Buoy section
+  (`locks/ba-st-launchpad.txt`).
+- State with the load repair only: 123 tests, 48 pass, 1 fail, 74 errors on
+  the two VMs.
+- Cause of 71 tests: Launchpad calls `CommandLineArguments>>copySubcommand`,
+  `CommandLineArguments>>optionAt:ifPresent:ifAbsent:` and
+  `CommandLineHandler class>>prepareSubcommand:`.  Pharo 13 had the three
+  methods.  Pharo 14 has a new design of the command line handler and does
+  not have them.  The repository has its own copies of the methods for
+  GemStone.
+- Cause of 2 tests: `BaselineOfLaunchpad` has branches for `pharo10.x` to
+  `pharo13.x` only, so the package `Launchpad-Tracing-Fuel` does not load on
+  Pharo 14, and its test class does.
+- Repair: `patches/ba-st-launchpad.patch` adds a package
+  `Launchpad-Pharo14-Compatibility` with the three methods and a
+  `pharo14.x` branch in the baseline.
+- Cause of 1 test: three helper methods of Buoy
+  (`OSPlatform>>environmentAt:put:` and two more) call the deprecated
+  `OSPlatform>>environment`.  `fixes/ba-st-launchpad.st` makes them use
+  `OSEnvironment current`.  The same change belongs in Buoy.
+- Result: 123 of 123 pass on the two VMs.
+
+## linear-models (`pharo-ai/linear-models`, row 41)
+
+- State before: 52 tests, 49 pass, 1 error, 2 skip on the two VMs.
+- The error (`Cannot locate any of #('liblapack.dylib')`):
+  `LapackLibrary>>macLibraryName` of the dependency `pharo-ai/lapack` asks
+  `FFIMacLibraryFinder`, which accepts a path only when a file is there.
+  Since macOS 11 the system libraries are in the shared cache of the dynamic
+  loader and have no file.  The loader opens `/usr/lib/liblapack.dylib` on
+  the two VMs.  `fixes/pharo-ai-linear-models.st` makes the method answer
+  that path when the finder finds no file.
+- The 2 skips: the two tests of `AILinearRegressionLeastSquaresVanillaTest`
+  start with `self skip` ("least squares vanilla is still broken").  The
+  fixes file gives the tests their bodies back, and the two tests pass.
+- Result: 52 of 52 pass on the two VMs.
+- For the Pharo image: `FFILibraryFinder>>findAnyLibrary:` has the same file
+  test for each system library on macOS 11 and later.
+
+## TSF-Scheduler, TSF-FileRotator, TSF-Logger, TSF-NexIO (`georghagn`, rows 51, 62, 66, 135)
+
+- The four repositories do not exist as public repositories.  Measured on
+  2026-11-17:
+  - `git ls-remote https://github.com/georghagn/<name>.git` answers
+    "Repository not found" for each of the four names.
+  - `https://api.github.com/users/georghagn/repos` answers an empty list:
+    the account has no public repository.
+  - A search of GitHub for a repository with one of the four names
+    (`search/repositories?q=<name>+in:name`) finds no copy and no fork.
+- GitHub asks for a name and a password for a repository that does not
+  exist, and Iceberg opened a dialog in the headless image.  The package run
+  now uses the non-interactive credentials provider of Iceberg, so the load
+  stops with an error (state `LOAD-FAIL`).
+- These four rows cannot run on any machine: there is no source to load.
+  They are the only rows that the run leaves out, and the reason is the
+  measurement above.  If the owner of the repositories makes them public
+  again, the rows run with no change.
+
+## pharo-newfile (`ronsaldo/pharo-newfile`, row 50)
+
+- State before: stock Cog 42 of 42 pass.  Our VM: 34 pass, 8 skip.  The 8
+  tests of `NewFileTest` start with
+  `NewFile primitiveIsAvailable ifFalse: [ ^ self skip ]`.
+- Cause: a defect of our VM.  The package calls the plugin `NewFilePlugin`
+  of the stock VM, and our VM did not have the plugin.
+- Repair: `src/vm/plugins/NewFilePlugin.cpp` (20 primitives, the POSIX
+  side).  The package needs no change.
+- Result: 42 of 42 pass on the two VMs.
+- The tests of the package reach 14 of the 20 primitives.
+  `scripts/cogdiff/newfile_plugin_checks.st` has 36 more checks (directories,
+  closed handles, buffers that are not ByteArrays, wrong arguments).  Our VM
+  and stock Cog give the same answer for 33 of them.  The 3 others are
+  defects of the stock plugin:
+  - A read of 3 bytes into a ByteArray of 2 bytes answers 3: the stock
+    plugin writes past the buffer.  Our VM fails the primitive.
+  - A read into an Array answers 2: the stock plugin writes bytes into the
+    pointer slots of the Array.  Our VM fails the primitive.
+  - A read into a read-only ByteArray answers 2.  Our VM fails the
+    primitive.
+- `scripts/cogdiff/newfile_plugin_ours_checks.st` is for our VM only.  Stock
+  Cog stopped with `Abort trap: 6` in `primitiveClose:` when the first form
+  of the script had the check that gives a copy of the handle of a closed
+  file to the close primitive (the stock plugin keeps a C pointer in the
+  handle).  Our VM keeps an id that is never used again, and fails the
+  primitive.
+- Found in the package, not repaired, and no test shows the defect:
+  `NewFile>>close` does not release the memory views of the file, and sets
+  the handle to null.  A later `unmap` of a view then gives a null handle to
+  the primitive, and the mapping stays until the VM exits.  The stock VM
+  has the same result.
+
+## Comix2 (`Ducasse/Comix2`, row 40)
+
+- State before: 113 tests, 110 pass, 2 fail, 1 skip on the two VMs.
+- `CXXMLItemSaverLoaderTest>>testVisitorXML`: the expected string has the
+  date 24 January 2026, and `CXVisitor` writes the date of the day.  The
+  expected string also had LF line ends, and the visitor writes CR.  The
+  test now makes the expected string with the date of the day and
+  `String cr`.
+- `CXXMLItemSaverLoaderTest>>testXMLImporter` ("Got 0 instead of 2"):
+  `CXXMLImporter>>import:` makes each item and does not add it to the
+  collection that it answers.  The method now adds each item.
+- `CBXMLImporterTest>>testImportRealCollection` (skip): the test reads the
+  file `BD.362.xml` from the image directory.  The file is the collection of
+  the author and is not in the repository (`git ls-files` and the history
+  have no such name).  The test now writes a file of 50 series with 20
+  albums each in the same format and imports that file.
+- Result: 113 of 113 pass on the two VMs.
+
+## OSC (`Ducasse/OSC`, row 43)
+
+- State before: 17 tests, 16 pass, 1 fail on the two VMs.
+- `OSCParserTest>>testParseTimestamp` compares the time tag of a bundle with
+  a second read of the clock, so the fraction bytes differ in each run.  The
+  test also compares an Array with a ByteArray.  The test now checks that
+  the time tag is between the time before and the time after the call.
+- Found in the same code, with no failing test:
+  `DateAndTime>>addLatency:` of the package adds to the nanoseconds with no
+  carry.  In the last 50 milliseconds of a second the fraction is too large
+  for its 4 bytes.  The fixes file makes the method add a Duration.
+- Result: 17 of 17 pass on the two VMs.
+
+## aws-sdk-smalltalk (`newapplesho/aws-sdk-smalltalk`, row 42)
+
+- State before: 59 tests, 39 pass, 20 errors on the two VMs
+  (`ConnectionClosed` to `127.0.0.1:8000` and `127.0.0.1:4566`).
+- Cause: 20 tests are live tests.  They need DynamoDB Local on port 8000 (19
+  tests) and an S3 emulator on port 4566 (1 test).  The class comments and
+  the `docker-compose.yml` of the package say so.  The test machine runs
+  neither, and no download of an emulator is permitted.
+- Repair here: `fixes/newapplesho-aws-sdk-smalltalk.st` adds the class
+  `AWSLocalEmulatorDouble`: two `ZnServer` instances in the image that
+  answer the requests of the tests (tables and items with their state, and
+  buckets).  The `setUp` of the three live test classes starts the two
+  servers.  No assertion has a change.
+- Limit: the 20 tests now check the client side (the request format, the
+  JSON mapping, the response handling, the sockets and the HTTP server of
+  the VM).  They do not check the request signature, and they are not a
+  check against the real services.
+- Result: 59 of 59 pass on the two VMs.
+
+## opentelemetry-pharo (`Gabriel-Darbord/opentelemetry-pharo`, row 44)
+
+- State before: the manifest row loaded the baseline with no group, and the
+  image had no test class.  With the group `tests`: 1034 tests, 1033 pass,
+  1 skip on the two VMs.  The group `integration-tests` (3 tests) was not
+  loaded.
+- The skip: `OTOtlpGrpcSpanExporterTest>>testExportUsesGrpcTransportStackEndToEnd`
+  runs only when 9 classes of grpc-pharo are in the image.  One of them,
+  `GRPCHTTP2MockStream`, is in the package `GRPC-Tests`.  The baseline of
+  the package loads grpc-pharo with its default group, and that group does
+  not have `GRPC-Tests`.
+- The 3 integration tests send one gRPC call each to an OpenTelemetry
+  collector on `127.0.0.1:4317`, and then read the file that the collector
+  writes.  The test machine runs no collector.
+- Repair here:
+  - The manifest row loads the groups `tests` and `integration-tests`.
+  - `fixes/gabriel-darbord-opentelemetry-pharo.st` defines
+    `GRPCHTTP2MockStream` (a copy of the class of grpc-pharo v0.1.0).
+  - The same file adds the class `OTLPGrpcCollectorDouble`: a receiver for
+    gRPC on HTTP/2 in the image.  The receiver decodes each request and
+    writes the JSON file that the collector writes.  The `setUp` of
+    `OTOtlpGrpcIntegrationTest` starts the receiver and sets the environment
+    variables that the tests read.  No assertion has a change.
+- Limits: the receiver uses the HTTP/2 code of the GRPC package for the
+  server side.  A defect that the reader and the writer of that code share
+  does not show.  The receiver does not check the request headers or the
+  rules of the OTLP data.  The 3 tests are thus a check of the client
+  against a receiver in the image, and not against the real collector.
+- Result: 1037 of 1037 pass on the two VMs.
+
+## DatasetUtilities4Pharo (`reugalabf/DatasetUtilities4Pharo`, row 56)
+
+- State before: 37 tests, 26 pass, 1 failure, 10 errors on the two VMs.
+- Causes, all in the package:
+  - `DatasetAggregator` calls `Number readFrom:` on the value of a row.  A
+    row from JSON has a Number there, and `Number readFrom:` needs a String
+    or a stream (2 errors).  The repair parses a String and passes a Number
+    on.
+  - `DictionaryAggregatorTest>>testSingleValueDataset` asserts 3 rows for a
+    text with 4 data rows, and then calls `inspect` (1 failure).  The repair
+    asserts 4 rows and the hourly minimum and maximum.  One more test ends
+    with `inspect`; the repair removes that line.
+  - `ObjectAggregatorTest` uses the classes `FlareSenseDevelopment` and
+    `FlareSenseRawEndpointClient` (8 errors).  No repository of the run and
+    no baseline has these classes.  The repair makes the two classes from
+    the JSON text and the expected values of the tests.
+- Limit: the two classes are stand-ins that we wrote.  The classes of the
+  author can differ.  The author must add the classes to the test package,
+  or add their project to the baseline.
+- Result: 37 of 37 pass on the two VMs.
+
+## PharoAthleteProject (`RomaShmyhelskyi/PharoAthleteProject`, row 61)
+
+- State before: `NO-TEST-CLASSES`.  The load loaded only the baseline class.
+- Cause: on the branch `main`, `BaselineOfProjectAthlete` has the method
+  `baseline:` on the class side.  Metacello calls `baseline:` on an
+  instance, so the load has no package.  The branch `master` has the method
+  on the instance side, and the README names that branch.
+- Repair here: the manifest row loads the branch `master`.
+  `fixes/romashmyhelskyi-pharoathleteproject.st` repairs two defects of the
+  package code on that branch:
+  - `TennisPlayer>>addPrizeMoney:` added a prize and removed the last
+    element at once, so the list of prizes stayed empty.  The repair removes
+    the last element only when the list has more than 3.
+  - `Footballer>>goalsScored:` refused 0, the value that `initialize` sets,
+    and the error text joined a String and an Integer.
+- Result: 34 of 34 pass on the two VMs.
+
+## Conduit (`NathanFrund/Conduit`, row 64)
+
+- State before: `LOAD-FAIL` (`KeyNotFound: key 'ConduitCore-Tests'`).
+- Cause: the baseline names the package `ConduitCore-Tests`.  The
+  repository has the package `Conduit-Tests`.
+- Repair here: `patches/nathanfrund-conduit.patch` corrects the name in the
+  two places of the baseline.
+- Result: 14 of 14 pass on the two VMs.
+
+## Geosphere (`akgrant43/Geosphere`, row 67)
+
+- State before: 11 tests, 6 pass, 5 failures on the two VMs.
+- Causes, all in the tests of the package:
+  - 4 tests compare Floats with `assert:closeTo:`.  The expected values have
+    4 or 5 decimal places, and Pharo 14 compares with a precision of
+    1.49e-8.  The repair gives each comparison its precision (0.0001 for
+    degrees, 0.01 for metres).
+  - 1 test expects the text `0.0` for the seconds.  The code prints 2
+    decimal places (`0.00`).
+- Repair here: `fixes/akgrant43-geosphere.st` (5 test methods).
+- Result: 11 of 11 pass on the two VMs.
 

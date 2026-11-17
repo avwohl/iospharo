@@ -523,22 +523,6 @@ fix value: #SmSingleMiddlewareTest value: #setUp
 
 "PharoMisc, NetworkExtras.
 
-G8. NeMulticastSocketTest>>testSendReceive and the tests of NeMulticastUdpServer make two multicast sockets on one group port.  NeMulticastSocket>>group:port: binds the port (setPort:) and sets no reuse option, so the bind of the second socket fails with 'Address already in use'.  The stock VM does not test the result of bind (sqSocketListenOnPortBacklogSizeInterface), so the second socket stays unbound there with no error, and the tests pass because only the first socket receives.  Our VM reports the error.  A multicast socket now asks for the reuse of the address and of the port before the bind, which is the usual rule for multicast receivers.  Socket>>setOption:value: answers nil on a system that does not have SO_REUSEPORT."
-
-fix value: #NeMulticastSocket value: #group:port:
-	value: [ :source | (source includesSubstring: 'SO_REUSEPORT') not ]
-	value:
-'group: anIpAddress port: aPortNumber
-	"The group IP address must be within the range: 224.0.0.0 - 239.255.255.255"
-	"Two or more multicast sockets of one machine can have one group port.  Each of them must ask for that before the bind."
-	self setOption: ''SO_REUSEADDR'' value: true.
-	self setOption: ''SO_REUSEPORT'' value: true.
-	self setPort: aPortNumber.
-	self groupAddress: anIpAddress.
-	self joinGroup.'.
-
-"PharoMisc, NetworkExtras.
-
 G9. NeMulticastSocketTest>>testInterface (2 expected failures: NeLoopbackAddressMulticastSocketTest, NeRoutedAddressMulticastSocketTest).  The test was marked <expectedFailure> and ended with 'self fail: #todo'; the author never wrote the second half.  The package code under the test is also wrong.  NeMulticastSocket>>networkInterfaceIp: gives an NeIpV4Address to Socket>>setOption:value:, which sends asString.  NeIpV4Address>>asString answers the dotted text ('127.0.0.1', 9 bytes), and the plugin passes those 9 bytes to setsockopt(IP_MULTICAST_IF), which needs the 4 bytes of the address (struct in_addr).  The option is then set to the text bytes or refused, depending on the system.  The method now gives a plain ByteArray with the 4 bytes (ByteArray>>asString keeps the bytes; an NeIpV4Address is a ByteArray subclass, so asByteArray would answer the same object and the dotted asString would win again).  NeMulticastSocket>>networkInterface answered the raw {0. int} of getOption:, with the 4 bytes of the address as one host-order int; it now answers the NeIpV4Address (the system reads in_addr in memory order, so the first byte is the low byte on a little-endian machine, which is every machine of the supported systems).  The test uses the loopback interface (127.0.0.1) and not the address 10.89.2.24 of the network of the author."
 
 fix value: #NeMulticastSocket value: #networkInterface
@@ -574,3 +558,172 @@ fix value: #NeMulticastSocketTest value: #testInterface
 	self assert: socket networkInterfaceIp equals: loopback.
 	socket networkInterfaceIp: ''127.0.0.1''.
 	self assert: socket networkInterface equals: loopback'.
+
+"PharoMisc, NetworkExtras: one socket listens on a port, and a sender does not bind (G10 to G13).
+
+The tests of the multicast sockets made the sender as a second NeMulticastSocket on the port of the receiver.  The stock VM does not report the failed bind of the second socket (scripts/cogdiff/socket_bind_in_use.st), so the second socket stayed unbound there with no error, and the tests passed.  Our VM reports the error.  A first repair here (reuse options before the bind) made three sockets listen on one port, and the system then gave a unicast datagram to only one of them: testRestartAfterStop of the loopback variant failed on the two VMs."
+
+"PharoMisc, NetworkExtras.
+
+G10. A multicast socket that only sends.  NeMulticastSocket>>group:port: binds the port, joins the group, and registers the port.  A sender of a multicast datagram needs none of that, and NeUdpSocket>>send: needs only targetIp and targetPort (the group and the port).  A test that makes a second bound socket on the port of a receiver gets a different result on each system: a bind that fails and is not reported (stock VM), an error (our VM), or, with the reuse options, a split of the unicast datagrams of the loopback group between the sockets (the oldest socket gets the datagram on macOS, the hash of the addresses decides on Linux).  NeMulticastSocket class>>sendToGroup:port: makes a socket that does not bind, does not join, and does not register the port in the tracker; its close does not leave a group, and its destroy does not unregister the port of the receiver.  The method needs one new instance variable, isSendOnly."
+
+(resolve value: 'NeMulticastSocket')
+	ifNil: [ Stdio stdout nextPutAll: 'SKIP NeMulticastSocket instVar isSendOnly (class absent)'; lf; flush ]
+	ifNotNil: [ :multicastClass |
+		(multicastClass instVarNames includes: #isSendOnly)
+			ifTrue: [ Stdio stdout nextPutAll: 'SKIP NeMulticastSocket instVar isSendOnly (already present)'; lf; flush ]
+			ifFalse: [
+				multicastClass addInstVarNamed: 'isSendOnly'.
+				Stdio stdout nextPutAll: 'ADDED NeMulticastSocket instVar isSendOnly'; lf; flush ] ].
+
+add value: #'NeMulticastSocket class' value: #sendToGroup:port: value: 'instance creation'
+	value:
+'sendToGroup: groupIp port: anInteger
+	"A socket that only sends to the group and the port.  It does not bind the port, and it does not join the group."
+
+	^ self new
+		sendToGroup: groupIp port: anInteger;
+		yourself'.
+
+add value: #NeMulticastSocket value: #sendToGroup:port: value: 'initialize-destroy'
+	value:
+'sendToGroup: anIpAddress port: aPortNumber
+	"The group IP address must be within the range: 224.0.0.0 - 239.255.255.255 (or the loopback address).
+	I only send.  The system gives me a free port when I send, so I do not take the port of a receiver of the group.
+	The port is not registered: the tracker keeps one entry for each socket that listens on a port, and I do not listen."
+
+	self ensureValidPort: aPortNumber.
+	isSendOnly := true.
+	receptionPort := aPortNumber.
+	self groupAddress: anIpAddress'.
+
+add value: #NeMulticastSocket value: #isSendOnly value: 'testing'
+	value:
+'isSendOnly
+	^ isSendOnly == true'.
+
+add value: #NeMulticastSocket value: #unregisterUsedPort value: 'reception ports tracking'
+	value:
+'unregisterUsedPort
+	"A socket that only sends did not register its port.  The port belongs to the receiver."
+
+	self isSendOnly ifTrue: [ ^ self ].
+	super unregisterUsedPort'.
+
+fix value: #NeMulticastSocket value: #close
+	value: [ :source | (source includesSubstring: 'isSendOnly') not ]
+	value:
+'close
+	"A socket that only sends never joined the group."
+
+	[ self isSendOnly ifFalse: [ self leaveGroup ] ] ensure: [
+		super close ]'.
+
+"PharoMisc, NetworkExtras.
+
+G11. The tests of the multicast sockets and servers made the sender as a second NeMulticastSocket on the port of the receiver, with the hack 'unregisterUsedPort' to get round the tracker.  Two sockets bound to one port: see G10.  NeLoopbackAddressMulticastUdpServerTest>>testRestartAfterStop failed in the second round because of this: NeMulticastUdpServerTest>>startServer runs once in setUp and once more in each round of the test, and each run made a new bound sender; the sender of setUp (the oldest socket of the port after the first server is stopped) was never closed and took the datagram of the second round (a unicast datagram to the loopback address goes to the oldest socket on macOS).  The sender is now a socket that only sends (G10), and no test needs the hack.  Each test still checks what it checked: the receiver gets the datagram that a sender of the group sends, and datagrams to another group do not arrive."
+
+add value: #NeUdpSocketTest value: #newMulticastSenderOnGroup:port: value: 'testing'
+	value:
+'newMulticastSenderOnGroup: groupIp port: port
+	^ self createSocket: [ NeMulticastSocket sendToGroup: groupIp port: port ]'.
+
+fix value: #NeMulticastUdpServerTest value: #startServer
+	value: [ :source | source includesSubstring: 'unregisterUsedPort' ]
+	value:
+'startServer
+	"The sender only sends.  It does not bind the port of the server: two sockets bound to one port split the datagrams between them in a way that depends on the system."
+
+	server start.
+	sender := self newMulticastSenderOnGroup: multicastGroup port: multicastPort'.
+
+fix value: #NeMulticastSocketTest value: #testSendReceive
+	value: [ :source | source includesSubstring: 'unregisterUsedPort' ]
+	value:
+'testSendReceive
+	"The sender only sends, so the order of creation does not matter."
+
+	| sender receiver |
+	receiver := socket.
+	sender := self
+		          newMulticastSenderOnGroup: self groupIp
+		          port: multicastPort.
+	sender send: ''Hello''.
+	self assert: (receiver receiveTimeout: 0.1) asString equals: ''Hello'''.
+
+fix value: #NeRoutedAddressMulticastSocketTest value: #testSendReceiveOnDifferentGroups
+	value: [ :source | source includesSubstring: 'unregisterUsedPort' ]
+	value:
+'testSendReceiveOnDifferentGroups
+
+	| sender1 receiver1 receiver2 multicastPort2 otherGroupIp sender2 message1 message2 |
+	receiver1 := socket.
+	sender1 := self
+		           newMulticastSenderOnGroup: self groupIp
+		           port: multicastPort.
+	multicastPort2 := NeUdpUsedPortsTracker freePortAtRandom.
+	otherGroupIp := ''226.1.1.42''.
+	self deny: otherGroupIp asIpAddress equals: self groupIp asIpAddress.
+	receiver2 := self
+		             newMulticastSocketOnGroup: otherGroupIp
+		             port: multicastPort2.
+	sender2 := self
+		           newMulticastSenderOnGroup: otherGroupIp
+		           port: multicastPort2.
+	message1 := ''Hello111''.
+	message2 := ''Hello222''.
+	sender1 send: message1.
+	sender2 send: message2.
+	self
+		assert: (receiver1 receiveTimeout: 0.1) asString
+		equals: message1.
+	self
+		assert: (receiver2 receiveTimeout: 0.1) asString
+		equals: message2'.
+
+"PharoMisc, NetworkExtras.
+
+G12. NeUdpLargeDataSender class>>multicastSocketGroup:port: made a NeMulticastSocket that binds the port, for a sender that only sends chunks.  A receiver of the group on the same port (same image: the tracker refuses the bind; another process of the host: the bind fails) cannot work with it.  No test in the package uses this method.  The sender socket now only sends (G10)."
+
+fix value: #'NeUdpLargeDataSender class' value: #multicastSocketGroup:port:
+	value: [ :source | (source includesSubstring: 'sendToGroup') not ]
+	value:
+'multicastSocketGroup: groupIp port: port
+	| socket |
+	socket := NeMulticastSocket sendToGroup: groupIp port: port.
+	^ self socket: socket'.
+
+"PharoMisc, NetworkExtras.
+
+G13. NeUdpUnicastSocketTest>>testCloseWhileReceiving sent a datagram to the receiver and closed the receiver at once, and expected that the reader of the receiver gets no data and ConnectionClosed.  A datagram that is in the buffer of the socket before the close is data that the reader can read: NeUdpSocket>>receiveTimeout: and Socket>>waitForDataFor:ifClosed:ifTimedOut: test dataAvailable first and the connection state only when no data is there.  Which of the two comes first depended on the time that the VM needs to wake the reader (a VM that signals the semaphore of the socket at once lets the reader win).  The test is about a reader that waits and is woken by the close, so no datagram is sent.  The reader sets a flag before it waits, the test goes on only when the flag is set (the reader has a higher priority, so the reader is then blocked in the wait), and the wait of the test is shorter than the timeout of the reader, so the wake-up must come from the close and not from the timeout."
+
+fix value: #NeUdpUnicastSocketTest value: #testCloseWhileReceiving
+	value: [ :source | source includesSubstring: 'sender send:' ]
+	value:
+'testCloseWhileReceiving
+	"A reader that waits for a datagram gets ConnectionClosed when the socket is closed.  No datagram is sent: a datagram that arrives before the close is read by the reader, so a test that sends one depends on the time that the VM needs to wake the reader."
+
+	| isDataReceived isErrorSignaled isTimedOut isWaiting |
+	isDataReceived := false.
+	isErrorSignaled := false.
+	isTimedOut := false.
+	isWaiting := false.
+	[
+	[
+	[
+	isWaiting := true.
+	receiver receiveTimeout: 2.
+	isDataReceived := true ]
+		on: ConnectionClosed
+		do: [ isErrorSignaled := true ] ]
+		on: ConnectionTimedOut
+		do: [ isTimedOut := true ] ] forkAt: Processor userInterruptPriority.
+	"The reader has a higher priority: it has run up to the wait."
+	self assert: isWaiting.
+	receiver closeAndDestroy.
+	self
+		waitUntil: [ isDataReceived | isErrorSignaled | isTimedOut ]
+		timeout: 500 milliSeconds. "Shorter than the 2 seconds of the reader: the close must wake the reader."
+	self deny: isDataReceived.
+	self deny: isTimedOut.
+	self assert: isErrorSignaled'.

@@ -2557,8 +2557,11 @@ uint32_t ObjectMemory::generateHash() {
     // identityHashOf misses.
     uint32_t hash;
     do {
-        lastHash_ = (lastHash_ * 16807) & 0xFFFFFFFF;
-        hash = (lastHash_ + (lastHash_ >> 4)) & 0x3FFFFF;  // 22-bit hash
+        // The arithmetic of SpurMemoryManager>>newObjectHash in the stock
+        // 64-bit VM: a 64-bit state that wraps.  (A 32-bit state here gave
+        // another sequence than the stock VM gives for the same seed.)
+        lastHash_ = lastHash_ * 16807;
+        hash = static_cast<uint32_t>((lastHash_ + (lastHash_ >> 4)) & 0x3FFFFF);  // 22-bit hash
     } while (hash == 0
              || (hash < classTable_.size()
                  && classTable_[hash].isObject()

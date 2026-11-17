@@ -25308,6 +25308,8 @@ void Interpreter::initializePrimitives() {
 
     // Initialize SocketPlugin (TCP sockets with I/O monitor thread)
     initializeSocketPlugin(this);
+    // NewFilePlugin (pharo-newfile): file/directory primitives with offsets + mmap
+    initializeNewFilePlugin(this);
     if (GET_DEBUG_BOOL(PHARO_DUMP_NAMED_PRIMS)) {
         for (const auto& kv : namedPrimitives_) fprintf(stderr, "[NAMED-PRIM] %s\n", kv.first.c_str());
         for (const auto& kv : externalPrimitives_) fprintf(stderr, "[NAMED-PRIM] %s\n", kv.first.c_str());

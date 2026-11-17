@@ -12,6 +12,8 @@
 #include "../DebugVars.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -93,6 +95,14 @@ static int gWakePipe[2] = {-1, -1};
 // =====================================================================
 // Helper: set socket to non-blocking
 // =====================================================================
+
+// The stock VM sets SO_REUSEADDR on each socket when it creates the socket
+// (sqSocketCreateNetTypeSocketType...), and the image can read the option
+// (Socket>>getOption:).  A difference found by scripts/cogdiff/socket_options.st.
+static void setReuseAddress(SOCKET fd) {
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof(one));
+}
 
 static bool setNonBlocking(SOCKET fd) {
     return sockSetNonBlocking(fd) == 0;
@@ -602,6 +612,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     int type = (socketType == UDP_SOCKET_TYPE) ? SOCK_DGRAM : SOCK_STREAM;
     SOCKET fd = socket(domain, type, 0);
     if (fd == INVALID_SOCKET) return vm->primitiveFail();
+    setReuseAddress(fd);
 
     if (!setNonBlocking(fd)) {
         sockClose(fd);
@@ -781,6 +792,7 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
             freeaddrinfo(aiResult);
             return vm->primitiveFail();
         }
+        setReuseAddress(newFd);
         if (!setNonBlocking(newFd)) {
             sockClose(newFd);
             freeaddrinfo(aiResult);
@@ -937,6 +949,7 @@ static bool socketMatchFamily(PrivateSocket* ps, int family) {
         return true;
     SOCKET nfd = socket(family, ps->isDgram ? SOCK_DGRAM : SOCK_STREAM, 0);
     if (nfd == INVALID_SOCKET) return false;
+    setReuseAddress(nfd);
     if (!setNonBlocking(nfd)) { sockClose(nfd); return false; }
     sockClose(ps->fd);
     ps->fd = nfd;
@@ -1453,20 +1466,61 @@ extern "C" sqInt sp_primitiveSocketRemotePort(void) {
     return 0;
 }
 
-// Helper: match option name (not null-terminated) against a C string
-static bool optNameIs(const char* buf, sqInt len, const char* expected) {
-    sqInt elen = (sqInt)strlen(expected);
-    return len == elen && memcmp(buf, expected, (size_t)elen) == 0;
-}
+// The socket options that the image can set and read.  The table has the
+// names of the stock VM (plugins/SocketPlugin/src/common/SocketPluginImpl.c,
+// socketOptions[]) and no other name.  An unknown name fails the primitive,
+// as in the stock VM: Socket>>setOption:value: then answers nil, and
+// Socket>>getOption: signals SocketError.
+//
+// Before 2026-11-17 this file knew six names and answered {0. 0} (success)
+// for each other name.  A multicast socket then had no group membership, no
+// loopback mode and a time to live of 0, with no error (14 tests of the
+// package NetworkExtras failed on our VM only).
+struct SocketOption {
+    const char* name;
+    int level;
+    int optname;
+};
+static const SocketOption kSocketOptions[] = {
+    {"SO_DEBUG", SOL_SOCKET, SO_DEBUG},
+    {"SO_REUSEADDR", SOL_SOCKET, SO_REUSEADDR},
+    {"SO_DONTROUTE", SOL_SOCKET, SO_DONTROUTE},
+    {"SO_BROADCAST", SOL_SOCKET, SO_BROADCAST},
+    {"SO_SNDBUF", SOL_SOCKET, SO_SNDBUF},
+    {"SO_RCVBUF", SOL_SOCKET, SO_RCVBUF},
+    {"SO_KEEPALIVE", SOL_SOCKET, SO_KEEPALIVE},
+    {"SO_OOBINLINE", SOL_SOCKET, SO_OOBINLINE},
+    {"SO_LINGER", SOL_SOCKET, SO_LINGER},
+    {"IP_TTL", IPPROTO_IP, IP_TTL},
+#ifdef IP_HDRINCL
+    {"IP_HDRINCL", IPPROTO_IP, IP_HDRINCL},
+#endif
+    {"IP_MULTICAST_IF", IPPROTO_IP, IP_MULTICAST_IF},
+    {"IP_MULTICAST_TTL", IPPROTO_IP, IP_MULTICAST_TTL},
+    {"IP_MULTICAST_LOOP", IPPROTO_IP, IP_MULTICAST_LOOP},
+#ifdef IP_ADD_MEMBERSHIP
+    {"IP_ADD_MEMBERSHIP", IPPROTO_IP, IP_ADD_MEMBERSHIP},
+    {"IP_DROP_MEMBERSHIP", IPPROTO_IP, IP_DROP_MEMBERSHIP},
+#endif
+#ifdef TCP_MAXSEG
+    {"TCP_MAXSEG", IPPROTO_TCP, TCP_MAXSEG},
+#endif
+    {"TCP_NODELAY", IPPROTO_TCP, TCP_NODELAY},
+#ifdef TCP_CORK
+    {"TCP_CORK", IPPROTO_TCP, TCP_CORK},
+#endif
+#ifdef SO_REUSEPORT
+    {"SO_REUSEPORT", SOL_SOCKET, SO_REUSEPORT},
+#endif
+};
 
-// Helper: parse value string as integer
-static int parseOptValue(const char* buf, sqInt len) {
-    if (len <= 0) return 0;
-    char tmp[32];
-    sqInt cpLen = len < 31 ? len : 31;
-    memcpy(tmp, buf, (size_t)cpLen);
-    tmp[cpLen] = '\0';
-    return (int)strtol(tmp, nullptr, 10);
+// The option with this name (the name is not null-terminated), or nullptr.
+static const SocketOption* findSocketOption(const char* name, sqInt nameLen) {
+    for (const SocketOption& opt : kSocketOptions) {
+        const sqInt len = (sqInt)strlen(opt.name);
+        if (len == nameLen && memcmp(name, opt.name, (size_t)len) == 0) return &opt;
+    }
+    return nullptr;
 }
 
 // primitiveSocketGetOptions
@@ -1480,51 +1534,34 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
     if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(nameOop)) return vm->primitiveFail();
-    char* optName = (char*)vm->firstIndexableField(nameOop);
-    sqInt nameLen = vm->byteSizeOf(nameOop);
+    const SocketOption* opt = findSocketOption((char*)vm->firstIndexableField(nameOop),
+                                               vm->byteSizeOf(nameOop));
+    if (!opt) return vm->primitiveFail();
 
-    int errCode = 0;
     int retVal = 0;
-
-    if (optNameIs(optName, nameLen, "TCP_NODELAY")) {
-        socklen_t vlen = sizeof(retVal);
-        if (getsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &retVal, &vlen) < 0)
-            errCode = SOCK_LAST_ERROR;
-    } else if (optNameIs(optName, nameLen, "SO_LINGER")) {
+    if (opt->level == SOL_SOCKET && opt->optname == SO_LINGER) {
+        // The value is the linger time, or 0 when the option is off.  (The
+        // stock VM reads the option as one int, which is l_onoff.)
         struct linger lin;
         socklen_t vlen = sizeof(lin);
-        if (getsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, &vlen) < 0)
-            errCode = SOCK_LAST_ERROR;
-        else
-            retVal = lin.l_onoff ? lin.l_linger : 0;
-    } else if (optNameIs(optName, nameLen, "SO_KEEPALIVE")) {
-        socklen_t vlen = sizeof(retVal);
-        if (getsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &retVal, &vlen) < 0)
-            errCode = SOCK_LAST_ERROR;
-    } else if (optNameIs(optName, nameLen, "SO_SNDBUF")) {
-        socklen_t vlen = sizeof(retVal);
-        if (getsockopt(ps->fd, SOL_SOCKET, SO_SNDBUF, &retVal, &vlen) < 0)
-            errCode = SOCK_LAST_ERROR;
-    } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
-        socklen_t vlen = sizeof(retVal);
-        if (getsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &retVal, &vlen) < 0)
-            errCode = SOCK_LAST_ERROR;
-    } else if (optNameIs(optName, nameLen, "SO_BROADCAST")) {
-        // Socket>>broadcastMisconfiguredForSendingTo: reads this to decide
-        // whether a failed send to a broadcast address should raise
-        // NoBroadcastAllowed — it must reflect the real option state.
-        socklen_t vlen = sizeof(retVal);
-        if (getsockopt(ps->fd, SOL_SOCKET, SO_BROADCAST, &retVal, &vlen) < 0)
-            errCode = SOCK_LAST_ERROR;
+        if (getsockopt(ps->fd, SOL_SOCKET, SO_LINGER, (char*)&lin, &vlen) < 0)
+            return vm->primitiveFail();
+        retVal = lin.l_onoff ? lin.l_linger : 0;
     } else {
-        // Unknown option — return 0 with no error (like the standard VM)
+        // Socket>>broadcastMisconfiguredForSendingTo: reads SO_BROADCAST to
+        // decide whether a failed send to a broadcast address should raise
+        // NoBroadcastAllowed -- the value must be the real option state.
+        socklen_t vlen = sizeof(retVal);
+        if (getsockopt(ps->fd, opt->level, opt->optname, (char*)&retVal, &vlen) < 0
+                || vlen != sizeof(retVal))
+            return vm->primitiveFail();
     }
 
     // Return a 2-element Array: {errCode. retVal}
     sqInt resultArray = vm->instantiateClassindexableSize(vm->classArray(), 2);
     if (vm->failed()) return vm->primitiveFail();
 
-    vm->storePointerofObjectwithValue(0, resultArray, vm->integerObjectOf(errCode));
+    vm->storePointerofObjectwithValue(0, resultArray, vm->integerObjectOf(0));
     vm->storePointerofObjectwithValue(1, resultArray, vm->integerObjectOf(retVal));
 
     vm->popthenPush(3, resultArray);
@@ -1534,6 +1571,15 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
 // primitiveSocketSetOptions
 // Stack: receiver, socketHandle, optionName, optionValue
 // Returns: Array of {errorCode. returnedValue}
+//
+// The value is a string of the image (Socket>>setOption:value: sends
+// asString to an Integer, and '1' or '0' for a Boolean) or a ByteArray with
+// the bytes of a structure (IP_ADD_MEMBERSHIP: 8 bytes, the group address and
+// the interface address; IP_MULTICAST_IF: 4 address bytes).  As in the stock
+// VM, a value that reads as an integer is an int, and each other value goes
+// to setsockopt as its bytes.  One difference: the stock VM reads an integer
+// only from a value of 4 characters or less, so '65536' for SO_SNDBUF goes to
+// its setsockopt as 5 bytes.  This code reads an integer of each length.
 extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     sqInt valueOop  = vm->stackValue(0);
     sqInt nameOop   = vm->stackValue(1);
@@ -1545,59 +1591,56 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     if (!vm->isBytes(nameOop)) return vm->primitiveFail();
     if (!vm->isBytes(valueOop)) return vm->primitiveFail();
 
-    char* optName = (char*)vm->firstIndexableField(nameOop);
-    sqInt nameLen = vm->byteSizeOf(nameOop);
+    const SocketOption* opt = findSocketOption((char*)vm->firstIndexableField(nameOop),
+                                               vm->byteSizeOf(nameOop));
+    if (!opt) return vm->primitiveFail();
 
-    char* optValue = (char*)vm->firstIndexableField(valueOop);
+    char buf[32];
     sqInt valueLen = vm->byteSizeOf(valueOop);
+    if (valueLen > (sqInt)sizeof(buf) - 1) return vm->primitiveFail();
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, vm->firstIndexableField(valueOop), (size_t)valueLen);
 
-    int errCode = 0;
-    int retVal = 0;
+    // An integer: the whole value reads as a number, as in the stock VM.  A
+    // value that starts with white space is not a number here (strtol skips
+    // white space, and the bytes of a structure can start with such a byte).
+    // A number that does not fit an int fails the primitive: a cut value
+    // would set another option value than the image asked for.
+    int val = 0;
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = strtol(buf, &end, 0);
+    const bool startsAsNumber = valueLen == 0
+        || (buf[0] >= '0' && buf[0] <= '9') || buf[0] == '-' || buf[0] == '+';
+    const bool isInteger = startsAsNumber && (end - buf) == valueLen;
+    if (isInteger) {
+        if (errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) return vm->primitiveFail();
+        val = (int)parsed;
+    }
 
-    if (optNameIs(optName, nameLen, "TCP_NODELAY")) {
-        int val = parseOptValue(optValue, valueLen);
-        if (setsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) < 0)
-            errCode = SOCK_LAST_ERROR;
-        retVal = val;
-    } else if (optNameIs(optName, nameLen, "SO_LINGER")) {
-        int val = parseOptValue(optValue, valueLen);
+    int rc;
+    if (isInteger && opt->level == SOL_SOCKET && opt->optname == SO_LINGER) {
+        // The value is the linger time; 0 sets the option off.  (The stock
+        // VM gives setsockopt one int, which the system does not accept.)
         struct linger lin;
         lin.l_onoff = (val > 0) ? 1 : 0;
         lin.l_linger = val;
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) < 0)
-            errCode = SOCK_LAST_ERROR;
-        retVal = val;
-    } else if (optNameIs(optName, nameLen, "SO_KEEPALIVE")) {
-        int val = parseOptValue(optValue, valueLen);
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) < 0)
-            errCode = SOCK_LAST_ERROR;
-        retVal = val;
-    } else if (optNameIs(optName, nameLen, "SO_SNDBUF")) {
-        int val = parseOptValue(optValue, valueLen);
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val)) < 0)
-            errCode = SOCK_LAST_ERROR;
-        retVal = val;
-    } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
-        int val = parseOptValue(optValue, valueLen);
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val)) < 0)
-            errCode = SOCK_LAST_ERROR;
-        retVal = val;
-    } else if (optNameIs(optName, nameLen, "SO_BROADCAST")) {
-        // Required for UDP broadcast sends; without it Windows sendto() to a
-        // broadcast address fails WSAEACCES (UDPSocketTest>>testUDPBroadcastError).
-        int val = parseOptValue(optValue, valueLen);
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_BROADCAST, &val, sizeof(val)) < 0)
-            errCode = SOCK_LAST_ERROR;
-        retVal = val;
+        rc = setsockopt(ps->fd, SOL_SOCKET, SO_LINGER, (const char*)&lin, sizeof(lin));
+    } else if (isInteger) {
+        rc = setsockopt(ps->fd, opt->level, opt->optname, (const char*)&val, sizeof(val));
+    } else {
+        rc = setsockopt(ps->fd, opt->level, opt->optname, buf, (socklen_t)valueLen);
     }
-    // Unknown options are silently ignored (return {0. 0})
+    // A failed setsockopt fails the primitive and does not change the socket
+    // error of the image (Socket>>socketError), as in the stock VM.
+    if (rc < 0) return vm->primitiveFail();
 
     // Return a 2-element Array: {errCode. retVal} (same as getOptions)
     sqInt resultArray = vm->instantiateClassindexableSize(vm->classArray(), 2);
     if (vm->failed()) return vm->primitiveFail();
 
-    vm->storePointerofObjectwithValue(0, resultArray, vm->integerObjectOf(errCode));
-    vm->storePointerofObjectwithValue(1, resultArray, vm->integerObjectOf(retVal));
+    vm->storePointerofObjectwithValue(0, resultArray, vm->integerObjectOf(0));
+    vm->storePointerofObjectwithValue(1, resultArray, vm->integerObjectOf(val));
 
     vm->popthenPush(4, resultArray);
     return 0;

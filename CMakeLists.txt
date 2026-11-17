@@ -107,6 +107,7 @@ set(VM_SOURCES
     src/vm/FFI.cpp
     src/vm/InterpreterProxy.cpp
     src/vm/plugins/SocketPlugin.cpp
+    src/vm/plugins/NewFilePlugin.cpp
     src/platform/EventQueue.cpp
     src/platform/MotionData.cpp
     src/vm/jit/BcDepthMap.cpp

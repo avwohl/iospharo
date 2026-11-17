@@ -1,0 +1,56 @@
+From 6361258724d1bc67541399678594d66a8338d592 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 11:23:42 -0500
+Subject: [PATCH] SocketPlugin: report a failed bind or listen of the listen
+ primitives to the image
+
+sqSocketListenOnPortBacklogSizeInterface did not test the result of bind
+and of listen.  Socket>>setPort: of a UDP socket on a port that another
+socket has then gave no error, the socket stayed unbound, and it received
+nothing on that port.
+
+The function now records the socket error and fails the primitive, as
+sqSocketBindToPort does.  The image then signals SocketError with the text
+of the system (Address already in use).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../src/common/SocketPluginImpl.c             | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..15e93af7e 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -884,11 +884,26 @@ void sqSocketListenOnPortBacklogSizeInterface(SocketPtr s, sqInt port, sqInt bac
+   saddr.sin_family= AF_INET;
+   saddr.sin_port= htons((short)port);
+   saddr.sin_addr.s_addr= htonl(addr);
+-  bind(SOCKET(s), (struct sockaddr*) &saddr, sizeof(saddr));
++  if (bind(SOCKET(s), (struct sockaddr*) &saddr, sizeof(saddr)) < 0)
++    {
++      /* The port is in use, or the address is not an address of this
++	 machine.  Without this test the socket stayed unbound and the
++	 image got no error: Socket>>setPort: of a UDP socket on a port
++	 that another socket has answered with no error, and the socket
++	 then received nothing on that port. */
++      PSP(s)->sockError= getLastSocketError();
++      success(false);
++      return;
++    }
+   if (TCPSocketType == s->socketType)
+     {
+       /* --- TCP --- */
+-      listen(SOCKET(s), backlogSize);
++      if (listen(SOCKET(s), backlogSize) < 0)
++	{
++	  PSP(s)->sockError= getLastSocketError();
++	  success(false);
++	  return;
++	}
+       SOCKETSTATE(s)= WaitingForConnection;
+       aioEnable(SOCKET(s), PSP(s), 0);
+       aioHandle(SOCKET(s), acceptHandler, AIO_RX); /* R => accept() */
+-- 
+2.54.0 (Apple Git-157)
+

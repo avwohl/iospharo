@@ -462,6 +462,14 @@ void ImageLoader::relocateObjectSlots(uint64_t* headerPtr) {
 }
 
 bool ImageLoader::setupSpecialObjects(ObjectMemory& memory, LoadResult& result) {
+    // The identity hash sequence continues where the image left it, as in the
+    // stock VM (AbstractImageAccess: objectMemory lastHash: header
+    // hdrLastHash).  The snapshot primitive writes the field.  Before
+    // 2026-11-17 the load did not read it, so each session started the
+    // sequence at the same constant and gave new objects the hashes of the
+    // objects of the sessions before.
+    memory.setLastHash(header_.lastHash);
+
     // The special objects array oop needs relocation too
     uint64_t relocatedSpecialOop = relocatePointer(header_.specialObjectsOop);
 

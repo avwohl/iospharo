@@ -1198,10 +1198,14 @@ public:
     const std::vector<Oop>& classTablePages() const { return classTablePages_; }
 private:
 
-    // Identity hash counter (must be non-zero for LCG to work)
-    uint32_t lastHash_ = 2166136261;
+    // State of the identity hash generator (must be non-zero).  64 bits, as
+    // the lastHash of the stock VM (a sqInt), which the image header holds.
+    uint64_t lastHash_ = 2166136261;
 public:
-    uint32_t lastHash() const { return lastHash_; }
+    uint64_t lastHash() const { return lastHash_; }
+    // From the image header at a load.  0 cannot seed the generator (the
+    // sequence would stay 0), so 0 keeps the start value.
+    void setLastHash(uint64_t seed) { if (seed != 0) lastHash_ = seed; }
 private:
 
     // GC state

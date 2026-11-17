@@ -1,6 +1,6 @@
 "Comix2 (Ducasse/Comix2, master): three tests that do not pass on stock Cog
 and on our VM.  The causes are in the package, not in a VM.  See
-ducasse-comix2.md for the evidence.
+docs/upstream/package-repairs.md for the evidence.
 
 1. CXXMLItemSaverLoaderTest>>testVisitorXML has the date of the day on which
    the author wrote the test ('24 January 2026') in the expected string.
@@ -19,22 +19,23 @@ ducasse-comix2.md for the evidence.
    the file by importFile:, so the test runs on each machine."
 
 fix value: #CXXMLItemSaverLoaderTest value: #testVisitorXML
-	value: [ :source | source includesSubstring: '24 January 2026' ]
+	value: [ :source | (source includesSubstring: 'String cr') not ]
 	value:
 'testVisitorXML
 
-	| vis base today |
+	| vis base today cr |
 	vis := CXVisitor new. 
 	base := CXBase new.
 	base addSerie: CXItem nic serie. 
 	today := Date today asString.
+	cr := String cr.
 	base accept: vis. 
 	self 
 		assert: vis contents
-		equals:   ''<?xml version="1.0" encoding="UTF-8"?>
-<Base date="'', today, ''" entriesNumber="2" note="nil">
-<bd authors="Larcenet" editor="Dargaud" entryCreationDate="25 March 2006" entryNumber="1" number="1" original="true" serie="Serie  Nic oumouk" serieComplete="false" sortedAs="1" title="Total souk pour nic oumouk" year="2005"/>
-<bd authors="Larcenet" editor="Dargaud" entryCreationDate="25 March 2007" entryNumber="1809" number="2" original="true" serie="Serie  Nic oumouk" serieComplete="false" sortedAs="2" title="La france a peur" year="2007"/></Base>''
+		equals: ''<?xml version="1.0" encoding="UTF-8"?>'', cr,
+			''<Base date="'', today, ''" entriesNumber="2" note="nil">'', cr,
+			''<bd authors="Larcenet" editor="Dargaud" entryCreationDate="25 March 2006" entryNumber="1" number="1" original="true" serie="Serie  Nic oumouk" serieComplete="false" sortedAs="1" title="Total souk pour nic oumouk" year="2005"/>'', cr,
+			''<bd authors="Larcenet" editor="Dargaud" entryCreationDate="25 March 2007" entryNumber="1809" number="2" original="true" serie="Serie  Nic oumouk" serieComplete="false" sortedAs="2" title="La france a peur" year="2007"/></Base>''
 '.
 
 fix value: #CXXMLImporter value: #import:

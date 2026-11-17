@@ -171,7 +171,7 @@ bool ImageWriter::writeHeapData(std::ofstream& file, ObjectMemory& memory) {
 
 SaveResult ImageWriter::save(const std::string& path, ObjectMemory& memory,
                              const SpurImageHeader& originalHeader,
-                             uint32_t lastHash, int screenWidth, int screenHeight) {
+                             uint64_t lastHash, int screenWidth, int screenHeight) {
     SaveResult result{false, ""};
 
     // Check for perm space usage — fail if non-empty (matches reference VM)

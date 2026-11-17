@@ -598,6 +598,21 @@ have Cog's 7 fields.  Still missing and present in Cog:
     BitBltPlugin primitiveDisplayString (the image draws the glyphs
     itself, slower).
 
+Added 2026-11-17, found by the package run (the audits above read the
+method literals of the image, and a package can name a plugin that the image
+does not use):
+
+  * **NewFilePlugin** (20 primitives: files with read and write at an
+    offset, directories, memory mapping).  The package
+    `ronsaldo/pharo-newfile` calls it, and 8 of its tests skipped on our VM
+    only.  `src/vm/plugins/NewFilePlugin.cpp` is a port of the POSIX side of
+    the stock plugin.  It checks each handle and each buffer range, which the
+    stock plugin does not.  NOT ported: the Windows side
+    (`Win32File.c`).  On Windows each primitive fails, and
+    `NewFile primitiveIsAvailable` answers false, so the 8 tests skip there.
+  * **SocketPlugin socket options**: the option primitives now have the 19
+    names of the stock VM (they had 6).  See `docs/vm-compat-bugs.md`.
+
 Missing pairs Cog does NOT have either (not a gap): ZipPlugin, MD5Plugin,
 Matrix2x3Plugin, FontPlugin, BMPReadWriterPlugin, AsynchFilePlugin,
 InternetConfigPlugin, KedamaPlugin.  SocketPlugin and SqueakSSL register

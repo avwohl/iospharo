@@ -64,6 +64,82 @@ Risks that the study found, each to check before the change goes in:
 - Tests that pass now because of the error (the two MuTalk tests) then end
   through their time limit, as on Cog.
 
+## FIXED 2026-11-17 — the identity hash sequence did not continue from the image, and had a 32-bit state
+
+Found by reading, on the way to the cause of a test that depends on the
+order of an `IdentitySet` (`docs/image_issues.md`, image fix 33).  No test
+failed for this defect.
+
+The stock VM keeps the state of its identity hash generator (`lastHash`, a
+64-bit `sqInt`) in the image header.  A load takes the state from the header
+(`AbstractImageAccess`: `objectMemory lastHash: header hdrLastHash`), and
+`SpurMemoryManager>>newObjectHash` multiplies the 64-bit state by 16807.
+
+Our VM differed in two ways:
+
+- The snapshot primitive wrote the field, and the load did not read it.
+  Each session started the sequence at the same constant, so new objects
+  got the hashes of the objects of the sessions before.
+- The state had 32 bits, so the same seed gave another sequence than the
+  stock VM gives.
+
+Repair: `ImageLoader::setupSpecialObjects` gives the header value to
+`ObjectMemory::setLastHash`, and `ObjectMemory::generateHash` has the 64-bit
+arithmetic of the stock VM.  One difference stays: our generator does not
+answer a hash that is the index of a class in the class table.
+
+## FIXED 2026-11-17 — the socket option primitives knew 6 names and gave a false success for each other name
+
+Found by the package run: PharoMisc with its package NetworkExtras, the first
+row with tests that differ between the two VMs.  13 tests of the multicast
+socket classes passed on stock Cog and failed on our VM (`Got 0 instead of 1`
+for the time to live, `Address already in use`, and errors that follow from
+the two).
+
+Cause: `primitiveSocketSetOptions` and `primitiveSocketGetOptions`
+(`src/vm/plugins/SocketPlugin.cpp`) had code for `TCP_NODELAY`, `SO_LINGER`,
+`SO_KEEPALIVE`, `SO_SNDBUF`, `SO_RCVBUF` and `SO_BROADCAST`.  For each other
+name the two primitives answered `{0. 0}`, which the image reads as success.
+A multicast socket then had no group membership, no loopback mode and a time
+to live of 0.
+
+The comment in the code said that the stock VM does the same.
+The stock VM does not: its table has 19 names on macOS
+(`socketOptions[]` in `SocketPluginImpl.c`), and an unknown name fails the
+primitive.
+
+Repair: the two primitives use a table with the names of the stock VM.
+
+- An unknown name fails the primitive.  `Socket>>setOption:value:` then
+  answers nil and `Socket>>getOption:` signals `SocketError`, as on Cog.
+- An error of `setsockopt` or `getsockopt` fails the primitive, as on Cog.
+- A value that reads as an integer is an `int`.  Each other value goes to
+  `setsockopt` as its bytes (the 8 bytes of a group membership, the 4 bytes
+  of an interface address).
+- A new socket has `SO_REUSEADDR` set, as on Cog
+  (`sqSocketCreateNetTypeSocketType...`).
+
+Check: `scripts/cogdiff/socket_options.st` makes 72 option calls on a UDP
+socket and on a TCP socket.  The two VMs now give the same answer for 68.
+The 4 that differ are two defects of the stock VM, and our VM keeps the
+correct answer:
+
+- `SO_RCVBUF` with the value 65536: the stock VM reads an integer only from
+  a value of 4 characters or less.  It gives `'65536'` to `setsockopt` as 5
+  characters, and the buffer becomes 8 MB.
+- `SO_LINGER`: the stock VM gives `setsockopt` one `int`, and the system
+  needs a `struct linger`.  The primitive fails.
+
+A change for Cog is on the local branch `fix/socket-option-values`
+(`docs/upstream/cog-changes.md`).
+
+One more difference is not in the option code.  `Socket>>setPort:` of a UDP
+socket on a port that another socket has gives `SocketError` on our VM.  The
+stock VM does not test the result of `bind` and gives no error
+(`scripts/cogdiff/socket_bind_in_use.st`).  Our VM is correct.  A change for
+Cog is on the local branch `fix/socket-listen-bind-result`, and the package
+got a repair (`docs/upstream/package-repairs.md`, PharoMisc).
+
 ## FIXED 2026-11-17 — the `perform:` cache of the arm64 JIT called a method through an entry with no compiled code
 
 Symptom: a full sweep of our VM stopped in two batches with a segmentation

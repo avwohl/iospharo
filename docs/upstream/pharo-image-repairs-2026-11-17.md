@@ -983,3 +983,139 @@ the test apply.
 | `CodeImporterCodeSnippetTest>>testCodeImporter` (3 snippets) | test | repaired | A skip that the code under test did not need. |
 
 State on our VM: all tests of `CodeImporterCodeSnippetTest` pass.
+
+## Rename-class-changes (found by the package run)
+
+- Entries: `scripts/image-fixes/31-rename-class-changes.st`
+- Methods: `RBNamespace>>renameClass:to:around:`,
+  `RBTransformationsTest>>testRenameClassTransform`,
+  `ReRenameClassCommandTest>>testRenameClassCommandSuccess`
+
+The method adds the rename change to the changes of the namespace and
+keeps the old value of `changes`.  Then the method runs the block and puts
+the old value back.  The method never makes the rename change the current
+`changes`.  The sibling method
+`perform:onlyWithChange:` has the line `changes := aCompositeRefactoryChange`
+at that place.  Without the line, the method changes that the block records
+are siblings of the rename change and not its parts.
+`ReRenameClassChange>>executeNotifying:` gives the new class name only to
+its parts.  A sibling keeps the old name, and `ReClassChange>>changeClass`
+answers nil for that name after the rename.
+
+The repair adds the line `changes := change`.
+
+Two tests of the image count the changes of a class rename at the top level
+of the model (11 and 7).  The counts are the rename change and the method
+changes as its siblings, which is the defect.  A first sweep with the repair
+showed the two tests ("Got 1 instead of 11", "Got 1 instead of 7").  The two
+tests now check that the model has one change, and that the rename change
+has the method changes as its parts (10 and 6).
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `ChanelTestCaseNameCleanerTest>>testRenameTestCaseEndingWithTestsUpdateReferences` (package Chanel) | image code | repaired | The method changes of a class rename kept the old class name. |
+| `RBTransformationsTest>>testRenameClassTransform` | test | repaired | The expected count was the count of the defect. |
+| `ReRenameClassCommandTest>>testRenameClassCommandSuccess` | test | repaired | The expected count was the count of the defect. |
+
+No test of the image shows the defect.  The test is in the package
+`jecisc/Chanel` (row 13 of the package run): it failed on stock Cog and on
+our VM with `receiver of "includesSelector:" is nil`, and it passes on the
+two VMs with the repair.
+
+## Duration-wait-rounds-up (found by the package run)
+
+- Entries: `scripts/image-fixes/32-duration-wait-rounds-up.st`
+- Methods: `Duration>>asDelay`, new test
+  `DurationTest>>testAsDelayDoesNotRoundDown`
+
+`Duration>>asDelay` makes a Delay for `self asMilliSeconds` milliseconds.
+`asMilliSeconds` rounds down, so a wait for 99.98 milliseconds is a Delay of
+99 milliseconds, and `Duration>>wait` can end before the Duration has
+passed.
+
+The stock VM hides the defect: it ends each Delay 1 to 6 milliseconds late
+on the test machine.  Our VM ends a Delay 0.1 to 0.4 milliseconds late.
+`scripts/cogdiff/delay_accuracy.st` gives, for the shortest of 40 waits of
+`(Duration nanoSeconds: 99980000) wait`, minus the Duration:
+
+| VM | Shortest wait minus the Duration |
+|---|---|
+| our VM | -921 microseconds |
+| stock Cog | +4629 microseconds |
+
+The repair rounds up: a part of a millisecond counts as one more
+millisecond.  A negative Duration gives the same Delay as before.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `DurationTest>>testAsDelayDoesNotRoundDown` (new) | image code | repaired | The Delay of a Duration was shorter than the Duration. |
+| `TkThreadTest>>testPeriodFixedDuration` (package PharoMisc, Tasks) | image code | repaired | Waits that are 1 millisecond short gave a task a fourth run in 300 milliseconds. |
+
+The new test fails on the two VMs before the repair.
+
+## Metalink-uninstall-order (found in a sweep of our VM)
+
+- Entries: `scripts/image-fixes/33-metalink-uninstall-order.st`
+- Methods: `MetaLinkInstaller>>uninstallFromAllAnonymousNodes:`,
+  `MetaLinkNodesMapper>>findNodeLike:forObject:`, new helper
+  `LinkInstallerTest>>nodeSetHomedAt:`, new tests
+  `LinkInstallerTest>>testUninstallVisitsEveryNodeWhenTheNodeSetCollides` and
+  `LinkInstallerTest>>testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode`
+- Script that shows the defect: `scripts/cogdiff/metalink_uninstall_order.st`
+
+`MetaLink>>uninstall` of an object-specific link calls
+`MetaLinkInstaller>>uninstallFromAllAnonymousNodes:`.  That method walks
+`aMetaLink nodes`, an IdentitySet, and calls `uninstall:fromNode:forObject:`
+for each node.  The call ends with `aMetaLink removeNode: node`, so the loop
+removes elements from the set that it walks.  `Set>>remove:` moves a later
+element of the same collision chain back into the slot that the walk has
+left.  The walk does not see that element.
+
+`MetaLink>>uninstall` then takes the link off the node that the walk
+skipped, so `link nodes` is empty and no test of the image sees a defect.
+But the installer still has the node in its node mapper for the object.
+
+A later installation for the same object can put a link at the same source
+position.  The new node is then equivalent to the old node
+(`isEquivalentTo:`: the same selector, source and position).
+`MetaLinkNodesMapper>>findNodeLike:forObject:` answers the first equivalent
+node.  When the old node is first, the installer removes the old node.
+
+The old node is in an old AST that has no link.
+`canRemoveMethodNodeContaining:` thus answers true, and the installer
+removes the method of the anonymous class of the object.  The uninstall of
+the last new node removes the method again, and `removeSelector:` signals
+`KeyNotFound`.
+
+`LinkInstallerTest>>testLinkOnTempVarForObject` makes three installations
+for one object (read, write, all), so the test can reach this state.  The
+order of the set depends on identity hashes.
+
+Results of the script on Pharo 14 build 791 with no repair (2026-11-17):
+
+| Part | Stock Cog | Our VM |
+|---|---|---|
+| A: forced order of the set, three rounds | `KeyNotFound` in round 3 | `KeyNotFound` in round 3 |
+| B: order of the identity hashes, rounds with `KeyNotFound` of 300 | 12 | 9 |
+| B: uninstalls that left a node in the mapper | 332 | 368 |
+
+The repair:
+
+- `uninstallFromAllAnonymousNodes:` walks a copy of the objects and a copy of
+  the nodes, and tests that a node is still a node of the link.
+- `findNodeLike:forObject:` answers the given node itself when the object
+  has that node, and an equivalent node only when the object does not.
+
+Results with the repair (2026-11-17, stock Cog and our VM):
+
+- Without the repair, the two new tests fail on the two VMs, and the 40
+  other tests of `LinkInstallerTest` pass.
+- With the repair, the 42 tests of `LinkInstallerTest` pass on the two VMs.
+- With the repair, the script gives no `KeyNotFound` in part A, and in part B
+  no uninstall of 300 rounds leaves a node in the mapper.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `LinkInstallerTest>>testUninstallVisitsEveryNodeWhenTheNodeSetCollides` (new) | image code | repaired | The walk skipped a node, and the mapper kept the node. |
+| `LinkInstallerTest>>testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode` (new) | image code | repaired | The old node of a skipped uninstall won over the new node. |
+| `LinkInstallerTest>>testLinkOnTempVarForObject` and each later test of the class in that run | image code | repaired | The method of the anonymous class was removed two times. |

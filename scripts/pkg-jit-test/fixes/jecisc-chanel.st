@@ -1,4 +1,4 @@
-"Chanel (jecisc/Chanel, master e5012fa).  Three defects, see jecisc-chanel.md.
+"Chanel (jecisc/Chanel, master e5012fa).  Three defects, see docs/upstream/package-repairs.md.
 
 1. ChanelAbstractCleanerTest: the test methods compile sources that use the
    variables test, test2, test3, test4, notTest and x without a declaration.
@@ -9,7 +9,9 @@
 2. OCMessageNode class>>superSendTo: (extension of Chanel) passes a Symbol
    to selector:, which takes an OCSelectorNode since Pharo 14.
 3. RBNamespace>>renameClass:to:around: of Pharo 14 does not make the rename
-   change the target of the changes that the block records."
+   change the target of the changes that the block records.  This is a defect
+   of the image, and its repair is scripts/image-fixes/31-rename-class-changes.st
+   (1 test of ChanelTestCaseNameCleanerTest)."
 
 fix value: #ChanelAbstractCleanerTest value: #createSubclassOf:named:
 	value: [ :source | (source includesSubstring: 'slots:') not ]
@@ -51,35 +53,3 @@ fix value: #'OCMessageNode class' value: #superSendTo:
 	value:
 'superSendTo: aSelector
 	^ self receiver: OCVariableNode superNode selector: (OCSelectorNode value: aSelector)'.
-
-fix value: #RBNamespace value: #renameClass:to:around:
-	value: [ :source | (source includesSubstring: 'changes := change.') not ]
-	value:
-'renameClass: aRBClass to: aSymbol around: aBlock
-
-	| change value dict oldChanges |
-	change := changeFactory renameClass: aRBClass to: aSymbol.
-	changes addChange: change.
-	oldChanges := changes.
-	changes := change.
-	aBlock ensure: [ changes := oldChanges ].
-	self flushCaches.
-
-	dict := (newClasses includesKey: aRBClass name)
-		        ifTrue: [ newClasses ]
-		        ifFalse: [ changedClasses ].
-
-	self markAsRemoved: aRBClass name.
-	self unmarkAsRemoved: aSymbol.
-
-	value := dict at: aRBClass name.
-	dict removeKey: aRBClass name.
-	dict at: aSymbol put: value.
-
-	value first name: aSymbol.
-	value last name: aSymbol.
-
-	value first subclasses do: [ :each | each superclass: value first ].
-	value last subclasses do: [ :each | each superclass: value last ].
-
-	^ change'.

@@ -171,13 +171,23 @@ static void* proxy_arrayValueOf(sqInt oop) {
 }
 
 static sqInt proxy_byteSizeOf(sqInt oop) {
+    // The exact size of the body in bytes, as numBytesOf of the stock VM: a
+    // byte object and a compiled method without their unused bytes, an odd
+    // count of 32-bit words, a count of 16-bit elements, and slots * 8 for a
+    // pointer object and a 64-bit object.
     Oop obj = sqIntToOop(oop);
     if (!obj.isObject()) return 0;
-    ObjectHeader* hdr = obj.asObjectPtr();
-    if (hdr->isBytesObject()) {
-        return static_cast<sqInt>(hdr->byteSize());
-    }
-    return static_cast<sqInt>(hdr->slotCount() * sizeof(Oop));
+    return static_cast<sqInt>(obj.asObjectPtr()->byteSize());
+}
+
+// A data object with no pointers: 64-, 32-, 16- or 8-bit elements.  A
+// compiled method and the reserved formats are not such objects.  For the
+// plugins of this VM that take a buffer from the image (NewFilePlugin).
+extern "C" sqInt proxyIsRawBitsObject(sqInt oop) {
+    Oop obj = sqIntToOop(oop);
+    if (!obj.isObject()) return 0;
+    auto format = obj.asObjectPtr()->format();
+    return (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable8_7) ? 1 : 0;
 }
 
 static void* proxy_fetchArrayofObject(sqInt fieldIndex, sqInt objectPointer) {
@@ -249,6 +259,10 @@ static void* proxy_firstIndexableField(sqInt oop) {
     }
     if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) {
         // Indexable 16-bit
+        return hdr->bytes();
+    }
+    if (format == ObjectFormat::Indexable64) {
+        // Indexable 64-bit: raw data, no fixed fields
         return hdr->bytes();
     }
     // Pointer-based indexable (format 2-4)
@@ -975,7 +989,10 @@ static sqInt proxy_primitiveMethod() {
 }
 
 static sqInt proxy_classExternalAddress() {
-    return proxy_nilObject(); // Not needed for B2DPlugin
+    // The image's ExternalAddress class (special object ClassExternalAddress).
+    // Used by NewFilePlugin to allocate handles.  nil if the image has none;
+    // callers must treat nil as "unavailable" and fail the primitive.
+    return oopToSqInt(gMem->specialObject(SpecialObjectIndex::ClassExternalAddress));
 }
 
 static void* proxy_ioLoadModuleOfLength(sqInt modIndex, sqInt modLength) {
@@ -1418,6 +1435,8 @@ extern "C" {
 
 // Reset interpreter proxy for VM relaunch
 void resetInterpreterProxy() {
+    // Close the files and directories and unmap the mappings of NewFilePlugin.
+    newFilePluginShutdown();
     gInterp = nullptr;
     gMem = nullptr;
     gFailed = false;
@@ -1739,5 +1758,64 @@ void initializeSocketPlugin(Interpreter* interp) {
 
     for (auto& p : prims) {
         interp->registerNamedPrimitive("SocketPlugin", p.name, p.fn);
+    }
+}
+
+// =====================================================================
+// NewFilePlugin integration (file/directory access, memory mapping)
+// =====================================================================
+extern "C" {
+    sqInt NewFilePlugin_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt nfp_primitiveIsAvailable(void);
+    sqInt nfp_primitiveDeleteFile(void);
+    sqInt nfp_primitiveDirectoryClose(void);
+    sqInt nfp_primitiveDirectoryCreate(void);
+    sqInt nfp_primitiveDirectoryNext(void);
+    sqInt nfp_primitiveDirectoryOpen(void);
+    sqInt nfp_primitiveDirectoryRemoveEmpty(void);
+    sqInt nfp_primitiveDirectoryRewind(void);
+    sqInt nfp_primitiveFileClose(void);
+    sqInt nfp_primitiveFileGetSize(void);
+    sqInt nfp_primitiveFileOpen(void);
+    sqInt nfp_primitiveFileReadInto(void);
+    sqInt nfp_primitiveFileReadIntoAtFileOffset(void);
+    sqInt nfp_primitiveFileSeek(void);
+    sqInt nfp_primitiveFileTell(void);
+    sqInt nfp_primitiveFileTruncate(void);
+    sqInt nfp_primitiveFileWriteFrom(void);
+    sqInt nfp_primitiveFileWriteFromAtFileOffset(void);
+    sqInt nfp_primitiveMemoryMapWithProtection(void);
+    sqInt nfp_primitiveMemoryUnmap(void);
+}
+
+void initializeNewFilePlugin(Interpreter* interp) {
+    NewFilePlugin_setInterpreter(&theProxy);
+
+    using PrimFn = sqInt (*)(void);
+    struct { const char* name; PrimFn fn; } prims[] = {
+        {"primitiveIsAvailable", nfp_primitiveIsAvailable},
+        {"primitiveDeleteFile", nfp_primitiveDeleteFile},
+        {"primitiveDirectoryClose", nfp_primitiveDirectoryClose},
+        {"primitiveDirectoryCreate", nfp_primitiveDirectoryCreate},
+        {"primitiveDirectoryNext", nfp_primitiveDirectoryNext},
+        {"primitiveDirectoryOpen", nfp_primitiveDirectoryOpen},
+        {"primitiveDirectoryRemoveEmpty", nfp_primitiveDirectoryRemoveEmpty},
+        {"primitiveDirectoryRewind", nfp_primitiveDirectoryRewind},
+        {"primitiveFileClose", nfp_primitiveFileClose},
+        {"primitiveFileGetSize", nfp_primitiveFileGetSize},
+        {"primitiveFileOpen", nfp_primitiveFileOpen},
+        {"primitiveFileReadInto", nfp_primitiveFileReadInto},
+        {"primitiveFileReadIntoAtFileOffset", nfp_primitiveFileReadIntoAtFileOffset},
+        {"primitiveFileSeek", nfp_primitiveFileSeek},
+        {"primitiveFileTell", nfp_primitiveFileTell},
+        {"primitiveFileTruncate", nfp_primitiveFileTruncate},
+        {"primitiveFileWriteFrom", nfp_primitiveFileWriteFrom},
+        {"primitiveFileWriteFromAtFileOffset", nfp_primitiveFileWriteFromAtFileOffset},
+        {"primitiveMemoryMapWithProtection", nfp_primitiveMemoryMapWithProtection},
+        {"primitiveMemoryUnmap", nfp_primitiveMemoryUnmap},
+    };
+
+    for (auto& p : prims) {
+        interp->registerNamedPrimitive("NewFilePlugin", p.name, p.fn);
     }
 }

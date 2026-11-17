@@ -9,5 +9,5 @@ fix value: #MicMetaDataBlockTest value: #testCreatingAnInstanceInitializeTheMeta
 	metadata bodyFromLine: ''"authors" : "S. Ducasse"''.
 	metadata closeMe.
 	self assert: metadata body isNotNil.
-	self assert: (metadata at: ''authors'') equals: ''S. Ducasse''.
+	self assert: (metadata atKey: ''authors'') equals: ''S. Ducasse''.
 	self deny: metadata bogusParsing'.

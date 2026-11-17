@@ -68,6 +68,9 @@
 #   BASE_IMAGE    pristine image (default /tmp/harness14/Pharo.image)
 #   LOAD_TIMEOUT  seconds for the load (default 900)
 #   TEST_TIMEOUT  seconds for one test run of one VM (default 1800)
+#   PKG_FIXES_FILE  another fixes file for the row (default
+#                 scripts/pkg-jit-test/fixes/<label>.st); for a run of one
+#                 row with an earlier state of its fixes
 #   PKG_REDO      1 = run a package again that has a row in summary.tsv
 #   PKG_REUSE_LOAD 1 = with PKG_REDO: start from the image that the load of an
 #                 earlier run left (no download)
@@ -301,8 +304,12 @@ scratch load
 memory_ok load
 # Iceberg tries an SSH clone first and falls back to HTTPS after an
 # authentication error.  The load asks for HTTPS at once.
+# GitHub asks for a name and a password when a repository is private or does
+# not exist.  Iceberg then opens a dialog and waits (row 51, a repository
+# that is gone, held the load until the time limit).  With the
+# non-interactive provider the load stops with an error at once.
 ( cd "$SCRATCH" && exec timeout -k 10 "$LOAD_TIMEOUT" "$COG" --headless "$COG_MEM" "$COG_FRAMES" "$img" eval --save \
-    "Iceberg remoteTypeSelector: #httpsUrl.$lock_expr $load_expr" ) > "$OUT/log/$label.load.log" 2>&1 < /dev/null &
+    "Iceberg remoteTypeSelector: #httpsUrl. IceCredentialsProvider providerType: IceNonInteractiveCredentialsProvider.$lock_expr $load_expr" ) > "$OUT/log/$label.load.log" 2>&1 < /dev/null &
 VM_PID=$!; wait "$VM_PID"; load_rc=$?; VM_PID=""
 trim_log "$OUT/log/$label.load.log"
 echo "[load exit=$load_rc]" >> "$OUT/log/$label.load.log"
@@ -326,8 +333,9 @@ fi
 # 2. fake GUI, image fixes, and the fixes of this package if it has a file
 scratch prep
 pkgfix=""
-if [ -f "$HERE/fixes/$label.st" ]; then
-    python3 "$REPO/scripts/gen-image-fixes.py" --one "$HERE/fixes/$label.st" "$SCRATCH/pkgfix.st" || fail_setup "fixes/$label.st"
+fixes_file=${PKG_FIXES_FILE:-$HERE/fixes/$label.st}
+if [ -f "$fixes_file" ]; then
+    python3 "$REPO/scripts/gen-image-fixes.py" --one "$fixes_file" "$SCRATCH/pkgfix.st" || fail_setup "$fixes_file"
     pkgfix="'$SCRATCH/pkgfix.st' asFileReference fileIn. "
 fi
 memory_ok prep

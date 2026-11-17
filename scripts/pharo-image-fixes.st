@@ -1381,7 +1381,7 @@ fix value: #MicMetaDataBlockTest value: #testCreatingAnInstanceInitializeTheMeta
 	metadata bodyFromLine: ''"authors" : "S. Ducasse"''.
 	metadata closeMe.
 	self assert: metadata body isNotNil.
-	self assert: (metadata at: ''authors'') equals: ''S. Ducasse''.
+	self assert: (metadata atKey: ''authors'') equals: ''S. Ducasse''.
 	self deny: metadata bogusParsing'.
 !
 
@@ -5278,4 +5278,383 @@ fix value: #TFUFFICallbackTest value: #testCallbacksInOtherThread
 	value: ((TFUFFICallbackTest >> #testCallbacksInOtherThread) sourceCode
 		copyReplaceAll: 'ffiLibrary = TFTestLibraryUsingSameThreadRunner ifTrue: [ ^ self skip ].'
 		with: '(ffiLibrary = TFTestLibraryUsingSameThreadRunner and: [ self sameThreadRunnerTakesCallbackFromOtherThread not ]) ifTrue: [ ^ self skip ].').
+!
+
+"=== 31-rename-class-changes.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"Refactoring-Core: a rename of a class loses the changes of its methods
+(2026-11-17).  Found by the package run: Chanel,
+ChanelTestCaseNameCleanerTest>>testRenameTestCaseEndingWithTestsUpdateReferences
+(MessageNotUnderstood: receiver of includesSelector: is nil, in
+ReAddMethodChange>>asUndoOperation).  The same on stock Cog and on our VM.
+
+RBNamespace>>renameClass:to:around: adds the rename change to the changes of
+the namespace, keeps the old value of 'changes', runs the block, and puts the
+old value back.  The method never makes the rename change the current
+'changes', so the code that puts the old value back has no effect.  The
+sibling method perform:onlyWithChange: has the line
+'changes := aCompositeRefactoryChange' at that place.  Without the line, the
+method changes that the block records (the methods of the class that refer
+to its own name) are siblings of the rename change and not its parts.
+ReRenameClassChange>>executeNotifying: gives the new class name only to its
+parts.  A sibling keeps the old name, and ReClassChange>>changeClass answers
+nil for that name after the rename.
+
+The repair adds the line.  The guard is the Pharo 14 form of the method with
+no such line.
+
+Two tests of the image count the changes of a class rename at the top level
+of the model: RBTransformationsTest>>testRenameClassTransform (11) and
+ReRenameClassCommandTest>>testRenameClassCommandSuccess (7).  The counts are
+the rename change and the method changes as its siblings, which is the
+defect.  ReRenameClassChange>>executeNotifying: runs the parts of the rename
+change with the new class name, so the parts are where the method changes
+belong.  With the repair the model has one change, the rename change, and
+the method changes are its parts (10 and 6).  The two tests now check the
+two numbers."
+
+fix value: #RBNamespace value: #renameClass:to:around:
+	value: [ :source | (source includesSubstring: 'oldChanges := changes.')
+		and: [ (source includesSubstring: 'changes := change.') not ] ]
+	value:
+'renameClass: aRBClass to: aSymbol around: aBlock
+
+	| change value dict oldChanges |
+	change := changeFactory renameClass: aRBClass to: aSymbol.
+	changes addChange: change.
+	oldChanges := changes.
+	"The changes that the block records are parts of the rename change, as in perform:onlyWithChange:.  The rename then gives them the new class name."
+	changes := change.
+	aBlock ensure: [ changes := oldChanges ].
+	self flushCaches.
+
+	dict := (newClasses includesKey: aRBClass name)
+		        ifTrue: [ newClasses ]
+		        ifFalse: [ changedClasses ].
+
+	self markAsRemoved: aRBClass name.
+	self unmarkAsRemoved: aSymbol.
+
+	value := dict at: aRBClass name.
+	dict removeKey: aRBClass name.
+	dict at: aSymbol put: value.
+
+	value first name: aSymbol.
+	value last name: aSymbol.
+
+	value first subclasses do: [ :each | each superclass: value first ].
+	value last subclasses do: [ :each | each superclass: value last ].
+
+	^ change'.
+
+fix value: #RBTransformationsTest value: #testRenameClassTransform
+	value: [ :source | source includesSubstring: 'transformation model changes changes size equals: 11.' ]
+	value: ((RBTransformationsTest >> #testRenameClassTransform) sourceCode
+		copyReplaceAll: 'self assert: transformation model changes changes size equals: 11.'
+		with: '"The rename change is the one change of the model.  The changes of the methods are its parts, so that the rename gives them the new class name."
+	self assert: transformation model changes changes size equals: 1.
+	self assert: transformation model changes changes first changes size equals: 10.').
+
+fix value: #ReRenameClassCommandTest value: #testRenameClassCommandSuccess
+	value: [ :source | source includesSubstring: 'driver changes changes size equals: 7.' ]
+	value: ((ReRenameClassCommandTest >> #testRenameClassCommandSuccess) sourceCode
+		copyReplaceAll: 'self assert: driver changes changes size equals: 7.'
+		with: '"The rename change is the one change.  The changes of the methods are its parts.  (One read of the changes: ReInteractionDriver>>changes runs the transformation at each call.)"
+	self assert: (driver changes changes collect: [ :each | each changes size ]) asArray equals: #( 6 ).').
+!
+
+"=== 32-duration-wait-rounds-up.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"System-Time: a wait for a Duration can end before the Duration has passed
+(2026-11-17).  Found by the package run: PharoMisc, Tasks,
+TkThreadTest>>testPeriodFixedDuration, which failed on our VM only.
+
+Duration>>asDelay makes a Delay for 'self asMilliSeconds' milliseconds, and
+asMilliSeconds rounds down.  A wait for 99.98 milliseconds is a Delay of 99
+milliseconds.  Duration>>wait uses asDelay.
+
+Measured with scripts/cogdiff/delay_accuracy.st, 40 waits of
+'(Duration nanoSeconds: 99980000) wait', shortest wait minus the Duration:
+  our VM      -921 microseconds (the wait ends before its time)
+  stock Cog   +4629 microseconds
+The stock VM ends each Delay 1 to 6 milliseconds late on this machine, and
+that hides the defect.  Our VM ends a Delay 0.1 to 0.4 milliseconds late.
+
+The Tasks package waits 'dueTime - now' for each period.  With waits that
+are 1 millisecond short, a task that repeats each 100 milliseconds for 300
+milliseconds gets a fourth run before the 300 milliseconds end.
+
+The repair rounds up: a part of a millisecond counts as one more
+millisecond.  A negative Duration gives the same Delay as before (an error
+in Delay>>setDelay:forSemaphore:).  The new test fails on the two VMs before
+the repair."
+
+fix value: #Duration value: #asDelay
+	value: [ :source | source includesSubstring: 'Delay forMilliseconds: self asMilliSeconds' ]
+	value:
+'asDelay
+	"A wait must not end before the receiver has passed.  A Delay counts milliseconds, so a part of a millisecond counts as one more millisecond.  (asMilliSeconds rounds down: a wait for 99.98 milliseconds ended after 99 milliseconds.)"
+
+	| nanoseconds |
+	nanoseconds := self asNanoSeconds.
+	^ Delay forMilliseconds: (nanoseconds negative
+			   ifTrue: [ nanoseconds // 1000000 ]
+			   ifFalse: [ nanoseconds + 999999 // 1000000 ])'.
+
+add value: #DurationTest value: #testAsDelayDoesNotRoundDown value: 'tests'
+	value:
+'testAsDelayDoesNotRoundDown
+	"The Delay of a Duration must not be shorter than the Duration."
+
+	self assert: (Duration nanoSeconds: 99980000) asDelay millisecondDelayDuration equals: 100.
+	self assert: (Duration nanoSeconds: 100000000) asDelay millisecondDelayDuration equals: 100.
+	self assert: (Duration nanoSeconds: 100000001) asDelay millisecondDelayDuration equals: 101.
+	self assert: (Duration nanoSeconds: 1) asDelay millisecondDelayDuration equals: 1.
+	self assert: Duration zero asDelay millisecondDelayDuration equals: 0'.
+!
+
+"=== 33-metalink-uninstall-order.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"Reflectivity: the uninstall of an object-specific link depends on the order
+of a set, and can remove the method of the object two times (2026-11-17).
+
+Symptom: LinkInstallerTest>>testLinkOnTempVarForObject failed in some sweeps
+of our VM (2 of 13 runs of its batch, never in 80 runs of the class alone)
+with 'KeyNotFound: key #methodWithTempVarAccess not found in
+MethodDictionary', from ClassDescription>>removeSelector: on the anonymous
+class of the object.  Each later test of the class then failed in the same
+way.
+
+Cause:
+
+U1. MetaLinkInstaller>>uninstallFromAllAnonymousNodes: walks 'aMetaLink
+nodes' (an IdentitySet).  For each node it calls uninstall:fromNode:forObject:,
+which ends with 'aMetaLink removeNode: node': the loop removes elements from
+the set that it walks.  Set>>remove: moves a later element of the same
+collision chain back into the slot that the walk has left, and the walk does
+not see that element.  MetaLink>>uninstall then takes the link off the node
+that the walk skipped, so 'link nodes' is empty and a test sees no defect.
+But the installer still has the node in its node mapper for the object, the
+anonymous class of the object keeps its method, and the object keeps the
+anonymous class.
+
+U2. MetaLinkNodesMapper>>findNodeLike:forObject: answers the first node of
+the object that is equivalent to the given node (the same selector, source
+and position).  A node that U1 left in the mapper is equivalent to the node
+at the same position of a later installation for the same object.  When the
+set order gives the old node first, the installer removes the old node.  The
+old node is in an old AST with no link, so canRemoveMethodNodeContaining:
+answers true and the method of the anonymous class goes.  The uninstall of the
+last new node removes the method again, and removeSelector: signals
+KeyNotFound.  testLinkOnTempVarForObject makes three installations for one
+object (read, write, all), so it can reach this state.
+
+Measured with scripts/cogdiff/metalink_uninstall_order.st on an image with no
+repair.  The part of the script that forces the order of the set gives the
+KeyNotFound on stock Cog and on our VM.  The part with the order of the
+identity hashes gives the KeyNotFound in 12 of 300 rounds on stock Cog and
+in 9 of 300 on our VM, and 332 and 368 uninstalls leave a node in the mapper.
+
+The repair: the walk uses a copy of the nodes and of the objects (U1), and
+the mapper answers the given node itself when the object has it (U2).
+
+The two new tests force the order with an IdentitySet subclass that gives
+each element the same first slot.  Measured on stock Cog and on our VM: the
+two tests fail before the repair (40 other tests of the class pass), and the
+42 tests of the class pass after the repair.  After the repair the script
+finds no node left in the mapper in 300 rounds."
+
+fix value: #MetaLinkInstaller value: #uninstallFromAllAnonymousNodes:
+	value: [ :source | (source includesSubstring: 'asArray') not ]
+	value:
+'uninstallFromAllAnonymousNodes: aMetaLink
+
+	| objectsForLink |
+	(linksRegistry isLinkObjectSpecific: aMetaLink) ifFalse: [ ^ self ].
+	objectsForLink := linksRegistry objectsForLink: aMetaLink.
+	"Walk copies.  uninstall:fromNode:forObject: removes the node from aMetaLink nodes (an IdentitySet).  A removal from a hashed collection moves later entries of the collision chain back, so a walk over the collection itself skipped a node: the node kept its entry in the mapper and its link until the end of MetaLink>>uninstall, and a later install found the old node."
+	objectsForLink asArray do: [ :object |
+		aMetaLink nodes asArray do: [ :node |
+			((aMetaLink nodes includes: node) and: [ linkToNodesMapper isNode: node ownedBy: object ])
+				ifTrue: [ self uninstall: aMetaLink fromNode: node forObject: object ] ] ]'.
+
+fix value: #MetaLinkNodesMapper value: #findNodeLike:forObject:
+	value: [ :source | (source includesSubstring: 'includes: aNode') not ]
+	value:
+'findNodeLike: aNode forObject: anObject
+	"The node itself when the object has it.  A node of an earlier installation at the same source position is equivalent too, and must not win."
+
+	| nodesForObject |
+	nodesForObject := nodesForObjects at: anObject ifAbsent: [ #() ].
+	(nodesForObject includes: aNode) ifTrue: [ ^ aNode ].
+	^ nodesForObject detect: [ :node | node isEquivalentTo: aNode ] ifNone: [ nil ]'.
+
+add value: #LinkInstallerTest value: #nodeSetHomedAt: value: 'helpers'
+	value:
+'nodeSetHomedAt: aSlotExpression
+	"An IdentitySet in which every element has the same home slot, so the layout does not depend on the identity hashes of the VM.  aSlotExpression is the source of the home slot: ''1'' (the first slot) or ''array size'' (the last slot)."
+
+	| setClass |
+	setClass := IdentitySet newAnonymousSubclass.
+	setClass compile: ''scanFor: anObject
+	| index start |
+	index := start := '', aSlotExpression, ''.
+	[ | element |
+		((element := array at: index) == nil or: [ element enclosedElement == anObject ])
+			ifTrue: [ ^ index ].
+		(index := index \\ array size + 1) = start ] whileFalse.
+	self errorNoFreeSpace''.
+	^ setClass new'.
+
+add value: #LinkInstallerTest value: #testUninstallVisitsEveryNodeWhenTheNodeSetCollides value: 'tests'
+	value:
+'testUninstallVisitsEveryNodeWhenTheNodeSetCollides
+	"Two nodes of one link have the same home slot in the node set of the link.  MetaLink>>uninstall removes each node from this set while it walks the set; the walk used to skip the second node.  The object then stayed registered for the old node."
+
+	| link obj temp reads |
+	link := MetaLink new.
+	obj := ReflectivityExamples2 new.
+	temp := (ReflectivityExamples2 >> #methodWithTempVarAccess) lookupVar: #temp.
+	reads := (temp accessingNodesFor: #read) asSortedCollection: [ :a :b | a start <= b start ].
+	link instVarNamed: #nodes put: (self nodeSetHomedAt: ''1'').
+	reads do: [ :each | each link: link forObject: obj ].
+	self assert: link nodes size equals: 2.
+	link uninstall.
+	self assert: link nodes isEmpty.
+	self assert: (MetaLink linkInstaller linkToNodesMapper findNodesForObject: obj) isEmpty'.
+
+add value: #LinkInstallerTest value: #testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode value: 'tests'
+	value:
+'testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode
+	"The three rounds of testLinkOnTempVarForObject with a node set that has a fixed layout.  Round 1: the two nodes have the same home slot (the old walk skipped the second node).  Round 2: the nodes leave in the other order and the method of the anonymous class is removed.  Round 3: the install finds the old node of round 1, which belongs to the old AST, and the uninstall removed the method a second time (KeyNotFound)."
+
+	| link obj temp reads writes |
+	link := MetaLink new.
+	obj := ReflectivityExamples2 new.
+	temp := (ReflectivityExamples2 >> #methodWithTempVarAccess) lookupVar: #temp.
+	reads := (temp accessingNodesFor: #read) asSortedCollection: [ :a :b | a start <= b start ].
+	writes := (temp accessingNodesFor: #write) asSortedCollection: [ :a :b | a start <= b start ].
+
+	[ link instVarNamed: #nodes put: (self nodeSetHomedAt: ''1'').
+	reads do: [ :each | each link: link forObject: obj ].
+	link uninstall.
+
+	link instVarNamed: #nodes put: (self nodeSetHomedAt: ''array size'').
+	writes do: [ :each | each link: link forObject: obj ].
+	link uninstall.
+
+	link instVarNamed: #nodes put: (self nodeSetHomedAt: ''array size'').
+	reads do: [ :each | each link: link forObject: obj ].
+	self shouldnt: [ link uninstall ] raise: KeyNotFound.
+	self assert: link nodes isEmpty.
+	self assert: (MetaLink linkInstaller linkToNodesMapper findNodesForObject: obj) isEmpty ]
+		ensure: [ link instVarNamed: #nodes put: IdentitySet new ]'.
 !
