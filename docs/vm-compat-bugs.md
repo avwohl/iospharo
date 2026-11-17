@@ -29,10 +29,80 @@ Effects:
 The change that makes our VM equal to Cog: at the limit of the inline
 frames, a process without `shouldOverflow` moves its frames to heap
 Contexts and continues.  The old-space limit and the low-space signal then
-are the only limits.  The change is in `pushFrame`, `handleStackOverflow`,
-`setFrameLimit` and the depth tests of machine code.  Not done.  The owner
-must decide, because the change removes a guard against a recursion with no
-end.
+are the only limits.  Not done.  The owner must decide, because the change
+removes a guard against a recursion with no end.
+
+Design from a read-only study of the code (2026-11-17, not built, not run):
+
+- Two modes.  A process with `shouldOverflow` true keeps the limit of the
+  whole depth and the `#stackOverflow` send.  Each other process counts
+  inline frames only, with a limit of 32768 (`McfNativeDepthCap`).
+- The flush at the limit is `materializeFrameStack()` and then
+  `executeFromContext()` on the top Context.  `transferTo` cannot do the
+  flush: it returns at once for the same process.
+- `handleStackOverflow` does the flush before it pops the send, and then
+  starts the activation again.  `pushFrame` gets no new instruction, and
+  machine code needs no change of its depth tests.  The J2J loops that drop
+  frames at `frameLimit_` need a test of the real capacity.
+
+Risks that the study found, each to check before the change goes in:
+
+- The operand stack.  The places that turn frames into a Context chain
+  (`collapseFramesToChain`: `thisContext`, blocks, non-local return) leave
+  the stack pointer where it is.  A recursion that makes a Context at each
+  level then grows the operand stack with no limit of frames to stop it.
+  The flush needs a second trigger on the use of the operand stack.
+- GC in the flush.  `pushFrame` allocates nothing now.  The flush allocates
+  up to 32768 Contexts in the middle of an activation, so the values that
+  the activation holds in C++ variables can move.
+- The end of a recursion with no end.  With the limit gone, the recursion
+  ends at the old-space limit, and `ObjectMemory.cpp` stops the VM there
+  (`std::abort`).  The flush must test the free old space and give the
+  low-space signal, so the image gets `OutOfMemory`.
+- A return through a long Context chain costs more than a return through
+  inline frames.
+- Tests that pass now because of the error (the two MuTalk tests) then end
+  through their time limit, as on Cog.
+
+## FIXED 2026-11-17 — the `perform:` cache of the arm64 JIT called a method through an entry with no compiled code
+
+Symptom: a full sweep of our VM stopped in two batches with a segmentation
+fault (exit status 139), in `RSLocationTest` and `RSSugiyamaLayoutTest`.  The
+fault address was `0x22`, and the program counter was in the shared call stub
+of the machine-code frames.  A run of the two batches alone
+(`scripts/vmrun.sh sweep --from 1301 --to 1400 ours <image> <outdir>`) stopped
+in 6 of 12 batches.  The defect is old: the five sweeps before did not show
+it, and the only change was three more entries in the image.
+
+Cause: a `perform:` site in machine code has a cache (`McfPerformEntry`) from
+the selector and the receiver class to the method and to the entry of the
+method in the call cache (`McfCallEntry`).  At a hit, the arm64 code made one
+test: the call-cache entry still has the same method.  A method with a
+primitive can have two kinds of entry.  A native entry has the compiled
+method (`jm`), and the VM makes that entry when the body of the method runs.
+A primitive entry has `jm == nullptr`, and the VM makes that entry when a send
+exits machine code for the method (`mcfNotePrimitiveTarget`).  The sequence
+was:
+
+1. `perform:` calls method M through a native entry, and the cache records
+   the address of the entry.
+2. Another method takes the slot of the entry.
+3. A send notes M again, and M gets the same slot as a primitive entry.
+4. The `perform:` site hits, the method is the same, and the code jumps to the
+   call stub with `jm == nullptr`.  The stub reads the argument count at
+   offset 34 of `jm`.
+
+The x86_64 code of the same site tests `jm` and the kind of the entry.  The
+arm64 code did not.
+
+Repair (`AsmjitT1.cpp`, the perform-cache hit of `emitOne_arm64`): the hit
+continues only for an entry with a `jm` and with the kind of a plain method or
+a tiny shape.  Each other entry goes to `pharo_mcf_perform`, which makes the
+full lookup.
+
+Proof of the cause: a build with a trap instruction at the new test stopped
+with the trap (exit status 133) in 5 of 12 batches, at the class counts of
+the segmentation faults.  With the repair, 40 of 40 batches ran to the end.
 
 ## FIXED 2026-11-17 — a process switch at the entry of `ensure:` left a context with no unwind block
 

@@ -149,6 +149,9 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweep14-new3` | ours, `f9cac33f` | 39339 | 1 | 114 | 1 | no batch stopped |
 | `sweep14-new4` | ours, audit fixes, entries 25 and 26 | 39340 | 0 | 114 | 1 | no batch stopped |
 | `sweep14-new5` | ours, `39105f0c`, entries 25 to 27 | 39343 | 0 | 114 | 1 | 39458 tests: 3 new queue tests |
+| `sweepcogp14-new3` | patched Cog, entries 25 to 30 | 39370 | 0 | 87 | 1 | entries 28 to 30 turn 27 skips into passes |
+| `sweep14-new6` | ours, entries 25 to 30 | - | - | - | - | 2 batches stopped with a segmentation fault, see below |
+| `sweep14-new7` | ours, perform-cache repair, entries 25 to 30 | 39370 | 0 | 87 | 1 | no batch stopped; interactive pass 135 of 135 |
 
 Defects that these sweeps showed, each with its repair:
 
@@ -173,6 +176,14 @@ Defects that these sweeps showed, each with its repair:
   the TaskIt repair found the three defects.
 - A stale method comment and a race in a callback test (entries 24 and
   `20-TFFI-disabled-tests.st`).
+- 27 skips of the code-snippet tests and of one FFI callback test
+  (`28-simple-formatter-comments.st`, `29-code-importer-snippets.st`,
+  `30-ffi-callback-from-other-thread.st`).  The callback test needs the Cog
+  change for a callback from another thread, so stock Cog still skips it.
+- The `perform:` cache of the arm64 JIT called a method through a call-cache
+  entry with no compiled code (the two stopped batches of `sweep14-new6`).
+  The defect was old, and the new image entries made it show.  Fixed in
+  `AsmjitT1.cpp`.  Text: [vm-compat-bugs.md](vm-compat-bugs.md).
 
 ### The 200-package run (started 2026-11-17)
 

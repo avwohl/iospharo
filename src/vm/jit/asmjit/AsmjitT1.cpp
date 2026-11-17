@@ -15704,6 +15704,32 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.ldr(x9, ptr(x7));                           // the entry's methodBits
                         a.cmp(x9, x6);
                         a.b_ne(perfC);
+                        // The entry is still a native-call entry: it has a
+                        // JM, and its kind is a plain method or a tiny shape
+                        // (the kinds that mcfPerformTarget puts in this
+                        // cache).  The method word is not enough: another
+                        // method can take the slot, and the slot can then come
+                        // back to the same method as a primitive entry
+                        // (mcfNotePrimitiveTarget), which has no JM.  A method
+                        // with a primitive gets a native entry when its body
+                        // runs and a primitive entry when a send exits for it.
+                        // The call stub then read the argument count through
+                        // a null JM (a segmentation fault at address 0x22 in
+                        // two batches of a sweep on 2026-11-17; a trap at this
+                        // test fired in 5 of 12 runs of those batches).  The
+                        // x86 site makes the same tests.
+                        {
+                            asmjit::Label kindOk = a.new_label();
+                            a.ldr(x16, ptr(x7, 8));                   // the entry's JM
+                            a.cbz(x16, perfC);
+                            a.ldr(x16, ptr(x7, 24));                  // the entry's kind
+                            a.cbz(x16, kindOk);
+                            a.and_(x16, x16, asmjit::Imm(0xFFFFFF));
+                            a.mov(x17, asmjit::Imm(kMcfTinyShape));
+                            a.cmp(x16, x17);
+                            a.b_ne(perfC);
+                            a.bind(kindOk);
+                        }
                         mcfFieldLdr(a, x11, PL.dirDepth, OFF_MCF_DEPTH_PTR, x10);
                         if (GET_DEBUG_BOOL(PHARO_MCF_NO_DEPTH0_CALL)
                                 || GET_DEBUG_BOOL(PHARO_MCF_NO_PERFORM_DEPTH0)) {
