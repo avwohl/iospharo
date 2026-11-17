@@ -1,0 +1,27 @@
+# Tests that cannot apply on a machine that does not have the puzzle input
+# files of the author.  One test for each line: Class>>selector, or Class>>*
+# for each test of the class.  A line that starts with # has the proof.
+#
+# The setUp and the tests of the two classes read a puzzle input file:
+# AoCSolver>>inputData: opens
+# <project directory>/data/<year>/input-day<NN>-0.txt, and the project
+# directory is the environment variable AOC_DIR or the home directory
+# (src/Advent-of-Code/AoCSolver.class.st).
+#
+# The repository does not have the files: commit 20b89cf has 22 files, and
+# none is under a directory "data" or has the extension ".txt".
+#
+# Our repository cannot supply the files.  Advent of Code asks that the
+# puzzle text, which has the example inputs, and the puzzle inputs are not
+# copied (https://adventofcode.com/about, "Can I copy/redistribute part of
+# Advent of Code?").
+#
+# The solution of day 8 is also not complete in the repository (part2 answers
+# 0).  The owner of the repository must complete it; a run needs the input
+# file.
+Y2025Day05Test>>testParser
+Y2025Day05Test>>testPart1
+Y2025Day05Test>>testPart2
+Y2025Day08Test>>testParser
+Y2025Day08Test>>testPart1
+Y2025Day08Test>>testPart2

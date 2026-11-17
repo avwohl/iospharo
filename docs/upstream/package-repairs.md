@@ -1495,3 +1495,24 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   in the Famix model.
 - Result: 331 of 331 pass on the two VMs, in a run from a new load.
 
+## Iconography (`OpenSmock/Iconography`, row 124)
+
+- State before: 32 tests, 6 pass, 26 errors on the two VMs
+  (`KeyNotFound: key #iconCheckCircleFilled32x32 not found in
+  MethodDictionary`).
+- Cause: the setUp and the tearDown of two test classes
+  (`AntDesignIconsLibraryTest`, `MaterialDesignIcons4LibraryTest`) call
+  `removeGeneratedMethods`, which sends `removeSelector:` for three
+  selectors.  Only two tests make these methods, so in each other test the
+  selectors are absent.  `removeSelector:` of Pharo 14 signals an error for
+  an absent selector, so the setUp stops before the test starts.
+- Repair (`fixes/opensmock-iconography.st`): the two methods remove a
+  selector only when the class has it.
+- Result on stock Cog: 32 of 32 pass.
+- Result on our VM: 31 pass, 1 failure that Cog does not have:
+  `AntDesignIconsLibraryTest>>testSerializeAsFormMaxWidthMaxHeight` ("Got a
+  Bitmap of length 992 instead of a Bitmap of length 992": the same size,
+  other pixel values).  The cause is in work.  An old note said "a library
+  difference" (our VM loads the Cairo of Homebrew, Cog loads the Cairo of
+  its bundle); nobody measured that.
+

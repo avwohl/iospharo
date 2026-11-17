@@ -10,11 +10,14 @@ current (OSPlatform>>environment is deprecated in Pharo 14).
 2. GridArray>>x:y: and x:y:put: gave an Integer index to atGrid:, which takes
 a Point (GridArrayTest>>testXY: SmallInteger does not understand #y).
 
-Not in this file: the 6 tests of Y2025Day05Test and Y2025Day08Test read the
-puzzle input files data/2025/input-dayNN-0.txt.  The repository does not have
-them (the inputs of Advent of Code are not for redistribution), so these
-tests cannot run on a machine that is not the author's:
-scripts/pkg-jit-test/not-applicable/shnarazk-aoc-in-pharo.txt."
+3. The 6 tests of Y2025Day05Test and Y2025Day08Test read the puzzle input
+files data/2025/input-dayNN-0.txt.  The repository does not have them (the
+inputs of Advent of Code are not for redistribution), so these tests cannot
+run on a machine that is not the author's.  They gave
+FileDoesNotExistException.  The setUp of the two classes now skips the test
+with the reason when the file is absent; with the file the tests run as
+before.  scripts/pkg-jit-test/not-applicable/shnarazk-aoc-in-pharo.txt has
+the proof."
 
 fix value: #'AoCSolver class' value: #projectDirectory
 	value: [ :source | source includesSubstring: 'atGrid:' ]
@@ -162,3 +165,42 @@ fix value: #Y2025Day05 value: #part2
 	^ result at: #sum'.
 
 "---- Y2025Day08: the puzzle is not finished in the package -----------------"
+
+add value: #AoCSolver value: #'inputFile:' value: 'reading' value:
+'inputFile: aNumberOrString
+    "The file of the test data."
+
+    | dataDirectory d |
+    dataDirectory := self class projectDirectoryAnd: ''data/''.
+    d := self class day < 10 ifTrue: [ ''0'' , self class day asString ]
+             ifFalse: [ self class day asString ].
+    ^ (dataDirectory , self class year asString , ''/input-day'' , d , ''-'' , aNumberOrString asString , ''.txt'') asFileReference'.
+
+fix value: #AoCSolver value: #'inputData:'
+	value: [ :source | (source includesSubstring: 'inputFile:') not ]
+	value:
+'inputData: aNumberOrString
+    "return test data from the file"
+
+    ^ (self inputFile: aNumberOrString) contents'.
+
+fix value: #Y2025Day05Test value: #setUp
+	value: [ :source | (source includesSubstring: 'inputFile:') not ]
+	value:
+'setUp
+
+  super setUp. "Put here a common initialization logic for tests"
+  solver := Y2025Day05 new.
+  (solver inputFile: 0) exists ifFalse: [
+    self skip: ''The puzzle input file '' , (solver inputFile: 0) fullName , '' is not on this machine. The repository has no puzzle input files.'' ]'.
+
+fix value: #Y2025Day08Test value: #setUp
+	value: [ :source | (source includesSubstring: 'inputFile:') not ]
+	value:
+'setUp
+	super setUp.
+
+	"Put here a common initialization logic for tests"
+	solver := Y2025Day08 new.
+	(solver inputFile: 0) exists ifFalse: [
+		self skip: ''The puzzle input file '' , (solver inputFile: 0) fullName , '' is not on this machine. The repository has no puzzle input files.'' ]'.
