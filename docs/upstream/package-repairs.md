@@ -1349,3 +1349,31 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - For the owner of Soil: `SoilObjectProxy>>class` is back, which the author
   removed on purpose or by accident; the review must decide.
 
+## Superluminal (`ba-st/Superluminal`, row 87)
+
+- State before: no load (the baseline of Teapot `v4` has no branch for
+  Pharo 14, as for Stargate).  With the patched Teapot and Launchpad as
+  locked dependencies: 203 tests, 150 pass, 4 failures, 49 errors on the two
+  VMs.
+- Causes:
+  - 43 errors: the tests call an httpbin service.  The CI of the package
+    starts a container and gives its name in `CI_HTTPBIN_HOSTNAME`.  With no
+    variable the tests go to `localhost:80`.
+  - 8 tests need a memcached server on `127.0.0.1:11211`.  The memcached
+    client of the dependency drops a connection error, so a stored item is
+    gone with no error.
+  - 4 tests compare a URL with a text whose query fields are in another
+    order than the code makes them (see "URLs with the same query fields in
+    another order" below).
+- Repair here (`fixes/ba-st-superluminal.st`): two stand-ins in the image,
+  `SuperluminalHttpbinStandIn` (a `ZnServer` on `127.0.0.1` with the routes
+  that the tests use) and `SuperluminalMemcachedStandIn` (the text protocol
+  of memcached).  The tests find them when the CI variables are absent.  The
+  four URL texts have the fields in the order of the code.  No assertion is
+  gone.
+- Limits: the tests check the client code of the package against the
+  stand-ins, not against httpbin and memcached.  The route `/cache` of the
+  stand-in takes the method `QUERY`, because one test sends it; we did not
+  read the httpbin fork of the CI.  Port 11211 must be free.
+- Result: 203 of 203 pass on the two VMs, in a run from a new load.
+
