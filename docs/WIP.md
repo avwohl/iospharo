@@ -248,8 +248,8 @@ state of each row.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
 - 14 rows are not clean yet.  The table has the rows with an open point.
-  Rows 119, 121, 122, 124 and 126 have a repair whose run is in work, and
-  rows 130 and 131 are new:
+  Rows 119, 122, 126, 130, 131 and 132 have a repair whose run is in work.
+  Rows 121 and 124 are in a second round:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -260,6 +260,8 @@ state of each row.
 | 84 | Soil | 1167 of 1184 pass, 17 skips | 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`).  Open: 3 coverage tests of the package ask for 93 percent, and the measured coverage is 81 to 86 percent |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
+| 121 | CodeParadise | 19 of 33 pass (13 skips of the author, 1 failure) | the first repair was wrong and is gone: it took the skips out, and the tests then failed on stock Cog (4 errors, 1 timeout, 2 failures, 2 more errors).  On our VM `CpCommunicatorTest>>testClientSendBeforeConnection` hung with no timeout (Cog ends it after 11 s): a difference between the VMs, in work |
+| 124 | Iconography | stock Cog 32 of 32, our VM 31 | 1 test fails on our VM only (a Bitmap with other pixel values after an SVG drawing and a scaling); the cause is in work |
 
 The package run found these defects outside the packages:
 
