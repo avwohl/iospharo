@@ -56,7 +56,7 @@ chunk, and a line of temporaries in the middle of a chunk is a syntax error.  Th
 one argument, an Array of class name, selector, start text, end text and new text; the text
 from the start text to the end text is replaced.  BlockClosure has no value:value:value:value:value:
 (five arguments), so each call gives one Array to value:."
-Smalltalk at: #KendrickRangeFix put: [ :args | | clsName sel startText endText newText cls source i j |
+Smalltalk globals at: #KendrickRangeFix put: [ :args | | clsName sel startText endText newText cls source i j |
 	clsName := args at: 1.
 	sel := args at: 2.
 	startText := args at: 3.
@@ -96,19 +96,19 @@ Smalltalk at: #KendrickRangeFix put: [ :args | | clsName sel startText endText n
 
 "=== B. chart code of the part before ==="
 
-(Smalltalk at: #KendrickRangeFix) value: { #TestOneSpeciesSpatialScripts. #before.
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestOneSpeciesSpatialScripts. #before.
 	'chart addDataFrame: [|tmp| tmp := OrderedCollection new.'.
 	'tmp] value.'.
 	'(1 to: 5) do: [ :patch |
 		chart addDataFrame: (simulator timeSeriesOutputsAt: { #status -> #I. #patch -> patch }) ].' }.
 
-(Smalltalk at: #KendrickRangeFix) value: { #TestDependantConcern. #before.
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestDependantConcern. #before.
 	'chart addDataFrame: [|tmp| tmp := DataFrame new.'.
 	'tmp] value.'.
 	'(1 to: 5) do: [ :patch |
 		chart addDataFrame: (simulator timeSeriesOutputsAt: { #status -> #I. #patch -> patch }) ].' }.
 
-(Smalltalk at: #KendrickRangeFix) value: { #TestMultiSpeciesSpatial. #before.
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestMultiSpeciesSpatial. #before.
 	'f := [:name| |df ds|'.
 	'#human}) }.'.
 	'chart
@@ -181,7 +181,7 @@ add value: #KEMapBuilder value: #plot value: 'as yet unclassified' value:
 'plot
 	^ self open'.
 
-(Smalltalk at: #KendrickRangeFix) value: { #TestsModel6SpatialMap. #before.
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestsModel6SpatialMap. #before.
 	'rowAt:1) max'.
 	'rowAt:1) max'.
 	'columnAt: 1) max' }.
@@ -211,4 +211,4 @@ add value: #'TestsIST class' value: #shouldInheritSelectors value: 'testing' val
 'shouldInheritSelectors
 	^ self ~~ TestsIST and: [ self testSelectors isEmpty ]'.
 
-Smalltalk removeKey: #KendrickRangeFix ifAbsent: [ nil ].
+Smalltalk globals removeKey: #KendrickRangeFix ifAbsent: [ nil ].

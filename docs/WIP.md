@@ -171,6 +171,7 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweepcogp14-new6` | patched Cog, gate, entries 31 to 33 | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped |
 | `sweep14-new11` | ours, gate, entries 31 to 33, socket options, file plugin, hash generator | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass as on the patched Cog |
 | `sweepcogp14-new7` | patched Cog with the low-space change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
+| `sweepcogp14-new8` | patched Cog with the file plugin change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 
 Defects that these sweeps showed, each with its repair:
 
@@ -332,9 +333,16 @@ is pushed):
   (`docs/upstream/cog-newfile-plugin-buffer-and-handle-checks.patch`).  The
   patched Cog and our VM give the same 36 lines for
   `scripts/cogdiff/newfile_plugin_checks.st`, and the 42 tests of the
-  package pass.  A sweep of the patched Cog with the change is in work.
-- The segmentation fault in the garbage collector in the PharoMisc row: the
-  cause is not known.
+  package pass.  The sweep of the patched Cog with the change
+  (`sweepcogp14-new8`) has the same result as the sweep before it.
+- The segmentation fault in the garbage collector in the PharoMisc row:
+  stock Cog stops in 2 of 6 runs of the row with the fixes file of commit
+  `5053c46f` (three sockets on one port).  The run command is
+  `/tmp/pharo-work/g8/run.sh`, and the crash reports are
+  `/tmp/pharo-work/g8/crash-cog-2.log` and `crash-cog-4.log`.  The mark
+  phase of a full GC follows a field of an old object that names an address
+  in new space.  The cause is not known.  An agent works on it with the leak
+  checker of the VM.
 - The segmentation fault of `MorphicWindowManagerTest` in an interactive
   session (1 of 3 runs): not started.
 

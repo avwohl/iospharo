@@ -227,6 +227,9 @@ anyone sends it.
     stock plugin for a NULL handle).  A second map after the file grew, and
     a read-write map after a read-only map, answer no mapping.
   - The 42 tests of the package `ronsaldo/pharo-newfile` pass.
+  - A full sweep of the Pharo 14 tests on the Cog with the change
+    (`sweepcogp14-new8`, 39461 tests) has the same result as the sweep
+    before the change.
 - Not tested: Windows (the Windows sources have the same changes, and they
   were not compiled) and Linux.
 
