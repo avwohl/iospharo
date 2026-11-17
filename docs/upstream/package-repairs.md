@@ -1027,3 +1027,45 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `atRandom` with an offset from 0.
 - Result: 270 of 270 pass on the two VMs, in a run from a new load.
 
+## Pillar (`pillar-markup/pillar`, row 71)
+
+- State before: 66 tests, 37 pass, 24 errors, 5 skips on the two VMs.
+- Causes:
+  - 20 errors (`UndeclaredVariableRead: MicPathRelativizer`) and, behind
+    them, 4 errors of the archetype tests.  Pillar (branch `dev`) uses
+    classes of the package `Microdown-Toc`, which only the branch `dev` of
+    Microdown has.  The baseline of Pillar names Microdown `v2.11.2`.  And
+    Pharo 14 has a class `BaselineOfMicrodown` in the image: Metacello does
+    not load a baseline whose class is in the image, so the load kept the
+    old package list of the image for each repository that the baseline
+    named.
+  - `PRArchetype>>directory` looks for the archetypes beside the image
+    only.  The CI of the package copies them there.  Three tests name
+    archetypes that the repository renamed or removed.
+  - `PRIntegrationTest>>testBookEpub` is a skip.  It sends `outputEPub`,
+    which has no implementor.  The package `Pillar-ExporterEPub` of the
+    repository cannot load: its superclasses and writers are defined
+    nowhere.
+- Repair here:
+  - `patches/pillar-markup-pillar.patch`: the baseline names Microdown
+    `dev`.  The manifest row has `ignoreImage`, so Metacello loads the
+    baseline of the repository.
+  - `fixes/pillar-markup-pillar.st`: `PRArchetype>>directory` also looks in
+    the clone of the repository; the three archetype names; and a small
+    EPub exporter (`PREPubOutput`, `PREPubDocument`) in the style of the
+    HTML exporter, so that `testBookEpub` runs with its assertions.
+- Limit: the EPub exporter is ours and is as small as the test needs (the
+  figures are not in the archive, and the navigation has one entry).
+- Result: 66 tests, 62 pass and 4 skips on the two VMs, in a run from a new
+  load.
+- Open, the 4 skips: `testBasicLatexPdf`, `testBookPdf`,
+  `testPresentationPdf` and `testWelcomePdf` start with `self skip`.  They
+  run `latexmk` with `lualatex`.  The test machine has no TeX (no
+  `latexmk`, `lualatex`, `pdflatex` or `xelatex` on the PATH, and no
+  `/Library/TeX`).  A probe without the skip wrote `index.tex` and then
+  stopped in OSSubprocess: the baseline pins OSSubprocess `v2.0.0`, which
+  calls `OSEnvironment>>defaultEncoding`, a method that Pharo 14 does not
+  have.  OSSubprocess `master` has the repair.  The owner must decide if
+  TeX goes on the machine; then the pin and the four tests get their
+  repair.  The row is not clean.
+

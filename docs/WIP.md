@@ -245,7 +245,7 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 | Row | Package | State | Work |
 |---|---|---|---|
 | 57 | EscapeAnalysisPharo | 81 of 82 pass | the analyzer of the package is repaired (33 entries).  Open: 1 skip of the author, a known wrong answer of the analyzer; a repair changes the answer of three other tests, so the author must decide |
-| 71 | Pillar | 37 of 66 pass | second round: the patch did not bring the package `Microdown-Toc` into the image; 4 PDF tests need LaTeX |
+| 71 | Pillar | 62 of 66 pass | open: 4 PDF tests need TeX (`latexmk`, `lualatex`), which the machine does not have; the owner must decide.  Behind them: the pin of OSSubprocess `v2.0.0` in the baseline of Pillar does not work on Pharo 14 |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
 | 81 | Stargate | 519 of 520 pass | second round: a test compares a URL text, and the order of the query fields differs |
 | 87 | Superluminal | 150 of 203 pass | an agent writes a stand-in for the HTTP test service on port 80 |
