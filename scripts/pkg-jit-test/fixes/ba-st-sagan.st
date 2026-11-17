@@ -1,6 +1,21 @@
-"ba-st-sagan (ba-st/Sagan, Sagan-RDBMS-Tests): three kinds of entries.
+"ba-st-sagan (ba-st/Sagan, Sagan-RDBMS-Tests): entries, round 2.
 
-1. The RDBMS tests use PostgreSQL.  The test class
+1. The package has no text reader for SQLite on Pharo 14.  The text of a
+   result column is read with SQLite3PreparedStatement>>stringAt:, and that
+   method sends stringFrom:at: to SQLite3Library.  The dependency Pharo-SQLite3
+   defines stringFrom:at: only in the version packages SQLite3-Pharo8 and
+   SQLite3-Pharo9, and the baseline of the dependency loads SQLite3-Pharo9 for
+   Pharo 9 to 13 only.  On Pharo 14 no package defines stringFrom:at:, and
+   each read of a text column ends with MessageNotUnderstood.  The entry adds
+   the method with the body of SQLite3-Pharo9.  This is the first cause of the
+   errors of the RDBMS tests.  The other errors follow from it: the read stops
+   in the middle of a SELECT, the statement stays active, an active statement
+   keeps a read lock on the file test.db, and the DROP TABLE of the tearDown
+   fails with 'SQLite3Busy: database is locked' and hides the first error.
+   The test that ran next found a table that the tearDown did not drop
+   ('table ... already exists') or no table.
+
+2. The RDBMS tests use PostgreSQL.  The test class
    SingleSessionRDMBSRepositoryTest chooses its database login when the class
    initializes: the environment variable RDBMS names the database, and without
    the variable the login is PostgreSQL on 127.0.0.1:5432 (user postgres,
@@ -17,24 +32,20 @@
    RDBMSSessionProviderTest>>expectedFailingLoginMessage reads that driver
    before it builds any login).
 
-   The long waits of the failed logins are not a defect.  RDBMSSessionProvider
-   retries a failed login 3 times with an exponential backoff with a random
-   factor (Retry>>backoffExponentiallyWithTimeSlot:), a time slot of 3 seconds,
-   and that gives 0 to 33 seconds of wait.  The time limit of a test is 10
-   seconds.  So a test ends as ERROR when the random wait is short and as
-   TIMEOUT when the wait is long, and the draw differs on each VM and run.
-   With a database that accepts the login there is no wait.
+3. The text binding of Pharo-SQLite3.  SQLite3Library>>with:at:putText: passes
+   the UTF-8 ByteArray to sqlite3_bind_text with the destructor argument 0
+   (SQLITE_STATIC).  SQLite then keeps the pointer and reads the bytes at
+   sqlite3_step, but nothing keeps the ByteArray alive after the bind call, and
+   a collection can move or reuse the memory before the step.  The repair
+   passes SQLITE_TRANSIENT (-1), so SQLite copies the bytes in the call; the
+   destructor argument is a 64-bit integer, so that -1 fills the register."
 
-2. The text binding of Pharo-SQLite3 (the dependency that the SQLite login
-   uses).  SQLite3Library>>with:at:putText: passes the UTF-8 ByteArray to
-   sqlite3_bind_text with the destructor argument 0 (SQLITE_STATIC).  SQLite
-   then keeps the pointer and reads the bytes at sqlite3_step, but nothing
-   keeps the ByteArray alive after the bind call, and a collection can move or
-   reuse the memory before the step.  The repair passes SQLITE_TRANSIENT (-1),
-   so SQLite copies the bytes in the call; the destructor argument is a 64-bit
-   integer, so that -1 fills the register.  The same entries are in the file
-   of the row rko281-restoreforpharo (the same defect in another fork).  The
-   coordinator can move these two entries to scripts/image-fixes/."
+add value: #SQLite3Library value: #stringFrom:at: value: 'fetching' value:
+'stringFrom: aStatement at: aColumn
+
+	"Defined by the version packages SQLite3-Pharo8 and SQLite3-Pharo9 of the dependency; the baseline of the dependency does not load one of them on Pharo 14."
+
+	^ self apiColumnText: aStatement atColumn: aColumn'.
 
 fix value: #'SingleSessionRDMBSRepositoryTest class' value: #defaultLogin
 	value: [ :source | source includesSubstring: 'postgreSQLLogin' ]

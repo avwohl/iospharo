@@ -239,13 +239,13 @@ State on 2026-11-17 at 16:30, rows 1 to 113 (the record of each repair is
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 94 rows are clean: each test passes on stock Cog and on our VM.
+- 95 rows are clean: each test passes on stock Cog and on our VM.
 - 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
   14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 15 rows are not clean yet.  Each has a repair in work or an open point
+- 14 rows are not clean yet.  Each has a repair in work or an open point
   (rows 107 to 113 of this list are with agents for their first analysis):
 
 | Row | Package | State | Work |
@@ -259,7 +259,6 @@ state of each row.
 | 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
 | 84 | Soil | 1119 of 1139 pass, 2 failures, 18 skips | second round: two lint failures and 4 skips of lint and coverage tests; 14 skips cannot apply (8 Windows lock tests, 6 cases with no meaning) |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
-| 100 | Sagan | stock Cog 48 of 133, our VM 45 | the tests use SQLite now (the machine has no PostgreSQL); second round: "database is locked" in the pooled tests, and 3 tests that differ between the VMs |
 
 The package run found these defects outside the packages:
 

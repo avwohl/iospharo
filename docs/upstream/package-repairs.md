@@ -1153,3 +1153,34 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Repair here: `fixes/j-brant-smacc.st`.
 - Result: 565 of 565 pass on the two VMs.
 
+## Sagan (`ba-st/Sagan`, row 100)
+
+- State before: 133 tests, 37 pass, 61 errors, 35 timeouts on the two VMs,
+  and 14 tests with another result on each VM (an error on one VM and a
+  timeout on the other).
+- Causes:
+  - The tests of the relational repositories choose a PostgreSQL server on
+    `127.0.0.1:5432` when the environment variable `RDBMS` is absent.  The
+    test machine has no server.  The login code tries again with waits, so
+    a test ends with an error or with the time limit.  The CI of the
+    repository runs the same tests with `RDBMS=SQLite3`.
+  - With SQLite: 68 errors "database is locked".  The cause is in the
+    dependency Pharo-SQLite3: `SQLite3PreparedStatement>>stringAt:` sends
+    `SQLite3Library>>stringFrom:at:`, and only the packages `SQLite3-Pharo8`
+    and `SQLite3-Pharo9` have that method.  The baseline of Pharo-SQLite3
+    loads `SQLite3-Pharo9` for Pharo 9 to 13 and not for Pharo 14.  A read
+    of a text column fails, the statement stays open and keeps a read lock
+    on the file, and the `DROP TABLE` of the `tearDown` then gets "database
+    is locked", which hides the first error.
+  - The text bind of Pharo-SQLite3 has the defect of the ReStore row
+    (`SQLITE_STATIC` for bytes that nothing holds).
+- Repair here (`fixes/ba-st-sagan.st`): SQLite3 is the login when `RDBMS` is
+  absent; `SQLite3Library>>stringFrom:at:` with the body of
+  `SQLite3-Pharo9`; the text bind with `SQLITE_TRANSIENT`.
+- Limit: the tests run on SQLite, not on PostgreSQL.  They do not check the
+  PostgreSQL driver.
+- Result: 133 of 133 pass on the two VMs, in a run from a new load.  No test
+  differs between the VMs.
+- For the owners: the baseline of `pharo-rdbms/Pharo-SQLite3` must name
+  Pharo 14.
+
