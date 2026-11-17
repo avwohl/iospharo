@@ -1,0 +1,8 @@
+# Test classes with tests that run only in an interactive session
+# (Smalltalk isInteractive).  scripts/vmrun.sh interactive runs them.
+MorphicNativeWindowTest
+MorphicWindowManagerTest
+OpenToolTest
+SimulateMouseTest
+SpCodePresenterTest
+SpTextPresenterTest

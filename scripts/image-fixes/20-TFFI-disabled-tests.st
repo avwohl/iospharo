@@ -39,9 +39,13 @@ fix value: #TFCallbacksTest value: #testCallbackNotRespectingLIFOOrderFailsRetur
 	c1 := self newTestCallbackDoing: [ smain signal. s1 wait ].
 	s2 := Semaphore new.
 	c2 := self newTestCallbackDoing: [ smain signal. s2 wait ].
+	"The second callout starts after the first callback is entered.  With two forks in a row, a preemption
+	 of the first process before its callout let the second callback enter first (1 of 40 runs on one VM),
+	 and the test then saw the first callout return early."
 	[ self callCallback: c1. returned := true ] fork.
+	smain wait.
 	[ self callCallback: c2 ] fork.
-	smain wait; wait.
+	smain wait.
 	s1 signal.
 	100 milliSecond wait.
 	self deny: returned.

@@ -3543,9 +3543,13 @@ fix value: #TFCallbacksTest value: #testCallbackNotRespectingLIFOOrderFailsRetur
 	c1 := self newTestCallbackDoing: [ smain signal. s1 wait ].
 	s2 := Semaphore new.
 	c2 := self newTestCallbackDoing: [ smain signal. s2 wait ].
+	"The second callout starts after the first callback is entered.  With two forks in a row, a preemption
+	 of the first process before its callout let the second callback enter first (1 of 40 runs on one VM),
+	 and the test then saw the first callout return early."
 	[ self callCallback: c1. returned := true ] fork.
+	smain wait.
 	[ self callCallback: c2 ] fork.
-	smain wait; wait.
+	smain wait.
 	s1 signal.
 	100 milliSecond wait.
 	self deny: returned.
@@ -4402,4 +4406,63 @@ fix value: #'ManifestCollectionsUnordered class' value: #manuallyResolvedDepende
 	value:
 'manuallyResolvedDependencies
 	^ #(#''Collections-Streams'' #''Math-Operations-Extensions'')'.
+!
+
+"=== 24-stale-executable-comment.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"A stale executable comment (2026-11-17).
+
+ DocCommentsReleaseTest builds one test for each executable comment of the
+ image (expression >>> expected value).  The comment of
+ Context class>>tallyInstructions: says that the simulation of
+ `3.14159 printString` uses 120 different bytecodes.  The image gives 131 on
+ stock Cog with a pristine image and on our VM.  The number changes each time
+ the code of Float printing or the compiler changes, so an exact number in the
+ comment goes out of date.  The comment now shows the use of the method with
+ an expected value that does not depend on that code.
+
+ The runners before run_sunit.st did not show this failure: they ran one test
+ of the class, not the test of each comment."
+
+fix value: #'Context class' value: #tallyInstructions:
+	value: [ :source | source includesSubstring: '[3.14159 printString]) size >>> 120' ]
+	value: ((Context class >> #tallyInstructions:) sourceCode
+		copyReplaceAll: '[3.14159 printString]) size >>> 120'
+		with: '[3.14159 printString]) notEmpty >>> true').
 !

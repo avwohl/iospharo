@@ -207,6 +207,21 @@ fresh_rundir() {                    # sets RUNDIR with a copy of image $1
 
 cmd=${1:-status}; [ $# -gt 0 ] && shift
 
+# Options after the subcommand (the same as the environment variables, so a
+# call needs no variable assignment in front of it):
+#   --image <path>   VMRUN_IMAGE        --interactive   VMRUN_INTERACTIVE=1
+#   --timeout <s>    VMRUN_TIMEOUT      --limit <s>     VMRUN_TEST_LIMIT
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image)       VMRUN_IMAGE=$2; shift 2 ;;
+        --interactive) VMRUN_INTERACTIVE=1; shift ;;
+        --timeout)     VMRUN_TIMEOUT=$2; shift 2 ;;
+        --limit)       VMRUN_TEST_LIMIT=$2; shift 2 ;;
+        --repeat)      VMRUN_REPEAT=$2; shift 2 ;;   # test: N runs, one VM after the other, counts at the end
+        *) break ;;
+    esac
+done
+
 case "$cmd" in
 status)
     echo "free memory: $(free_pct)%   swap used: $(swap_mb) MB   load:$(uptime | sed 's/.*load averages*://')"
@@ -228,21 +243,35 @@ test)
     name=${1:?usage: vmrun.sh test <vm> <Class> [selector ...]}; cls=${2:?class}; shift 2
     resolve_vm "$name"
     acquire_lock "test $name $cls"
-    fresh_rundir "${VMRUN_IMAGE:-$(default_image "$name")}"
-    cd "$RUNDIR" || exit 2
-    { echo "$cls"; for s in "$@"; do echo "$s"; done; echo "TIMEOUT=${VMRUN_TEST_LIMIT:-120}"; } > runtest_args.txt
-    expr="'$REPO/scripts/vmrun/one_test.st' asFileReference fileIn"
+    repeat=${VMRUN_REPEAT:-1}
+    summary=$WORK/run/$$.summary; mkdir -p "$WORK/run"; : > "$summary"
     headless="--headless"
     if [ "${VMRUN_INTERACTIVE:-0}" = "1" ]; then export PHARO_INTERACTIVE=1; headless=""; fi
-    if [ "$KIND" = ours ]; then
-        ours_env
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
-    else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" $headless "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
-    fi
-    rc=$?
-    if [ -f runtest_out.txt ]; then cat runtest_out.txt; else echo "NO-OUTPUT rc=$rc"; tail -5 vm.log; fi
-    grep -q '^DONE' runtest_out.txt 2>/dev/null || echo "INCOMPLETE rc=$rc (log: $RUNDIR/vm.log)"
+    expr="'$REPO/scripts/vmrun/one_test.st' asFileReference fileIn"
+    n=1
+    while [ "$n" -le "$repeat" ]; do
+        fresh_rundir "${VMRUN_IMAGE:-$(default_image "$name")}"
+        cd "$RUNDIR" || exit 2
+        { echo "$cls"; for s in "$@"; do echo "$s"; done; echo "TIMEOUT=${VMRUN_TEST_LIMIT:-120}"; } > runtest_args.txt
+        if [ "$KIND" = ours ]; then
+            ours_env
+            guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
+        else
+            guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" $headless "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
+        fi
+        rc=$?
+        if [ "$repeat" -eq 1 ]; then
+            if [ -f runtest_out.txt ]; then cat runtest_out.txt; else echo "NO-OUTPUT rc=$rc"; tail -5 vm.log; fi
+            grep -q '^DONE' runtest_out.txt 2>/dev/null || echo "INCOMPLETE rc=$rc (log: $RUNDIR/vm.log)"
+        else
+            # one line per test and run, without the time, for the counts
+            if [ -f runtest_out.txt ]; then sed -E 's/ [0-9]+ms( |$)/ /' runtest_out.txt | grep -v '^DONE' >> "$summary"; fi
+            grep -q '^DONE' runtest_out.txt 2>/dev/null || echo "INCOMPLETE rc=$rc" >> "$summary"
+        fi
+        n=$((n + 1))
+    done
+    if [ "$repeat" -gt 1 ]; then echo "$repeat runs:"; cut -c1-200 "$summary" | sort | uniq -c; fi
+    rm -f "$summary"
     ;;
 
 eval)
@@ -321,6 +350,37 @@ sweep)
     fi
     tail -n 14 "$outdir/sweep.log" 2>/dev/null
     echo "sweep rc=$rc"
+    ;;
+
+interactive)
+    # The classes of scripts/interactive-classes.txt in an interactive session,
+    # with the sweep runner.  Our VM: PHARO_INTERACTIVE=1.  Cog: a start without
+    # --headless, so a real window opens on the desktop for the run.
+    name=${1:?usage: vmrun.sh interactive <vm> <image> <outdir>}; image=${2:?image}; outdir=${3:?outdir}
+    resolve_vm "$name"
+    acquire_lock "interactive $name $(basename "$outdir")"
+    mkdir -p "$outdir"; outdir=$(cd "$outdir" && pwd)
+    export SUNIT_PREFIX=$outdir/state
+    rm -f "${SUNIT_PREFIX}"_*
+    grep -v '^#' "$REPO/scripts/interactive-classes.txt" | awk 'NF { print $1 }' > "${SUNIT_PREFIX}_class_names.txt"
+    fresh_rundir "$image"
+    cd "$RUNDIR" || exit 2
+    expr="'$REPO/scripts/pharo-headless-test/run_sunit.st' asFileReference fileIn"
+    if [ "$KIND" = ours ]; then
+        ours_env
+        export PHARO_INTERACTIVE=1 PHARO_EVAL_NO_SUNIT_MARKER=1
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
+    else
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
+    fi
+    rc=$?
+    if [ -f "${SUNIT_PREFIX}_test_results.txt" ]; then
+        cp "${SUNIT_PREFIX}_test_results.txt" "$outdir/all_results.txt"
+        grep -E '^(=== [A-Z]|Total:|  (FAIL|ERROR|SKIP|TIMEOUT|XFAIL))' "$outdir/all_results.txt" | cut -c1-220
+    else
+        echo "NO-RESULTS rc=$rc (log: $outdir/run.log)"; tail -5 "$outdir/run.log"
+    fi
+    echo "interactive rc=$rc"
     ;;
 
 run)
