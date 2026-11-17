@@ -1,5 +1,62 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
+## FIXED 2026-11-17 — a process switch at the entry of `ensure:` left a context with no unwind block
+
+Symptom: `ZdcSocketStreamTest` stopped the image in 4 of 25 runs with the
+JIT and in 5 of 25 runs without the JIT.  Stock Cog: 0 of 25.  The image
+printed an unhandled error from a process in its termination:
+
+    #asContextWithSender: was sent to nil
+    Context>>unwindTo:
+    [ ] in Context>>unwindAndStop:
+
+The runners before `run_sunit.st` did not show the defect.  They ran with a
+session in which the error of a forked process did not stop the image.
+
+Cause: Pharo 14's `BlockClosure>>ensure:` copies its argument into its first
+temporary in its first statement (`handler := aBlock`), and
+`Context>>unwindBlock` reads the unwind block from that temporary.  The
+image depends on a rule of Cog: Cog makes no interrupt check when it
+activates a method with primitive 198 (`ensure:`, `ifCurtailed:`).  See
+`StackInterpreter>>canContextSwitchIfActivating:header:` in the Cog sources.
+
+Our VM had a part of that rule: `suppressContextSwitch_` held back the forced
+yield at the entry of such a method.  The timer check and the check for
+external semaphore signals ran at the same point.  A signal from the socket
+I/O thread made a higher priority process ready, and the process switch left
+an `ensure:` context whose first temporary was still nil.  When that process
+was terminated in that state, `Context>>unwindTo:` found an unwind context
+with no unwind block.
+
+A dump from a debug image showed the state: the context of `ensure:` at its
+first bytecode (pc 44), the argument in slot 1, and nil in slots 2 to 4.
+
+Fix: the entry of a method with primitive 198 is not an interrupt point
+(`Interpreter::atInterruptPoint`, `Interpreter::isUnwindMarkerMethod`).  All
+checks that can switch process wait for the next interrupt point.
+
+Test: `scripts/vmrun.sh test --repeat 40 ours ZdcSocketStreamTest` gives 40
+complete runs of 40.
+
+Not checked: a block that runs through `valueNoContextSwitch` (primitives 221
+and 222) still has an interrupt point at its entry on our VM.  Cog has none
+there.  No test shows a failure from that difference.
+
+## FIXED 2026-11-17 — four defects found by the repair of the skipped tests
+
+- `primitiveResolverLocalAddress` answered 127.0.0.1 on every machine (a
+  stub).  The primitive now answers the first IPv4 address of an interface
+  that is up and is not the loopback.  Cog has its own defect in the same
+  primitive (`docs/upstream/`).
+- A named primitive that does not exist failed with no error code.  Cog
+  gives `PrimErrNotFound`.  Primitive 218 now keeps the error code of the
+  inner primitive.
+- `primitiveFFIIntegerAtPut` wrote into a read-only `ByteArray`.  The typed
+  store primitives 615 to 629 fail on a read-only object, and the fallback of
+  the image came to this primitive.
+- `PHARO_INTERACTIVE=1` had no effect on an eval run, so `test_load_image`
+  could not give a test an interactive session.
+
 ## FIXED 2026-11-13 — a primitive met a forwarder that a pin had left in an object slot
 
 Pinning a young object (primitive 184, and each FFI call that takes the

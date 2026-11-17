@@ -2311,6 +2311,7 @@ public:
     bool mcfCacheableOop(Oop m) const;
 #endif  // PHARO_JIT_ENABLED — interpreter members below run regardless
     bool atInterruptPoint() const;
+    bool isUnwindMarkerMethod(Oop method) const;   // primitive 198: ensure:, ifCurtailed:
     bool ensureFrameAtEntry() const;
 #if PHARO_JIT_ENABLED  // re-open: JIT-only members below
     // Set by returnValue when a return resumed a sender context; mcfRun then

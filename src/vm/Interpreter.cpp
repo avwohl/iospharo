@@ -955,8 +955,10 @@ bool Interpreter::atInterruptPoint() const {
         Oop hdr0 = mo0->slotAt(0);
         if (!hdr0.isSmallInteger()) return true;
         const uint8_t* start0 = mo0->bytes() + (1 + (hdr0.asSmallInteger() & 0x7FFF)) * 8;
-        if (instructionPointer_ == start0) return true;
-        return *start0 == S::CallPrimitive && instructionPointer_ == start0 + 3;
+        const bool atEntry0 = instructionPointer_ == start0
+            || (*start0 == S::CallPrimitive && instructionPointer_ == start0 + 3);
+        if (!atEntry0) return false;
+        return !isUnwindMarkerMethod(method_);
     }
     if (op >= S::Send0Base && op <= S::Send2Last) return true;
     if (op == S::ExtSend || op == S::ExtSuperSend) return true;
@@ -989,8 +991,27 @@ bool Interpreter::atInterruptPoint() const {
     Oop hdr = mo->slotAt(0);
     if (!hdr.isSmallInteger()) return true;
     const uint8_t* start = mo->bytes() + (1 + (hdr.asSmallInteger() & 0x7FFF)) * 8;
-    if (ip == start) return true;
-    return *start == S::CallPrimitive && ip == start + 3;
+    const bool atEntry = ip == start || (*start == S::CallPrimitive && ip == start + 3);
+    if (!atEntry) return false;
+    return !isUnwindMarkerMethod(method_);
+}
+
+// The entry of an ensure: or ifCurtailed: method (primitive 198) is not an
+// interrupt point.  Cog makes no interrupt check when it activates such a
+// method (StackInterpreter>>canContextSwitchIfActivating:header:), and the
+// image depends on that.  Pharo 14's ensure: copies its argument into its
+// first temporary in its first statement, and Process>>terminate reads the
+// unwind block from that temporary (Context>>unwindBlock).  suppress-
+// ContextSwitch_ held back only the forced yield.  A timer or an external
+// semaphore signal at the same check made a higher priority process ready,
+// and the switch left an ensure: context with no unwind block.  A terminate
+// of that process then sent asContextWithSender: to nil
+// (ZdcSocketStreamTest: 4 of 25 runs stopped the image, with the JIT and
+// without it; stock Cog 0 of 25).
+bool Interpreter::isUnwindMarkerMethod(Oop method) const {
+    if (!method.isObject() || method.rawBits() < 0x10000) return false;
+    if (method.asObjectPtr()->classIndex() != compiledMethodClassIndex_) return false;
+    return primitiveIndexOf(method) == 198;
 }
 
 // ===== CONSTRUCTION =====
