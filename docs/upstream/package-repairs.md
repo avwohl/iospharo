@@ -1184,3 +1184,27 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - For the owners: the baseline of `pharo-rdbms/Pharo-SQLite3` must name
   Pharo 14.
 
+## P3 (`svenvc/P3`, row 113)
+
+- State: 96 tests, 23 pass, 70 errors (`NameLookupFailure: cannot resolve
+  'postgres'`), 3 timeouts on the two VMs.
+- Cause: 73 tests need a PostgreSQL server.  `P3ClientTest class>>url`
+  answers `psql://postgres:postgres@postgres:5432/postgres`.  The host
+  `postgres` is the name of the service container of the CI of the
+  repository, so the tests stop at the name lookup on this machine.  No
+  environment variable changes the URL.
+- No stand-in: the tests send real SQL and check what the server does
+  (tables and types, the catalogs, notices, a statement timeout, time
+  zones).  A stand-in with replies that we write would only check the
+  decoder of P3 against our own text.
+- The 3 timeouts: `P3Client>>withConnection:` tries a network error again
+  10 times and waits 5 s each time.  A name lookup failure is a network
+  error, so a test of the connection pool waits for 50 s.
+- One package defect, repaired in `fixes/svenvc-p3.st`:
+  `P3Client>>retryDelay:` did not store its argument.
+- Open, for the owner: the row needs a PostgreSQL server (version 9.4 or
+  later) on `127.0.0.1:5432` with the database `postgres`, the user
+  `postgres` and the password `postgres`, and the tests need the host
+  `127.0.0.1` in their URL.  We install nothing without the word of the
+  owner.  The row is not clean.
+

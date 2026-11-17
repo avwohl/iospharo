@@ -259,6 +259,7 @@ state of each row.
 | 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
 | 84 | Soil | 1119 of 1139 pass, 2 failures, 18 skips | second round: two lint failures and 4 skips of lint and coverage tests; 14 skips cannot apply (8 Windows lock tests, 6 cases with no meaning) |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
+| 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
 
 The package run found these defects outside the packages:
 
