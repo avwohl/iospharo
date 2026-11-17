@@ -782,3 +782,38 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Repair here: `fixes/pakarati-pharo-gsoc2025.st` corrects the assertion.
 - Result: 1456 of 1456 pass on the two VMs.
 
+## Carrefour (`moosetechnology/Carrefour`, row 85)
+
+- State before: `LOAD-FAIL` (`Class not found: #FAMIX2JavaVisitor`).
+- Cause of the load failure: no baseline of the chain loads the Famix Java
+  metamodel.  FAST-Java loads the Famix groups `Core` and `Basic` only, and
+  the baseline of Famix2Java has no dependencies.  The binder also needs
+  TinyLogger.
+- Repair of the load: the manifest row loads Famix with the group
+  `ModelJava`, then TinyLogger, then Carrefour.
+- State after the load: 77 tests, 63 pass, 9 failures, 5 errors on the two
+  VMs.  The package and its tests are for the Famix Java metamodel of 2023.
+  Causes, each found with a probe:
+  - A defect of Famix (development branch):
+    `FamixJavaMethod>>isConstructor` answers `false` for each method.  The
+    binder keeps an invocation of a `new` expression only when the candidate
+    is a constructor, so no constructor call was bound (9 tests).  The
+    repair answers true when the kind of the method is `#constructor`, as
+    `FamixTHasKind>>isConstructor` does.
+  - The JSON model of the tests (`CRFTest>>famixModelString`) has the
+    properties of 2023.  Famix removed `children`, `declaredType` as a
+    property, the element `ParameterType` and others.  The repair migrates
+    the model: typing elements for 84 declared types, `TypeParameter`,
+    `typeParameters`, `referredEntity`, and `candidates` of an access.
+  - Carrefour, FAMIX2Java and FAST (branch `v2`) call selectors that Famix
+    renamed (`atScope:`, `allAtScope:`, `children`, `childrenSelectors`,
+    `parentSelectors` and others).  The repair uses the new names.
+  - 2 tests call the setter `declaredType:` that Famix removed.  They make a
+    typing element now.  3 tests look for an entity by a name with `::`
+    between the package and the class.  Famix writes a period there now.
+- Repair here: `fixes/moosetechnology-carrefour.st`.
+- Result: 77 of 77 pass on the two VMs, in a run from a new load.
+- For the owners of the packages: the defect of
+  `FamixJavaMethod>>isConstructor` is in Famix.  Carrefour needs a release
+  for the present Famix.
+
