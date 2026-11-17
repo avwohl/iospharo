@@ -1,0 +1,26 @@
+diff --git a/src/BaselineOfFirstToFix/BaselineOfFirstToFix.class.st b/src/BaselineOfFirstToFix/BaselineOfFirstToFix.class.st
+index e47f9d4..307902a 100644
+--- a/src/BaselineOfFirstToFix/BaselineOfFirstToFix.class.st
++++ b/src/BaselineOfFirstToFix/BaselineOfFirstToFix.class.st
+@@ -19,17 +19,17 @@ BaselineOfFirstToFix >> baseline: spec [
+ 				package: 'DrTests-FirstToFix' with: [ spec requires: #('RottenTestsDebugger') ];
+ 				package: 'DrTests-FirstToFix-Tests' with: [ spec requires: #('DrTests-FirstToFix') ];
+ 				
+-				package: 'TestSmellsDetector';
++				package: 'TestSmellsDetector' with: [ spec requires: #('RottenTestsDebugger') ];
+ 				package: 'TestSmellsDetector-FakeTests';
+ 				package: 'TestSmellsDetector-Tests' with: [ spec requires: #('TestSmellsDetector' 'TestSmellsDetector-FakeTests') ];
+ 				package: 'DrTests-TestSmellsDetector' with: [ spec requires: #('TestSmellsDetector') ];
+-				package: 'DrTests-TestSmellsDetector-Tests' with: [ spec requires: #('DrTests-TestSmellsDetector' 'TestSmellsDetector-FakeTests') ] ].
++				package: 'DrTests-TestSmellsDetector-Tests' with: [ spec requires: #('DrTests-TestSmellsDetector' 'TestSmellsDetector-FakeTests') ].
+ 
+ 			"Groups"
+ 			spec
+ 				group: 'Core' with: #('RottenTestsDebugger' 'TestSmellsDetector');
+-				group: 'Tests' with: #('FirstToFix-Tests' 'TestSmellsDetector-Tests');
++				group: 'Tests' with: #('RottenTestsDebugger-Tests' 'TestSmellsDetector-Tests');
+ 				group: 'Plugins' with: #('DrTests-FirstToFix' 'DrTests-TestSmellsDetector' 'DrTests-FirstToFix-Tests' 'TestSmellsDetector-Tests');
+ 				group: 'default' with: #('Core' 'Plugins' 'Tests');
+-				group: 'All' with: #('Core' 'Tests' 'Plugins')
++				group: 'All' with: #('Core' 'Tests' 'Plugins') ]
+ ]

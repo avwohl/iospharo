@@ -710,3 +710,24 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Repair here: the manifest row loads `Math-Benchmarks-KDTree` too.
 - Result: 777 of 777 pass on the two VMs.
 
+## MCP (`Evref-BL/MCP`, row 82)
+
+- State before: 1167 tests.  Stock Cog: 947 pass, 188 failures, 31 errors, 1
+  skip.  Our VM: 946 pass, 189 failures.
+- Cause of 218 tests: the manifest row loaded the groups `Core` and `Tests`.
+  The helper selectors that the tests need (`mcp...`) are in the package
+  `MCP-IDE-Compatibility-From12`, and the baseline has that package only in
+  the group `IDE`.
+- Repair here: the manifest row loads `Core`, `IDE` and `Tests`.
+- Result: stock Cog 1166 pass and 1 skip.  Our VM 1165 pass, 1 failure and
+  1 skip.
+- The failure on our VM only:
+  `MCPToolContractsTest>>testEvaluateStopsAnEndlessRecursionWithinASecondOrTwo`.
+  The evaluator of the package stops an endless recursion at a depth of
+  1000000 frames.  Our VM gives its own error at 56000 frames first.  This
+  is a defect of our VM (`docs/vm-compat-bugs.md`, the first entry), and the
+  repair is in work.
+- The skip: the test needs the World to step the Transcript.  Pharo 14 does
+  not do that any more (`WorldState>>runStepMethodsIn:` does not send
+  `stepGlobal`), so the test cannot apply on this image.
+

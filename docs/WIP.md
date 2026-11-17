@@ -250,15 +250,16 @@ State on 2026-11-17 at 14:10, rows 1 to 93 (the record of each repair is
 | 73 | Famix | 1474 of 1477 pass | second round: `FamixStClass` has no LCOM metrics; a cohesion value |
 | 74 | ReStore | our VM 2358 of 2358, stock Cog 2357 | second round: one test fails on Cog in some runs |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
-| 81, 87 | Stargate, Superluminal | no load | a patched Teapot as a locked dependency; runs in work |
-| 82 | MCP | 947 of 1167 pass | the manifest row did not load the group `IDE`; run in work.  1 test fails on our VM only (the limit of 56000 frames) |
-| 83 | Kendrick | the load passes with a patch of the baseline | the fixes file had a call with the wrong count of arguments; run in work |
-| 84 | Soil | 1109 of 1139 pass, 30 skips | repair written (3 package defects, stale tests); 16 skips cannot apply (Windows locks, cases with no meaning); run in work |
-| 85 | Carrefour | no load | the load needs the Famix Java model and TinyLogger; run in work |
-| 88 | mongotalk | 23 of 88 pass | the tests need a MongoDB server; an agent writes a stand-in |
-| 89 | Teapot | 78 of 79 pass | 1 skip (HTTPS); an agent works on it |
-| 90 | pharo-test-analysis | no load | a name that the baseline does not have; an agent works on it |
-| 91 | Turbo | 265 of 270 pass | 5 expected failures of a layout; an agent works on it |
+| 81 | Stargate | 519 of 520 pass | second round: a test compares a URL text, and the order of the query fields differs |
+| 87 | Superluminal | 150 of 203 pass | an agent writes a stand-in for the HTTP test service on port 80 |
+| 82 | MCP | stock Cog 1166 of 1167, our VM 1165 | 1 test fails on our VM only (the limit of 56000 frames; the VM repair is in work on the branch `deep-recursion`).  The 1 skip cannot apply on Pharo 14 |
+| 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
+| 84 | Soil | 1119 of 1139 pass, 2 failures, 18 skips | second round: two lint failures and 4 skips of lint and coverage tests; 14 skips cannot apply (8 Windows lock tests, 6 cases with no meaning) |
+| 85 | Carrefour | 63 of 77 pass | the row loads now (the Famix Java model and TinyLogger first); second round: the binder and the tests are for the Famix Java model of 2023 |
+| 88 | mongotalk | 23 of 88 pass | the tests need a MongoDB server; a stand-in in the image is written (wire protocol `OP_MSG`, 18 commands); run in work |
+| 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
+| 90 | pharo-test-analysis | no load | patch of the baseline (a package name that does not exist) and a fixtures file; run in work |
+| 91 | Turbo | 265 of 270 pass | the 5 expected pictures were drawn for a half cell that is cut off, and the canvas rounds a half up; new pictures; run in work |
 
 The package run found these defects outside the packages:
 

@@ -1,0 +1,4 @@
+# TSDFakeTests: data for the TSD*Test classes (TSDDetectorTest>>fixtureClass, TSDInstanceVariablesFinderTest>>fixtureClass, TSDClassReferencesVisitorTest>>fixtureClass). setUp calls "self skip" on purpose; the real tests read its methods and never run them.
+TSDFakeTests
+# TSDSubFakeTests: subclass of TSDFakeTests, same use (TSDSubclassUselessTest>>fixtureClass, TSDAssignmentsFinderTest>>fixtureClass). Its setUp calls super setUp, so it skips too.
+TSDSubFakeTests
