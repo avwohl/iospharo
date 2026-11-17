@@ -1,0 +1,26 @@
+diff --git a/src/BaselineOfBlenny/BaselineOfBlenny.class.st b/src/BaselineOfBlenny/BaselineOfBlenny.class.st
+index b732781..0f26b9d 100644
+--- a/src/BaselineOfBlenny/BaselineOfBlenny.class.st
++++ b/src/BaselineOfBlenny/BaselineOfBlenny.class.st
+@@ -19,7 +19,10 @@ BaselineOfBlenny >> baseline: spec [
+ 					loads: #('Core' 'WebSocket')
+ 				];
+             baseline: 'JSONWebToken'
+-            with: [ spec repository: 'github://ba-st-dependencies/JSONWebToken:v3' ];
++            with: [
++					spec repository: 'github://ba-st-dependencies/JSONWebToken:v3';
++					loads: #('Core')
++				];
+             baseline: 'Conduit'
+             with: [ spec repository: 'github://NathanFrund/Conduit:main/src' ];
+             baseline: 'P3' 
+@@ -70,7 +73,7 @@ BaselineOfBlenny >> baseline: spec [
+                    'Blenny-Modules' );
+             group: 'Core'
+             with: #( 'Blenny-Traits' 'Blenny-Core' 'Blenny-Config' 'Blenny-Persistence' );
+-            group: 'PostgreSQL' with: #( 'Blenny-Persistence' ) ];
++            group: 'PostgreSQL' with: #( 'Blenny-Persistence' );
+ 				group: 'Tests' with: #( 'Blenny-Tests' );
+-				group: 'Datastar' with: #( 'Blenny-Datastar' ).
++				group: 'Datastar' with: #( 'Blenny-Datastar' ) ].
+ ]
