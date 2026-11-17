@@ -1,0 +1,2 @@
+# IrisExampleTest: data for IrisMCPRunTestsToolTest (testRunsTestClass, testRunsPackage, testRunsSingleErrorTest, testRunsSingleFailingTest, testRunsSinglePassingTest). Its testError, testFailWithDescription and testFailWithoutDescription fail on purpose; IrisMCPRunTestsToolTest runs them through IrisMCPRunTestsTool and compares the text with "1 passed, 2 failed, 1 errored". Its testPass is a trivial assert: true.
+IrisExampleTest

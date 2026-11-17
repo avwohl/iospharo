@@ -759,3 +759,26 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   JavaScript, no aggregation, no transactions and no check of access rights.
 - Result: 88 of 88 pass on the two VMs.
 
+## Iris (`koendehondt/iris-for-pharo`, row 96)
+
+- State before: 131 tests, 128 pass, 2 failures, 1 error on the two VMs.
+- Cause: the 3 tests are in `IrisExampleTest`, a class with one test that
+  passes, two that fail and one that signals an error.  The class is data:
+  `IrisMCPRunTestsToolTest` runs it and asserts the text of the report
+  ("1 passed, 2 failed, 1 errored" and the three messages).  The package run
+  listed the class as a test class.
+- Repair here: `fixtures/koendehondt-iris-for-pharo.txt` names the class as
+  a fixture.  Its 4 tests leave the list.
+- Result: 127 of 127 pass on the two VMs.
+
+## pharo-gsoc2025 (`Pakarati/pharo-gsoc2025`, row 97)
+
+- State before: 1456 tests, 1455 pass, 1 failure on the two VMs
+  (`DTTestCoverageTest>>testDTTestCoverageResultHas2Nodes`, "Got 2 instead
+  of 3").
+- Cause: `DTTestCoverageResult>>buildTreeForUI` of the package makes 2
+  nodes, and the name of the test says 2.  The assertion says 3.  The first
+  commit of the repository has the same code and the same assertion.
+- Repair here: `fixes/pakarati-pharo-gsoc2025.st` corrects the assertion.
+- Result: 1456 of 1456 pass on the two VMs.
+

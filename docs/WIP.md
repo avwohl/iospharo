@@ -237,10 +237,10 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 101 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).
 
-- 78 rows are clean: each test passes on stock Cog and on our VM.
+- 80 rows are clean: each test passes on stock Cog and on our VM.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 19 rows are not clean yet.  Each has a repair in work:
+- 17 rows are not clean yet.  Each has a repair in work:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -260,9 +260,7 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 90 | pharo-test-analysis | 67 of 71 pass | the row loads now (a patch of the baseline); second round: 4 errors (`RTDHelperVisitor` does not understand `#messages`) |
 | 91 | Turbo | 265 of 270 pass | the 5 expected failures are plain failures now: the new pictures of the first round are not what the code draws; second round with probes |
-| 96 | Iris | 128 of 131 pass | 3 tests that fail on purpose (probably fixtures of another test); an agent checks |
-| 97 | pharo-gsoc2025 | 1455 of 1456 pass | 1 failure: a count of nodes of a DrTests coverage result; an agent works on it |
-| 100 | Sagan | 37 of 133 pass, 61 errors, 35 timeouts | the tests need a PostgreSQL server on port 5432; an agent checks whether the tests can use SQLite |
+| 100 | Sagan | stock Cog 48 of 133, our VM 45 | the tests use SQLite now (the machine has no PostgreSQL); second round: "database is locked" in the pooled tests, and 3 tests that differ between the VMs |
 
 The package run found these defects outside the packages:
 
