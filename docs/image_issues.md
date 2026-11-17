@@ -1,6 +1,6 @@
-# Pharo 13 image issues we patch
+# Pharo 13 and Pharo 14 image issues we patch
 
-This is the consolidated list of bugs in the standard Pharo 13 image
+This is the consolidated list of bugs in the standard Pharo 13 and Pharo 14 images
 (`/tmp/harness/Pharo.image`, fetched via `https://get.pharo.org/64/130`)
 that we need to patch locally for our VM to work the same way as
 stock Cog.  See also `docs/vm-compat-bugs.md` for open VM-side defects, and
@@ -21,7 +21,42 @@ hash values.  Our identity hashes come from a fixed-seed generator, so
 the order changes only when process timing changes which objects get a
 hash first.  The defect is in the image's removal order, not in the VM.
 
-## TaskIt worker pool kills a busy worker (2026-11-12, not patched)
+## TaskIt worker pool kills a busy worker (2026-11-12, repaired 2026-11-17)
+
+Repair of 2026-11-17: `scripts/image-fixes/25-taskit-worker-pool-race.st`.
+The pool now stops a worker only when the process of the worker waits on the
+semaphore of the task queue (`AtomicSharedQueue>>isProcessWaiting:`,
+`isWaitingForTask`).  A process in that state holds no task, and no task can
+come into the queue while the pool holds its mutex.
+
+A first repair tested two facts, "the worker is free" and "the process of
+the worker waits".  That repair left 4 failures in 3000 runs.  The event log
+of `scripts/cogdiff/taskit_pool_diag.st` showed the cause: between the two
+reads a worker took a task, started the task and then waited for the mutex
+of the pool.  The repair now reads one fact at one moment.
+
+Failures of the test in a loop, with a process at priority 60 that wakes
+each millisecond (`scripts/cogdiff/taskit_pool_stress.st`):
+
+    our VM, before the repair      83 in 600 runs
+    stock Cog, before the repair    2 in 600 runs
+    our VM, first repair            4 in 3000 runs
+    our VM, repair                  0 in 3000 runs
+
+The same defect made `TKTFutureTest` fail one time in the sweep of
+2026-11-17 ("Got nil instead of 5"): the pool of the test profile stopped
+the worker that held a callback.
+
+A second cause of that failure text is in four tests, not in TaskIt.
+`testFutureFirstCompleteOfSuccessIfFirstSuccessFaster` and three tests like
+it give the two futures their results one after the other, and expect the
+result of the first.  The two callbacks are tasks of a pool with 4 workers,
+so the callbacks have no fixed order.  The entries of
+`26-taskit-first-complete-tests.st` make each test wait for the result of
+the combined future before the second future gets its result.  Our VM: 7
+failures in 900 runs before, 0 in 1500 after.
+
+The text below is the analysis of 2026-11-12.
 
 `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
 failed with `TKTTimeoutException` in the Pharo 13 and the Pharo 14 sweeps
@@ -363,6 +398,63 @@ missing:
     (#(TAddForUniquenessTest ... TSetArithmetic)
         reject: [:n | Smalltalk globals includesKey: n ])
     -> #(#TAsStringCommaAndDelimiterTest)
+
+## Image and test repairs of 2026-11-17 (Pharo 14)
+
+The Pharo 14 image (build 791) had 220 tests that did not pass on our VM and on stock Cog.  The repairs are in the entries files in `scripts/image-fixes/`.  The generator `scripts/gen-image-fixes.py` joins the entries files with the helper blocks of `00-header.st` and writes `scripts/pharo-image-fixes.st`.  Each entry has a guard that reads the current method source, so the entry applies only when the defect is present.  A pristine Pharo 14 build 791 image gives 137 FIXED, 29 ADDED and 6 SKIP lines.  Our VM and stock Cog give the same counts.
+
+The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-image-repairs-2026-11-17.md`.  The table gives one row for each entries file.  The `10-` file is in the section above.  The `20-NA-platform-windows.st` file repairs 3 tests, and the record shows that the other 16 tests of that group cannot apply on macOS arm64.
+
+| Entries file | Repairs | Defect | Where | Record |
+|---|---|---|---|---|
+| `10-pharo13-test-defects.st` | seven tests of the section above | see the section above | test and image code | none |
+| `20-BlockClosureTest.st` | `BlockClosureTest` (2 tests) | Unconditional `self skip` | test | [link](upstream/pharo-image-repairs-2026-11-17.md#blockclosuretest) |
+| `20-CavWindowStrategyTest.st` | `CavWindowStrategyTest` | Stale skip and flag | test | [link](upstream/pharo-image-repairs-2026-11-17.md#cavwindowstrategytest) |
+| `20-ClapHelloTest.st` | `ClapHelloTest`, `ClapCommandLineExamples` | `hasFlag:` loses the order, so the latest flag does not win | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#claphellotest) |
+| `20-Cly-async-results.st` | `ClyAsyncQueryResultTest` and the semi-async subclass | Expected failure calls a super test that contradicts the async contract | test | [link](upstream/pharo-image-repairs-2026-11-17.md#cly-async-results) |
+| `20-Cly-misc-queries.st` | five `Cly*QueryTest` tests | Expected-failure overrides in place of the real check | test | [link](upstream/pharo-image-repairs-2026-11-17.md#cly-misc-queries) |
+| `20-Cly-wrapper-queries.st` | `ClyWrapQueryTest` (7 selectors, 14 tests) | Composite tests that a wrapper query refuses by design | test | [link](upstream/pharo-image-repairs-2026-11-17.md#cly-wrapper-queries) |
+| `20-Debugger-kernel-skips.st` | `DebugInfoTest` (3 tests), `CodeSimulationTest` | Stop points too wide; the skip of `testErrorCodeNotFound` hides a VM difference (not accepted in review) | image code and test | [link](upstream/pharo-image-repairs-2026-11-17.md#debugger-kernel-skips) |
+| `20-FloatTest.st` | `FloatTest>>testNaNCompare` | Unconditional `self skip` | test | [link](upstream/pharo-image-repairs-2026-11-17.md#floattest) |
+| `20-Fuel-cleanblock.st` | nine `FL*` tests | Obsolete clean-block skip guard; one wrong premise | test | [link](upstream/pharo-image-repairs-2026-11-17.md#fuel-cleanblock) |
+| `20-Fuel-widestring-globals.st` | `FLGlobalCluster`, `FL*BasicSerializationTest` (15 tests) | Global names written one byte for each character | image code and test | [link](upstream/pharo-image-repairs-2026-11-17.md#fuel-widestring-globals) |
+| `20-Geometry-intersections.st` | `GEllipse`, `GArcTest`, `GEllipseTest` | `intersectionsWithEllipse:` is a stub | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#geometry-intersections) |
+| `20-MicMetaDataBlockTest.st` | `MicMetaDataBlockTest` | Skipped test with an obsolete expectation | test | [link](upstream/pharo-image-repairs-2026-11-17.md#micmetadatablocktest) |
+| `20-NA-platform-windows.st` | `Win32EnvironmentTest` (3 tests) | Skip on a platform-independent contract | test | [link](upstream/pharo-image-repairs-2026-11-17.md#na-platform-windows) |
+| `20-NavigationInteractionTest.st` | `NavigationInteractionTest` | Unbuilt browser in the test; the spawned tool does not match | test and image code | [link](upstream/pharo-image-repairs-2026-11-17.md#navigationinteractiontest) |
+| `20-network-tests.st` | `NetNameResolverTest`, `ZnHTTPSTest`, `ZnClientTest` | `localHostAddress` answers 0.0.0.0; skipped or stale network tests | image code and test | [link](upstream/pharo-image-repairs-2026-11-17.md#network-tests) |
+| `20-OCArrayLiteralTest.st` | `OCArrayLiteralTest` (pharo issue 19058) | A nested brace array needs more stack slots than a frame has | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#ocarrayliteraltest) |
+| `20-OCParserTest.st` | `OCParserTest` (2 tests) | Skip and expected failure without an assertion | test | [link](upstream/pharo-image-repairs-2026-11-17.md#ocparsertest) |
+| `20-OCProgramNodeTest.st` | `OCProgramNodeTest`, `OCAssignmentNode` | `bestNodeFor:` answers the value in place of the assignment | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#ocprogramnodetest) |
+| `20-OCRengineTest.st` | `OCRengineTest` | Leftover `self skip` | test | [link](upstream/pharo-image-repairs-2026-11-17.md#ocrenginetest) |
+| `20-platform-unix-resolver.st` | `UnixResolverTest` (3 tests) | Guard skips on macOS, and the code is plain POSIX | test | [link](upstream/pharo-image-repairs-2026-11-17.md#platform-unix-resolver) |
+| `20-presenter-examples.st` | eight presenter test classes | Presenter classes have no class-side `example` | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#presenter-examples) |
+| `20-ReflectivityOnStackTest.st` | `ReflectivityOnStackTest`, `ReflectiveMethod` | Saved bytecode cache has the old layout (pharo issue 20072) | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#reflectivityonstacktest) |
+| `20-ReleaseTest.st` | `ReleaseTest>>testRatioOfCommentedClasses` | Absolute count of uncommented classes grows with the loaded projects | test | [link](upstream/pharo-image-repairs-2026-11-17.md#releasetest) |
+| `20-RGMCClassTest.st` | `RGMCClassTest`, Ring and Monticello code | Trait slots compared; `#` kept in a slot name | test and image code | [link](upstream/pharo-image-repairs-2026-11-17.md#rgmcclasstest) |
+| `20-Ring2ChunkImporterTest.st` | `Ring2ChunkImporterTest` (2 tests) | The chunk parser loses `classTrait` | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#ring2chunkimportertest) |
+| `20-Rubric-anchors.st` | `RubEditingAreaTest` (3 tests) | Leftover `self skip` ("fails in CI") | test | [link](upstream/pharo-image-repairs-2026-11-17.md#rubric-anchors) |
+| `20-RunnerLongDurationTest.st` | `RunnerLongDurationTest` (2 tests) | Unconditional `self skip` | test | [link](upstream/pharo-image-repairs-2026-11-17.md#runnerlongdurationtest) |
+| `20-SettingsStonReaderTest.st` | `SettingsStonReaderTest`, `SettingsStonReader` | `load` does not handle a missing instance variable | image code and test | [link](upstream/pharo-image-repairs-2026-11-17.md#settingsstonreadertest) |
+| `20-SlotErrorsTest.st` | `SlotErrorsTest>>testCannotBeRecompiled` | Expectation of the old class builder | test | [link](upstream/pharo-image-repairs-2026-11-17.md#sloterrorstest) |
+| `20-SpCodePresenterTest.st` | `SpCodePresenterTest` (3 tests) | Skips with three different causes, including a modal dialogue | test and image code | [link](upstream/pharo-image-repairs-2026-11-17.md#spcodepresentertest) |
+| `20-SpEasy-skips.st` | ten Spec2 Easy presenter tests | Easy presenters lack API that the shared tests call | image code and test | [link](upstream/pharo-image-repairs-2026-11-17.md#speasy-skips) |
+| `20-SpMorphPresenterTest.st` | `SpMorphPresenterTest`, `SpMorphicMorphAdapter` | The adapter ignores the presenter help | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#spmorphpresentertest) |
+| `20-SpRadioButtonInteractionTest.st` | `SpRadioButtonInteractionTest` (2 tests) | Inherited test needs an adapter that a composable presenter lacks | test | [link](upstream/pharo-image-repairs-2026-11-17.md#spradiobuttoninteractiontest) |
+| `20-SpTree-selection-skips.st` | six tree presenter tests | Stub tests with a stale reason | test | [link](upstream/pharo-image-repairs-2026-11-17.md#sptree-selection-skips) |
+| `20-St-evaluate-declare-global.st` | two `St*` presenter tests | Tests rely on a warning that the UI path does not raise | test and image code | [link](upstream/pharo-image-repairs-2026-11-17.md#st-evaluate-declare-global) |
+| `20-StDebugger-skips.st` | nine `StDebugger*` tests | Obsolete expectations, empty placeholders, a test that runs the test again | test and image code | [link](upstream/pharo-image-repairs-2026-11-17.md#stdebugger-skips) |
+| `20-StObjectTranscriptPresenterTest.st` | `StObjectTranscriptPresenterTest` | Remembered window extent from another test | test | [link](upstream/pharo-image-repairs-2026-11-17.md#stobjecttranscriptpresentertest) |
+| `20-StSettingsBrowserTest.st` | `StSettingsBrowserTest` | Stale body calls removed API | test | [link](upstream/pharo-image-repairs-2026-11-17.md#stsettingsbrowsertest) |
+| `20-TFFI-disabled-tests.st` | `FFICallbackParametersTest`, `TFCallbacksTest`, `TFUFFIFunctionCallTest` | Disabled with an obsolete reason | test | [link](upstream/pharo-image-repairs-2026-11-17.md#tffi-disabled-tests) |
+| `20-WeakAnnouncerTest.st` | `WeakAnnouncerTest>>testNoWeakBlock`, `AnnouncementSubscription` | `makeWeak` raises for a block action | image code | [link](upstream/pharo-image-repairs-2026-11-17.md#weakannouncertest) |
+| `20-WriteBarrierTest.st` | `WriteBarrierTest` (2 tests), `TFFIBackend` | Test compares a byte with a Float; the fallback does not signal `ModificationForbidden` | test and image code | [link](upstream/pharo-image-repairs-2026-11-17.md#writebarriertest) |
+| `21-write-barrier-integer-stores.st` | `ByteArray>>integerAt:put:size:signed:`, `WriteBarrierTest` | A store into a read-only `ByteArray` ends in `PrimitiveFailed` | image code and test | none |
+| `22-interactive-session-tests.st` | 28 tests that skip in a headless run | Deprecated `isHeadless` guard always true; `MorphicNativeWindow` lacks `isClosed` | test and image code | none |
+| `23-defects-the-standard-runner-shows.st` | `OutOfMemoryTest`, `Collections-Unordered` manifest | Low Space Watcher ended by another test; stale manual dependency | test and image code | none |
+| `24-stale-executable-comment.st` | `Context class>>tallyInstructions:` | Comment holds an exact bytecode count that went out of date | image code | none |
+| `25-taskit-worker-pool-race.st` | `TKTCommonQueueWorkerPool`, `TKTCommonQueueWorkerPoolTest`, `TKTFutureTest` | The pool stops a worker that holds a task | image code | section "TaskIt worker pool" above |
+| `26-taskit-first-complete-tests.st` | `TKTFutureTest` (4 tests of `firstCompleteOf:`) | Test depends on the order of two callbacks in a worker pool | test | section "TaskIt worker pool" above |
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 

@@ -39,8 +39,10 @@ fix value: #SpTextPresenterTest value: #testPropagateNaturalHeightWithMultipleLi
 		copyReplaceAll: 'Smalltalk isHeadless ifTrue: [ ^ self skip ].'
 		with: 'Smalltalk isInteractive ifFalse: [ ^ self skip ].').
 
+"The new text holds the old text, so the guard also asks that the fix is not there."
 fix value: #TaskbarMorph value: #updateTasks
-	value: [ :src | src includesSubstring: 'task morph hasProperty: #isClosed' ]
+	value: [ :src | (src includesSubstring: 'task morph hasProperty: #isClosed')
+		and: [ (src includesSubstring: 'task morph isMorph') not ] ]
 	value: ((TaskbarMorph >> #updateTasks) sourceCode
 		copyReplaceAll: 'task morph hasProperty: #isClosed'
 		with: '(task morph isMorph

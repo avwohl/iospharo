@@ -137,19 +137,82 @@ the real suite has 11825 tests for them.  The new runner
 (see [sunit-runner.md](sunit-runner.md)).  The new runner also changes
 nothing in the image and uses the SUnit time limits.
 
+### Sweeps with the new runner, and what they showed (2026-11-17)
+
+The new runner has 39455 tests for Pharo 14 (2160 classes).
+
+| Sweep | VM | Pass | Fail | Skip | Expected failure | Note |
+|---|---|---|---|---|---|---|
+| `sweep14-new1` | ours | 39338 | 2 | 114 | 1 | |
+| `sweepcogp14-new1` | patched Cog | 39339 | 1 | 114 | 1 | the two VMs differ in 1 test |
+| `sweep14-new2` | ours | 39340 | 0 | 114 | 1 | 1 batch stopped, see below |
+| `sweep14-new3` | ours, `f9cac33f` | 39339 | 1 | 114 | 1 | no batch stopped |
+
+Defects that these sweeps showed, each with its repair:
+
+- Our VM switched process at the entry of `ensure:` (the stopped batch of
+  `sweep14-new2`; `ZdcSocketStreamTest` stopped the image in 4 of 25 runs).
+  Fixed in `f9cac33f`.  A code audit then found one more path to the same
+  state and two smaller differences from Cog.  The three are fixed in the
+  tree and are in the next sweep.  Text: [vm-compat-bugs.md](vm-compat-bugs.md),
+  the first entry.
+- TaskIt stops a worker that holds a task (the failure of `sweep14-new3`,
+  `TKTFutureTest`, and the old open lead of `TKTCommonQueueWorkerPoolTest`).
+  This is an image defect that stock Cog has too.  The repair is
+  `scripts/image-fixes/25-taskit-worker-pool-race.st`.  Loops of the test
+  (`scripts/cogdiff/taskit_pool_stress.st`, `taskit_pool_diag.st`): 83
+  failures in 600 runs before on our VM (stock Cog: 2 in 600), 0 in 3000
+  after.
+- Four TaskIt tests of `firstCompleteOf:` depend on the order of two
+  callbacks in a worker pool (`26-taskit-first-complete-tests.st`).
+- A stale method comment and a race in a callback test (entries 24 and
+  `20-TFFI-disabled-tests.st`).
+
+### The 200-package run (started 2026-11-17)
+
+The owner allowed the download of the packages from GitHub on 2026-11-17.
+
+    scripts/vmrun.sh pkgs /tmp/pharo-work/pkgs1 <first-row> [last-row]
+
+For each row of `scripts/pkg-jit-test/packages-200.tsv`, stock Cog loads the
+package and saves the image.  Stock Cog and our VM then run the test classes
+of the package with `run_sunit.st`, each VM on its own copy of that image
+(`scripts/pkg-jit-test/run-one-package.sh`).  The results are in
+`<outdir>/summary.tsv`, and the tests that differ between the VMs are in
+`<outdir>/res/<label>.diff`.  A package can have a fixes file
+(`scripts/pkg-jit-test/fixes/<label>.st`).
+
+Rows 1 to 11:
+
+| Package | Tests | Result |
+|---|---|---|
+| XML-XMLParser | 6027 | equal on the two VMs: 5917 pass, 110 skip (file and network tests that the package turns off) |
+| Avr-Pharo | 1705 | all pass on the two VMs |
+| glorp | 262 | equal: 2 errors, the baseline does not load `Glorp-Pharo10` on Pharo 14 (fixes file written, not run yet) |
+| mutalk | 337 | our VM: 336 pass, 1 skip.  Stock Cog grew to 13 GB in `testExecutingInfiniteRecursionAnalysis` and the memory guard stopped the VM |
+| OpenSmock | 1060 | all pass on the two VMs |
+| PharoMisc | - | no test class found with the manifest prefix (the class list now uses the packages of the repository; not run again yet) |
+| earley-parser | 360 | all pass on the two VMs |
+| Pharo-Advent-Of-Code | - | no load: the baseline names a package that the repository does not have |
+| fisher-parser | 288 | all pass on the two VMs |
+| Buoy | - | no load: the package replaces `Symbol>>argumentCount` with a method that Metacello of Pharo 14 cannot use |
+| graph-algorithms | 176 | all pass on the two VMs |
+
+No test of these rows has a result on our VM that is not the result on Cog.
+
 Not done, in order:
 
-1. Run full sweeps of the two VMs with the new runner, one VM at a time, and
-   repair what the 9650 new test variants and the SUnit time limits show.
-2. Add the interactive pass to the sweep.
-3. Put the repairs into `docs/image_issues.md`.
+1. Run the sweep of our VM and of the patched Cog with the tree of this
+   moment (the audit fixes, entries 25 and 26).
+2. Run rows 12 to 200 of the package manifest, then repair each row that
+   does not pass (the package, our VM, or Cog).  Open rows: mutalk on Cog,
+   Pharo-Advent-Of-Code, Buoy, PharoMisc, the skips of XMLParser.
+3. Add the interactive pass to the sweep.
 4. Do the same work for Pharo 13 (first sweep with the old runner: 27894
    passes of 28077, 2 failures, 131 skips, 50 expected failures).
-5. Repair the tests of the 200 packages.  The package load needs a download
-   from GitHub, and the permission check refused that download once.
-6. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
+5. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
    the sweeps of this day.
-7. Fix the two open Cog defects.
+6. Fix the two open Cog defects.
 
 Not found: the "Apple prompt on every run to allow network" that the owner
 sees.  Checks that gave no prompt:

@@ -20,6 +20,12 @@
 #   vmrun.sh prep  <vm> <base.image> <out.image> <file.st> [file.st ...]
 #   vmrun.sh sweep <vm> <image> <outdir>   the image has the fake GUI and the
 #                                          image fixes, and no runner inside
+#   vmrun.sh interactive <vm> <image> <outdir>   scripts/interactive-classes.txt
+#                                          in an interactive session
+#   vmrun.sh pkgs  <outdir> <first-row> [last-row] [ours-vm] [cog-vm]
+#                                          packages of scripts/pkg-jit-test/
+#                                          packages-200.tsv: load from GitHub
+#                                          on Cog, tests on Cog and on our VM
 #   vmrun.sh run   <vm> <image> [image arguments ...]
 #   vmrun.sh build <build-tree>            cmake --build under the same lock
 #
@@ -151,15 +157,17 @@ check_no_foreign_vm() {
 }
 
 memory_guard() {                    # runs beside the VM; $1 = run tag
+    # The guard does not stop after the first kill: a sweep or a package run
+    # starts more VMs after the one that the guard stopped.
     local f rss
     while sleep 5; do
         f=$(free_pct)
         rss=$(ps -axo rss=,command= | grep -F "$1" | grep -v grep | awk '{ s += $1 } END { print int(s / 1024) }')
         if [ "${f:-100}" -lt "$KILL_FREE" ] || [ "${rss:-0}" -gt "$MAX_RSS_MB" ]; then
             say "MEMORY-GUARD: free ${f}%, VM ${rss} MB: stopping the VM"
-            echo "MEMORY-GUARD free=${f}% rss=${rss}MB" > "$LOCK/memory-guard"
+            echo "MEMORY-GUARD free=${f}% rss=${rss}MB" >> "$LOCK/memory-guard"
             pgrep -f "$1" | grep -v "^$$\$" | xargs kill 2>/dev/null
-            return
+            sleep 10
         fi
     done
 }
@@ -175,7 +183,7 @@ guarded() {
     timeout -k 10 "$limit" "$@"
     local rc=$?
     cleanup_run
-    [ -f "$LOCK/memory-guard" ] && { cat "$LOCK/memory-guard" >&2; rm -f "$LOCK/memory-guard"; rc=78; }
+    [ -f "$LOCK/memory-guard" ] && { tail -n 1 "$LOCK/memory-guard" >&2; rm -f "$LOCK/memory-guard"; rc=78; }
     return $rc
 }
 
@@ -383,6 +391,31 @@ interactive)
     echo "interactive rc=$rc"
     ;;
 
+pkgs)
+    # Rows <first>..<last> of scripts/pkg-jit-test/packages-200.tsv, one package
+    # after the other.  For each package: stock Cog loads the package from
+    # GitHub and saves the image, then stock Cog and our VM run the tests of
+    # the package with run_sunit.st (scripts/pkg-jit-test/run-one-package.sh).
+    # The memory check and the guard are new for each package.  A package that
+    # is in <outdir>/summary.tsv is not run again.
+    outdir=${1:?usage: vmrun.sh pkgs <outdir> <first-row> [last-row] [ours-vm] [cog-vm]}; first=${2:?first row}; last=${3:-$first}
+    resolve_vm "${5:-cog}"; COG=$VM
+    resolve_vm "${4:-ours}"; OURS=$VM
+    export COG OURS
+    acquire_lock "pkgs $(basename "$outdir") $first-$last"
+    mkdir -p "$outdir"; outdir=$(cd "$outdir" && pwd)
+    ours_env
+    row=$first
+    while [ "$row" -le "$last" ]; do
+        guarded "$outdir/" "${VMRUN_TIMEOUT:-5400}" "$REPO/scripts/pkg-jit-test/run-one-package.sh" "$outdir" "$row" >> "$outdir/driver.log" 2>&1 < /dev/null
+        rc=$?
+        [ "$rc" -eq 3 ] && { echo "row $row: no such row"; break; }
+        if [ "$rc" -ne 0 ]; then echo "row $row: rc=$rc (log: $outdir/driver.log)"; fi
+        tail -n 1 "$outdir/summary.tsv" 2>/dev/null | cut -c1-230
+        row=$((row + 1))
+    done
+    ;;
+
 run)
     name=${1:?usage: vmrun.sh run <vm> <image> [image arguments ...]}; image=${2:?image}; shift 2
     resolve_vm "$name"
@@ -408,7 +441,7 @@ build)
     ;;
 
 *)
-    sed -n '3,45p' "${BASH_SOURCE[0]}"
+    sed -n '3,49p' "${BASH_SOURCE[0]}"
     exit 2
     ;;
 esac

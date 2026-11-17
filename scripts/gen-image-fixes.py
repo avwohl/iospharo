@@ -10,6 +10,9 @@ requires.
 
     python3 scripts/gen-image-fixes.py            write the output file
     python3 scripts/gen-image-fixes.py --check    exit 1 if the output file is stale
+    python3 scripts/gen-image-fixes.py --one <entries.st> <out.st>
+        write one chunk: the header and the entries of one file (the fixes of
+        one package, scripts/pkg-jit-test/fixes/<label>.st)
 """
 import glob, os, sys
 
@@ -42,7 +45,21 @@ def build():
                      + chunk_text(header.rstrip() + '\n\n' + body) + '!\n')
     return ''.join(parts)
 
+def build_one(name):
+    header = open(os.path.join(src_dir, '00-header.st'), encoding='utf-8').read()
+    body = open(name, encoding='utf-8').read().rstrip() + '\n'
+    if '| fix add resolve |' in body:
+        sys.exit(os.path.basename(name) + ': an entries file must not hold the header')
+    return ('"=== ' + os.path.basename(name) + ' ==="\n'
+            + chunk_text(header.rstrip() + '\n\n' + body) + '!\n')
+
 def main():
+    args = sys.argv[1:]
+    if args[:1] == ['--one']:
+        if len(args) != 3:
+            sys.exit('usage: gen-image-fixes.py --one <entries.st> <out.st>')
+        open(args[2], 'w', encoding='utf-8').write(build_one(args[1]))
+        return 0
     text = build()
     if '--check' in sys.argv[1:]:
         current = open(out_path, encoding='utf-8').read() if os.path.exists(out_path) else ''

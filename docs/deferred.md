@@ -47,11 +47,15 @@ The history lives in `docs/history/`; nothing was deleted.
   headless `eval` run has no OOM defense. The 2026-08-11 package sweep lost
   three packages to an OOM kill for exactly this reason.
 - **Open leads from the 2026-11-12 sweeps.** None has a reproduction.
-  - `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
+  - ~~`TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
     fails about 1.5 times in 100 on our VM and 0.2 to 0.7 times in 100 on
-    Cog.  The failure is an image race
-    ([image_issues.md](image_issues.md)), but the cause of the higher rate
-    is not known.
+    Cog.~~  REPAIRED 2026-11-17 in the image
+    (`scripts/image-fixes/25-taskit-worker-pool-race.st`,
+    [image_issues.md](image_issues.md)).  The higher rate of our VM is not
+    explained by a measurement.  One explanation that agrees with the
+    numbers: the race needs a process switch in a window of some tens of
+    bytecodes, and our VM runs that window more slowly than Cog, so a timer
+    lands in the window more often.
   - `primitiveCallbackReturn` ignores its receiver and completes the top
     invocation.  Cog answers false when the receiver is not the top
     invocation.  A change was written and then removed, because no test
@@ -71,6 +75,18 @@ The history lives in `docs/history/`; nothing was deleted.
     (`#adaptToNumber:andSend:`, and `#<` sent to nil in
     `DelayBasicScheduler>>scheduleAtTimingPriority`).  Fixed builds did not
     show these.
+- **Three scheduler rules of our VM that Cog does not have** (from the code
+  audit of 2026-11-17, [vm-compat-bugs.md](vm-compat-bugs.md)).  No test
+  shows a failure from them.  Each changes the time when a process runs.
+  Each is a suspect when a test of process order fails on our VM only.
+  - The aging rule in `Interpreter::handleForceYield`: after a process above
+    priority 40 ran for 50 ms with no stop, a process of a lower priority
+    gets the processor for some time.  The rule dates from the time when the
+    VM had no JIT.  To do: measure a sweep with the rule off.
+  - `delayRecoverySemaphore_` in `checkTimerSemaphore`: a signal after 5 s
+    with no new timer.
+  - `primitiveRelinquishProcessor` runs the timer and signal checks and a
+    yield.  Only the idle process calls the primitive.
 - **Windows old-space commit policy** — see open defect #10. Reserving the
   whole space up front is deliberate; committing it unconditionally is the bug.
 
