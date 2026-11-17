@@ -111,6 +111,14 @@ VM=${1:?usage: sunit-sweep.sh <vm-binary> <prepped-image> [outdir]}
 IMAGE=${2:?usage: sunit-sweep.sh <vm-binary> <prepped-image> [outdir]}
 OUT=${3:-./sunit-sweep-out}
 
+# SUNIT_PREFIX names the state files of the runner (<prefix>_batch.txt,
+# <prefix>_test_results.txt and the others).  The default is /tmp/sunit.  Two
+# sweeps, or a sweep and a run of some classes, can run at the same time when
+# each one has its own prefix (and its own outdir).  The runner reads the same
+# variable (SUnitRunner class>>tmpPath:), so the image must be prepared with a
+# runner that has that method.
+PREFIX=${SUNIT_PREFIX:-/tmp/sunit}
+export SUNIT_PREFIX="$PREFIX"
 TOTAL=${TOTAL:-}              # class count; empty means ask the image (see below)
 STEP=${STEP:-50}
 PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-600}
@@ -181,7 +189,7 @@ fi
 # result merged into all_results.txt. The tell is a classes= count far below the
 # batch size on an rc=0 completed=yes line. Point C++ tier tests at the pristine
 # base.image instead, or wait for the sweep.
-rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
+rm -f ${PREFIX}_class_names.txt ${PREFIX}_method_names.txt
 
 # TOTAL is how many classes the runner lists.  It differs per image: 2047 on a
 # clean Pharo 13 and 2159 on a clean Pharo 14 (the runner counts the abstract
@@ -199,7 +207,7 @@ if [ -z "$TOTAL" ]; then
     TOTAL=$( cd "$OUT/count" && rm -f startup.st && timeout 300 "$VM" count.image eval \
                  "SUnitRunner testClassCount printString" 2>&1 < /dev/null \
              | grep -o "EVAL-RESULT='[0-9]*'" | tail -1 | tr -dc '0-9' )
-    rm -f /tmp/sunit_run_completed.txt
+    rm -f ${PREFIX}_run_completed.txt
     case "$TOTAL" in
         ''|*[!0-9]*|0) echo "could not read the class count from the image (SUnitRunner testClassCount); set TOTAL" >&2; exit 1 ;;
     esac
@@ -279,7 +287,7 @@ run_batch() {                       # $1 = log path
             wait "$pid" 2>/dev/null
             return 138
         fi
-        if grep -q '=== BATCH COMPLETE ===' /tmp/sunit_test_results.txt 2>/dev/null; then
+        if grep -q '=== BATCH COMPLETE ===' ${PREFIX}_test_results.txt 2>/dev/null; then
             grace=$(( grace + 1 ))
             if [ "$grace" -ge "$SHUTDOWN_GRACE" ]; then
                 # kill BOTH: killing timeout(1) orphans the VM it wraps.  The
@@ -307,7 +315,7 @@ run_batch_retrying() {              # $1 = log path
         if grep -q 'previous run completed, skipping auto-restart' "$log" 2>/dev/null && [ "$try" -lt 3 ]; then
             echo "  runner skipped (foreign marker file), run $try repeated: $log" >> "$OUT/sweep.log"
             try=$(( try + 1 ))
-            rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
+            rm -f ${PREFIX}_test_results.txt ${PREFIX}_run_completed.txt
             continue
         fi
         return $rc
@@ -329,8 +337,8 @@ while [ "$start" -le "$TOTAL" ]; do
     cp "$IMAGE"   "$OUT/run.image"
     cp "$CHANGES" "$OUT/run.changes"
     [ -f "$OUT/$(basename "$SOURCES")" ] || cp "$SOURCES" "$OUT/"
-    printf '%s %s' "$start" "$end" > /tmp/sunit_batch.txt
-    rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
+    printf '%s %s' "$start" "$end" > ${PREFIX}_batch.txt
+    rm -f ${PREFIX}_test_results.txt ${PREFIX}_run_completed.txt
 
     t0=$(date +%s)
     run_batch_retrying "$OUT/batch_${start}.log"
@@ -338,11 +346,11 @@ while [ "$start" -le "$TOTAL" ]; do
     t1=$(date +%s)
 
     got=0
-    if [ -f /tmp/sunit_test_results.txt ]; then
-        tr '\r' '\n' < /tmp/sunit_test_results.txt >> "$OUT/all_results.txt"
-        got=$(tr '\r' '\n' < /tmp/sunit_test_results.txt | grep -c '^Total:' || true)
+    if [ -f ${PREFIX}_test_results.txt ]; then
+        tr '\r' '\n' < ${PREFIX}_test_results.txt >> "$OUT/all_results.txt"
+        got=$(tr '\r' '\n' < ${PREFIX}_test_results.txt | grep -c '^Total:' || true)
     fi
-    marker=no; grep -q '=== BATCH COMPLETE ===' /tmp/sunit_test_results.txt 2>/dev/null && marker=yes
+    marker=no; grep -q '=== BATCH COMPLETE ===' ${PREFIX}_test_results.txt 2>/dev/null && marker=yes
 
     printf 'batch %5d-%-5d rc=%-3s %4ds  classes=%-4s completed=%s\n' \
         "$start" "$end" "$rc" "$((t1-t0))" "$got" "$marker" >> "$OUT/sweep.log"
@@ -388,8 +396,8 @@ if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
 
             cp "$IMAGE"   "$OUT/run.image"
             cp "$CHANGES" "$OUT/run.changes"
-            printf '%s %s' "$s2" "$e2" > /tmp/sunit_batch.txt
-            rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
+            printf '%s %s' "$s2" "$e2" > ${PREFIX}_batch.txt
+            rm -f ${PREFIX}_test_results.txt ${PREFIX}_run_completed.txt
 
             t0=$(date +%s)
             # run_batch redirects the VM's stdin from /dev/null, which this site
@@ -399,9 +407,9 @@ if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
             t1=$(date +%s)
 
             got=0
-            if [ -f /tmp/sunit_test_results.txt ]; then
-                tr '\r' '\n' < /tmp/sunit_test_results.txt >> "$OUT/retry_results.txt"
-                got=$(tr '\r' '\n' < /tmp/sunit_test_results.txt | grep -c '^Total:' || true)
+            if [ -f ${PREFIX}_test_results.txt ]; then
+                tr '\r' '\n' < ${PREFIX}_test_results.txt >> "$OUT/retry_results.txt"
+                got=$(tr '\r' '\n' < ${PREFIX}_test_results.txt | grep -c '^Total:' || true)
             fi
             printf 'retry %5d-%-5d rc=%-3s %4ds  classes=%-4s\n' \
                 "$s2" "$e2" "$rc" "$((t1-t0))" "$got" >> "$OUT/sweep.log"
@@ -421,11 +429,12 @@ awk '/^Total:/ && NF > 2 {
     t += $2
     for (i = 3; i <= NF; i++) { split($i, kv, ":")
         if (kv[1] == "P") p += kv[2]; else if (kv[1] == "F") f += kv[2]
-        else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2] }
+        else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2]
+        else if (kv[1] == "T") tt += kv[2]; else if (kv[1] == "X") x += kv[2] }
     c++
 } END {
-    printf "=== TOTALS ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n",
-           c, t, p, f, e, s
+    printf "=== TOTALS ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n  TIMEOUT %d\n  XFAIL   %d\n",
+           c, t, p, f, e, s, tt, x
     if (t > 0) printf "  rate    %.2f%%\n", 100.0 * p / t
 }' "$OUT/all_results.txt" >> "$OUT/sweep.log"
 
@@ -434,11 +443,12 @@ if [ -s "$OUT/retry_results.txt" ]; then
         t += $2
         for (i = 3; i <= NF; i++) { split($i, kv, ":")
             if (kv[1] == "P") p += kv[2]; else if (kv[1] == "F") f += kv[2]
-            else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2] }
+            else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2]
+            else if (kv[1] == "T") tt += kv[2]; else if (kv[1] == "X") x += kv[2] }
         c++
     } END {
-        printf "=== RECOVERED (classes the main pass never ran) ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n",
-               c, t, p, f, e, s
+        printf "=== RECOVERED (classes the main pass never ran) ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n  TIMEOUT %d\n  XFAIL   %d\n",
+               c, t, p, f, e, s, tt, x
     }' "$OUT/retry_results.txt" >> "$OUT/sweep.log"
 fi
 

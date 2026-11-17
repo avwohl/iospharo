@@ -44,6 +44,17 @@ RUNNER=${RUNNER:-$(cd "$(dirname "$0")" && pwd)/pharo-headless-test/run_sunit_co
 STEP=${STEP:-100}
 PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-1800}
 PREFIX=${SUNIT_PREFIX:-/tmp/cogsweep}
+# COG_ARCH selects how the stock VM starts.  x86_64 (the default) runs the
+# x86_64 slice under Rosetta, which was the only stock VM that started on this
+# host until 2026-10.  The stock arm64 VMs built on 2026-10-23 (v10.3.12 and
+# v12.0.6-beta) start on Darwin 27, so COG_ARCH=native gives an arm64 baseline.
+# IMAGE_NAME is the image in the stock VM directory (default Pharo.image).
+COG_ARCH=${COG_ARCH:-x86_64}
+IMAGE_NAME=${IMAGE_NAME:-Pharo.image}
+case "$COG_ARCH" in
+    native) ARCH_CMD="" ;;
+    *)      ARCH_CMD="arch -$COG_ARCH" ;;
+esac
 
 [ -f "$LIST" ]            || { echo "no class list: $LIST" >&2; exit 1; }
 [ -f "$RUNNER" ]          || { echo "no runner: $RUNNER" >&2; exit 1; }
@@ -59,7 +70,7 @@ TOTAL=$(wc -l < "$OUT/classes.txt" | tr -d ' ')
 
 {
   echo "cog sweep start $(date '+%F %H:%M:%S')"
-  echo "  vm      $PHARO_DIR/pharo (x86_64 under Rosetta)"
+  echo "  vm      $PHARO_DIR/pharo (arch: $COG_ARCH)  image $IMAGE_NAME"
   echo "  runner  $RUNNER"
   echo "  classes $TOTAL  step=$STEP  timeout=${PER_BATCH_TIMEOUT}s  prefix=$PREFIX"
 } >> "$OUT/sweep.log"
@@ -75,7 +86,7 @@ while [ "$start" -le "$TOTAL" ]; do
     t0=$(date +%s)
     ( cd "$PHARO_DIR" && rm -f startup.st && \
       SUNIT_PREFIX="$PREFIX" timeout "$PER_BATCH_TIMEOUT" \
-        arch -x86_64 ./pharo Pharo.image eval "'$RUNNER' asFileReference fileIn" ) \
+        $ARCH_CMD ./pharo "$IMAGE_NAME" eval "'$RUNNER' asFileReference fileIn" ) \
         > "$OUT/batch_${start}.log" 2>&1 < /dev/null
     rc=$?
     t1=$(date +%s)
@@ -98,11 +109,11 @@ awk '/^Total:/ && NF > 2 {
     for (i = 3; i <= NF; i++) { split($i, kv, ":")
         if (kv[1] == "P") p += kv[2]; else if (kv[1] == "F") f += kv[2]
         else if (kv[1] == "E") e += kv[2]; else if (kv[1] == "S") s += kv[2]
-        else if (kv[1] == "T") tt += kv[2] }
+        else if (kv[1] == "T") tt += kv[2]; else if (kv[1] == "X") x += kv[2] }
     c++
 } END {
-    printf "=== COG TOTALS ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n  TIMEOUT %d\n",
-           c, t, p, f, e, s, tt
+    printf "=== COG TOTALS ===\n  classes %d\n  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n  TIMEOUT %d\n  XFAIL   %d\n",
+           c, t, p, f, e, s, tt, x
     if (t > 0) printf "  rate    %.2f%%\n", 100.0 * p / t
 }' "$OUT/all_results.txt" >> "$OUT/sweep.log"
 
