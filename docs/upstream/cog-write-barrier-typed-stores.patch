@@ -1,0 +1,173 @@
+From 50a703717fb8d85844a02f971815e952f98bdbcd Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 07:39:09 -0500
+Subject: [PATCH] Typed store primitives respect the write barrier
+
+The primitives that store a typed value into the bytes of an object
+(primitiveStore*IntoBytes, 615 to 629) and primitiveFFIIntegerAtPut did not
+test the receiver for immutability.  A store into a read-only ByteArray
+changed the bytes, and no ModificationForbidden was signalled:
+
+    g := ByteArray new: 8.  g beReadOnlyObject.
+    g float64AtOffset: 0 put: 2.5.      "g is now #[0 0 0 0 0 0 4 64]"
+    g uint32AtOffset: 0 put: 7.         "g is now #[7 0 0 0 ...]"
+
+Each primitive now fails with PrimErrNoModification for a read-only
+receiver, as primitiveAtPut does.  primitiveFFIIntegerAtPut does the test
+only for a store into the bytes of the receiver itself; a store through an
+ExternalAddress goes to outside memory.
+
+The image has two tests for this with the expected-failure mark
+(WriteBarrierTest>>testMutateByteArrayUsingDoubleAtPut and
+testMutateByteArrayUsingFloatAtPut).  With this change, and with the image
+methods TFFIBackend>>on:float64At:put: and on:float32At:put: testing
+anObject in place of self, the two tests pass.
+
+Measured on macOS 27, arm64, a Debug build: after the change the two stores
+above fail the primitive and g stays all zero.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../StackInterpreterPrimitives.class.st       | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+index 3e19d3e0a..90a5442b4 100644
+--- a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
++++ b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+@@ -1334,6 +1334,12 @@ StackInterpreterPrimitives >> primitiveFFIIntegerAtPut [
+ 		
+ 	addr := self maybeExternalAddressOf: rcvr startingAt: byteOffset size: byteSize.
+ 	addr = 0 ifTrue: [^self primitiveFailFor: PrimErrBadArgument].
++
++	"A store into the bytes of the receiver itself must respect the write barrier.
++	 A store through an ExternalAddress goes to outside memory and is not a store into the receiver."
++	((objectMemory fetchClassOf: rcvr) ~= objectMemory classExternalAddress
++		and: [objectMemory isObjImmutable: rcvr])
++			ifTrue: [^self primitiveFailFor: PrimErrNoModification].
+ 	
+ 	value := isSigned 
+ 		ifTrue:[objectMemory signed64BitValueOf: valueOop]
+@@ -2910,6 +2916,7 @@ StackInterpreterPrimitives >> primitiveStoreBoolean8IntoBytes [
+ 	index := objectMemory integerValueOf: index.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 	
+ 	valueObject = objectMemory trueObject ifTrue: [
+ 		value := 1
+@@ -2972,6 +2979,7 @@ StackInterpreterPrimitives >> primitiveStoreChar16IntoBytes [
+ 	value := objectMemory characterValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 1) or: [byteSize < 2]]) ifTrue:
+@@ -3020,6 +3028,7 @@ StackInterpreterPrimitives >> primitiveStoreChar32IntoBytes [
+ 	value := self characterValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3068,6 +3077,7 @@ StackInterpreterPrimitives >> primitiveStoreChar8IntoBytes [
+ 	value := objectMemory characterValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= byteSize]) ifTrue:
+@@ -3117,6 +3127,7 @@ StackInterpreterPrimitives >> primitiveStoreFloat32IntoBytes [
+ 	value := objectMemory floatValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3167,6 +3178,7 @@ StackInterpreterPrimitives >> primitiveStoreFloat64IntoBytes [
+ 	value := objectMemory floatValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 7) or: [byteSize < 8]]) ifTrue:
+@@ -3216,6 +3228,7 @@ StackInterpreterPrimitives >> primitiveStoreInt16IntoBytes [
+ 	value := objectMemory integerValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 1) or: [byteSize < 2]]) ifTrue:
+@@ -3266,6 +3279,7 @@ StackInterpreterPrimitives >> primitiveStoreInt32IntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3318,6 +3332,7 @@ StackInterpreterPrimitives >> primitiveStoreInt64IntoBytes [
+ 	
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 7) or: [byteSize < 8]]) ifTrue:
+@@ -3368,6 +3383,7 @@ StackInterpreterPrimitives >> primitiveStoreInt8IntoBytes [
+ 	value := objectMemory integerValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= byteSize]) ifTrue:
+@@ -3418,6 +3434,7 @@ StackInterpreterPrimitives >> primitiveStorePointerIntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - (BytesPerWord  - 1)) or: [byteSize < BytesPerWord]]) ifTrue:
+@@ -3505,6 +3522,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt16IntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 1) or: [byteSize < 2]]) ifTrue:
+@@ -3557,6 +3575,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt32IntoBytes [
+ 	
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3609,6 +3628,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt64IntoBytes [
+ 	
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 7) or: [byteSize < 8]]) ifTrue:
+@@ -3661,6 +3681,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt8IntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= byteSize]) ifTrue:
+-- 
+2.54.0 (Apple Git-157)
+

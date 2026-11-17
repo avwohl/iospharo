@@ -1,0 +1,43 @@
+From d60074f617fd8b7ca8ec8ce6616ea9ce61aabcaa Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 07:39:09 -0500
+Subject: [PATCH] primitiveDoNamedPrimitiveWithArgs: PrimErrNotFound when the
+ function does not exist
+
+primitiveExternalCall fails with PrimErrNotFound when a named primitive
+does not exist, so <primitive: 'name' module: 'm' error: code> gets
+#'not found' in code.  primitiveDoNamedPrimitiveWithArgs, which the image
+uses to simulate the same call (Context>>tryNamedPrimitiveIn:for:withArgs:),
+failed with the generic code -1 for the same case, and the simulation
+answered nil as the error code.
+
+CodeSimulationTest>>testErrorCodeNotFound compares the two answers.  The
+image has the test set to skip.  With this change the test passes with the
+skip removed.
+
+Measured on macOS 27, arm64, a Debug build:
+  real call, before and after:  #'not found'
+  simulated call, before:       nil
+  simulated call, after:        #'not found'
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+index 3e19d3e0a..8ebbf3489 100644
+--- a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
++++ b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+@@ -913,7 +913,7 @@ StackInterpreterPrimitives >> primitiveDoNamedPrimitiveWithArgs [
+ 				         addressOf: metaAccessorDepth
+ 				         put: [ :val | metaAccessorDepth := val ]).
+ 	addr = 0 ifTrue: [ metaAccessorDepth := -2 ].
+-	addr = 0 ifTrue: [ ^ self primitiveFailFor: -1 ]. "could not find function; answer generic failure (see below)"
++	addr = 0 ifTrue: [ ^ self primitiveFailFor: PrimErrNotFound ]. "could not find function; the same code as primitiveExternalCall gives for the real call"
+ 
+ 	"Cannot fail this primitive from now on.  Can only fail the external primitive."
+ 	tempOop := objectMemory
+-- 
+2.54.0 (Apple Git-157)
+

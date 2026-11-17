@@ -30,6 +30,8 @@ The stock VM in `/tmp/harness` comes from
 | Change | Branch in `~/src/pharo-vm` | Patch file | State |
 |---|---|---|---|
 | SocketPlugin: local address from any interface that is up | `fix/resolver-local-address-any-interface` | `cog-socketplugin-local-address.patch` | committed on the branch, tested |
+| Typed store primitives respect the write barrier | `fix/write-barrier-typed-stores` | `cog-write-barrier-typed-stores.patch` | committed on the branch, tested |
+| `primitiveDoNamedPrimitiveWithArgs`: `PrimErrNotFound` | `fix/named-primitive-not-found-in-simulation` | `cog-named-primitive-not-found.patch` | committed on the branch, tested |
 | Code-generation VM for macOS arm64 that starts on macOS 27 | `fix/vmmaker-bootstrap-vm-darwin-arm64` | `cog-vmmaker-bootstrap-vm-darwin-arm64.patch` | tested, not committed: the change is a version pin, and the owner must approve a pin |
 
 ### SocketPlugin: local address from any interface that is up
@@ -48,6 +50,42 @@ The stock VM in `/tmp/harness` comes from
   the two VMs (73 tests pass, 1 skip).
 - Our VM had its own defect in the same primitive (a stub that answered
   127.0.0.1).  This repository has the fix for that defect.
+
+### Typed store primitives respect the write barrier
+
+- Defect: the primitives 615 to 629 (`primitiveStore*IntoBytes`) and
+  `primitiveFFIIntegerAtPut` do not test the receiver for immutability.  A
+  typed store into a read-only `ByteArray` changes the bytes, and the VM
+  signals no `ModificationForbidden`.
+- Change: each primitive fails with `PrimErrNoModification` for a read-only
+  receiver, as `primitiveAtPut` does.
+- Test (2026-11-17, a Debug build with the change): `WriteBarrierTest` gives
+  33 passes of 33 with the image fixes of this repository.  The stock VM
+  fails 4 of the 33: the two tests that upstream marked as expected failures
+  (`testMutateByteArrayUsingDoubleAtPut`, `testMutateByteArrayUsingFloatAtPut`)
+  and the two integer tests that this repository adds.
+- The image has a defect in the same path:
+  `TFFIBackend>>on:float64At:put:` and `on:float32At:put:` test `self`
+  (the backend) for read-only, not `anObject`.  The image fix is in
+  `scripts/image-fixes/20-WriteBarrierTest.st`.
+- Our VM had a related defect (`primitiveFFIIntegerAtPut` wrote into a
+  read-only object).  This repository has the fix for that defect.
+
+### `primitiveDoNamedPrimitiveWithArgs`: `PrimErrNotFound`
+
+- Defect: for a named primitive that does not exist, the real call fails with
+  `PrimErrNotFound`, and the simulated call (primitive 218, used by
+  `Context>>tryNamedPrimitiveIn:for:withArgs:`) fails with the generic
+  code -1.  The debugger simulation then gives another error code than the
+  real execution.  The image has `CodeSimulationTest>>testErrorCodeNotFound`
+  set to skip.
+- Change: primitive 218 fails with `PrimErrNotFound` when the function does
+  not exist.
+- Test (2026-11-17, a Debug build with the change): `CodeSimulationTest`
+  gives 9 passes of 9 with the skip removed.  The stock VM fails
+  `testErrorCodeNotFound` ("Got #'not found' instead of nil").
+- Our VM gave nil for the real call and for the simulated call.  This
+  repository has the fix for that defect.
 
 ### Code-generation VM for macOS arm64
 
