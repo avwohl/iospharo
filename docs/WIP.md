@@ -232,17 +232,32 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 11:40, rows 1 to 50 (the record of each repair is
+State on 2026-11-17 at 14:10, rows 1 to 93 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)):
 
-- 42 rows are clean: each test passes on stock Cog and on our VM.  21 of
-  them needed a repair: a fixes file, a patch of the package, a locked
-  dependency, or a corrected manifest row.
-- Rows that are not clean yet: OSC (1 failure), Hyperspace (1 failure),
-  Comix2 (1 failure), PharoWiki (7 skips), aws-sdk-smalltalk (20 tests need
-  a local AWS emulator), opentelemetry-pharo (the row loads no test
-  package), PharoMisc and pharo-newfile (see below).  Row 51 names a
-  repository that is gone.
+- 73 rows are clean: each test passes on stock Cog and on our VM.
+- 3 rows name repositories that are not public any more (51, 62, 66; row
+  135 is the fourth).  These rows cannot run.
+- 17 rows are not clean yet.  Each has a repair in work:
+
+| Row | Package | State | Work |
+|---|---|---|---|
+| 57 | EscapeAnalysisPharo | 69 of 82 pass | second round by an agent with probes: the analyzer of the package gives other answers than 8 tests expect |
+| 70 | BioSmalltalk | 1193 of 1205 pass | second round: a stand-in for a Glamorous Toolkit class broke 12 tests |
+| 71 | Pillar | 37 of 66 pass | second round: the patch did not bring the package `Microdown-Toc` into the image; 4 PDF tests need LaTeX |
+| 72 | Microdown | 1604 of 1605 pass | second round, 1 error |
+| 73 | Famix | 1474 of 1477 pass | second round: `FamixStClass` has no LCOM metrics; a cohesion value |
+| 74 | ReStore | our VM 2358 of 2358, stock Cog 2357 | second round: one test fails on Cog in some runs |
+| 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
+| 81, 87 | Stargate, Superluminal | no load | a patched Teapot as a locked dependency; runs in work |
+| 82 | MCP | 947 of 1167 pass | the manifest row did not load the group `IDE`; run in work.  1 test fails on our VM only (the limit of 56000 frames) |
+| 83 | Kendrick | the load passes with a patch of the baseline | the fixes file had a call with the wrong count of arguments; run in work |
+| 84 | Soil | 1109 of 1139 pass, 30 skips | repair written (3 package defects, stale tests); 16 skips cannot apply (Windows locks, cases with no meaning); run in work |
+| 85 | Carrefour | no load | the load needs the Famix Java model and TinyLogger; run in work |
+| 88 | mongotalk | 23 of 88 pass | the tests need a MongoDB server; an agent writes a stand-in |
+| 89 | Teapot | 78 of 79 pass | 1 skip (HTTPS); an agent works on it |
+| 90 | pharo-test-analysis | no load | a name that the baseline does not have; an agent works on it |
+| 91 | Turbo | 265 of 270 pass | 5 expected failures of a layout; an agent works on it |
 
 The package run found these defects outside the packages:
 

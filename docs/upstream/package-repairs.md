@@ -682,3 +682,31 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   the new names.  The 3 tests have a body for the code as it is.
 - Result: 914 of 914 pass on the two VMs.
 
+## Hera (`koendehondt/hera-for-pharo`, row 78)
+
+- State before: 672 tests, 582 pass, 4 failures, 86 errors on the two VMs
+  (`UndeclaredVariableRead: HeraSyntaxDarkTheme`).
+- Cause: the commit `6bf7551` of the package uses the classes
+  `HeraSyntaxLightTheme` and `HeraSyntaxDarkTheme`.  No file of the
+  repository defines them.  `HeraSettings>>syntaxTheme` reads the dark theme
+  class when the UI theme of the image is dark, as in the image of the run.
+- Repair here: `fixes/koendehondt-hera-for-pharo.st` makes the three theme
+  classes (`HeraSyntaxTheme` and the two subclasses) with the six colours
+  that `HeraScriptGenerator` asks for.  The light colours are the values in
+  the expected texts of the tests.  Each test of `HeraUnitTestCase` runs with
+  the light theme, because the tests expect the light colours.
+- Limit: the dark colours are ours (the GitHub dark palette).  The author
+  must add the class files to the repository.
+- Result: 672 of 672 pass on the two VMs.
+
+## PolyMath (`PolyMathOrg/PolyMath`, row 80)
+
+- State before: 777 tests, 776 pass, 1 error on the two VMs
+  (`PMKDTreeTest>>testBenchmark`, `UndeclaredVariableRead:
+  PMKDTreeBenchmark`).
+- Cause: the test uses a class of the package `Math-Benchmarks-KDTree`.  The
+  baseline has that package only in the group `Benchmarks`, and the group
+  `Tests` does not ask for it.
+- Repair here: the manifest row loads `Math-Benchmarks-KDTree` too.
+- Result: 777 of 777 pass on the two VMs.
+
