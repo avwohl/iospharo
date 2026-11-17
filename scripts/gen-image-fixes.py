@@ -35,6 +35,9 @@ def build():
                    if os.path.basename(n) != '00-header.st')
     for name in names:
         body = open(name, encoding='utf-8').read().rstrip() + '\n'
+        if '| fix add resolve |' in body:
+            sys.exit(os.path.basename(name) + ': an entries file must not hold the header '
+                     '(found the declaration of fix, add and resolve)')
         parts.append('\n"=== ' + os.path.basename(name) + ' ==="\n'
                      + chunk_text(header.rstrip() + '\n\n' + body) + '!\n')
     return ''.join(parts)
