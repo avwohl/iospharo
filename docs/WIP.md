@@ -173,6 +173,7 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweepcogp14-new7` | patched Cog with the low-space change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 | `sweepcogp14-new8` | patched Cog with the file plugin change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 | `sweep14-new12` | ours, entries 31 to 34, VM parameter 11 | 39374 | 0 | 87 | 1 | 39462 tests (1 new test of entry 34); no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass |
+| `sweepcogp14-new9` | patched Cog, entries 31 to 34 (the library had a test change for the Cog GC crash at that time) | 39373 | 1 | 87 | 1 | 39462 tests; no batch stopped; 1 failure that no sweep had before: `TKTFutureTest>>testFutureAndThenExecutesInOrder` ("Got #(2 3 1) instead of #(1 2 3)": three callbacks of one future ran in another order); the cause is in work |
 
 Defects that these sweeps showed, each with its repair:
 
