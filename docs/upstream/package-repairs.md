@@ -1249,3 +1249,103 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Limit: the four classes are ours.  The author must add the real ones.
 - Result: 16 of 16 pass on the two VMs.
 
+## OSSubprocess (`pharo-contributions/OSSubprocess`, row 115)
+
+- State before: 126 tests, 98 pass, 2 failures, 26 errors on the two VMs.
+- Causes, all API changes of Pharo 14 (the row loads the branch `master`):
+  - 18 errors and 2 failures: the old file stream classes of the package
+    send `SessionManager default currentSession isReadOnlyAccessMode`.
+    `WorkingSession` of Pharo 14 has no such method.
+  - 4 errors: a test helper sends `UUIDGenerator next`.
+  - 4 tests send `Smalltalk image changesName`.
+- Repair here: `fixes/pharo-contributions-ossubprocess.st` adds
+  `WorkingSession>>isReadOnlyAccessMode` (it answers false), and the tests
+  use `UUID new` and `FileLocator changes`.
+- Result: 126 of 126 pass on the two VMs.
+
+## Postern (`punt-labs/postern`, row 116)
+
+- State before: 88 tests, 82 pass, 2 failures, 1 error, 3 skips on the two
+  VMs.
+- Causes, all in the package, which is for Pharo 12:
+  - `testCodeFencesParse`: the test catches `CodeError`.  Pharo 14 signals
+    `OCCodeError`, the superclass.
+  - `testPharoVersionPin` asks for a review of the help content when the
+    Pharo version changes.  The review found names that Pharo 14 does not
+    have (`RPackageOrganizer`, `RBRenameMethodRefactoring`, `TestRunner`,
+    `IceWorkingCopy>>changes`).  The help content and the version text are
+    for Pharo 14 now.
+  - `testDelegateNormalizesLfToCr`: the input of the test has no period
+    after a statement, so the code that it evaluates is not the code that
+    the test means.
+  - 2 skips "test requires a running eval server": no test starts the
+    server.  Each of the two tests now starts a server on the loopback
+    interface and stops it.
+  - 1 skip: the test looks for the Iceberg repository of another project of
+    the author.  It uses the repository of the package now.
+- Repair here: `fixes/punt-labs-postern.st`.
+- Result: 88 of 88 pass on the two VMs.
+
+## Blenny (`NathanFrund/blenny`, row 118)
+
+- State before: `LOAD-FAIL` (an Array index error in the load).
+- Causes:
+  - The load brings Buoy in (through JSONWebToken and NeoJSON).  Buoy
+    replaces `Symbol>>argumentCount` of Pharo 14, and the post-load step of
+    Buoy then fails.  The row gets the locked Buoy with its patch
+    (`locks/nathanfrund-blenny.txt`), as the ba-st rows.
+  - The baseline of Blenny has a bracket at the wrong place, so three of its
+    groups are outside the platform block
+    (`patches/nathanfrund-blenny.patch`).
+  - 3 tests start with `self skip`, and the reasons in their comments do not
+    hold.  They have a body now.  One of them uses a small object in the
+    place of a WebSocket, which records the messages that it gets.
+  - 2 tests subtract an Integer from a `DateAndTime`, which Pharo 14 does
+    not do.  They subtract a Duration.
+  - Three defects of the package code that no test shows (a `join:` with
+    the receiver and the argument in the wrong places, a parse of an
+    argument with no `=`, the name of an environment variable).
+- Repair here: the lock, the patch and `fixes/nathanfrund-blenny.st`.
+- Result: 35 of 35 pass on the two VMs.  No test of the row needs a
+  PostgreSQL server.
+
+## Soil (`ApptiveGrid/Soil`, row 84)
+
+- State before: 1139 tests, 1109 pass, 30 skips on the two VMs.  Each of the
+  30 is a `self skip` of the package.
+- Defects of the package that the skips hid, each repaired in
+  `fixes/apptivegrid-soil.st`:
+  - `SoilBTreePage>>cleanRemovedIn:` removed each removed entry by its key.
+    With two entries of one key the search can find the live entry, so the
+    live entry went and the removed one stayed.
+  - `SoilRestoringIndexIterator` had no `size` for an older transaction: a
+    transaction saw the count of a later commit.
+  - `SoilObjectProxy` had no `class` method (a commit removed it), so
+    `class` answered the proxy class and not the class of the object.
+  - `SoilObjectRepository>>cacheSegmentAt:using:` gave its block the segment
+    where the block needs the cache.
+  - `SoilBehaviorRegistry>>recreateIndex` did a commit and then an abort of
+    the same transaction.
+  - A method with no sender in the image
+    (`checkDescriptionsOf:referencedBy:in:`) is gone, and a class with no
+    use (`SoilObjectVisitor`) too.
+- Tests:
+  - 3 tests were stale and have a body for the code as it is.
+  - The lint tests of the package (no class with no use, no call with no
+    implementor, no selector with no sender) run now.  For them:
+    `SoilJournalConverter`, a tool that a user starts by hand, got a test;
+    44 new tests (`SoilApiSurfaceTest`) call the API that no test called;
+    and a reader of the method format of Pharo 11 has the lint mark for the
+    selector that Pharo 14 does not have.
+- Result: 1184 tests, 1167 pass and 17 skips on the two VMs, in a run from a
+  new load.
+  - 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`): 8 tests
+    of file locks of Windows, and 6 cases of a parametrized test that have
+    no meaning for their parameter.
+  - Open, 3 skips: the three `testCodeCoverage` tests ask for a coverage of
+    93 percent.  The measured coverage is 86 percent (Soil-Core), 81 percent
+    (Soil-Serializer) and 85 percent (Soil-Resident).  The package needs
+    more tests for about 210 methods.  The row is not clean.
+- For the owner of Soil: `SoilObjectProxy>>class` is back, which the author
+  removed on purpose or by accident; the review must decide.
+

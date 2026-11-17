@@ -1,0 +1,33 @@
+# Tests that cannot apply.  One test for each line: Class>>selector (with the
+# parameters of a parametrized case), or Class>>* for each test of the class.
+# A line that starts with # has the proof.
+#
+# SoilIndexIteratorTest is a parametrized test class (index class and
+# uniqueKeys).  SoilIndexIterator>>moveKey:to:ifAbsent: signals a SoilError
+# when the index does not have unique keys (Soil-Core, SoilIndexIterator,
+# 'index hasUniqueKeys ifFalse: [ SoilError signal: ... ]').  So testMoveKey
+# and testMoveKeyOverwritesTheTarget have a meaning only for uniqueKeys true,
+# and testMoveKeyOnNonUniqueIndexIsRefused only for uniqueKeys false.  Each
+# test skips for the other value, and the cases with a meaning pass.
+SoilIndexIteratorTest>>testMoveKey(#classToTest->SoilBTree_#uniqueKeys->false)
+SoilIndexIteratorTest>>testMoveKey(#classToTest->SoilSkipList_#uniqueKeys->false)
+SoilIndexIteratorTest>>testMoveKeyOverwritesTheTarget(#classToTest->SoilBTree_#uniqueKeys->false)
+SoilIndexIteratorTest>>testMoveKeyOverwritesTheTarget(#classToTest->SoilSkipList_#uniqueKeys->false)
+SoilIndexIteratorTest>>testMoveKeyOnNonUniqueIndexIsRefused(#classToTest->SoilBTree_#uniqueKeys->true)
+SoilIndexIteratorTest>>testMoveKeyOnNonUniqueIndexIsRefused(#classToTest->SoilSkipList_#uniqueKeys->true)
+#
+# SoilWindowsFileLockTest: each of these tests starts with
+# 'OSPlatform current isWindows ifFalse: [ ^ self skip ]' and calls kernel32
+# through FFI (LockFileEx, UnlockFileEx, FlushFileBuffers: Soil-File,
+# SoilWindowsFileLock, 'module: #kernel32').  The test machine is macOS.  The
+# two tests of the class that do not call kernel32 (testErrorDescriptions,
+# testWinOverlappedStructure) run and pass.  SoilLockableStreamTest and
+# SoilFileLockRegistryTest test the file locks of macOS and pass.
+SoilWindowsFileLockTest>>testFlushFileBuffersDirect
+SoilWindowsFileLockTest>>testFsyncEntireFile
+SoilWindowsFileLockTest>>testLockAndUnlockEntireFile
+SoilWindowsFileLockTest>>testLockAndUnlockRange
+SoilWindowsFileLockTest>>testLockExclusive
+SoilWindowsFileLockTest>>testLockOrErrorSuccess
+SoilWindowsFileLockTest>>testLockShared
+SoilWindowsFileLockTest>>testMultipleLocks

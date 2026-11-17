@@ -233,20 +233,21 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 17:10, rows 1 to 118 (the record of each repair is
-[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 119 to
+State on 2026-11-17 at 17:45, rows 1 to 120 (the record of each repair is
+[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 121 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).  The command
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 100 rows are clean: each test passes on stock Cog and on our VM.
+- 104 rows are clean: each test passes on stock Cog and on our VM.
 - 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
   14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 14 rows are not clean yet.  Each has a repair in work or an open point
-  (rows 109, 115, 116 and 118 are with agents and are not in the table yet):
+- 12 rows are not clean yet.  Each has a repair in work or an open point
+  (row 109 is with an agent, and row 119 is new; the two are not in the
+  table yet):
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -257,7 +258,7 @@ state of each row.
 | 87 | Superluminal | 150 of 203 pass | an agent writes a stand-in for the HTTP test service on port 80 |
 | 82 | MCP | stock Cog 1166 of 1167, our VM 1165 | 1 test fails on our VM only (the limit of 56000 frames; the VM repair is in work on the branch `deep-recursion`).  The 1 skip cannot apply on Pharo 14 |
 | 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
-| 84 | Soil | 1119 of 1139 pass, 2 failures, 18 skips | second round: two lint failures and 4 skips of lint and coverage tests; 14 skips cannot apply (8 Windows lock tests, 6 cases with no meaning) |
+| 84 | Soil | 1167 of 1184 pass, 17 skips | 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`).  Open: 3 coverage tests of the package ask for 93 percent, and the measured coverage is 81 to 86 percent |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
 

@@ -92,10 +92,19 @@ def main():
                 kind = 'CLEAN-NA'
                 na_tests += len(bad_cog)
         counts[kind] += 1
+        note = ''
+        if kind == 'NOT-CLEAN' and state == 'ok' and patterns:
+            # Part of the tests that do not pass cannot apply: say how many
+            # of the others are open on each VM.
+            bad_cog = non_pass(os.path.join(outdir, 'res', label + '.cog.status')) or []
+            bad_ours = non_pass(os.path.join(outdir, 'res', label + '.ours.status')) or []
+            open_cog = [t for t, s in bad_cog if not (s == 'SKIP' and covered(t, patterns))]
+            open_ours = [t for t, s in bad_ours if not (s == 'SKIP' and covered(t, patterns))]
+            note = '   open: cog %d, ours %d (the others cannot apply)' % (len(open_cog), len(open_ours))
         if kind == 'CLEAN-NA':
             lines.append((n, '%3d %-46s CLEAN-NA   %d tests cannot apply (not-applicable/%s.txt)' % (n, label, len(bad_cog), label)))
         else:
-            lines.append((n, '%3d %-46s %-16s cog[%s] ours[%s]' % (n, label, state, cog.replace('tests=', ''), ours.replace('tests=', ''))))
+            lines.append((n, '%3d %-46s %-16s cog[%s] ours[%s]%s' % (n, label, state, cog.replace('tests=', ''), ours.replace('tests=', ''), note)))
     print('\n'.join(text for _, text in sorted(lines)))
     total = counts['CLEAN'] + counts['CLEAN-NA'] + counts['NOT-CLEAN']
     print('rows with a result: %d   clean: %d   clean, with tests that cannot apply: %d (%d tests)   not clean: %d   no result now: %d'
