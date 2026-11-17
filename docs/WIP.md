@@ -237,18 +237,17 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 101 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).
 
-- 81 rows are clean: each test passes on stock Cog and on our VM.
+- 82 rows are clean: each test passes on stock Cog and on our VM.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 16 rows are not clean yet.  Each has a repair in work:
+- 15 rows are not clean yet.  Each has a repair in work or an open point:
 
 | Row | Package | State | Work |
 |---|---|---|---|
-| 57 | EscapeAnalysisPharo | 69 of 82 pass | second round by an agent with probes: the analyzer of the package gives other answers than 8 tests expect |
+| 57 | EscapeAnalysisPharo | 81 of 82 pass | the analyzer of the package is repaired (33 entries).  Open: 1 skip of the author, a known wrong answer of the analyzer; a repair changes the answer of three other tests, so the author must decide |
 | 70 | BioSmalltalk | 1193 of 1205 pass | second round: a stand-in for a Glamorous Toolkit class broke 12 tests |
 | 71 | Pillar | 37 of 66 pass | second round: the patch did not bring the package `Microdown-Toc` into the image; 4 PDF tests need LaTeX |
 | 72 | Microdown | 1604 of 1605 pass | second round, 1 error |
-| 73 | Famix | 1474 of 1477 pass | second round: `FamixStClass` has no LCOM metrics; a cohesion value |
 | 74 | ReStore | our VM 2358 of 2358, stock Cog 2357 | second round: one test fails on Cog in some runs |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
 | 81 | Stargate | 519 of 520 pass | second round: a test compares a URL text, and the order of the query fields differs |

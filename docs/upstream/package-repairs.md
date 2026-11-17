@@ -817,3 +817,81 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `FamixJavaMethod>>isConstructor` is in Famix.  Carrefour needs a release
   for the present Famix.
 
+## EscapeAnalysisPharo (`fouziray/EscapeAnalysisPharo`, row 57)
+
+- State before: the two VMs stopped in the middle of the row.  Three
+  `1 halt` statements were in the code and in the tests, and a `Halt` with
+  no handler ends a headless image.  Of the 80 tests that ran, 62 passed.
+- The package is a research prototype of an escape analysis for Pharo
+  methods.  An object escapes a method when a reference to it can stay
+  after the activation ends.
+- Repairs here (`fixes/fouziray-escapeanalysispharo.st`, 33 entries; the
+  manifest row also loads `tomooda/HoneyGinger`, which 4 tests use and no
+  baseline names):
+  - The three `1 halt` statements are gone.  The runner now also records a
+    `Halt` as an error of the test.
+  - Three tests use the AST API of an older Pharo (`selector:` with a
+    String, `loadProject:`).
+  - The analyzer (`EscapeAnalyzerVisitor`) answered "escapes" for objects
+    that do not escape.  The causes, each shown with a probe:
+    - A variable in a block was an escape, also in a block that the compiler
+      inlines (`ifTrue:`, `timesRepeat:`).
+    - A recursive send made a new context down to the depth limit, and the
+      limit marks the receiver as an escape.
+    - A store into an instance variable was an escape at once, also when the
+      object that gets the value does not escape.
+    - The result of a message was taken for the receiver of the message.
+    - The flag "the result is returned" stayed set after the last return of
+      the root method.
+    - A primitive that only reads its receiver (`ProtoObject>>class`) was an
+      escape.
+    - The name `self` of a callee was looked up in the context of the
+      caller.  That tied objects together that have no relation, and one
+      test made 21779 contexts.
+  - Two tests had wrong expected values (a method name copied from another
+    test, and a count of contexts).  One test passed before only because its
+    list was empty; the code that it runs is repaired.
+  - `ObjectInlining>>assignObjectCreatedInlineToTmp:` was a stub.  It is
+    written now, as small as its test needs.
+- Result: 82 tests, 81 pass and 1 skip on the two VMs, in a run from a new
+  load.
+- Open: `EscapeTest>>testComplexWeighterGraph`.  The author skips the test
+  (`self skip`, with the flag `#false`): the analyzer says that two objects
+  escape, and the test says that they do not.  The test is right by the
+  definition.  A repair must analyse the body of a block at the place where
+  the block is made.  That change gives another answer for three tests of
+  the same class (`testTempInBlock`, `testReturnTempInBlock`,
+  `testArgBlockReturnsTemp`), which assert the careful answer.  The author
+  of the package must decide which answer is right.  The test is not
+  accepted: the row is not clean.
+
+## Famix (`moosetechnology/Famix`, row 73)
+
+- State before: 1477 tests, 1472 pass, 4 skips, 1 expected failure on the
+  two VMs.
+- Causes:
+  - `FamixMetricsTest>>testLCOM2` and `testLCOM3` start with `self skip`.
+    Without the skip: `FamixStClass` does not understand `lcom2`.  The
+    generator of the Smalltalk metamodel
+    (`FamixPharoSmalltalkGenerator>>defineHierarchy`) does not give the class
+    the trait `FamixTLCOMMetrics`; the Java generator does.  The last line
+    of `testLCOM2` also asks for `lcom3` where it means `lcom2`.
+  - `testMartinCohesionFamixPackage` starts with `self skip`.  Without the
+    skip the first value is 5.0, and the test expects 1.0.
+    `FamixTCohesionCouplingMetrics>>martinCohesion` counts the classes in
+    the same namespace.  In Smalltalk all classes are in one namespace, so
+    classes of other packages count too.  The expected values of the test
+    agree with the definition (H = (R + 1) / N for the classes of the
+    package).  The Java package class has the same method with
+    `FamixTPackage`.
+  - `FamixTest2ModelTest>>testRootUniqueness` is a skip for an old issue.
+    The test of the superclass passes for the class.
+  - `FamixPackageNavigationChefTest>>testStaticProviderPackages` has the
+    mark of an expected failure.  Its expected set lacks one package that
+    the sibling test has.
+- Repair here: `fixes/moosetechnology-famix.st` adds the trait in the
+  generator and in the class, uses `FamixTPackage` in `martinCohesion`, and
+  corrects the four tests.
+- Result: 1477 of 1477 pass on the two VMs, in a run from a new load.
+- For the owners of Famix: the two code defects are in Famix.
+
