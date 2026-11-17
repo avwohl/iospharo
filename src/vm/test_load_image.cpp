@@ -1279,7 +1279,15 @@ int main(int argc, char* argv[]) {
         // ProtoObject which doesn't either).  In eval mode we don't
         // want Morphic running; pass no args so startup.st's eval +
         // exitSuccess is the entire session.  2026-05-08.
-        interpreter.setImageArguments({});
+        // PHARO_INTERACTIVE=1 asks for an interactive session the way stock
+        // Cog gives one to a launch without --headless: the image sees
+        // --interactive, so Smalltalk isInteractive is true.  The eval
+        // expression itself still reaches the image through startup.st.
+        if (GET_DEBUG_BOOL(PHARO_INTERACTIVE)) {
+            interpreter.setImageArguments({"--interactive"});
+        } else {
+            interpreter.setImageArguments({});
+        }
     } else if (imageArgs.empty()) {
         // Bare launches (the SUnit harness) must NOT claim an interactive
         // session: `Smalltalk isInteractiveGraphic` true made
@@ -1509,8 +1517,13 @@ int main(int argc, char* argv[]) {
 
                 // Click injection after ~5s of execution (skip when headless:
                 // the World-Menu morph creates render-loop churn that starves
-                // the SUnit runner / wedges the scheduler).
-                if (!clickInjected && elapsed >= 5 && imageArgs.empty() && !headlessMode) {
+                // the SUnit runner / wedges the scheduler).  Also skipped for
+                // PHARO_INTERACTIVE=1: that run asks for the session stock Cog
+                // gives, not a GUI demo, and the injected click opens the World
+                // menu in the middle of a test (it took the keyboard and mouse
+                // focus from SimulateMouseTest>>testSimulateClick).
+                if (!clickInjected && elapsed >= 5 && imageArgs.empty() && !headlessMode
+                    && !GET_DEBUG_BOOL(PHARO_INTERACTIVE)) {
                     std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
                     injectMouseClick(50, 300, 2);
                     clickInjected = true;
