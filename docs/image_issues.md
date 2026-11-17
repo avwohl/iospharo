@@ -496,6 +496,7 @@ The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-imag
 | `31-rename-class-changes.st` | `RBNamespace>>renameClass:to:around:`, two tests that count the changes of a rename | A rename of a class loses the changes of the methods that name the class | image code and test | section "Defects that the package run found" below |
 | `32-duration-wait-rounds-up.st` | `Duration>>asDelay`, new `DurationTest>>testAsDelayDoesNotRoundDown` | A wait for a Duration can end up to 1 millisecond before the Duration has passed | image code | section "Defects that the package run found" below |
 | `33-metalink-uninstall-order.st` | `MetaLinkInstaller>>uninstallFromAllAnonymousNodes:`, `MetaLinkNodesMapper>>findNodeLike:forObject:`, two new tests of `LinkInstallerTest` | The uninstall of an object-specific link skips a node when two nodes collide in the node set of the link; a later uninstall for the same object removes the method two times (`KeyNotFound`) | image code | section "Defects that the package run found" |
+| `34-znurl-query-order.st` | `ZnUrl>>equals:`, new `ZnUrlTest>>testEqualsWithQueryFieldsInAnotherOrder` | Two URLs with the same query fields in another order are equal in Pharo 13 and not equal in Pharo 14 | image code | section "Defects that the package run found" |
 
 ### The code snippet skips (2026-11-17, repaired)
 
@@ -523,9 +524,10 @@ comment that the AST does not have.
 
 ### Defects that the package run found (2026-11-17, repaired)
 
-The tests of the image do not show the first two defects.  Tests of packages
-of the 200-package run showed them.  The third defect showed in some sweeps
-of our VM only, and is in this list because the same work found it.
+The tests of the image do not show the first two defects and the fourth
+one.  Tests of packages of the 200-package run showed them.  The third
+defect showed in some sweeps of our VM only, and is in this list because the
+same work found it.
 
 - `RBNamespace>>renameClass:to:around:` (entry 31, found by Chanel).  The
   method adds the rename change to the changes of the namespace and keeps
@@ -574,6 +576,28 @@ of our VM only, and is in this list because the same work found it.
   - The repair walks a copy, and the mapper answers the given node itself
     when the object has that node.  Two new tests of `LinkInstallerTest`
     force the order with an IdentitySet subclass.
+- The equality of two URLs (entry 34, found by three ba-st packages).
+  `ZnUrl>>equals:` compares the queries with `=`.  The query is a
+  `ZnMultiValueDictionary`, a subclass of OrderedDictionary, in Pharo 13 and
+  in Pharo 14.  `OrderedDictionary>>=` of Pharo 14 also compares the
+  position of each key, and a test of the image says so
+  (`OrderedDictionaryTest>>testEqualsWhenKeyArentInTheSameOrder`).  The
+  equality of URLs changed with it.  Zinc has no test for that, and the hash
+  of a `ZnUrl` does not look at the query.
+  - Measured with
+    `'https://example.com/pets?start=3&limit=2' asZnUrl = 'https://example.com/pets?limit=2&start=3' asZnUrl`:
+    true on Pharo 13 build 750 (stock Cog), false on Pharo 14 build 791
+    (stock Cog and our VM).
+  - The repair compares the query fields with no regard to their order.
+    The values of a field that is there more than one time keep their
+    order.  For each of the 8 cases of the new test, the repaired method
+    gives the answer of Pharo 13.
+  - The new test fails before the repair on the two VMs.  With the repair,
+    `ZnUrlTest` (52 tests) and the client, request, response and header
+    tests of Zinc pass on the two VMs.
+  - Another place for the repair is `ZnMultiValueDictionary>>=`.  That also
+    changes the equality of header collections, so entry 34 does the small
+    change.
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 

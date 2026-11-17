@@ -6,7 +6,7 @@ Cause 2 (8 tests: 3 KeyNotFound in DistributedMemoryCacheRepositoryTest, 2 failu
 
 Both stand-ins start in the default execution environment.  The environment of a test ends each process that the test forks when the test ends, so a stand-in that the first test started would be gone, with the listening socket still open, at the second test.
 
-Cause 3 (4 tests: CompositeHttpRequestCommandTest>>testApplyOn and testShortcutCreation, and, behind the connection errors of cause 1, HttpRequestTest>>testComposite and testQueryString).  The tests expect the URL with the query ?last_name=fox&first_name=fran after the fields were added in the order first_name, last_name.  The query of a ZnUrl is a ZnMultiValueDictionary, and in Pharo 14 that is a subclass of OrderedDictionary.  OrderedDictionary>>= compares the order of the keys, and ZnUrl>>equals: uses that.  The query now keeps the order of insertion, first_name first.  The expected order last_name first came from the order of a hashed Dictionary in older Zinc and has no meaning: the commands add first_name before last_name, and a server sees the fields in the order that the client sent.  The expected string now has the order of insertion.  The tests keep the assertions.
+Cause 3 (4 tests: CompositeHttpRequestCommandTest>>testApplyOn and testShortcutCreation, and, behind the connection errors of cause 1, HttpRequestTest>>testComposite and testQueryString).  The tests compare a URL with a text whose query fields are in another order.  Two such URLs are equal in Pharo 13 and were not equal in Pharo 14.  This file has no entry for it: scripts/image-fixes/34-znurl-query-order.st repairs ZnUrl>>equals: in the image.
 
 What the stand-ins do not check (also in the notes of the row).  httpbin: only the routes that the tests use (anything, get, post, put, patch, delete, status/N, cache, headers); no basic-auth, bearer, redirect, delay, gzip or cookie routes; the answer fields are args, data, files, form, headers, json, method, origin (always 127.0.0.1) and url; status/N answers an empty body; cache answers like httpbin (304 when If-None-Match or If-Modified-Since is present; otherwise the echo with Last-Modified and an unquoted ETag) and accepts the methods GET and QUERY, because testQueryCached sends QUERY to it and the httpbin of the CI is a fork that was not available to read.  memcached: the commands set, add, replace, get, gets, delete, incr, decr, flush_all, version, verbosity, stats (empty answer) and quit; no cas, touch, append or prepend; no binary protocol; no memory limit or eviction; no key length or item size limit; an item expires with the precision of a millisecond, where memcached counts whole seconds."
 
@@ -369,28 +369,3 @@ fix value: #SuperluminalTest value: #memcachedHostname
 		  ifAbsent: [
 			  SuperluminalMemcachedStandIn ensureRunning.
 			  ''127.0.0.1'' ]'.
-
-"--- The order of the query fields ---"
-fix value: #CompositeHttpRequestCommandTest value: #testApplyOn
-	value: [ :source | source includesSubstring: '?last_name=fox&first_name=fran' ]
-	value: ((CompositeHttpRequestCommandTest >> #testApplyOn) sourceCode
-		copyReplaceAll: '?last_name=fox&first_name=fran'
-		with: '?first_name=fran&last_name=fox').
-
-fix value: #CompositeHttpRequestCommandTest value: #testShortcutCreation
-	value: [ :source | source includesSubstring: '?last_name=fox&first_name=fran' ]
-	value: ((CompositeHttpRequestCommandTest >> #testShortcutCreation) sourceCode
-		copyReplaceAll: '?last_name=fox&first_name=fran'
-		with: '?first_name=fran&last_name=fox').
-
-fix value: #HttpRequestTest value: #testComposite
-	value: [ :source | source includesSubstring: '?last_name=fox&first_name=fran' ]
-	value: ((HttpRequestTest >> #testComposite) sourceCode
-		copyReplaceAll: '?last_name=fox&first_name=fran'
-		with: '?first_name=fran&last_name=fox').
-
-fix value: #HttpRequestTest value: #testQueryString
-	value: [ :source | source includesSubstring: '?last_name=fox&first_name=fran' ]
-	value: ((HttpRequestTest >> #testQueryString) sourceCode
-		copyReplaceAll: '?last_name=fox&first_name=fran'
-		with: '?first_name=fran&last_name=fox').

@@ -365,12 +365,11 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `run-one-package.sh`).
 - Hyperspace, `ZnUrlHyperspaceExtensionsTest>>testStartLimit`: the test
   expects that one URL is equal to `?limit=10&start=1` and to
-  `?start=1&limit=10`.  The query of a `ZnUrl` is an ordered dictionary, and
-  `OrderedDictionary>>=` of Pharo 14 compares the order of the keys (the
-  cause of the Buoy `testEquals` repair too).  `fixes/ba-st-hyperspace.st`
-  compares the first form as a set of associations and keeps the second
-  assertion.
-- Hyperspace result: 197 of 197 pass on the two VMs.
+  `?start=1&limit=10`.  See "URLs with the same query fields in another
+  order" below: the defect is in the image, and image fix 34 repairs it.
+  The package has no fixes file any more.
+- Hyperspace result: 197 of 197 pass on the two VMs (with the first repair,
+  a change of the test; the run with image fix 34 is in work).
 
 ## PharoWiki (`chicoary/PharoWiki`, row 26)
 
@@ -1413,4 +1412,44 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   The test classes of the simulations have a time limit of 3 minutes of
   their own, with the measured times in the comment.
 - Result: 240 of 240 pass on the two VMs, in a run from a new load.
+
+## URLs with the same query fields in another order (rows 15, 81, 87)
+
+- Tests of three ba-st packages compare a URL with a text whose query
+  fields are in another order than the code makes them:
+  - Hyperspace, `ZnUrlHyperspaceExtensionsTest>>testStartLimit` (the test
+    asserts that one URL is equal to the two orders);
+  - Stargate, `PetsRESTfulControllerTest>>testComplexPagination` ("Got
+    `...pets?limit=2&start=3` instead of `...pets?start=3&limit=2`");
+  - Superluminal, `CompositeHttpRequestCommandTest>>testApplyOn` and
+    `testShortcutCreation`, `HttpRequestTest>>testComposite` and
+    `testQueryString`.
+- The tests pass on Pharo 13.  The defect is in the Pharo 14 image:
+  `ZnUrl>>equals:` compares the queries with `=`, the query is an
+  OrderedDictionary, and `OrderedDictionary>>=` of Pharo 14 compares the
+  position of each key.  Measured: the same two URLs are equal on Pharo 13
+  and not equal on Pharo 14 (stock Cog and our VM).
+- Repair: `scripts/image-fixes/34-znurl-query-order.st` (see
+  [../image_issues.md](../image_issues.md)).  The packages need no change
+  for it, and the changes of test texts that the first repairs made are
+  gone.
+
+## Stargate (`ba-st/Stargate`, row 81)
+
+- State before: `LOAD-FAIL`.  The baseline of the dependency Teapot `v4`
+  (`ba-st-dependencies/Teapot`) defines the package `Teapot-Tests` for Pharo
+  7 to 13 only, so the load stops for Pharo 14.
+- Repair of the load: `patches/ba-st-dependencies-teapot.patch` adds Pharo
+  14 to the list.  `locks/ba-st-stargate.txt` loads the patched Teapot, the
+  patched Buoy and the patched Launchpad first and locks them.
+- `fixes/ba-st-stargate.st`: three methods of
+  `PharoOperatingSystemInformationProvider` use `Smalltalk os`, which Pharo
+  14 deprecates.  They use `OSPlatform current` and `OSEnvironment current`.
+- A defect of our VM that the tests of the row showed: VM parameter 11 (the
+  count of objects that scavenges moved to old space) was always 0.
+  `GarbageCollectionMetricsTest` asserts a positive value.  Repaired in the
+  VM.
+- With the load: 520 tests, 519 pass, 1 failure on the two VMs
+  (`testComplexPagination`, the URL order above).
+- Result with image fix 34: in work.
 

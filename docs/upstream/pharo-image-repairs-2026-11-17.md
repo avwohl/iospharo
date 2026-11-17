@@ -1119,3 +1119,36 @@ Results with the repair (2026-11-17, stock Cog and our VM):
 | `LinkInstallerTest>>testUninstallVisitsEveryNodeWhenTheNodeSetCollides` (new) | image code | repaired | The walk skipped a node, and the mapper kept the node. |
 | `LinkInstallerTest>>testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode` (new) | image code | repaired | The old node of a skipped uninstall won over the new node. |
 | `LinkInstallerTest>>testLinkOnTempVarForObject` and each later test of the class in that run | image code | repaired | The method of the anonymous class was removed two times. |
+
+## Znurl-query-order (found by the package run)
+
+- Entries: `scripts/image-fixes/34-znurl-query-order.st`
+- Methods: `ZnUrl>>equals:`, new test
+  `ZnUrlTest>>testEqualsWithQueryFieldsInAnotherOrder`
+
+`ZnUrl>>equals:` compares the queries of two URLs with `=`.  The query is a
+`ZnMultiValueDictionary`, a subclass of OrderedDictionary.
+`OrderedDictionary>>=` of Pharo 14 compares the position of each key
+(`OrderedDictionaryTest>>testEqualsWhenKeyArentInTheSameOrder`).  In Pharo 13
+the position was not a part of the comparison.  So two URLs with the same
+query fields in another order are equal in Pharo 13 and not equal in Pharo
+14.  Tests of three packages (ba-st Hyperspace, Stargate and Superluminal)
+depend on the old answer, and one of them asserts it.
+
+| Expression | Pharo 13 build 750 | Pharo 14 build 791 |
+|---|---|---|
+| `'https://example.com/pets?start=3&limit=2' asZnUrl = 'https://example.com/pets?limit=2&start=3' asZnUrl` | true | false (stock Cog and our VM) |
+
+The repair compares the fields with no regard to their order.  The two
+queries must have the same count of fields, and each field must have the
+same value.  A field that is there more than one time has an Array of
+values.  The order in that Array stays a part of the comparison, as in
+Pharo 13.
+
+Another place for the repair is `ZnMultiValueDictionary>>=`.  That changes
+the equality of header collections too.  The owner of Zinc must decide.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `ZnUrlTest>>testEqualsWithQueryFieldsInAnotherOrder` (new, 8 cases; each case has the answer of Pharo 13) | image code | repaired | The equality of URLs took the order of the query fields from `OrderedDictionary>>=`. |
+
