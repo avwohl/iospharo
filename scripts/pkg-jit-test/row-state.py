@@ -60,9 +60,17 @@ def main():
         f = line.rstrip('\n').split('\t')
         if f and f[0] in order:
             seen[f[0]] = f
-    counts = {'CLEAN': 0, 'CLEAN-NA': 0, 'NOT-CLEAN': 0}
+    counts = {'CLEAN': 0, 'CLEAN-NA': 0, 'NOT-CLEAN': 0, 'NO-RESULT': 0}
     na_tests = 0
     lines = []
+    # A row that runs again has no line in summary.tsv until the run ends.
+    # Such a row is listed, so that it does not look clean by its absence.
+    highest = max([order[l] for l in seen] or [0])
+    missing = [(i + 1, r[0]) for i, r in enumerate(rows)
+               if r[0] not in seen and first <= i + 1 <= min(last, highest)]
+    for n, label in missing:
+        counts['NO-RESULT'] += 1
+        lines.append((n, '%3d %-46s NO-RESULT        no line in summary.tsv (a run of the row is in work, or the row did not run)' % (n, label)))
     for label, f in sorted(seen.items(), key=lambda kv: order[kv[0]]):
         n = order[label]
         if n < first or n > last:
@@ -85,13 +93,13 @@ def main():
                 na_tests += len(bad_cog)
         counts[kind] += 1
         if kind == 'CLEAN-NA':
-            lines.append('%3d %-46s CLEAN-NA   %d tests cannot apply (not-applicable/%s.txt)' % (n, label, len(bad_cog), label))
+            lines.append((n, '%3d %-46s CLEAN-NA   %d tests cannot apply (not-applicable/%s.txt)' % (n, label, len(bad_cog), label)))
         else:
-            lines.append('%3d %-46s %-16s cog[%s] ours[%s]' % (n, label, state, cog.replace('tests=', ''), ours.replace('tests=', '')))
-    print('\n'.join(lines))
-    total = sum(counts.values())
-    print('rows with a result: %d   clean: %d   clean, with tests that cannot apply: %d (%d tests)   not clean: %d'
-          % (total, counts['CLEAN'], counts['CLEAN-NA'], na_tests, counts['NOT-CLEAN']))
+            lines.append((n, '%3d %-46s %-16s cog[%s] ours[%s]' % (n, label, state, cog.replace('tests=', ''), ours.replace('tests=', ''))))
+    print('\n'.join(text for _, text in sorted(lines)))
+    total = counts['CLEAN'] + counts['CLEAN-NA'] + counts['NOT-CLEAN']
+    print('rows with a result: %d   clean: %d   clean, with tests that cannot apply: %d (%d tests)   not clean: %d   no result now: %d'
+          % (total, counts['CLEAN'], counts['CLEAN-NA'], na_tests, counts['NOT-CLEAN'], counts['NO-RESULT']))
 
 if __name__ == '__main__':
     main()
