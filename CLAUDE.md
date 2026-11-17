@@ -41,6 +41,29 @@ or a patch file with a description, and give it to the owner.  Do not push to
 a pharo-project repository, and do not open an issue or a pull request there.
 The owner reviews first.
 
+## One test VM at a time: scripts/vmrun.sh (owner's rule, 2026-11-17)
+
+Start each VM for a test through `scripts/vmrun.sh`: our VM and stock Cog,
+single tests, evals, image preps and sweeps.  Do not start `test_load_image`
+or the stock `Pharo` directly, and do not give an agent another way to start
+a VM.
+
+- The script has a lock, so only one VM runs on the machine.
+- The script checks free memory before a start, and stops a VM that makes
+  memory low.
+- The script makes sure that the VM is gone before it returns.
+- After a stop or an error, run `scripts/vmrun.sh status`.  The output must
+  show no VM process.
+
+On 2026-11-17 parallel agents with their own VM runs, sweeps and builds made
+the Mac run out of memory.  Agents can read and edit in parallel.  VM runs,
+sweeps and builds are serial.
+
+Keep shell commands simple: one program for each call, and a fixed script for
+repeated work.  Each new command shape can need an approval from the owner.
+`.claude/settings.local.json` (not in git) has the allow rules for the usual
+commands.
+
 ## Hard rules
 
 - Never draw tables using markdown table syntax or `|` (pipe) characters in
