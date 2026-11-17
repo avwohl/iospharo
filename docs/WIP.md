@@ -1,4 +1,4 @@
-# WIP — 2026-11-14
+# WIP — 2026-11-17
 
 Current state only. This file was 4882 lines of stacked session entries going
 back to 2026-05-27; on 2026-08-23 it was pruned the same way `docs/deferred.md`
@@ -14,6 +14,102 @@ file:line. If you are looking for something that is not here, read the archive
 before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
+
+## Right now (2026-11-17) -- every test that does not pass gets a fix
+
+The owner changed the focus on 2026-11-17.  The rule is in `CLAUDE.md`
+("Every failing test gets a fix").  A test that stock Cog fails too is not
+accepted any more.  The fix goes into the test, the image, our VM or Cog.
+Changes for Cog and for the Pharo image upstream go to the owner for review
+before any pull request.
+
+### Measured state, Pharo 14 build 791, arm64
+
+One sweep of each VM on the same image (fake GUI and image fixes filed in):
+
+| VM | Tests | Pass | Fail | Skip | Expected failure |
+|---|---|---|---|---|---|
+| Our VM, JIT (`build-rel`) | 28413 | 28193 | 1 | 170 | 49, not run by the old runner |
+| Stock Cog v12.0.6, native arm64 | 28413 | 28193 | 1 | 170 | 49 fail or error |
+
+The two VMs give the same result for each of the 220 tests that do not pass,
+with one exception: the two `WriteBarrierTest` tests that upstream marked as
+expected failures.  Our VM fails the primitive, and the image then signals
+`PrimitiveFailed`.  Cog writes into the read-only `ByteArray`.
+
+The 220 tests in groups:
+
+| Group | Tests | State |
+|---|---|---|
+| Fixture tests that only another test runs (`MockTest`, `RTFFake*`) | 35 | to prove as not applicable |
+| Windows-only and 32-bit-only tests | 24 | to prove as not applicable |
+| Tests that skip in a session that is not interactive | 28 | our VM cannot give an interactive session to a test run; 6 of the 28 use `Smalltalk isHeadless`, which always answers true in Pharo 14 |
+| Tests that upstream set to skip, or marked as expected failures | 132 | each one needs a repair |
+| `ZnClientTest>>testQueryGoogle` | 1 | the test looks for `pharo.org` in the Google result page |
+
+### Harness defects found on 2026-11-17
+
+- The runner did not run a test that has the expected-failure mark.  It
+  counted the test as a skip.  Fixed (`pharo-headless-test` `300ce55`): such a
+  test runs, a failure is an `XFAIL` line, a pass is a `FAIL` line.
+- The Cog runner used a bare `runCase`.  `ProcessTest`, `SUnitTest` and others
+  gave 56 errors and failures that were not defects.  Fixed in the same
+  commit: `runCaseManaged`, the same session state as our runner, no run of
+  abstract classes.
+- All runner state files had fixed `/tmp/sunit_*` names.  Fixed: the
+  `SUNIT_PREFIX` environment variable (`CLAUDE.md`, "Running Pharo test
+  suites").
+- The runner for our VM gives each test 50 s in place of the 10 s of SUnit,
+  and removes each class limit.  The runner also replaces about 12 image
+  methods (speed shortcuts and old VM workarounds).  Not fixed yet: an agent
+  works on the runner (worktree branch `wt-runner`).
+- The runner for our VM does not work on stock Cog (`TIMEOUT(prim-stuck)` on
+  each test).  Same agent.
+
+### Host facts found on 2026-11-17
+
+- The checkout is `~/src/iospharo` again.  The CMake caches of all build trees
+  named `~/src/iospharo-jit`.  `build-rel` has a new cache and a full build.
+  The other trees need `rm -rf <tree>/CMakeCache.txt <tree>/CMakeFiles` and a
+  new `cmake -S . -B <tree> ...` before the next build.
+- The stock arm64 Cog VMs start on this Mac (builds of 2026-10-23).
+- `~/src/pharo-vm` (branch `pharo-12`) and `~/src/pharo` (branch `Pharo14`,
+  the commit of image build 791) are new clones for reference and patches.
+- A reboot on 2026-11-17 emptied `/tmp`.  The harness directories are
+  `/tmp/harness` (Pharo 13), `/tmp/harness14`, and the two `-x86` ones.
+- The notes folder of `~/src/iospharo` now has the memory notes of the old
+  path `~/src/iospharo-jit` too.
+
+### Work in progress (started 2026-11-17, all in the session scratchpad)
+
+- Workflow `repair-nonpassing-tests`: 43 clusters of the 220 tests.  For each
+  cluster one agent makes the repair and a second agent tries to refute it on
+  the two VMs.  Fix entries go to `<scratchpad>/fixes/<cluster>.st`.
+- Agent for the 28 interactive tests (worktree branch `wt-interactive`).
+- Agent for the runner (worktree branch `wt-runner`).
+
+Not done, in order:
+
+1. Put the accepted fix entries into `scripts/pharo-image-fixes.st` and
+   `docs/image_issues.md`.
+2. Merge the two worktree branches.
+3. Run full sweeps of the two VMs with the new runner.
+4. Write the patch files for Cog and for Pharo upstream.
+5. Do the same work for Pharo 13.
+6. Repair the tests of the 200 packages.
+7. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
+   the sweep of this day.
+
+Not found: the "Apple prompt on every run to allow network" that the owner
+sees.  Checks that gave no prompt:
+
+- The firewall is off and has no entry for the VM.
+- Terminal has the local-network permission.
+- No prompt came during a sweep of each VM, a LAN connection from each VM, or
+  a start of the stock VM as an app.
+
+The system log has policy checks for `org.pharo.vm` (the stock VM app) on
+2026-11-16.  Ask the owner for the text of the prompt.
 
 ## Right now (2026-11-14) -- Linux CI green, Apple build repaired and run
 
