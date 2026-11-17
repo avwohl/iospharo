@@ -13829,13 +13829,17 @@ PrimitiveResult Interpreter::primitiveDoNamedPrimitiveWithArgs(int argCount) {
     }
 
     // Inner prim failed (or was unresolvable): restore the original stack and
-    // fail with -1 = "the external primitive failed" (image maps -1 -> nil).
+    // fail with the error code of the external primitive, as Cog does (an
+    // unresolved named primitive gives PrimErrNotFound, #'not found', the same
+    // code the real primitive gives).  No code, or Cog's generic code 1, is
+    // -1 = "the external primitive failed" (image maps -1 -> nil).
+    const int innerCode = primFailCode_;
     popN(numArgs + 1);
     push(ctxOop);
     push(methodOop);
     push(theReceiver);
     push(argsArrayOop);
-    primFailCode_ = -1;
+    primFailCode_ = (innerCode > 1) ? innerCode : -1;
     return (r == PrimitiveResult::Error) ? PrimitiveResult::Error
                                          : PrimitiveResult::Failure;
 }
@@ -18027,7 +18031,10 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     const uint64_t extKey = method.rawBits();
     ExtCallCacheEntry& extEntry = extCallCache_[(extKey >> 3) & (kExtCallCacheSize - 1)];
     if (extEntry.method == extKey && extEntry.gcEpoch == memory_.fullGCCount()) {
-        if (extEntry.missing) return PrimitiveResult::Failure;
+        if (extEntry.missing) {
+            primFailCode_ = PrimErrNotFound_;  // Cog: PrimErrNotFound, #'not found'
+            return PrimitiveResult::Failure;
+        }
         return extEntry.named ? (this->*(extEntry.named))(argCount)
                               : callExternalPrimitive(extEntry.ext);
     }
@@ -18350,7 +18357,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // fail at once next time, as Cog does, instead of repeating the literal
     // search above (which cost polymath's KD-tree tests ~80% of their time
     // when Float32Array>>sum had no primitive).
-    if (numLiterals >= 1 && !GET_DEBUG_BOOL(PHARO_NO_EXTCALL_MISS_CACHE)) {
+    if (numLiterals >= 1) {
         Oop lit0 = memory_.fetchPointer(1, method);
         if (lit0.isObject() && memory_.isValidPointer(lit0)
             && memory_.classOf(lit0).rawBits()
@@ -18359,8 +18366,14 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             Oop nameOop = memory_.fetchPointer(1, lit0);
             if (nameOop.isObject() && memory_.isValidPointer(nameOop)
                 && nameOop.asObjectPtr()->isBytesObject()) {
-                cacheExtCall(nullptr, nullptr);
-                if (extEntry.method == extKey) extEntry.missing = true;
+                if (!GET_DEBUG_BOOL(PHARO_NO_EXTCALL_MISS_CACHE)) {
+                    cacheExtCall(nullptr, nullptr);
+                    if (extEntry.method == extKey) extEntry.missing = true;
+                }
+                // Cog fails with PrimErrNotFound when the named primitive does
+                // not exist, so <primitive: 'name' module: 'm' error: code>
+                // gets #'not found' in code.
+                if (primFailCode_ == 0) primFailCode_ = PrimErrNotFound_;
             }
         }
     }
@@ -31994,6 +32007,15 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAtPut(int argCount) {
                 size_t objSize = objHdr->byteSize();
                 if (offset + nBytes > static_cast<int64_t>(objSize))
                     return PrimitiveResult::Failure;
+                // A store into the bytes of the object itself respects the
+                // write barrier.  (A store through an ExternalAddress goes to
+                // outside memory and is not a store into that object.)  The
+                // typed store primitives 615-629 fail on a read-only object,
+                // and the image then came here and wrote the bytes anyway.
+                if (objHdr->isImmutable()) {
+                    primFailCode_ = PrimErrNoModification_;
+                    return PrimitiveResult::Failure;
+                }
                 ptr = objHdr->bytes() + offset;
             }
         }

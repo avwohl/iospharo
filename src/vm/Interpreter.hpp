@@ -1030,6 +1030,7 @@ private:
     // see both, so the whole family carries the underscore.
     static constexpr int PrimErrBadArgument_    = 3;  // Argument is not what the primitive needs
     static constexpr int PrimErrBadNumArgs_     = 5;  // Wrong number of arguments
+    static constexpr int PrimErrNotFound_      = 11; // Named primitive or its module not found
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
     static constexpr int PrimErrNoMemory_       = 9;  // Insufficient object memory
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
