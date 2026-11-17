@@ -239,13 +239,13 @@ State on 2026-11-17 at 17:45, rows 1 to 120 (the record of each repair is
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 105 rows are clean: each test passes on stock Cog and on our VM.
+- 106 rows are clean: each test passes on stock Cog and on our VM.
 - 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
   14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 11 rows are not clean yet.  Each has a repair in work or an open point
+- 10 rows are not clean yet.  Each has a repair in work or an open point
   (row 109 is with an agent, and row 119 is new; the two are not in the
   table yet):
 
@@ -256,7 +256,6 @@ state of each row.
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
 | 81 | Stargate | 519 of 520 pass | second round: a test compares a URL text, and the order of the query fields differs |
 | 82 | MCP | stock Cog 1166 of 1167, our VM 1165 | 1 test fails on our VM only (the limit of 56000 frames; the VM repair is in work on the branch `deep-recursion`).  The 1 skip cannot apply on Pharo 14 |
-| 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
 | 84 | Soil | 1167 of 1184 pass, 17 skips | 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`).  Open: 3 coverage tests of the package ask for 93 percent, and the measured coverage is 81 to 86 percent |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |

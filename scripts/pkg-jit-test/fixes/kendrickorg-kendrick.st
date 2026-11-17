@@ -130,7 +130,21 @@ value (the quarantine status Q has no migration); the method ignored it, so the
 quarantined individuals moved.  The word next after an attribute key
 (sigma_species_status_next) selects the value of the compartment that the
 transition goes to; the method has no code for it (Composition and an older
-method have), so the rate E to I1 was zero and no epidemic started."
+method have), so the rate E to I1 was zero and no epidemic started.
+
+S. The simulation tests need more time than the SUnit limit (10 s for a test).
+No defect makes them slow.  Each test runs a Runge-Kutta or a Gillespie
+simulation twice (the model before the DSL and the model after the DSL), and the
+time is the work of the simulation: 500 steps, four stages for each step, 50
+compartments, and for each transition a call of the probability block and a sum
+over the compartments.  A sample of the running process (every 10 ms, 445 samples
+of the model of TestsModel5 before the DSL) shows no hot spot and no time in
+Dictionary>>scanFor:, so the hash of a Dictionary as a key is not the cause: the
+time is spread over the copy of the key dictionaries, the sums, the probability
+blocks and, for Gillespie, Random>>nextInteger:.  The tests need 3 s to 21 s on
+the machine of the run, so the classes of the simulation tests get a class-side
+defaultTimeLimit of 3 minutes (room for a machine that is 3 times slower).  The
+limit of the other tests of the image does not change."
 
 
 "Two helpers live in globals for the time of the file-in: the entries file is one
@@ -579,6 +593,21 @@ fix value: #KendrickEquations value: #convertToCompatibleBackendRepresentation
 				(aModel currentCompartment at: each first) = each second
 					ifTrue: [ res := value at: each third ] ].
 			res ].' ) }.
+
+"=== S. a time limit for the simulation tests ==="
+
+add value: #'TestsIST class' value: #defaultTimeLimit value: 'accessing' value:
+'defaultTimeLimit
+	"The tests of the DSL scripts run a simulation twice (before and after the DSL).  Measured on one machine (arm64, 2026-11-17), the time of one test: TestsModel3 3.4 s, TestsModel4 4.1 to 5.8 s, TestsModel5 9.6 s and more than 10 s on stock Cog, TestsModel6SpatialMap 7.3 s, TestsModel6SpatialMapWithEntity 7.4 s.  The time is the work of the simulation, not a defect.  3 minutes leave room for a machine that is 3 times slower."
+
+	^ 3 minutes'.
+
+#( #TestMosquitoScripts #TestMultiSpeciesSpatial #TestMultiSpeciesSpatialDependant #TestOneSpeciesSpatialScripts #TestDependantConcern ) do: [ :name |
+	add value: (name , ' class') asSymbol value: #defaultTimeLimit value: 'accessing' value:
+'defaultTimeLimit
+	"The test runs a simulation twice (before and after the DSL).  Measured on one machine (arm64, 2026-11-17), testEquivalence: TestMosquitoScripts 20.9 s (Gillespie), TestMultiSpeciesSpatial 5.3 s, TestMultiSpeciesSpatialDependant 5.1 s, TestOneSpeciesSpatialScripts 2.0 s, TestDependantConcern 1.9 s.  The time is the work of the simulation, not a defect.  3 minutes leave room for a machine that is 3 times slower."
+
+	^ 3 minutes' ].
 
 Smalltalk globals removeKey: #KendrickRangeFix ifAbsent: [ nil ].
 Smalltalk globals removeKey: #KendrickEdit ifAbsent: [ nil ].

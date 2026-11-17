@@ -1377,3 +1377,40 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   read the httpbin fork of the CI.  Port 11211 must be free.
 - Result: 203 of 203 pass on the two VMs, in a run from a new load.
 
+## Kendrick (`KendrickOrg/kendrick`, row 83)
+
+- State before: `LOAD-FAIL` (`Conflicting repositories!`).
+- Causes of the load failure, in the baseline: the baseline names its own
+  repository with another address than the load expression, and it gives
+  the dependencies of `Kendrick-Core` only for Pharo 8 to 10.
+  `patches/kendrickorg-kendrick.patch` removes the repository line and names
+  PolyMath, DataFrame, PetitParser and the AI graph algorithms for each
+  Pharo version.
+- State after the load: 240 tests, 219 pass, 1 failure, 16 errors, 4
+  expected failures on the two VMs.
+- Causes, each found with a probe (`fixes/kendrickorg-kendrick.st`):
+  - The chart code sends `RSChart>>addPlot:`.  Roassal of Pharo 14 has
+    `add:`.
+  - `Composition>>doesNotUnderstand:` looks for a parameter in its own
+    parameters, which are empty.  The parameters are in the model of the
+    composition.
+  - `KEComponent>>attributes:` did not refuse two attributes with one name
+    (1 failure), and did not take a Dictionary.
+  - Four defects behind the four marks of an expected failure: a model made
+    from transitions had its equations in the wrong kind of collection;
+    `KEUnaryExpression>>removeVariable:` changed the receiver; a compartment
+    that only a transition names had no key; and one test asked a model of
+    transitions for events, which only exist between equations and
+    transitions.  That test now asks for the transitions and keeps its
+    expected value of 4.  The four marks are gone.
+  - `KendrickEquations` reads the print text of an Array of symbols.  Pharo
+    14 prints `#'S:t'` with quotes, so the text was cut.
+  - Tests: `contents max` on a DataFrame (the value is `max first`);
+    `asArray` on a number; tests that compared data frames of another
+    shape; a class name that the last commit of the repository changed.
+- 10 simulation tests need 3 to 25 s, and SUnit gives a test 10 s.  The
+  profile is flat (the work is the steps of the simulation, no slow lookup).
+  The test classes of the simulations have a time limit of 3 minutes of
+  their own, with the measured times in the comment.
+- Result: 240 of 240 pass on the two VMs, in a run from a new load.
+
