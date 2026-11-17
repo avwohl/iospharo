@@ -1453,3 +1453,42 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   (`testComplexPagination`, the URL order above).
 - Result with image fix 34: in work.
 
+## Esope (`moosetechnology/Esope`, row 109)
+
+- State before: `LOAD-FAIL` (`Class not found: #FamixFortranModel`).
+- Causes of the load failure and of the first errors:
+  - The baseline of the dependency Famix-Fortran has no "requires" line
+    from `Famix-FortranUDT-Entities` to `Famix-Fortran77-Entities`, so
+    Metacello loads the first package before the package that it needs.
+    `patches/moosetechnology-famix-fortran.patch` adds the lines, and
+    `locks/moosetechnology-esope.txt` loads the patched Famix-Fortran first.
+  - No baseline of the chain names NeoJSON, which the importer uses (83
+    errors).  The manifest row loads NeoJSON first.
+- State after the load: 331 tests, 325 pass, 1 failure, 5 skips on the two
+  VMs; before the first repair of the tests 14 tests were skips.
+- Repairs (`fixes/moosetechnology-esope.st`), each test with its assertions:
+  - `PPEsopeRewriter>>applySlashTransformation:` put its marker before a
+    blank and not at the slash (2 skips).
+  - 5 skips were left from a time when the importer lacked the feature; the
+    feature is there now.
+  - Features that the importer lacked, written in its style: an argument
+    count for an invocation (the Fortran model of Famix has no arguments, so
+    the count is in the intermediate tree); the command "segini" with a
+    copy; a pointer in a segment; a DATA statement; a comment line with an
+    IF before an Esope command.
+  - `visitBlock_data:` stored a raw Array as the source anchor, so each
+    BLOCK DATA stopped the conversion to Famix.
+  - One test used `target` of an access, which Famix replaced by `variable`.
+  - One test starts an outside parser program.  It uses a stand-in that
+    gives the JSON text of the test.
+- Two expected values are ours and need the review of the owner of the
+  package: the count of body entries of a BLOCK DATA with one COMMON and one
+  DATA statement (3 became 2: one statement gives one entry in the sibling
+  test), and the end column of an IF comment (29 became 27: the line has 26
+  characters, and the sibling test shows that the end is the last column
+  plus 1).
+- Limit of the model, not repaired: a BLOCK DATA entity of the Fortran model
+  has no accesses, so the values of a DATA statement in a BLOCK DATA are not
+  in the Famix model.
+- Result: 331 of 331 pass on the two VMs, in a run from a new load.
+

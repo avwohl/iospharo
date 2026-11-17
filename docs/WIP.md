@@ -239,15 +239,14 @@ State on 2026-11-17 at 17:45, rows 1 to 120 (the record of each repair is
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 106 rows are clean: each test passes on stock Cog and on our VM.
+- 107 rows are clean: each test passes on stock Cog and on our VM.
 - 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
   14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 10 rows are not clean yet.  Each has a repair in work or an open point
-  (row 109 is with an agent, and row 119 is new; the two are not in the
-  table yet):
+- 9 rows are not clean yet.  Each has a repair in work or an open point
+  (row 119 is new and is not in the table yet):
 
 | Row | Package | State | Work |
 |---|---|---|---|
