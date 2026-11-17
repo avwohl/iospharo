@@ -3464,7 +3464,7 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
         // free JIT code the suspended process resumes into — the exact
         // corruption class this function exists to prevent.  70000 >
         // MaxFrameDepth(65536) is the standard chain-walk cycle guard here.
-        for (int d = 0; d < 70000 && ctx.isObject() && ctx.rawBits() > 0x10000
+        for (int d = 0; d < ContextChainWalkCap && ctx.isObject() && ctx.rawBits() > 0x10000
                  && memory_.isValidPointer(ctx); d++) {
             chainSteps++;
             Oop mth = memory_.fetchPointer(3, ctx);   // Context>>method (CompiledMethod/Block)
@@ -3950,6 +3950,25 @@ void Interpreter::checkLowSpaceSignal() {
     if (inExtension_) return;
     Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
     if (!lowSem.isObject() || lowSem.isNil()) return;
+    // Collect before the image is told, as Cog's sufficientSpaceAfterGC does:
+    // old space can hold garbage that no full GC has seen (the contexts of a
+    // recursion that the image has stopped), and the full GC runs only at a
+    // growth threshold that a small old-space limit never reaches.  A
+    // collection that frees enough ends the crossing.  This is a GC safe
+    // point, as the one in periodic_checks.
+    if (memory_.oldSpaceGrewSinceCompact()) {
+        memory_.clearCompactGCFlag();
+        memory_.fullGC(/* skipEphemerons */ GET_DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH));
+        flushMethodCache();
+        memory_.recheckLowSpace();
+        if (!memory_.lowSpaceCrossed()) return;
+    }
+    // A second signal while the image still unwinds the process that it
+    // stopped is no use; see ObjectMemory::lowSpaceWorthSignalling.
+    if (!memory_.lowSpaceWorthSignalling()) {
+        memory_.dropLowSpaceLatch();
+        return;
+    }
     // Disarm only once we can actually deliver.  The old code zeroed the
     // threshold before looking the semaphore up, so a crossing that arrived
     // before the image had registered one disarmed the breaker for good and
@@ -9386,7 +9405,7 @@ void Interpreter::returnValue(Oop value) {
                 // MaxFrameDepth(65536) covers any real chain; the abandon
                 // path below remains correct for genuinely unreachable
                 // (cross-stack) targets.
-                for (int i = 0; i < 70000 && check.isObject() && !check.isNil(); i++) {
+                for (int i = 0; i < ContextChainWalkCap && check.isObject() && !check.isNil(); i++) {
                     if (check.rawBits() == homeCtx.rawBits()) {
                         reachable = true;
                         break;
@@ -9416,7 +9435,7 @@ void Interpreter::returnValue(Oop value) {
             {
                 Oop ctx = senderOfCurrent;
                 int depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+                while (ctx.isObject() && !ctx.isNil() && depth < ContextChainWalkCap) {
                     if (ctx.rawBits() == homeCtx.rawBits()) break;
                     Oop method = memory_.fetchPointer(3, ctx);
                     if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
@@ -9433,7 +9452,7 @@ void Interpreter::returnValue(Oop value) {
                 Oop c = senderOfCurrent;
                 int safety = 0;
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 70000) {
+                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < ContextChainWalkCap) {
                     Oop next = memory_.fetchPointer(0, c);
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
@@ -9465,7 +9484,7 @@ void Interpreter::returnValue(Oop value) {
                 Oop c = senderOfCurrent;
                 int safety = 0;
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                       c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
+                       c.rawBits() != homeCtx.rawBits() && safety++ < ContextChainWalkCap) {
                     Oop next = memory_.fetchPointer(0, c);
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
@@ -9527,7 +9546,7 @@ void Interpreter::returnValue(Oop value) {
             Oop homeCtx = Oop::nil();
             Oop ctx = senderOfCurrent;
             int depth = 0;
-            while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+            while (ctx.isObject() && !ctx.isNil() && depth < ContextChainWalkCap) {
                 if (memory_.fetchPointer(3, ctx).rawBits() == homeMethodOop.rawBits()) {
                     homeCtx = ctx;
                     break;
@@ -9541,7 +9560,7 @@ void Interpreter::returnValue(Oop value) {
                 Oop nextEnsure = Oop::nil();
                 ctx = senderOfCurrent;
                 depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+                while (ctx.isObject() && !ctx.isNil() && depth < ContextChainWalkCap) {
                     if (ctx.rawBits() == homeCtx.rawBits()) break;
                     Oop method = memory_.fetchPointer(3, ctx);
                     if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
@@ -9558,7 +9577,7 @@ void Interpreter::returnValue(Oop value) {
                     Oop c = senderOfCurrent;
                     int safety = 0;
                     while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                           c.rawBits() != nextEnsure.rawBits() && safety++ < 70000) {
+                           c.rawBits() != nextEnsure.rawBits() && safety++ < ContextChainWalkCap) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
                         memory_.storePointer(1, c, nilObj);
@@ -9584,7 +9603,7 @@ void Interpreter::returnValue(Oop value) {
                     Oop c = senderOfCurrent;
                     int safety = 0;
                     while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                           c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
+                           c.rawBits() != homeCtx.rawBits() && safety++ < ContextChainWalkCap) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
                         memory_.storePointer(1, c, hasBeenReturnedPC);
@@ -10482,7 +10501,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                 } else if (GET_DEBUG_BOOL(PHARO_NLR_HOME_DIAG)) {
                     nlrFallbackNote("returnFromMethodSlow-chain-scan", !liveHome.isNil(), homeMethodOop);
                 }
-                while (!homeIsChainContext && ctx.isObject() && !ctx.isNil() && searchDepth < 70000) {
+                while (!homeIsChainContext && ctx.isObject() && !ctx.isNil() && searchDepth < ContextChainWalkCap) {
                     Oop ctxMethod = memory_.fetchPointer(3, ctx);
                     if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
                         fallbackCtx = ctx;
@@ -10530,7 +10549,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
                             Oop ctx = activeContext_;
                             Oop nilObj = memory_.nil();
                             int safety = 0;
-                            while (ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety++ < 70000) {
+                            while (ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety++ < ContextChainWalkCap) {
                                 Oop nextSender = memory_.fetchPointer(0, ctx);
                                 memory_.storePointer(0, ctx, nilObj);  // sender = nil
                                 memory_.storePointer(1, ctx, nilObj);  // pc = nil → isDead
@@ -10741,7 +10760,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
         int depth = 0;
         const Oop lexicalHome = lexicalHomeContextOf(closure_);
         Oop fallbackCtx = Oop::nil();
-        while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+        while (ctx.isObject() && !ctx.isNil() && depth < ContextChainWalkCap) {
             Oop ctxMethod = memory_.fetchPointer(3, ctx);
             if (!lexicalHome.isNil() && ctx.rawBits() == lexicalHome.rawBits()) {
                 homeCtx = ctx;
@@ -10818,7 +10837,7 @@ void Interpreter::returnFromMethodSlow(Oop value) {
 void Interpreter::killContextsThrough(Oop from, Oop homeCtx) {
     Oop ctx = from;
     const Oop nilObj = memory_.nil();
-    for (int safety = 0; ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety < 70000; safety++) {
+    for (int safety = 0; ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety < ContextChainWalkCap; safety++) {
         Oop next = memory_.fetchPointer(0, ctx);
         memory_.storePointer(0, ctx, nilObj);
         memory_.storePointer(1, ctx, nilObj);
@@ -10906,7 +10925,7 @@ Interpreter::HomeSite Interpreter::homeSiteOf(Oop home, size_t& frameIndex) {
     }
     const Oop nilObj = memory_.nil();
     Oop c = activeContext_;
-    for (int hops = 0; hops < 70000 && c.isObject() && c.rawBits() != nilObj.rawBits(); hops++) {
+    for (int hops = 0; hops < ContextChainWalkCap && c.isObject() && c.rawBits() != nilObj.rawBits(); hops++) {
         if (c.rawBits() == home.rawBits()) return HomeSite::Chain;
         c = memory_.fetchPointer(0, c);
     }
@@ -11066,7 +11085,7 @@ void Interpreter::returnFromBlock() {
             // lexical home), in-chain + home method, over the method-oop nearest.
             Oop lexicalHome = lexicalHomeContextOf(closure_);
             Oop fallbackCtx = Oop::nil();
-            while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+            while (ctx.isObject() && !ctx.isNil() && depth < ContextChainWalkCap) {
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
                 if (!lexicalHome.isNil() && ctx.rawBits() == lexicalHome.rawBits()) {
                     homeCtx = ctx;
@@ -11592,7 +11611,7 @@ void Interpreter::segUnmark() {
 void Interpreter::segGuardWalk(Oop from, Oop stop) {
     if (!seg_.armed) return;
     Oop c = from;
-    for (int i = 0; i < 100000 && isContextObject(c); i++) {
+    for (int i = 0; i < ContextChainWalkCap && isContextObject(c); i++) {
         if (c.rawBits() == stop.rawBits()) return;
         Oop s = c.asObjectPtr()->slotAt(0);
         if (s.rawBits() == segMarker().rawBits()) { nlrSegmentDeopt(); return; }
@@ -11696,7 +11715,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_CHECK), 0)) {
         bool onChain = false;
         Oop c = startCtx;
-        for (int d = 0; d < 70000 && c.isObject() && !c.isNil(); d++) {
+        for (int d = 0; d < ContextChainWalkCap && c.isObject() && !c.isNil(); d++) {
             if (c.rawBits() == homeCtx.rawBits()) { onChain = true; break; }
             c = memory_.fetchPointer(0, c);
         }
@@ -11736,7 +11755,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     // 70000 > MaxFrameDepth(65536) covers the chain; still a finite cyclic guard.
     // (Proactive: the proven trigger used the ~6754 path; this materialized-context
     // path (frameDepth_==0) is the same pattern, regression-validated.)
-    while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
+    while (ctx.isObject() && !ctx.isNil() && depth < ContextChainWalkCap) {
         if (ctx.rawBits() == homeCtx.rawBits()) break;
 
         Oop method = memory_.fetchPointer(3, ctx);
@@ -11840,7 +11859,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
         Oop c = startCtx;
         int safety = 0;
         while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-               c.rawBits() != ensureCtx.rawBits() && safety++ < 70000) {
+               c.rawBits() != ensureCtx.rawBits() && safety++ < ContextChainWalkCap) {
             Oop nextSender = memory_.fetchPointer(0, c);
             memory_.storePointer(0, c, nilObj);  // sender = nil
             memory_.storePointer(1, c, hasBeenReturnedPC);  // pc = sentinel
@@ -14441,7 +14460,10 @@ bool Interpreter::reportStalledProcess() {
 }
 
 void Interpreter::handleStackOverflow(int argCount) {
-    // Stack overflow (frameDepth_ hit StackOverflowLimit). Grab the receiver of
+    // Only a process whose shouldOverflow slot is true gets here (see
+    // flushFramesAtLimit: every other process moves its frames to Contexts and
+    // goes on, as on Cog).  Stack overflow (the whole depth hit
+    // StackOverflowLimit).  Grab the receiver of
     // the send that could not be activated BEFORE popping: it becomes the
     // receiver of the #error: signalled below.
     Oop failedReceiver = stackValue(argCount);
@@ -15125,6 +15147,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
+        if (flushFramesAtLimit(method)) {
+            activateMethod(method, argCount);   // frameDepth_ is 0: the push fits
+            return;
+        }
         handleStackOverflow(argCount);
         return;
     }
@@ -16980,6 +17006,10 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
+        if (flushFramesAtLimit(block)) {
+            activateBlock(block, argCount);   // frameDepth_ is 0: the push fits
+            return;
+        }
         handleStackOverflow(argCount);
         return;
     }
@@ -17382,7 +17412,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Everything rare is in stackDepthExceeded().
     if (__builtin_expect(frameDepth_ >= frameLimit_, 0)) {
         if (stackDepthExceeded(frameDepth_)) {
-            reportFrameOverflow(method, argCount);   // cold, out of line
+            if (wholeDepthLimited_) reportFrameOverflow(method, argCount);   // cold, out of line
             return false;
         }
     }
@@ -17607,8 +17637,9 @@ void Interpreter::forgetProcessDepth(Oop process) {
 
 // The only writer of frameLimit_.  See the block comment in Interpreter.hpp.
 void Interpreter::setFrameLimit() {
+    const size_t limit = wholeDepthLimited_ ? StackOverflowLimit : FlushFrameLimit;
     frameLimit_ = inStackOverflowSignal_ ? 0
-        : (StackOverflowLimit > chainDepthBase_ ? StackOverflowLimit - chainDepthBase_ : 0);
+        : (limit > chainDepthBase_ ? limit - chainDepthBase_ : 0);
 #if PHARO_JIT_ENABLED
     if (mcfDepthLimitPtr_) {
         // PHARO_MCF_NO_FUSED_DEPTH keeps the older, lower cap of the unfused test.
@@ -17641,6 +17672,27 @@ void Interpreter::setFrameLimit() {
         chainDepthBase_ = senderChainLength(below, ChainWalkCap);
         chainBaseStale_ = false;
     };
+    // The mode is read here, on the cold path (a process can get shouldOverflow
+    // after it started).  A process that does not get #stackOverflow has no
+    // depth limit: the trip asks for a flush (flushFramesAtLimit), and the
+    // count that tripped is the frames since the last flush, so no chain walk.
+    if (!processShouldOverflow(getActiveProcess())) {
+        if (wholeDepthLimited_ || inStackOverflowSignal_) {
+            // The flag went away: the heap chain no longer counts.
+            wholeDepthLimited_ = false;
+            inStackOverflowSignal_ = false;
+            if (ProcessDepth* e = depthEntry(getActiveProcess(), false)) e->headroom = false;
+            chainDepthBase_ = 0;
+        }
+        setFrameLimit();
+        return depth >= frameLimit_;
+    }
+    if (!wholeDepthLimited_) {
+        // The flag came on while the process ran: from here the whole depth
+        // counts, so the base is the measured chain (the code below measures).
+        wholeDepthLimited_ = true;
+        setFrameLimit();
+    }
     if (inStackOverflowSignal_) {
         // On the headroom: the inline frames may reach limit + headroom and the
         // whole depth SignalWholeDepthCap.  frameLimit_ is 0, so every push
@@ -17672,6 +17724,50 @@ void Interpreter::setFrameLimit() {
     }
     setFrameLimit();
     return false;
+}
+
+bool Interpreter::processShouldOverflow(Oop process) {
+    return process.isObject() && !process.isNil()
+        && process.asObjectPtr()->slotCount() > (size_t)ProcessShouldOverflowIndex
+        && memory_.fetchPointer(ProcessShouldOverflowIndex, process) == memory_.trueObject();
+}
+
+// The frame limit tripped for a process that does not get #stackOverflow.
+// Cog moves frames to Contexts at each overflow of a stack page and goes on;
+// this does the same for all inline frames at once.
+//
+// Invariants:
+// - The caller (activateMethod, activateBlock) has changed nothing before its
+//   pushFrame failed, so it can run the activation again.  Its Oop `keep` is
+//   pushed on the operand stack, so the Context made below holds it.
+// - No allocation here runs a GC (ObjectMemory::allocateRaw only sets the
+//   request flags; the collections run at the next checkpoint).  So the C++
+//   locals of the callers stay valid, except `keep`, which comes back from the
+//   stack anyway.
+// - After the move frameDepth_ is 0 and the operand stack restarts at its
+//   base: executeFromContext builds the top frame from the Context.  Moving
+//   the frames alone would free the frame table but not the operand stack.
+bool Interpreter::flushFramesAtLimit(Oop& keep) {
+    if (processShouldOverflow(getActiveProcess())) return false;
+    push(keep);
+    Oop top = materializeFrameStack();
+    if (!matfsComplete_ || !isContextObject(top)) {
+        // An allocation of a Context failed: old space is full.  The image has
+        // had its low-space signal before this point (ObjectMemory keeps the
+        // headroom of one eden), so this is a real exhaustion.
+        stopVM("Out of memory while moving the frames of a deep recursion to Contexts");
+        return false;
+    }
+    frameDepth_ = 0;          // the frames are Contexts now
+    chainDepthBase_ = 0;      // frames since this flush
+    if (!executeFromContext(top)) {
+        stopVM("Cannot continue in the top Context of a deep recursion");
+        return false;
+    }
+    chainDepthBase_ = 0;
+    setFrameLimit();
+    keep = pop();
+    return true;
 }
 
 // pushFrame's stack-overflow report, out of line so the hot push does not
@@ -23361,9 +23457,13 @@ void Interpreter::transferTo(Oop newProcess) {
     // is reset.  Not when the base belongs to an earlier process (a switch
     // that has not reached executeFromContext yet).
     if (!chainBaseStale_) {
-        ProcessDepth* out = depthEntry(oldProcess, true);
-        out->depth = std::min(chainDepthBase_ + frameDepth_, ChainWalkCap);
-        out->valid = true;
+        if (wholeDepthLimited_) {
+            ProcessDepth* out = depthEntry(oldProcess, true);
+            out->depth = std::min(chainDepthBase_ + frameDepth_, ChainWalkCap);
+            out->valid = true;
+        } else if (ProcessDepth* out = depthEntry(oldProcess, false)) {
+            out->valid = false;   // a process that has no depth limit has no depth on record
+        }
     }
     Oop savedNewProcess = gcTempOop_;  // Save previous value
     gcTempOop_ = newProcess;  // Protect from GC (gcTempOop_ is a GC root)
@@ -24735,7 +24835,14 @@ bool Interpreter::executeFromContext(Oop context) {
     // This is the one place every resume passes (transferTo, tryReschedule,
     // terminateAndSwitchProcess, the inline switches in the callback paths,
     // enterInterpreterFromCallback, the startup paths).
-    if (chainBaseStale_) {
+    if (chainBaseStale_ && !(wholeDepthLimited_ = processShouldOverflow(getActiveProcess()))) {
+        // No depth limit for this process (see frameLimit_): the frames that
+        // it pushes from here on are counted, the heap chain under them is not
+        // and is not walked.
+        chainBaseStale_ = false;
+        chainDepthBase_ = 0;
+        inStackOverflowSignal_ = false;
+    } else if (chainBaseStale_) {
         chainBaseStale_ = false;
         // The depth of a process that transferTo switched out is on record:
         // no walk.  Any other resume (first run, a switch that bypassed
