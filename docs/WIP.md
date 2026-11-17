@@ -237,10 +237,10 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 101 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).
 
-- 77 rows are clean: each test passes on stock Cog and on our VM.
+- 78 rows are clean: each test passes on stock Cog and on our VM.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 20 rows are not clean yet.  Each has a repair in work:
+- 19 rows are not clean yet.  Each has a repair in work:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -257,9 +257,8 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 | 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
 | 84 | Soil | 1119 of 1139 pass, 2 failures, 18 skips | second round: two lint failures and 4 skips of lint and coverage tests; 14 skips cannot apply (8 Windows lock tests, 6 cases with no meaning) |
 | 85 | Carrefour | 63 of 77 pass | the row loads now (the Famix Java model and TinyLogger first); second round: the binder and the tests are for the Famix Java model of 2023 |
-| 88 | mongotalk | 23 of 88 pass | the tests need a MongoDB server; a stand-in in the image is written (wire protocol `OP_MSG`, 18 commands); run in work |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
-| 90 | pharo-test-analysis | no load | patch of the baseline (a package name that does not exist) and a fixtures file; run in work |
+| 90 | pharo-test-analysis | 67 of 71 pass | the row loads now (a patch of the baseline); second round: 4 errors (`RTDHelperVisitor` does not understand `#messages`) |
 | 91 | Turbo | 265 of 270 pass | the 5 expected failures are plain failures now: the new pictures of the first round are not what the code draws; second round with probes |
 | 96 | Iris | 128 of 131 pass | 3 tests that fail on purpose (probably fixtures of another test); an agent checks |
 | 97 | pharo-gsoc2025 | 1455 of 1456 pass | 1 failure: a count of nodes of a DrTests coverage result; an agent works on it |

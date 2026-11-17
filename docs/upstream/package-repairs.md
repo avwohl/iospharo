@@ -731,3 +731,31 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   not do that any more (`WorldState>>runStepMethodsIn:` does not send
   `stepGlobal`), so the test cannot apply on this image.
 
+## mongotalk (`pharo-nosql/mongotalk`, row 88)
+
+- State before: 88 tests, 23 pass, 65 errors on the two VMs.
+- Cause: the 65 tests need a MongoDB server on `127.0.0.1:27017`.  41 tests
+  stop in `setUp` with `ConnectionClosed`.  24 tests stop in `tearDown`,
+  because `setUp` did not make the database object.  The test machine runs
+  no MongoDB, and we install none.
+- Repair here: `fixes/pharo-nosql-mongotalk.st` adds a stand-in for the
+  server in the image (the classes `MongoServerDouble`,
+  `MongoDoubleCollection`, `MongoDoubleMatcher`, `MongoDoubleBSON` and
+  `MongoDoubleError`).  The stand-in listens on `127.0.0.1:27017`, reads the
+  wire messages `OP_MSG` that the client sends, and keeps databases and
+  collections in memory.  The `setUp` of the five test classes starts the
+  stand-in first.  No assertion has a change.
+- Three test defects that the missing server hid:
+  - `MongoTest>>testAddExistingCollection` and
+    `MongoAuthTest>>testSCRAMSHA1AuthMechanism` start with `self skip`.  The
+    two tests run now.  The stand-in answers the error for a collection that
+    exists, and has the server side of the login `SCRAM-SHA-1`.
+  - `MQQueryTest>>testWhere` sends the JavaScript text `this.key1 =
+    "value1"`.  A single `=` is an assignment, so a real server matches each
+    document.  The repair writes `==`.
+- Limits: the tests are a check of the client of the package against a
+  server in the image, and not against MongoDB.  The stand-in has only the
+  commands and the query operators that the tests use.  It has no
+  JavaScript, no aggregation, no transactions and no check of access rights.
+- Result: 88 of 88 pass on the two VMs.
+
