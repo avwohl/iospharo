@@ -1,0 +1,124 @@
+From 27578be5eb355e195c372b9e04f76a4d87b5345a Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 07:15:10 -0500
+Subject: [PATCH] SocketPlugin: local address from any interface that is up,
+ not only eth0 and wlan0
+
+sqResolverLocalAddress accepted only interfaces with the names eth0 and
+wlan0.  On macOS (en0, en1, ...) and on a Linux with predictable interface
+names (enp3s0, wlp2s0, ...) the primitive answered 0.0.0.0, and
+NetNameResolver class>>localHostAddress then answered the loopback address
+on a connected machine.  NetNameResolverTest>>testLocalHostAddress is set
+to skip in the image as 'currently broken' for this reason.
+
+Take the first IPv4 address of an interface that is up and is not the
+loopback.  An interface that is also running, with an address outside
+169.254/16, wins over one that is only up.  With no such interface the
+answer stays 0.0.0.0.  The early returns no longer skip freeifaddrs.
+
+Measured on macOS 27, arm64, interface en6 at 10.3.0.128:
+  before: NetNameResolver primLocalAddress -> #[0 0 0 0]
+  after:  NetNameResolver primLocalAddress -> #[10 3 0 128]
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../src/common/SocketPluginImpl.c             | 67 ++++++++++---------
+ 1 file changed, 37 insertions(+), 30 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..034ca133f 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -107,6 +107,7 @@ struct sockaddr_un
+ # include <arpa/inet.h>
+ # include <netdb.h>
+ #include <ifaddrs.h>
++#include <net/if.h>
+ 
+ #define closesocket(x) close(x)
+ #define SD_SEND 	SHUT_WR
+@@ -1718,45 +1719,51 @@ sqInt sqResolverLocalAddress(void) {
+ #ifndef _WIN32
+ 
+ 	/*
+-	 * TODO: Check all this code, because is does not work if you have more than one network interface.
++	 * Answer the IPv4 address of the first network interface that is up and is
++	 * not the loopback.  An interface that is also running, with an address
++	 * outside the link-local range 169.254/16, wins over one that is only up.
++	 *
++	 * Before, this function accepted only the interface names "eth0" and
++	 * "wlan0".  The answer was 0.0.0.0 on macOS (en0, en1, ...) and on a Linux
++	 * with predictable interface names (enp3s0, wlp2s0, ...).
+ 	 */
+ 
+ 	struct ifaddrs *ifaddr, *ifa;
+-    int s;
+-    char host[NI_MAXHOST];
+-    sqInt localAddr = 0;
++	struct ifaddrs *best = NULL, *fallback = NULL, *pick;
++	sqInt localAddr = 0;
+ 
+-    if (getifaddrs(&ifaddr) == -1) {
+-        success(false);
+-        return 0;
+-    }
++	if (getifaddrs(&ifaddr) == -1) {
++		success(false);
++		return 0;
++	}
+ 
++	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
++	{
++		unsigned char *bytes;
+ 
+-    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) 
+-    {
+-        if (ifa->ifa_addr == NULL)
+-            continue;  
++		if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET)
++			continue;
++		if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK))
++			continue;
+ 
+-        s=getnameinfo(ifa->ifa_addr,sizeof(struct sockaddr_in),host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
++		bytes = (unsigned char *)&((struct sockaddr_in *)(ifa->ifa_addr))->sin_addr;
++		if ((ifa->ifa_flags & IFF_RUNNING) && !(bytes[0] == 169 && bytes[1] == 254)) {
++			best = ifa; /* take the first plausible answer */
++			break;
++		}
++		if (fallback == NULL)
++			fallback = ifa;
++	}
+ 
+-        if(((strcmp(ifa->ifa_name,"eth0")==0)||(strcmp(ifa->ifa_name,"wlan0")==0))&&(ifa->ifa_addr->sa_family==AF_INET))
+-        {
+-            if (s != 0)
+-            {
+-                success(false);
+-                return 0;
+-            }
+-            logTrace( "\tInterface : <%s>\n",ifa->ifa_name );
+-            logTrace( "\t IP       : <%s>\n", inet_ntoa(((struct sockaddr_in *)(ifa->ifa_addr))->sin_addr));
+-            if(localAddr == 0) { /* take the first plausible answer */
+-                localAddr = ((struct sockaddr_in *)(ifa->ifa_addr))->sin_addr.s_addr;
+-            }
+-           
+-        }
+-    }
++	pick = (best != NULL) ? best : fallback;
++	if (pick != NULL) {
++		logTrace( "\tInterface : <%s>\n", pick->ifa_name );
++		logTrace( "\t IP       : <%s>\n", inet_ntoa(((struct sockaddr_in *)(pick->ifa_addr))->sin_addr));
++		localAddr = ((struct sockaddr_in *)(pick->ifa_addr))->sin_addr.s_addr;
++	}
+ 
+-    freeifaddrs(ifaddr);
+-    return ntohl(localAddr);
++	freeifaddrs(ifaddr);
++	return ntohl(localAddr);
+ #else
+ 
+     static char localHostName[MAXHOSTNAMELEN];
+-- 
+2.54.0 (Apple Git-157)
+

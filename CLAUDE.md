@@ -13,6 +13,7 @@ Key paths:
     docs/deferred.md     consolidated list of deferred work
     docs/image_issues.md Pharo 13 image bugs we patch + upstream wishlist
     docs/vm-compat-bugs.md  open VM defects and leads
+    docs/upstream/       changes for Cog and the Pharo image, for the owner to review
 
 ## README stays short
 
