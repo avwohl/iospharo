@@ -52,6 +52,14 @@
 #   VMRUN_OLD_SPACE_MB  old-space limit of our VM (default 6144)
 set -u
 
+# A VM gets no key, token or password of the user.  An image can hold the
+# code of other people (the packages of the package run), and that code can
+# read the environment.  Measured 2026-11-17: the tests of one package read
+# an API key from the environment and sent requests with it.
+for v in $(compgen -e | grep -E -i 'KEY|TOKEN|SECRET|PASSW|CREDENTIAL|^ANTHROPIC_|^CLAUDE|^GH_|^GITHUB_|^AWS_|^OPENAI_|^GOOGLE_'); do
+    unset "$v"
+done
+
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=${PHARO_WORK:-/tmp/pharo-work}
 # The lock is a symbolic link whose text is the process id of the holder.

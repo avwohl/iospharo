@@ -625,3 +625,36 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Repair here: `fixes/akgrant43-geosphere.st` (5 test methods).
 - Result: 11 of 11 pass on the two VMs.
 
+## anthropic-sdk-pharo (`punt-labs/anthropic-sdk-pharo`, row 75)
+
+- State before: 932 tests, 883 pass, 1 failure, 43 errors, 3 skips, 2
+  timeouts on the two VMs.
+- Cause: 46 tests of 16 integration test classes call the real service
+  `api.anthropic.com`.  `ClaudeSDKExampleSupport class>>resolveClient` reads
+  the key from `ANTHROPIC_PHARO_API_KEY`, `ANTHROPIC_API_KEY` or the
+  keychain.  The shell that started the run had `ANTHROPIC_API_KEY`, so the
+  tests sent requests with that value.  The service answered "invalid
+  x-api-key".  The two timeouts are the same answer on the streaming socket:
+  the client waits for a line end that does not come.
+- What we changed in our tools because of this row: the VMs of the package
+  run start with an environment that has no key or token of the user
+  (`scripts/pkg-jit-test/run-one-package.sh` and `scripts/vmrun.sh`).
+- Repair here: `fixes/punt-labs-anthropic-sdk-pharo.st` adds the class
+  `ClaudeAnthropicDouble`: a `ZnServer` on `127.0.0.1` that accepts one fixed
+  test key and answers the requests of the tests (models, messages, token
+  counts, streaming, files, skills).  `resolveClient` answers a client for
+  that server.  Three tests that opened a TLS socket to the real host take a
+  plain socket to the server.  No assertion has a change, no real key is
+  read, and no request leaves the machine.
+- Limit: the tests now check the client code of the package against a
+  server in the image.  The server does not run a model, and it is not a
+  check against the real service.
+- 2 skips were tests of `isAvailable` that could not fail.  They now assert
+  that the answer agrees with a search of `PATH` for the tool.
+- Not repaired, and the owner must decide: `PharoKeyringIntegrationTest`
+  skips on macOS because its guard asks `isUnix`.  With the right guard the
+  test writes a secret into the login keychain of the user and removes the
+  secret in `tearDown`.  We do not write into a keychain without the word of
+  the owner.
+- Result: the run with the repair is in work.
+

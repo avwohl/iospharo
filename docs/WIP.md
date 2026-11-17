@@ -246,9 +246,22 @@ The package run found these defects outside the packages:
 | `SO_RCVBUF` 65536 becomes 8 MB; `SO_LINGER` cannot be set | stock Cog | `scripts/cogdiff/socket_options.st` | local branch `fix/socket-option-values`, tested on the patched Cog |
 | Segmentation fault in the garbage collector in `TkThreadTest>>testFinalization` after the multicast tests bind their sockets | stock Cog | PharoMisc | open, cause not known |
 | A load in a headless image waits at a dialog (merge or load; credentials) | our package driver | Hyperspace, row 51 | the driver answers the warning and uses the non-interactive credentials provider |
+| The VMs of the package run had the full environment of the shell, with the API keys and tokens of the owner | our package driver and `scripts/vmrun.sh` | row 75 (see below) | repaired on 2026-11-17 at 13:30: the driver starts with a short list of variables, and `vmrun.sh` removes each variable with a name like a credential |
 
 The first two rows are the only tests of rows 1 to 50 with a result on our
 VM that is not the result on Cog.
+
+**A key of the owner left the machine (2026-11-17, about 12:45 to 12:50).**
+The tests of row 75 (`punt-labs/anthropic-sdk-pharo`) read the variable
+`ANTHROPIC_API_KEY` from the environment of the shell that started the run.
+46 tests on each VM sent a request with the value as the key to
+`api.anthropic.com`, the address in the package.  The service answered
+"invalid x-api-key" (401) each time.  The result files and the logs do not
+have the value.  The environment had three more names of that kind
+(`GH_TOKEN`, `GOOGLE_MAPS_API_KEY`, `CLAUDE_CODE_MESSAGING_TOKEN`).  A
+search of the sources of each package clone for names of that kind found
+only `ANTHROPIC_API_KEY`, in that one package.  The owner must decide if the
+key gets a new value.  The VMs now start without these variables.
 
 Found by the MuTalk row and open: our VM signals an error at a recursion
 depth of 56000 frames, and Cog has no such limit

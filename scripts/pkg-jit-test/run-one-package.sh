@@ -77,6 +77,21 @@
 #   KEEP_IMAGES   nonpass (default): keep the image of a package when a test
 #                 does not pass or the VMs differ; all; none
 set -u
+# The VMs of this script run the code of other people (the package and its
+# tests).  That code gets a small environment: no key, token or password of
+# the user.  Measured 2026-11-17: the tests of one package (row 75) read an
+# API key from the environment of the caller and sent requests with the key
+# to the service of the key.  The script starts again with only the
+# variables of the list below.
+if [ -z "${PKG_CLEAN_ENV:-}" ]; then
+    keep=(PKG_CLEAN_ENV=1)
+    for v in PATH HOME USER LOGNAME SHELL TMPDIR LANG LC_ALL LC_CTYPE \
+             MANIFEST COG OURS BASE_IMAGE LOAD_TIMEOUT TEST_TIMEOUT KEEP_IMAGES \
+             $(compgen -e | grep -E '^(PKG_|VMRUN_|PHARO_|SUNIT_)'); do
+        [ -n "${!v+x}" ] && keep+=("$v=${!v}")
+    done
+    exec env -i "${keep[@]}" /bin/bash "$0" "$@"
+fi
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: run-one-package.sh <outdir> <row>}
