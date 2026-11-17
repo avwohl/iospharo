@@ -16,29 +16,22 @@
 # batch that contains the offender.
 #
 # ---------------------------------------------------------------------------
-# PREPARING THE IMAGE — read this, it is the part that wastes time.
-#
-# The image must have run_sunit_tests.st filed in AND SAVED, because the runner
-# installs a SessionManager startUp: handler and the sweep relies on it firing
-# on resume. Prepare it with:
+# THE IMAGE.  Since 2026-11-17 the runner is one script, pharo-headless-test/
+# run_sunit.st, that every batch starts as an eval of the image under test.  It
+# defines no class and changes nothing in the image, so the image is NOT
+# prepared with the runner and carries no SessionManager handler.  The image
+# can be any Pharo image; for the sweep it is the pristine image plus
+# setup_fake_gui.st (the fake GUI the Spec/Morph tests need) and
+# pharo-image-fixes.st (defects that also fail on stock Cog).  Make it with:
 #
 #     <vm> fresh.image eval \
 #       "'scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
 #        'scripts/pharo-image-fixes.st' asFileReference fileIn.
-#        'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn.
 #        Smalltalk snapshot: true andQuit: true"
 #
-# (setup_fake_gui.st and pharo-image-fixes.st are optional; the fixes file works
-# on Pharo 13 and Pharo 14.  File run_sunit_tests.st LAST.)
-#
-# NOT with `eval --save`. Other docs in this repo describe prepping via
-# `pharo image eval --save ...`; that is the STOCK Cog VM's flag. Under
-# test_load_image the flag is forwarded to the image's command-line handler and
-# nothing is saved -- verified by setting a global and finding it gone on the
-# next launch. Use the explicit snapshot above.
-#
-# A correctly prepped Pharo 13 image grows from ~52 MB to ~74 MB and answers
-# non-nil for `Smalltalk at: #SUnitRunner`.
+# NOT with `eval --save`: that is the STOCK Cog VM's flag and our VM does not
+# implement it (nothing is saved).  Use the explicit snapshot above.  The same
+# runner file and the same image content run on stock Cog (scripts/cog-sweep.sh).
 # ---------------------------------------------------------------------------
 # THE .sources FILE MUST SIT BESIDE THE IMAGE. It is not optional decoration:
 # Pharo reads class comments out of it at RUNTIME, so without it
@@ -119,6 +112,12 @@ OUT=${3:-./sunit-sweep-out}
 # runner that has that method.
 PREFIX=${SUNIT_PREFIX:-/tmp/sunit}
 export SUNIT_PREFIX="$PREFIX"
+RUNNER=${RUNNER:-$(cd "$(dirname "$0")" && pwd)/pharo-headless-test/run_sunit.st}
+CLASSLIST=${CLASSLIST:-$(cd "$(dirname "$0")" && pwd)/pharo-headless-test/test_classes.txt}
+# Every eval of our VM touches /tmp/sunit_run_completed.txt unless this is set;
+# the runner keeps its own marker under the prefix.
+export PHARO_EVAL_NO_SUNIT_MARKER=1
+RUNNER_EXPR="'$RUNNER' asFileReference fileIn"
 TOTAL=${TOTAL:-}              # class count; empty means ask the image (see below)
 STEP=${STEP:-50}
 PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-600}
@@ -162,6 +161,7 @@ mkdir -p "$OUT"
 # interrupted run already wrote.
 if [ -z "${START_AT:-}" ]; then
     : > "$OUT/all_results.txt"
+    : > "$OUT/all_detail.txt"
 fi
 if [ -z "${START_AT:-}" ]; then
     : > "$OUT/sweep.log"
@@ -199,17 +199,20 @@ rm -f ${PREFIX}_class_names.txt ${PREFIX}_method_names.txt
 # stages nothing: stage /tmp/sunit_test_classes.txt first, as for the batches.
 # A Pharo 13 image first prints the result of the prep command (EVAL-RESULT=a
 # SnapshotOperation), so take the LAST number-valued result.
+[ -f "$RUNNER" ] || { echo "no runner: $RUNNER" >&2; exit 1; }
+# The curated class order is read from <prefix>_test_classes.txt.
+[ -f "${PREFIX}_test_classes.txt" ] || cp "$CLASSLIST" "${PREFIX}_test_classes.txt"
 if [ -z "$TOTAL" ]; then
     mkdir -p "$OUT/count"
     cp "$IMAGE"   "$OUT/count/count.image"
     cp "$CHANGES" "$OUT/count/count.changes"
     cp "$SOURCES" "$OUT/count/"
-    TOTAL=$( cd "$OUT/count" && rm -f startup.st && timeout 300 "$VM" count.image eval \
-                 "SUnitRunner testClassCount printString" 2>&1 < /dev/null \
-             | grep -o "EVAL-RESULT='[0-9]*'" | tail -1 | tr -dc '0-9' )
-    rm -f ${PREFIX}_run_completed.txt
+    rm -f ${PREFIX}_class_count.txt
+    ( cd "$OUT/count" && rm -f startup.st && SUNIT_COUNT_ONLY=1 timeout 300 "$VM" count.image eval \
+          "$RUNNER_EXPR" > count.log 2>&1 < /dev/null )
+    TOTAL=$(tr -dc '0-9' < ${PREFIX}_class_count.txt 2>/dev/null)
     case "$TOTAL" in
-        ''|*[!0-9]*|0) echo "could not read the class count from the image (SUnitRunner testClassCount); set TOTAL" >&2; exit 1 ;;
+        ''|*[!0-9]*|0) echo "could not read the class count (SUNIT_COUNT_ONLY run, see $OUT/count/count.log); set TOTAL" >&2; exit 1 ;;
     esac
 fi
 
@@ -272,18 +275,18 @@ SHUTDOWN_GRACE=${SHUTDOWN_GRACE:-30}
 run_batch() {                       # $1 = log path
     local log=$1 grace=0 pid
     if [ "${RUN_FROM_IMAGE_DIR:-1}" = "1" ]; then
-        ( cd "$OUT" && exec timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" ) \
+        ( cd "$OUT" && exec timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" eval "$RUNNER_EXPR" ) \
             > "$log" 2>&1 < /dev/null &
     else
-        timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" > "$log" 2>&1 < /dev/null &
+        timeout "$PER_BATCH_TIMEOUT" "$VM" "$OUT/run.image" eval "$RUNNER_EXPR" > "$log" 2>&1 < /dev/null &
     fi
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         # The prepped image found a foreign /tmp/sunit_run_completed.txt, skipped
         # its runner and sits idle: stop it now, run_batch_retrying starts again.
         if head -c 65536 "$log" 2>/dev/null | grep -q 'previous run completed, skipping auto-restart'; then
+            pgrep -P "$pid" 2>/dev/null | xargs kill -9 2>/dev/null
             kill -9 "$pid" 2>/dev/null
-            pkill -9 -f "$OUT/run.image" 2>/dev/null
             wait "$pid" 2>/dev/null
             return 138
         fi
@@ -291,10 +294,9 @@ run_batch() {                       # $1 = log path
             grace=$(( grace + 1 ))
             if [ "$grace" -ge "$SHUTDOWN_GRACE" ]; then
                 # kill BOTH: killing timeout(1) orphans the VM it wraps.  The
-                # image path is unique to this sweep's outdir, so the pkill
-                # pattern cannot reach another sweep or a package run.
+                # the VM is the child of timeout(1); no pkill, so no other VM is touched.
+                pgrep -P "$pid" 2>/dev/null | xargs kill -9 2>/dev/null
                 kill -9 "$pid" 2>/dev/null
-                pkill -9 -f "$OUT/run.image" 2>/dev/null
                 wait "$pid" 2>/dev/null
                 return 137
             fi
@@ -348,6 +350,7 @@ while [ "$start" -le "$TOTAL" ]; do
     got=0
     if [ -f ${PREFIX}_test_results.txt ]; then
         tr '\r' '\n' < ${PREFIX}_test_results.txt >> "$OUT/all_results.txt"
+        [ -f ${PREFIX}_test_detail.txt ] && cat ${PREFIX}_test_detail.txt >> "$OUT/all_detail.txt"
         got=$(tr '\r' '\n' < ${PREFIX}_test_results.txt | grep -c '^Total:' || true)
     fi
     marker=no; grep -q '=== BATCH COMPLETE ===' ${PREFIX}_test_results.txt 2>/dev/null && marker=yes
@@ -409,6 +412,7 @@ if [ "$RETRY_DAMAGED" = "1" ] && [ -s "$OUT/damaged.txt" ]; then
             got=0
             if [ -f ${PREFIX}_test_results.txt ]; then
                 tr '\r' '\n' < ${PREFIX}_test_results.txt >> "$OUT/retry_results.txt"
+                [ -f ${PREFIX}_test_detail.txt ] && cat ${PREFIX}_test_detail.txt >> "$OUT/retry_detail.txt"
                 got=$(tr '\r' '\n' < ${PREFIX}_test_results.txt | grep -c '^Total:' || true)
             fi
             printf 'retry %5d-%-5d rc=%-3s %4ds  classes=%-4s\n' \

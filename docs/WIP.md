@@ -80,25 +80,76 @@ The 220 tests in groups:
 - The notes folder of `~/src/iospharo` now has the memory notes of the old
   path `~/src/iospharo-jit` too.
 
-### Work in progress (started 2026-11-17, all in the session scratchpad)
+### Rules of the owner for the work on this Mac (2026-11-17)
 
-- Workflow `repair-nonpassing-tests`: 43 clusters of the 220 tests.  For each
-  cluster one agent makes the repair and a second agent tries to refute it on
-  the two VMs.  Fix entries go to `<scratchpad>/fixes/<cluster>.st`.
-- Agent for the 28 interactive tests (worktree branch `wt-interactive`).
-- Agent for the runner (worktree branch `wt-runner`).
+The owner stopped the first run of this day.  43 groups of agents, two more
+agents, sweeps and three Cog builds ran at the same time, and the Mac ran out
+of memory.  The rules are in `CLAUDE.md` ("One test VM at a time"):
+
+- Start each test VM through `scripts/vmrun.sh`.  The script permits one VM
+  at a time, checks memory, and makes sure that the VM is gone at the end.
+- Do not run agents with VM runs, sweeps and builds at the same time.
+- Keep shell commands simple, so that the owner gets few approval prompts.
+
+### Results after the repairs (2026-11-17)
+
+The repair run gave fix entries for 132 tests (`scripts/image-fixes/`, 152
+entries that apply to a pristine Pharo 14 image on the two VMs).  The record
+for the review by the owner is
+`docs/upstream/pharo-image-repairs-2026-11-17.md`.
+
+One sweep of our VM (`build-rel`, the old runner, all entries of that time):
+
+| Tests | Pass | Fail | Error | Timeout | Skip | Expected failure |
+|---|---|---|---|---|---|---|
+| 28416 | 28331 | 0 | 0 | 0 | 84 | 1 |
+
+Before the repairs the same sweep gave 28193 passes.  The 85 tests that do
+not pass now:
+
+| Group | Tests | State |
+|---|---|---|
+| Tests that need an interactive session | 28 | all 28 pass on our VM in an interactive session with the entries of `22-interactive-session-tests.st` (measured by the agent, 3 runs); the sweep has no interactive pass yet |
+| Fixture tests that another test runs | 35 | by design (34 skips and 1 expected failure) |
+| Windows-only and 32-bit-only tests | 21 | not applicable on macOS arm64 |
+| `TFUFFICallbackTest>>testCallbacksInOtherThread` | 1 | passes on our VM; stock Cog stops with a segmentation fault, so the skip stays until Cog has a fix |
+
+VM defects found by the repairs, and fixed in our VM:
+
+- `primitiveResolverLocalAddress` answered 127.0.0.1 on every machine.
+- A named primitive that does not exist gave no error code (Cog:
+  `#'not found'`).
+- `primitiveFFIIntegerAtPut` wrote into a read-only `ByteArray`.
+- `PHARO_INTERACTIVE=1` had no effect on an eval run.
+
+Cog defects found, with a tested change for each one in `docs/upstream/`:
+the local address lookup, the write barrier of the typed stores (C
+primitives and the JIT versions), the error code of primitive 218, and the
+pinned code-generation VM that does not start on macOS 27.  Open in Cog: the
+segmentation fault for a callback from another thread with the same-thread
+runner, and a segmentation fault in `MorphicWindowManagerTest` in an
+interactive session (one of three runs).
+
+Harness defect found: the two runners ran a `ParametrizedTestCase` class
+with the first parameter set only.  251 classes have 2173 test selectors, and
+the real suite has 11825 tests for them.  The new runner
+`scripts/pharo-headless-test/run_sunit.st` takes the tests from `buildSuite`
+(see [sunit-runner.md](sunit-runner.md)).  The new runner also changes
+nothing in the image and uses the SUnit time limits.
 
 Not done, in order:
 
-1. Put the accepted fix entries into `scripts/pharo-image-fixes.st` and
-   `docs/image_issues.md`.
-2. Merge the two worktree branches.
-3. Run full sweeps of the two VMs with the new runner.
-4. Write the patch files for Cog and for Pharo upstream.
-5. Do the same work for Pharo 13.
-6. Repair the tests of the 200 packages.
-7. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
-   the sweep of this day.
+1. Run full sweeps of the two VMs with the new runner, one VM at a time, and
+   repair what the 9650 new test variants and the SUnit time limits show.
+2. Add the interactive pass to the sweep.
+3. Put the repairs into `docs/image_issues.md`.
+4. Do the same work for Pharo 13 (first sweep with the old runner: 27894
+   passes of 28077, 2 failures, 131 skips, 50 expected failures).
+5. Repair the tests of the 200 packages.  The package load needs a download
+   from GitHub, and the permission check refused that download once.
+6. Repair the flaky tests of the earlier sweeps.  The flaky tests passed in
+   the sweeps of this day.
+7. Fix the two open Cog defects.
 
 Not found: the "Apple prompt on every run to allow network" that the owner
 sees.  Checks that gave no prompt:

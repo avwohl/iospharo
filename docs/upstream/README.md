@@ -58,7 +58,10 @@ The stock VM in `/tmp/harness` comes from
   typed store into a read-only `ByteArray` changes the bytes, and the VM
   signals no `ModificationForbidden`.
 - Change: each primitive fails with `PrimErrNoModification` for a read-only
-  receiver, as `primitiveAtPut` does.
+  receiver, as `primitiveAtPut` does.  The JIT has machine code versions of
+  the 32-bit and 64-bit stores.  The machine code now leaves without a store
+  when the receiver is read-only.  Without that part, a store was blocked in
+  the interpreter and went through after the JIT compiled the method.
 - Test (2026-11-17, a Debug build with the change): `WriteBarrierTest` gives
   33 passes of 33 with the image fixes of this repository.  The stock VM
   fails 4 of the 33: the two tests that upstream marked as expected failures

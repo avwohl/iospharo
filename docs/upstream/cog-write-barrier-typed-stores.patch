@@ -1,4 +1,4 @@
-From 50a703717fb8d85844a02f971815e952f98bdbcd Mon Sep 17 00:00:00 2001
+From 03d50c9754c3be0145864b0f815c0d1af15646e0 Mon Sep 17 00:00:00 2001
 From: Aaron Wohl <wohl@awohl.com>
 Date: Tue, 17 Nov 2026 07:39:09 -0500
 Subject: [PATCH] Typed store primitives respect the write barrier
@@ -12,10 +12,17 @@ changed the bytes, and no ModificationForbidden was signalled:
     g float64AtOffset: 0 put: 2.5.      "g is now #[0 0 0 0 0 0 4 64]"
     g uint32AtOffset: 0 put: 7.         "g is now #[7 0 0 0 ...]"
 
-Each primitive now fails with PrimErrNoModification for a read-only
+Each C primitive now fails with PrimErrNoModification for a read-only
 receiver, as primitiveAtPut does.  primitiveFFIIntegerAtPut does the test
 only for a store into the bytes of the receiver itself; a store through an
 ExternalAddress goes to outside memory.
+
+The JIT has machine code versions of these primitives
+(genPrimitiveStore:intoBytesWith:needsToTrap:).  The machine code now leaves
+without a store when the receiver is read-only, so the C primitive or the
+fallback code of the method handles the case.  Without this part a store
+was blocked in the interpreter and went through after the method was
+compiled.
 
 The image has two tests for this with the expected-failure mark
 (WriteBarrierTest>>testMutateByteArrayUsingDoubleAtPut and
@@ -23,14 +30,55 @@ testMutateByteArrayUsingFloatAtPut).  With this change, and with the image
 methods TFFIBackend>>on:float64At:put: and on:float32At:put: testing
 anObject in place of self, the two tests pass.
 
-Measured on macOS 27, arm64, a Debug build: after the change the two stores
-above fail the primitive and g stays all zero.
+Measured on macOS 27, arm64: after the change the two stores above leave g
+all zero, also through unsignedLongAt:put: from compiled code.
 
 Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
 ---
+ .../CogObjectRepresentationForSpur.class.st   | 15 ++++++++++---
  .../StackInterpreterPrimitives.class.st       | 21 +++++++++++++++++++
- 1 file changed, 21 insertions(+)
+ 2 files changed, 33 insertions(+), 3 deletions(-)
 
+diff --git a/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st b/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st
+index 2346db982..2473cbe66 100644
+--- a/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st
++++ b/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st
+@@ -1761,14 +1761,20 @@ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize int
+ { #category : 'primitive generators' }
+ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize intoBytesWith: aBlock needsToTrap: needsToTrap [
+ 
+-	| nSlotsOrBytesReg jumpBadIndex formatReg jumpIsPointers jumpOutOfBounds jumpSmaller jumpImmediate destPointerRegister |
++	| nSlotsOrBytesReg jumpBadIndex formatReg jumpIsPointers jumpOutOfBounds jumpSmaller jumpImmediate jumpImmutable destPointerRegister |
++	<var: #jumpImmutable type: #'AbstractInstruction *'>
+ 	nSlotsOrBytesReg := ClassReg.
+ 	destPointerRegister := ClassReg.
+ 
+ 	cogit genLoadArgAtDepth: 1 into: Arg0Reg.
+ 	cogit genLoadArgAtDepth: 0 into: Arg1Reg.
+-	
++
+ 	jumpImmediate := self genJumpImmediate: ReceiverResultReg.
++	"A read-only receiver leaves the machine code version without a store.  The C primitive (64-bit values)
++	 or the fallback code of the method then handles the read-only case."
++	self
++		cppIf: IMMUTABILITY
++		ifTrue: [jumpImmutable := self genJumpImmutable: ReceiverResultReg scratchReg: TempReg].
+ 	jumpBadIndex := self genJumpNotSmallInteger: Arg0Reg scratchReg: TempReg.
+ 	self genConvertSmallIntegerToIntegerInReg: Arg0Reg.
+ 	
+@@ -1804,8 +1810,11 @@ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize int
+ 
+ 	"Restore the Arg0 into an oop."
+ 	self genConvertIntegerToSmallIntegerInReg: Arg0Reg.
+-	
++
+ 	jumpBadIndex jmpTarget: (jumpImmediate jmpTarget: cogit Label).
++	self
++		cppIf: IMMUTABILITY
++		ifTrue: [jumpImmutable jmpTarget: jumpImmediate getJmpTarget].
+ 	^ needsToTrap ifTrue: [0] ifFalse: [CompletePrimitive]
+ ]
+ 
 diff --git a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
 index 3e19d3e0a..90a5442b4 100644
 --- a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st

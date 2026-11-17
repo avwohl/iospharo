@@ -4227,3 +4227,179 @@ add value: #WriteBarrierTest value: #testMutateByteArrayUsingSignedShortAtPut va
 
 	self assert: (guineaPig signedShortAt: 3) equals: -2'.
 !
+
+"=== 22-interactive-session-tests.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"Fixes for the tests that skip because the test run is not an interactive
+ session (2026-11-17).  With these entries and an interactive session
+ (PHARO_INTERACTIVE=1 on our VM, a start without --headless on stock Cog) the
+ 28 tests of the group run.
+
+ 1. SpTextPresenterTest (and SpCodePresenterTest, which inherits the tests):
+    testPropagateNaturalHeight, testPropagateNaturalHeightWithMultipleLines,
+    testPropagateNaturalWidth began with `Smalltalk isHeadless ifTrue: [ ^ self skip ]`.
+    In Pharo 14 SmalltalkImage>>isHeadless is deprecated and always answers
+    true, so the 6 tests never ran on any VM.  The tests open a presenter in
+    the Morphic world and compare widget sizes against font metrics; they need
+    no native window.  Two of the three need no interactive session: the guard is
+    removed.  testPropagateNaturalHeightWithMultipleLines needs a real display
+    size (the fake-GUI world is 240@120, too small for six lines): its guard
+    becomes isInteractive, as the deprecation text asks.
+ 2. MorphicWindowManagerTest>>testDeleteAWindowAndTaskBarActualized:
+    TaskbarMorphForManager answers the manager's MorphicNativeWindow objects as
+    its windows; TaskbarMorph>>updateTasks asks each task's morph
+    `hasProperty: #isClosed`, which a MorphicNativeWindow does not understand
+    (stock Cog: same DNU).  A native window answers #isClosed itself.
+ 3. SimulateMouseTest>>testSimulateRightClick: `Smalltalk tools toolNamed:
+    #workspace) open` answers an StWindowPresenter in Pharo 14, not a Morph, so
+    `simulateRightClick` is not understood (stock Cog: same DNU).  The test
+    right-clicks the morph of the window: the window presenter's widget."
+
+"These two need no interactive session: they pass in the fake-GUI world."
+#( #testPropagateNaturalHeight #testPropagateNaturalWidth ) do: [ :sel |
+	fix value: #SpTextPresenterTest value: sel
+		value: [ :src | src includesSubstring: 'Smalltalk isHeadless ifTrue: [ ^ self skip ].' ]
+		value: ((SpTextPresenterTest >> sel) sourceCode
+			copyReplaceAll: 'Smalltalk isHeadless ifTrue: [ ^ self skip ].' with: '') ].
+
+"This one needs a real display: it asserts a widget height of six text lines,
+ and the fake-GUI world is 240@120 (widget height 47 on both VMs).  It runs in an
+ interactive session, where the display is large enough."
+fix value: #SpTextPresenterTest value: #testPropagateNaturalHeightWithMultipleLines
+	value: [ :src | src includesSubstring: 'Smalltalk isHeadless ifTrue: [ ^ self skip ].' ]
+	value: ((SpTextPresenterTest >> #testPropagateNaturalHeightWithMultipleLines) sourceCode
+		copyReplaceAll: 'Smalltalk isHeadless ifTrue: [ ^ self skip ].'
+		with: 'Smalltalk isInteractive ifFalse: [ ^ self skip ].').
+
+fix value: #TaskbarMorph value: #updateTasks
+	value: [ :src | src includesSubstring: 'task morph hasProperty: #isClosed' ]
+	value: ((TaskbarMorph >> #updateTasks) sourceCode
+		copyReplaceAll: 'task morph hasProperty: #isClosed'
+		with: '(task morph isMorph
+					                              ifTrue: [ task morph hasProperty: #isClosed ]
+					                              ifFalse: [ task morph isClosed ])').
+
+fix value: #SimulateMouseTest value: #testSimulateRightClick
+	value: [ :src | (src includesSubstring: 'adapter widget') not ]
+	value: 'testSimulateRightClick
+
+	| menu |
+	morph := (Smalltalk tools toolNamed: #workspace) open adapter widget.
+	menu := self menuOpenedDuring: [ morph simulateRightClick ].
+	self assert: menu isNil not'.
+!
+
+"=== 23-defects-the-standard-runner-shows.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"Two image defects that show when the tests run with the plain SUnit rules
+ (run_sunit.st: no change of the image, SUnit time limits, a Warning is a
+ failure).  Measured 2026-11-17 on stock Cog and on our VM.
+
+ R1. OutOfMemoryTest>>testSignalOfTheLowSpaceFromTheVM needs the Low Space
+ Watcher process to wait on the low-space semaphore.  Another test can end that
+ process for the rest of the run: OupsDebuggerSelectorTest>>tearDown sends
+ DebugSession>>terminate, which installs a NEW watcher (Smalltalk
+ installLowSpaceWatcher), and the SUnit process monitor terminates that new
+ process at the end of the test as a process the test left behind.  The next
+ test that needs the watcher then waits until its time limit (TIMEOUT,
+ TestTookTooMuchTime, 10 s).  The same two classes in this order give the
+ timeout on the two VMs.  Fix: the test class prepares its own precondition, as
+ every other test of the class prepares its own heap limit.
+
+ R2. The package Collections-Unordered declares System-Support as a manually
+ resolved dependency, and the dependency analyser does not find that dependency
+ any more.  The analyser then signals StPotentialOutDatedDependencyWarning, and
+ SUnit counts a Warning in a test as a failure
+ (StTarjanAlgorithmTest>>testNoOutgoingDependenciesAfterTarjan).  Stock Cog
+ fails the same way with the same image.  The older runner resumed the Warning,
+ so the failure did not show.  The manifest entry is out of date; remove it."
+
+fix value: #OutOfMemoryTest value: #setUp
+	value: [ :source | (source includesSubstring: 'installLowSpaceWatcher') not ]
+	value:
+'setUp
+
+	super setUp.
+	oldValue := Smalltalk vm maxOldSpaceSize: 2 * 1024 * 1024 * 1024.
+	"The test needs a running Low Space Watcher process.  An earlier test can
+	 leave none (see the process monitor of SUnit)."
+	Smalltalk installLowSpaceWatcher'.
+
+fix value: #'ManifestCollectionsUnordered class' value: #manuallyResolvedDependencies
+	value: [ :source | source includesSubstring: 'System-Support' ]
+	value:
+'manuallyResolvedDependencies
+	^ #(#''Collections-Streams'' #''Math-Operations-Extensions'')'.
+!

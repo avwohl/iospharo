@@ -4,7 +4,7 @@
 #
 #   scripts/cog-sweep.sh <class-list> <outdir> [pharo-dir]
 #
-# Why this exists: run_sunit_cog.st runs the whole class list in ONE Cog
+# Why this exists: a run of the whole class list is ONE Cog
 # invocation, so a single hard hang costs the entire run.  This splits the list
 # into chunks and relaunches per chunk, exactly as scripts/sunit-sweep.sh does
 # for our VM, so the damage from one bad class is bounded to its chunk.
@@ -40,7 +40,7 @@ set -u
 LIST=${1:?usage: cog-sweep.sh <class-list> <outdir> [pharo-dir]}
 OUT=${2:?usage: cog-sweep.sh <class-list> <outdir> [pharo-dir]}
 PHARO_DIR=${3:-$PHARO_HARNESS_X86}
-RUNNER=${RUNNER:-$(cd "$(dirname "$0")" && pwd)/pharo-headless-test/run_sunit_cog.st}
+RUNNER=${RUNNER:-$(cd "$(dirname "$0")" && pwd)/pharo-headless-test/run_sunit.st}
 STEP=${STEP:-100}
 PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-1800}
 PREFIX=${SUNIT_PREFIX:-/tmp/cogsweep}
@@ -64,8 +64,19 @@ esac
 # handed straight in.
 mkdir -p "$OUT"
 grep -v '^#' "$LIST" | awk 'NF { print $NF }' > "$OUT/classes.txt"
-TOTAL=$(wc -l < "$OUT/classes.txt" | tr -d ' ')
+# The runner (run_sunit.st, the same file as on our VM) reads the class order from
+# <prefix>_test_classes.txt, adds every other TestCase subclass, and takes the
+# batch from <prefix>_batch.txt.  It writes the number of classes on request.
+cp "$OUT/classes.txt" "${PREFIX}_test_classes.txt"
+rm -f "${PREFIX}_class_count.txt" "${PREFIX}_batch.txt" "${PREFIX}_class_names.txt" "${PREFIX}_method_names.txt"
+( cd "$PHARO_DIR" && rm -f startup.st && \
+  SUNIT_PREFIX="$PREFIX" SUNIT_COUNT_ONLY=1 timeout 600 \
+    $ARCH_CMD ./pharo "$IMAGE_NAME" eval "'$RUNNER' asFileReference fileIn" ) \
+    > "$OUT/count.log" 2>&1 < /dev/null
+TOTAL=$(tr -dc '0-9' < "${PREFIX}_class_count.txt" 2>/dev/null)
+case "$TOTAL" in ''|*[!0-9]*|0) echo "could not read the class count, see $OUT/count.log" >&2; exit 1 ;; esac
 : > "$OUT/all_results.txt"
+: > "$OUT/all_detail.txt"
 : > "$OUT/sweep.log"
 
 {
@@ -80,7 +91,7 @@ while [ "$start" -le "$TOTAL" ]; do
     end=$(( start + STEP - 1 ))
     [ "$end" -gt "$TOTAL" ] && end=$TOTAL
 
-    sed -n "${start},${end}p" "$OUT/classes.txt" > "${PREFIX}_test_classes.txt"
+    printf '%s %s' "$start" "$end" > "${PREFIX}_batch.txt"
     rm -f "${PREFIX}_test_results.txt" "${PREFIX}_run_completed.txt"
 
     t0=$(date +%s)
@@ -94,6 +105,7 @@ while [ "$start" -le "$TOTAL" ]; do
     got=0
     if [ -f "${PREFIX}_test_results.txt" ]; then
         tr '\r' '\n' < "${PREFIX}_test_results.txt" >> "$OUT/all_results.txt"
+        [ -f "${PREFIX}_test_detail.txt" ] && cat "${PREFIX}_test_detail.txt" >> "$OUT/all_detail.txt"
         got=$(tr '\r' '\n' < "${PREFIX}_test_results.txt" | grep -c '^Total:' || true)
     fi
 

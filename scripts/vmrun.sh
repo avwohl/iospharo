@@ -18,7 +18,8 @@
 #   vmrun.sh test  <vm> <Class> [selector ...]
 #   vmrun.sh eval  <vm> <file.st>
 #   vmrun.sh prep  <vm> <base.image> <out.image> <file.st> [file.st ...]
-#   vmrun.sh sweep <vm> <prepared.image> <outdir>
+#   vmrun.sh sweep <vm> <image> <outdir>   the image has the fake GUI and the
+#                                          image fixes, and no runner inside
 #   vmrun.sh run   <vm> <image> [image arguments ...]
 #   vmrun.sh build <build-tree>            cmake --build under the same lock
 #
@@ -67,7 +68,10 @@ resolve_vm() {                      # sets VM (binary) and KIND (ours|cog)
         dbg)   VM=$REPO/build-dbg/test_load_image;   KIND=ours ;;
         cog)   VM=/tmp/harness14/pharo-vm/Pharo.app/Contents/MacOS/Pharo; KIND=cog ;;
         cog13) VM=/tmp/harness/pharo-vm/Pharo.app/Contents/MacOS/Pharo;   KIND=cog ;;
-        cogp)  VM=$WORK/cogbuild-all/build/vm/Debug/Pharo.app/Contents/MacOS/Pharo; KIND=cog ;;
+        cogp)  # the stock app with the VM core and the socket plugin of the build with
+               # the changes of docs/upstream (a local Cog build lacks freetype, cairo
+               # and libgit2, so the stock app keeps its own third-party libraries)
+               VM=$WORK/cogp-app/Pharo.app/Contents/MacOS/Pharo; KIND=cog ;;
         */test_load_image) VM=$1; KIND=ours ;;
         */Pharo)           VM=$1; KIND=cog ;;
         *) say "unknown VM: $1"; exit 2 ;;
@@ -307,7 +311,9 @@ sweep)
         cogdir=$outdir/cogdir; rm -rf "$cogdir"; mkdir -p "$cogdir"
         printf '#!/bin/bash\nexec "%s" --headless "$@"\n' "$VM" > "$cogdir/pharo"; chmod +x "$cogdir/pharo"
         cp "$image" "$cogdir/Pharo.image" && cp "${image%.image}.changes" "$cogdir/Pharo.changes" && cp "$(dirname "$image")"/*.sources "$cogdir/"
-        list=${VMRUN_CLASS_LIST:-$WORK/classes14.txt}
+        # The same curated class order as the sweep of our VM; the runner adds
+        # every other TestCase subclass of the image after it.
+        list=${VMRUN_CLASS_LIST:-$REPO/scripts/pharo-headless-test/test_classes.txt}
         [ -f "$list" ] || { say "no class list $list (set VMRUN_CLASS_LIST)"; exit 2; }
         export COG_ARCH=native STEP=${STEP:-100} PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-2400}
         guarded "$outdir/" "${VMRUN_TIMEOUT:-7200}" "$REPO/scripts/cog-sweep.sh" "$list" "$outdir" "$cogdir" > "$outdir/driver.log" 2>&1 < /dev/null
