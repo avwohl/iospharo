@@ -1,0 +1,22 @@
+diff --git a/source/Kepler-Notifications/Subscription.class.st b/source/Kepler-Notifications/Subscription.class.st
+index bd48b3c..3b4803c 100644
+--- a/source/Kepler-Notifications/Subscription.class.st
++++ b/source/Kepler-Notifications/Subscription.class.st
+@@ -19,7 +19,7 @@ Class {
+ Subscription class >> of: aSubjectOfInterest to: anEventType toBeNotifiedSending: aMessage [
+ 
+ 	AssertionChecker
+-				enforce: [ aMessage argumentCount < 2 ]
++				enforce: [ aMessage numArgs < 2 ]
+ 				because: 'Selector should have zero or one argument at most'.
+ 
+ 	^ self new
+@@ -51,7 +51,7 @@ Subscription >> message [
+ { #category : 'notifying' }
+ Subscription >> notifyAbout: anEvent [
+ 
+-	message argumentCount = 0
++	message numArgs = 0
+ 		ifTrue: [ subscriber perform: message ]
+ 		ifFalse: [
+ 		subscriber perform: message with:  anEvent ]

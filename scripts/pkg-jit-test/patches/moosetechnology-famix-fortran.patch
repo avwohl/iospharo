@@ -1,0 +1,29 @@
+diff --git a/src/BaselineOfFamixFortran/BaselineOfFamixFortran.class.st b/src/BaselineOfFamixFortran/BaselineOfFamixFortran.class.st
+index fa6ab79..4f60d4c 100644
+--- a/src/BaselineOfFamixFortran/BaselineOfFamixFortran.class.st
++++ b/src/BaselineOfFamixFortran/BaselineOfFamixFortran.class.st
+@@ -41,8 +41,10 @@ BaselineOfFamixFortran >> definePackages: spec [
+ 		package: 'Famix-Fortran77-Generator';
+ 		package: 'Famix-Fortran77-Tests'
+ 		with: [ spec requires: #( 'Famix-Fortran77-Entities' ) ];
+-		package: 'Famix-FortranUDT-Entities';
+-		package: 'Famix-FortranUDT-Generator'.
++		package: 'Famix-FortranUDT-Entities'
++		with: [ spec requires: #( 'Famix-Fortran77-Entities' ) ];
++		package: 'Famix-FortranUDT-Generator'
++		with: [ spec requires: #( 'Famix-Fortran77-Generator' ) ].
+ 
+ 	spec for: #NeedsFamix do: [
+ 			spec
+@@ -51,9 +53,9 @@ BaselineOfFamixFortran >> definePackages: spec [
+ 				package: 'Famix-Fortran77-Generator'
+ 				with: [ spec requires: #( Famix ) ];
+ 				package: 'Famix-FortranUDT-Entities'
+-				with: [ spec requires: #( Famix ) ];
++				with: [ spec requires: #( Famix 'Famix-Fortran77-Entities' ) ];
+ 				package: 'Famix-FortranUDT-Generator'
+-				with: [ spec requires: #( Famix ) ] ]
++				with: [ spec requires: #( Famix 'Famix-Fortran77-Generator' ) ] ]
+ ]
+ 
+ { #category : 'baselines' }

@@ -1,0 +1,2 @@
+# The baseline of Famix-Fortran lets Famix-FortranUDT-Entities load before Famix-Fortran77-Entities, and the load stops (docs/upstream/package-repairs.md).
+FamixFortran moosetechnology-famix-fortran moosetechnology Famix-Fortran master /src all
