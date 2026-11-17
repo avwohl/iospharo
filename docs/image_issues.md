@@ -25,23 +25,32 @@ hash first.  The defect is in the image's removal order, not in the VM.
 
 Repair of 2026-11-17: `scripts/image-fixes/25-taskit-worker-pool-race.st`.
 The pool now stops a worker only when the process of the worker waits on the
-semaphore of the task queue (`AtomicSharedQueue>>isProcessWaiting:`,
-`isWaitingForTask`).  A process in that state holds no task, and no task can
-come into the queue while the pool holds its mutex.
+semaphore of the task queue (`AtomicSharedQueue>>isProcessWaiting:`).  A
+process in that state holds no task.  The pool takes the process out of the
+wait in the same step (`suspendIfWaitingForTask`): the test and the suspend
+run at the highest priority, so the worker cannot leave the wait between
+the two.
 
 A first repair tested two facts, "the worker is free" and "the process of
 the worker waits".  That repair left 4 failures in 3000 runs.  The event log
 of `scripts/cogdiff/taskit_pool_diag.st` showed the cause: between the two
 reads a worker took a task, started the task and then waited for the mutex
-of the pool.  The repair now reads one fact at one moment.
+of the pool.
+
+A second repair tested one fact, "the process waits on the semaphore of the
+queue", and then stopped the worker.  That repair is correct while each
+signal of the queue comes under the mutex of the pool.  The repair of the
+queue (the next section) makes a reader give a signal too, so the test and
+the suspend became one step.
 
 Failures of the test in a loop, with a process at priority 60 that wakes
 each millisecond (`scripts/cogdiff/taskit_pool_stress.st`):
 
-    our VM, before the repair      83 in 600 runs
-    stock Cog, before the repair    2 in 600 runs
-    our VM, first repair            4 in 3000 runs
-    our VM, repair                  0 in 3000 runs
+    our VM, before the repair        83 in 600 runs
+    stock Cog, before the repair      2 in 600 runs
+    our VM, first repair              4 in 3000 runs
+    our VM, second repair             0 in 3000 runs
+    stock Cog, second repair          0 in 600 runs
 
 The same defect made `TKTFutureTest` fail one time in the sweep of
 2026-11-17 ("Got nil instead of 5"): the pool of the test profile stopped
@@ -57,6 +66,31 @@ the combined future before the second future gets its result.  Our VM: 7
 failures in 900 runs before, 0 in 1500 after.
 
 The text below is the analysis of 2026-11-12.
+
+### AtomicSharedQueue loses a wake-up with two readers (2026-11-17, repaired)
+
+Found by a review of the TaskIt repair.  A TaskIt worker pool is an
+`AtomicSharedQueue` with many readers.  The repair is
+`scripts/image-fixes/27-atomic-shared-queue-wakeups.st`, with a new test
+class `AtomicSharedQueueTest`.  The released image has no test class for
+this queue.
+
+- A reader that wakes for a second item can find the queue locked by a
+  first reader (`WaitfreeQueue>>nextIfNone:` locks the queue for one read).
+  The second reader waits again, and the signal for its item is used.  The
+  first reader gave no signal after its read.  Now a reader gives a signal
+  after its read when items are left.
+- A reader that finds only removed items resets the signals of the queue.
+  A writer can put an item in at that moment, and the reader then waits
+  with an item in the queue.  Now `AtomicSharedQueue>>next` looks again
+  before it waits.
+- A reader that is terminated in `nextIfNone:` left the queue locked for
+  each later reader.  Now the read runs in a block with `ifCurtailed:`.
+
+Each of the three tests brings the queue into the state by steps of a
+suspended process (`Process>>step`), so the tests do not depend on time.
+On an image without the repair, the three tests fail on our VM and on
+stock Cog.  With the repair, the three pass on the two VMs.
 
 `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel`
 failed with `TKTTimeoutException` in the Pharo 13 and the Pharo 14 sweeps
@@ -401,7 +435,7 @@ missing:
 
 ## Image and test repairs of 2026-11-17 (Pharo 14)
 
-The Pharo 14 image (build 791) had 220 tests that did not pass on our VM and on stock Cog.  The repairs are in the entries files in `scripts/image-fixes/`.  The generator `scripts/gen-image-fixes.py` joins the entries files with the helper blocks of `00-header.st` and writes `scripts/pharo-image-fixes.st`.  Each entry has a guard that reads the current method source, so the entry applies only when the defect is present.  A pristine Pharo 14 build 791 image gives 137 FIXED, 29 ADDED and 6 SKIP lines.  Our VM and stock Cog give the same counts.
+The Pharo 14 image (build 791) had 220 tests that did not pass on our VM and on stock Cog.  The repairs are in the entries files in `scripts/image-fixes/`.  The generator `scripts/gen-image-fixes.py` joins the entries files with the helper blocks of `00-header.st` and writes `scripts/pharo-image-fixes.st`.  Each entry has a guard that reads the current method source, so the entry applies only when the defect is present.  A pristine Pharo 14 build 791 image gives 139 FIXED, 35 ADDED and 6 SKIP lines.  Our VM and stock Cog give the same counts.
 
 The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-image-repairs-2026-11-17.md`.  The table gives one row for each entries file.  The `10-` file is in the section above.  The `20-NA-platform-windows.st` file repairs 3 tests, and the record shows that the other 16 tests of that group cannot apply on macOS arm64.
 
@@ -455,6 +489,7 @@ The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-imag
 | `24-stale-executable-comment.st` | `Context class>>tallyInstructions:` | Comment holds an exact bytecode count that went out of date | image code | none |
 | `25-taskit-worker-pool-race.st` | `TKTCommonQueueWorkerPool`, `TKTCommonQueueWorkerPoolTest`, `TKTFutureTest` | The pool stops a worker that holds a task | image code | section "TaskIt worker pool" above |
 | `26-taskit-first-complete-tests.st` | `TKTFutureTest` (4 tests of `firstCompleteOf:`) | Test depends on the order of two callbacks in a worker pool | test | section "TaskIt worker pool" above |
+| `27-atomic-shared-queue-wakeups.st` | `AtomicSharedQueue`, `WaitfreeQueue`, new `AtomicSharedQueueTest` | A reader loses a wake-up; a terminated reader leaves the queue locked | image code | section "TaskIt worker pool" above |
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 

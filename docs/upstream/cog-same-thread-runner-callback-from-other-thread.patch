@@ -1,0 +1,124 @@
+From 3178db2ecf3421f70de8ed29c53c8cf2aa3d7ddb Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 10:06:00 -0500
+Subject: [PATCH] Same-thread FFI runner: a callback from another thread waits
+ for the VM thread
+
+A callback from a thread that is not the VM thread entered the interpreter
+from that thread (sameThreadCallbackEnter called
+ptEnterInterpreterFromCallback), while the VM thread ran.  The result was a
+segmentation fault (TFUFFICallbackTest>>testCallbacksInOtherThread, which
+skips for this runner for that cause).
+
+callbackFrontend puts each invocation in the queue of pending callbacks, so
+the image runs the callback in the VM thread.  For a callback from another
+thread the calling thread now waits on a platform semaphore until the image
+returns from the callback, as the worker runner does.  A callback from the
+VM thread works as before.
+---
+ src/ffi/sameThread/sameThread.c | 63 +++++++++++++++++++++++++++++----
+ 1 file changed, 56 insertions(+), 7 deletions(-)
+
+diff --git a/src/ffi/sameThread/sameThread.c b/src/ffi/sameThread/sameThread.c
+index b5a9f7185..f59ebb235 100644
+--- a/src/ffi/sameThread/sameThread.c
++++ b/src/ffi/sameThread/sameThread.c
+@@ -3,6 +3,8 @@
+ #include "pThreadedFFI.h"
+ #include "vmCallback.h"
+ #include "pharovm/macros.h"
++#include "pharovm/semaphores/pharoSemaphore.h"
++#include "pharovm/semaphores/platformSemaphore.h"
+ 
+ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation* callback);
+ void sameThreadCallbackExit(struct _Runner* runner, struct _CallbackInvocation* callback);
+@@ -28,13 +30,43 @@ Primitive(primitiveGetSameThreadRunnerAddress) {
+     primitiveEndReturn(externalAddress);
+ }
+ 
++/*
++ * A callback can come from a thread that is not the VM thread: a library can
++ * call a callback from a thread that the library made.  Such a thread must
++ * not enter the interpreter.  The interpreter runs in the VM thread only, and
++ * an entry from another thread, while the VM thread runs, corrupts the state
++ * of the interpreter (a segmentation fault in
++ * TFUFFICallbackTest>>testCallbacksInOtherThread).
++ *
++ * callbackFrontend puts each invocation in the queue of pending callbacks, so
++ * the image runs the callback in the VM thread.  For a callback from another
++ * thread, the calling thread waits on a platform semaphore until the image
++ * returns from the callback (sameThreadCallbackExit).  The worker runner does
++ * the same for a callback from a thread that is not its own thread.
++ */
++typedef struct {
++	/* Not NULL: the callback came from a thread that is not the VM thread. */
++	Semaphore *returned;
++	/* The callback came from the VM thread: the state for the long jump. */
++	VMCallbackContext vmcc;
++} SameThreadCallbackState;
++
+ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation* callback){
+ 
++	SameThreadCallbackState *state = (SameThreadCallbackState*)callback->payload;
+ 	VMCallbackContext *vmcc;
+ 
+-	vmcc = malloc(sizeof(VMCallbackContext));
++	if(state->returned != NULL){
++		/* The image can return from the callback before this thread comes
++		 * here: the semaphore then has the signal, and the wait ends at once. */
++		Semaphore *returned = state->returned;
++		returned->wait(returned);
++		returned->free(returned);
++		free(state);
++		return;
++	}
+ 
+-	callback->payload = vmcc;
++	vmcc = &state->vmcc;
+ 
+ 	if ((!sigsetjmp(vmcc->trampoline, 0))) {
+ 		//Used to mark that is a fake callback!
+@@ -47,18 +79,35 @@ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation*
+ 		return;
+ 	}
+ 
+-	free(vmcc);
++	free(state);
+ 
+ }
+ 
+ void sameThreadCallbackExit(struct _Runner* runner, struct _CallbackInvocation* callback){
+ 
+-	VMCallbackContext *vmcc;
+-	vmcc = (VMCallbackContext*)callback->payload;
++	SameThreadCallbackState *state = (SameThreadCallbackState*)callback->payload;
+ 
+-	ptExitInterpreterToCallback(vmcc);
++	if(state->returned != NULL){
++		/* The thread that made the callback waits in sameThreadCallbackEnter,
++		 * and frees the state after the signal: no use of state after it. */
++		Semaphore *returned = state->returned;
++		returned->signal(returned);
++		return;
++	}
++
++	ptExitInterpreterToCallback(&state->vmcc);
+ }
+ 
+ void sameThreadPrepareCallback(struct _Runner* runner, struct _CallbackInvocation* callback){
+-	// I do not do nothing
++
++	SameThreadCallbackState *state = malloc(sizeof(SameThreadCallbackState));
++
++	// threads should be compared using ioOSThreadsEqual(), since binary comparison == is not portable
++	if(ioOSThreadsEqual(ioCurrentOSThread(), getVMOSThread())){
++		state->returned = NULL;
++	}else{
++		state->returned = platform_semaphore_new(0);
++	}
++
++	callback->payload = state;
+ }
+-- 
+2.54.0 (Apple Git-157)
+

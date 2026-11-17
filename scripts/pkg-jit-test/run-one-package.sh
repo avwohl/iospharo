@@ -30,6 +30,12 @@
 #                     defect that stops the load)
 #   fixes/L.st        entries in the form of scripts/image-fixes/, filed in
 #                     after the load (for a defect in the code or in a test)
+#   fixtures/L.txt    names of test classes that are fixtures: another test
+#                     runs them, and some fail on purpose.  One name for each
+#                     line; a line that starts with # has the proof.  A test
+#                     class in a package with TestResources in its name is a
+#                     fixture with no entry here.  res/L.list_fixtures.txt
+#                     has the classes that the list left out.
 #
 # Files of a package with the label L:
 #   <outdir>/img/L.image, L.changes   the image with the package.  Deleted when
@@ -59,6 +65,8 @@
 #   LOAD_TIMEOUT  seconds for the load (default 900)
 #   TEST_TIMEOUT  seconds for one test run of one VM (default 1800)
 #   PKG_REDO      1 = run a package again that has a row in summary.tsv
+#   PKG_REUSE_LOAD 1 = with PKG_REDO: start from the image that the load of an
+#                 earlier run left (no download)
 #   KEEP_IMAGES   nonpass (default): keep the image of a package when a test
 #                 does not pass or the VMs differ; all; none
 set -u
@@ -80,6 +88,10 @@ export PHARO_MAX_OLD_SPACE_MB=${PHARO_MAX_OLD_SPACE_MB:-6144}
 # Stock Cog gets the old-space limit of our VM.  With no limit, a recursion
 # with no end (a MuTalk test) made stock Cog use 13 GB in 12 seconds.
 COG_MEM=--maxOldSpaceSize=${PHARO_MAX_OLD_SPACE_MB}M
+# When stock Cog stops with a VM error, it prints the stack of each process.
+# For a recursion with no end that was some million lines (500 MB in 10
+# minutes, and the VM was not done).
+COG_FRAMES=--maxFramesToLog=200
 
 mkdir -p "$OUT/img" "$OUT/log" "$OUT/res" "$OUT/run" || exit 2
 OUT=$(cd "$OUT" && pwd)
@@ -148,6 +160,15 @@ rm -f "$OUT/res/$label".* "$OUT/log/$label".*
 # write files there.  Our VM puts the startup.st of an eval there too.
 scratch() { local d=$OUT/run/$label.$1; rm -rf "$d"; mkdir -p "$d" || fail_setup "mkdir $d"; SCRATCH=$d; }
 
+# A log above 20 MB keeps its first 5 MB and its last 1 MB.
+trim_log() {
+    local f=$1 n
+    [ -f "$f" ] || return 0
+    n=$(wc -c < "$f")
+    [ "$n" -gt 20000000 ] || return 0
+    { head -c 5000000 "$f"; printf '\n[... %s bytes cut by run-one-package.sh ...]\n' "$((n - 6000000))"; tail -c 1000000 "$f"; } > "$f.cut" && mv "$f.cut" "$f"
+}
+
 # The totals of a results file of run_sunit.st, in one line.
 totals() {
     [ -f "$1" ] || { echo "NO-RESULT"; return; }
@@ -174,8 +195,10 @@ status_list() {
 # repository) is loaded from a local clone that has the patch as a commit.
 # The patch repairs a defect of the package that stops the load.
 if [ -f "$HERE/patches/$label.patch" ]; then
-    pdir=$OUT/patched/$label
-    rm -rf "$pdir"; mkdir -p "$OUT/patched"
+    # The name of the directory is the name of the Iceberg repository, and
+    # pkg_classes.st looks for the repository by the name of the manifest.
+    pdir=$OUT/patched/$label/$repo
+    rm -rf "$OUT/patched/$label"; mkdir -p "$OUT/patched/$label"
     if git clone -q --branch "$branch" "https://github.com/$owner/$repo.git" "$pdir" > "$OUT/log/$label.patch.log" 2>&1 \
         && git -C "$pdir" apply "$HERE/patches/$label.patch" >> "$OUT/log/$label.patch.log" 2>&1 \
         && git -C "$pdir" add -A >> "$OUT/log/$label.patch.log" 2>&1 \
@@ -192,15 +215,24 @@ if [ -f "$HERE/patches/$label.patch" ]; then
     fi
 fi
 
-# 1. load
+# 1. load.  The image as the load left it stays in img/<label>.loaded.image.
+# With PKG_REUSE_LOAD=1 a later run starts from that image and makes no
+# download: for work on the fixes file of a package.
+loaded=$OUT/img/$label.loaded.image
+if [ "${PKG_REUSE_LOAD:-0}" = 1 ] && [ -f "$loaded" ] && [ ! -f "$HERE/patches/$label.patch" -o "$loaded" -nt "$HERE/patches/$label.patch" ]; then
+    echo "[$ROW] $label: the load of an earlier run ($(date +%H:%M:%S))"
+    cp -f "$loaded" "$img" && cp -f "${loaded%.image}.changes" "${img%.image}.changes" || fail_setup "copy of the loaded image"
+    load_rc=0
+else
 echo "[$ROW] $label: load ($(date +%H:%M:%S))"
 scratch load
 memory_ok load
 # Iceberg tries an SSH clone first and falls back to HTTPS after an
 # authentication error.  The load asks for HTTPS at once.
-( cd "$SCRATCH" && exec timeout -k 10 "$LOAD_TIMEOUT" "$COG" --headless "$COG_MEM" "$img" eval --save \
+( cd "$SCRATCH" && exec timeout -k 10 "$LOAD_TIMEOUT" "$COG" --headless "$COG_MEM" "$COG_FRAMES" "$img" eval --save \
     "Iceberg remoteTypeSelector: #httpsUrl. $load_expr" ) > "$OUT/log/$label.load.log" 2>&1 < /dev/null &
 VM_PID=$!; wait "$VM_PID"; load_rc=$?; VM_PID=""
+trim_log "$OUT/log/$label.load.log"
 echo "[load exit=$load_rc]" >> "$OUT/log/$label.load.log"
 rm -rf "$SCRATCH"
 load_state=ok
@@ -216,6 +248,8 @@ if [ "$load_state" != ok ]; then
     rm -f "$img" "${img%.image}.changes"
     exit 0
 fi
+cp -f "$img" "$loaded" && cp -f "${img%.image}.changes" "${loaded%.image}.changes"
+fi
 
 # 2. fake GUI, image fixes, and the fixes of this package if it has a file
 scratch prep
@@ -225,7 +259,7 @@ if [ -f "$HERE/fixes/$label.st" ]; then
     pkgfix="'$SCRATCH/pkgfix.st' asFileReference fileIn. "
 fi
 memory_ok prep
-( cd "$SCRATCH" && exec timeout -k 10 600 "$COG" --headless "$COG_MEM" "$img" eval --save \
+( cd "$SCRATCH" && exec timeout -k 10 600 "$COG" --headless "$COG_MEM" "$COG_FRAMES" "$img" eval --save \
     "'$REPO/scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn. '$REPO/scripts/pharo-image-fixes.st' asFileReference fileIn. ${pkgfix}1" ) \
     > "$OUT/log/$label.prep.log" 2>&1 < /dev/null &
 VM_PID=$!; wait "$VM_PID"; prep_rc=$?; VM_PID=""
@@ -240,7 +274,9 @@ fi
 # 3. class list
 classes=$OUT/res/$label.classes.txt
 memory_ok class-list
-( cd "$SCRATCH" && SUNIT_PREFIX="$OUT/res/$label.list" PKG_PREFIXES="$test_prefix" PKG_REPO="$repo" exec timeout -k 10 300 "$COG" --headless "$COG_MEM" "$img" eval \
+fixtures=""
+[ -f "$HERE/fixtures/$label.txt" ] && fixtures=$(grep -v '^#' "$HERE/fixtures/$label.txt" | awk 'NF { printf "%s%s", sep, $1; sep = "," }')
+( cd "$SCRATCH" && SUNIT_PREFIX="$OUT/res/$label.list" PKG_PREFIXES="$test_prefix" PKG_REPO="$repo" PKG_FIXTURES="$fixtures" exec timeout -k 10 300 "$COG" --headless "$COG_MEM" "$COG_FRAMES" "$img" eval \
     "'$HERE/pkg_classes.st' asFileReference fileIn" ) >> "$OUT/log/$label.prep.log" 2>&1 < /dev/null &
 VM_PID=$!; wait "$VM_PID"; VM_PID=""
 rm -rf "$SCRATCH"
@@ -276,13 +312,14 @@ run_vm() {      # $1 = cog|ours
     cp "$classes" "${pre}_class_names.txt" || fail_setup "copy of the class list"
     memory_ok "$kind"
     if [ "$kind" = cog ]; then
-        ( cd "$d" && SUNIT_PREFIX="$pre" exec timeout -k 10 "$TEST_TIMEOUT" "$COG" --headless "$COG_MEM" "$d/pkg.image" eval "$RUNNER_EXPR" ) \
+        ( cd "$d" && SUNIT_PREFIX="$pre" exec timeout -k 10 "$TEST_TIMEOUT" "$COG" --headless "$COG_MEM" "$COG_FRAMES" "$d/pkg.image" eval "$RUNNER_EXPR" ) \
             > "$OUT/log/$label.cog.log" 2>&1 < /dev/null &
     else
         ( cd "$d" && SUNIT_PREFIX="$pre" PHARO_EVAL_NO_SUNIT_MARKER=1 exec timeout -k 10 "$TEST_TIMEOUT" "$OURS" "$d/pkg.image" eval "$RUNNER_EXPR" ) \
             > "$OUT/log/$label.ours.log" 2>&1 < /dev/null &
     fi
     VM_PID=$!; wait "$VM_PID"; rc=$?; VM_PID=""
+    trim_log "$OUT/log/$label.$kind.log"
     echo "[exit=$rc]" >> "$OUT/log/$label.$kind.log"
     rm -rf "$d"
     VM_RC=$rc
@@ -315,7 +352,7 @@ echo "[$ROW] $label: $state cog[$c] ours[$o] different=$d ($(date +%H:%M:%S))"
 
 case "$KEEP_IMAGES" in
     all)  ;;
-    none) rm -f "$img" "${img%.image}.changes" ;;
-    *)    [ "$clean" = yes ] && rm -f "$img" "${img%.image}.changes" ;;
+    none) rm -f "$img" "${img%.image}.changes" "$loaded" "${loaded%.image}.changes" ;;
+    *)    [ "$clean" = yes ] && rm -f "$img" "${img%.image}.changes" "$loaded" "${loaded%.image}.changes" ;;
 esac
 exit 0

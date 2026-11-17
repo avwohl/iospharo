@@ -69,6 +69,7 @@ cmake --build build
   architecture, configuration
 - [docs/benchmarking.md](docs/benchmarking.md): benchmarks against Cog
 - [docs/WIP.md](docs/WIP.md): the current state of the work
+- [docs/test-runs.md](docs/test-runs.md): how to run tests, sweeps and the package run
 - [docs/deferred.md](docs/deferred.md): known gaps and deferred work
 - [docs/vm-compat-bugs.md](docs/vm-compat-bugs.md): VM defects, open and
   fixed

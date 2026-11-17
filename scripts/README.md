@@ -12,21 +12,25 @@
   callback, the callback never answers, and the VM spins — which reads as a hang.
   With it, that class runs in about 0.4s. Needs a pharo-vm checkout; set
   `PHARO_VM_SRC` if yours is not at `~/esrc/pharo-vm`.
-- `sunit-sweep.sh` — offline full-coverage SUnit sweep, one architecture per
-  invocation: `sunit-sweep.sh <vm-binary> <prepped-image> [outdir]`. Unlike
-  `run_all_tests.sh` it never touches the network and takes the VM binary as an
-  argument, which is what makes an arm-vs-x86 comparison on one machine
-  possible. Batches and relaunches from a pristine image, because one class can
-  hard-hang the VM in a way the in-image watchdog cannot interrupt.
-
-  Prepare the image with an explicit snapshot, NOT `eval --save`:
-
-      <vm> fresh.image eval "'scripts/pharo-headless-test/run_sunit_tests.st'
-          asFileReference fileIn. Smalltalk snapshot: true andQuit: true"
-
-  `--save` is the stock Cog VM's flag; under `test_load_image` it is forwarded
-  to the image's command-line handler and nothing is saved. Verified by setting
-  a global and finding it gone on the next launch.
+- `vmrun.sh` — the one way to start a VM for a test: our VM and stock Cog,
+  single tests, expression files, image preps, sweeps and the package run.
+  The script has a lock, so one VM runs at a time, and a memory guard.
+  The commands are in `docs/test-runs.md`.
+- `sunit-sweep.sh`, `cog-sweep.sh` — the full suite in batches, for our VM and
+  for stock Cog.  Start them through `vmrun.sh sweep`.  Each batch is an eval
+  of `pharo-headless-test/run_sunit.st` on the test image.  The test image
+  has the fake GUI and the image fixes and no runner inside
+  (`vmrun.sh prep`).
+- `image-fixes/`, `gen-image-fixes.py`, `pharo-image-fixes.st` — repairs of
+  image and test defects that stock Cog has too.  Edit the entries files in
+  `image-fixes/`, then run the generator.  The list is in
+  `docs/image_issues.md`.
+- `pkg-jit-test/` — the 200-package run: the manifest `packages-200.tsv`, the
+  driver `run-one-package.sh` (start it through `vmrun.sh pkgs`), and the
+  patches, fixes and fixture lists of single packages.
+- `cogdiff/` — expression files that give the same output on our VM and on
+  stock Cog (`vmrun.sh eval`), and loops for tests that fail from time to
+  time (`taskit_pool_stress.st`, `taskit_pool_diag.st`).
 - `pharo-headless-test/` — Submodule: headless test runner + fake GUI (https://github.com/avwohl/pharo-headless-test)
 
   The runner has no class-level skip list: it runs every non-abstract TestCase

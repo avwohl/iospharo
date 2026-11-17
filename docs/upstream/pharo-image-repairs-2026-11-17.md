@@ -850,3 +850,80 @@ Open points: Both tests pass only on our VM. They cannot pass on stock Cog until
 
 Upstream note: Pharo (image), small: TFFIBackend>>on:float64At:put: and on:float32At:put: now signal ModificationForbidden (modificationForbiddenFor:index:value:) when the receiver is read-only and the primitive failed, instead of primitiveFailed; WriteBarrierTest>>testMutateByteArrayUsingDoubleAtPut / UsingFloatAtPut are repaired (they compared 'guineaPig first', a byte, with a Float) and lose their expectedFailure marks. These tests only pass once the VM primitives 628/629 fail on read-only receivers. Cog VM (separate, owner must review first, not filed): primitiveStoreFloat32IntoBytes and primitiveStoreFloat64IntoBytes (and the other primitiveStore*IntoBytes) should fail with PrimErrNoModification when (objectMemory isObjImmutable: rcvr).
 
+
+## TaskIt-worker-pool-race (added after the repair run)
+
+- Review: a read-only review by a second agent, then loops on the two VMs.
+- Entries: `scripts/image-fixes/25-taskit-worker-pool-race.st`
+- Methods: `TKTCommonQueueWorkerPool>>privateRemoveIdleWorkerIfNeeded`, new
+  `AtomicSharedQueue>>isProcessWaiting:`, new `isWaitingForTask` and
+  `suspendIfWaitingForTask` in `TKTWorkerProcess` and `TKTWorker`
+
+`privateRemoveIdleWorkerIfNeeded` stops one worker that is free.  A worker is
+free from the end of a task until `executeTask:` records the next task, so a
+free worker can be in the code that takes a task from the queue, or can hold
+a task.  The pool then terminates a process that holds a task, and the future
+of the task never gets a value.  The entry stops a worker only when its
+process waits on the semaphore of the task queue, and takes the process out
+of that wait in the same step, at the highest priority.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `TKTCommonQueueWorkerPoolTest>>testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel` | image-code | repaired | The pool stops a worker that holds a task (`TKTTimeoutException`). |
+| `TKTFutureTest>>testFutureFirstCompleteOfSuccessIfFirstSuccessFaster` | image-code and test | repaired | The same cause in the pool of the test profile, and the order of two callbacks (next group). |
+
+Measurements: `docs/image_issues.md`, section "TaskIt worker pool kills a
+busy worker".  Loops: `scripts/cogdiff/taskit_pool_stress.st` and
+`scripts/cogdiff/taskit_pool_diag.st`.
+
+Upstream note: Title: TaskIt: the common-queue worker pool stops a worker
+that holds a task.  Project: pharo (TaskIt).  The change is in the three
+classes that the entry names.
+
+## TaskIt-first-complete-tests (added after the repair run)
+
+- Entries: `scripts/image-fixes/26-taskit-first-complete-tests.st`
+- Methods: `TKTFutureTest>>testFutureFirstCompleteOfSuccessIfFirstSuccessFaster`,
+  `testFutureFirstCompleteOfSuccessIfSecondSuccessFaster`,
+  `testFutureFirstCompleteOfFailsIfFirstFailsFaster`,
+  `testFutureFirstCompleteOfFailsIfSecondFailsFaster`
+
+`TKTFuture>>firstCompleteOf:` gives each of the two futures a callback, and
+the callback that runs first decides the result.  The callbacks are tasks of
+a pool with 4 workers, so they have no fixed order.  Each test gave the two
+futures their results one after the other and expected the result of the
+first.  Each test now waits for the result of the combined future before the
+second future gets its result.  The assertions are the same.
+
+Not changed, from the review: each of about 40 tests of `TKTFutureTest`
+waits a fixed 50 ms for a callback before its assertion.  No loop showed a
+failure from that wait.
+
+Upstream note: Title: TKTFutureTest: the firstCompleteOf: tests depend on
+the order of two callbacks.  Project: pharo (TaskIt-Tests).
+
+## AtomicSharedQueue-wakeups (added after the repair run)
+
+- Entries: `scripts/image-fixes/27-atomic-shared-queue-wakeups.st`
+- Methods: `WaitfreeQueue>>nextIfNone:`, `AtomicSharedQueue>>next`, new
+  `AtomicSharedQueue>>nextIfNone:`, new class `AtomicSharedQueueTest` with 3
+  tests
+
+Three defects of `AtomicSharedQueue` with two or more readers, found by the
+review of the TaskIt repair.  The text of each defect is in the entries file
+and in `docs/image_issues.md`.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `AtomicSharedQueueTest>>testSecondReaderGetsItemWhenFirstReaderHadTheLock` | image-code | repaired | A reader that finds the queue locked waits again, and the reader with the lock gives no signal. |
+| `AtomicSharedQueueTest>>testReaderGetsItemThatCameWhileItResetTheSignals` | image-code | repaired | A reader resets the signals after a writer gave one. |
+| `AtomicSharedQueueTest>>testQueueIsFreeAfterReaderIsTerminatedInARead` | image-code | repaired | A reader that is terminated in `nextIfNone:` leaves the queue locked. |
+
+Proof: the three tests fail on an image without the entries, on our VM and
+on stock Cog (`Got nil instead of 2`, two times, and `Got nil instead of
+1`).  With the entries the three pass on the two VMs.
+
+Upstream note: Title: AtomicSharedQueue: lost wake-ups with two readers, and
+a locked queue after the termination of a reader.  Project: pharo
+(Collections-Atomic, Collections-Atomic-Tests).  The released image does not
+have the package Collections-Atomic-Tests, so the tests are in a new class.

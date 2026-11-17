@@ -22,12 +22,15 @@
 #                                          image fixes, and no runner inside
 #   vmrun.sh interactive <vm> <image> <outdir>   scripts/interactive-classes.txt
 #                                          in an interactive session
-#   vmrun.sh pkgs [--redo] <outdir> <first-row> [last-row] [ours-vm] [cog-vm]
+#   vmrun.sh pkgs [--redo|--reuse] <outdir> <first-row> [last-row] [ours-vm] [cog-vm]
 #                                          packages of scripts/pkg-jit-test/
 #                                          packages-200.tsv: load from GitHub
 #                                          on Cog, tests on Cog and on our VM
 #   vmrun.sh run   <vm> <image> [image arguments ...]
 #   vmrun.sh build <build-tree>            cmake --build under the same lock
+#   vmrun.sh cogbuild                      build the Cog tree with the changes of
+#                                          docs/upstream and put its libraries
+#                                          into the app of the VM name cogp
 #
 # <vm> is a name or a path of a VM binary:
 #   ours     build-rel/test_load_image           nojit  build-nojit/test_load_image
@@ -218,6 +221,8 @@ guarded() {
 
 # Stock Cog gets the old-space limit of our VM (see ours_env).
 cog_mem() { echo "--maxOldSpaceSize=${VMRUN_OLD_SPACE_MB:-6144}M"; }
+# A VM error of stock Cog prints the stack of each process: at most 200 frames.
+COG_FRAMES=--maxFramesToLog=200
 
 ours_env() {
     # No PHARO_EVAL_NO_SUNIT_MARKER here: sunit-sweep.sh asks a runner image for
@@ -258,7 +263,9 @@ while [ $# -gt 0 ]; do
         --timeout)     VMRUN_TIMEOUT=$2; shift 2 ;;
         --limit)       VMRUN_TEST_LIMIT=$2; shift 2 ;;
         --repeat)      VMRUN_REPEAT=$2; shift 2 ;;   # test: N runs, one VM after the other, counts at the end
+        --old-space)   VMRUN_OLD_SPACE_MB=$2; shift 2 ;;   # old-space limit in MB, for our VM and for stock Cog
         --redo)        VMRUN_REDO=1; shift ;;        # pkgs: run a package again that has a row
+        --reuse)       VMRUN_REDO=1; VMRUN_REUSE=1; shift ;;   # pkgs: again, from the image of the earlier load
         *) break ;;
     esac
 done
@@ -299,7 +306,7 @@ test)
             ours_env
             guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
         else
-            guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" $headless "$(cog_mem)" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
+            guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" $headless "$(cog_mem)" "$COG_FRAMES" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
         fi
         rc=$?
         if [ "$repeat" -eq 1 ]; then
@@ -328,7 +335,7 @@ eval)
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" --headless "$(cog_mem)" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" --headless "$(cog_mem)" "$COG_FRAMES" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
     fi
     rc=$?
     if [ -f eval_out.txt ]; then tr '\r' '\n' < eval_out.txt; echo; else echo "NO-OUTPUT rc=$rc (log: $RUNDIR/vm.log)"; tail -5 vm.log; fi
@@ -338,20 +345,23 @@ prep)
     name=${1:?usage: vmrun.sh prep <vm> <base.image> <out.image> <file.st> ...}; base=${2:?base image}; out=${3:?out image}; shift 3
     [ $# -gt 0 ] || { say "no file to file in"; exit 2; }
     resolve_vm "$name"
+    # Paths can be relative to the directory of the caller: make them absolute
+    # before the change to the run directory.
+    expr=""
+    for f in "$@"; do
+        [ -f "$f" ] || { say "no file $f"; exit 2; }
+        f=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
+        expr="$expr'$f' asFileReference fileIn. "
+    done
+    case "$out" in /*) ;; *) out=$PWD/$out ;; esac
     acquire_lock "prep $name $(basename "$out")"
     fresh_rundir "$base"
     cd "$RUNDIR" || exit 2
-    expr=""
-    for f in "$@"; do
-        f=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
-        [ -f "$f" ] || { say "no file $f"; exit 2; }
-        expr="$expr'$f' asFileReference fileIn. "
-    done
     if [ "$KIND" = ours ]; then
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "${expr}Smalltalk snapshot: true andQuit: true" > vm.log 2>&1 < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$(cog_mem)" "$RUNDIR/rt.image" eval --save "${expr}1" > vm.log 2>&1 < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$(cog_mem)" "$COG_FRAMES" "$RUNDIR/rt.image" eval --save "${expr}1" > vm.log 2>&1 < /dev/null
     fi
     rc=$?
     grep -a -o '\(FIXED\|ADDED\|SKIP\) [A-Za-z0-9 ]*>>[A-Za-z0-9_:]*' vm.log | sort -u | awk '{ print $1 }' | sort | uniq -c | tr '\n' ' '; echo
@@ -380,7 +390,7 @@ sweep)
     else
         # cog-sweep.sh runs <dir>/pharo <image>: give it a directory with this VM.
         cogdir=$outdir/cogdir; rm -rf "$cogdir"; mkdir -p "$cogdir"
-        printf '#!/bin/bash\nexec "%s" --headless %s "$@"\n' "$VM" "$(cog_mem)" > "$cogdir/pharo"; chmod +x "$cogdir/pharo"
+        printf '#!/bin/bash\nexec "%s" --headless %s %s "$@"\n' "$VM" "$(cog_mem)" "$COG_FRAMES" > "$cogdir/pharo"; chmod +x "$cogdir/pharo"
         cp "$image" "$cogdir/Pharo.image" && cp "${image%.image}.changes" "$cogdir/Pharo.changes" && cp "$(dirname "$image")"/*.sources "$cogdir/"
         # The same curated class order as the sweep of our VM; the runner adds
         # every other TestCase subclass of the image after it.
@@ -392,6 +402,28 @@ sweep)
     fi
     tail -n 14 "$outdir/sweep.log" 2>/dev/null
     echo "sweep rc=$rc"
+    # The interactive pass: the classes of scripts/interactive-classes.txt have
+    # tests that skip in the batches, because the session there is not
+    # interactive.  For our VM the pass needs no window.  For stock Cog it
+    # opens a window, so it runs only on request (vmrun.sh interactive).
+    if [ "$KIND" = ours ] && [ "${VMRUN_NO_INTERACTIVE:-0}" != 1 ]; then
+        export SUNIT_PREFIX=$outdir/interactive
+        rm -f "${SUNIT_PREFIX}"_*
+        grep -v '^#' "$REPO/scripts/interactive-classes.txt" | awk 'NF { print $1 }' > "${SUNIT_PREFIX}_class_names.txt"
+        fresh_rundir "$image"
+        cd "$RUNDIR" || exit 2
+        export PHARO_INTERACTIVE=1 PHARO_EVAL_NO_SUNIT_MARKER=1
+        guarded "$RUNDIR/" 900 "$VM" "$RUNDIR/rt.image" eval "'$REPO/scripts/pharo-headless-test/run_sunit.st' asFileReference fileIn" > "$outdir/interactive.log" 2>&1 < /dev/null
+        irc=$?
+        echo "=== INTERACTIVE PASS (rc=$irc) ==="
+        if [ -f "${SUNIT_PREFIX}_test_results.txt" ]; then
+            awk '/^Total:/ && NF > 2 { t += $2; for (i = 3; i <= NF; i++) { split($i, kv, ":"); n[kv[1]] += kv[2] } }
+                 END { printf "  tests   %d\n  PASS    %d\n  FAIL    %d\n  ERROR   %d\n  SKIP    %d\n  TIMEOUT %d\n  XFAIL   %d\n", t, n["P"], n["F"], n["E"], n["S"], n["T"], n["X"] }' "${SUNIT_PREFIX}_test_results.txt"
+            grep -E '^  (FAIL|ERROR|SKIP|TIMEOUT|XFAIL)' "${SUNIT_PREFIX}_test_results.txt" | cut -c1-200
+        else
+            echo "  no results (log: $outdir/interactive.log)"
+        fi
+    fi
     ;;
 
 interactive)
@@ -413,7 +445,7 @@ interactive)
         export PHARO_INTERACTIVE=1 PHARO_EVAL_NO_SUNIT_MARKER=1
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$(cog_mem)" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$(cog_mem)" "$COG_FRAMES" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
     fi
     rc=$?
     if [ -f "${SUNIT_PREFIX}_test_results.txt" ]; then
@@ -445,6 +477,7 @@ pkgs)
     export COG OURS
     export VMRUN_CHECK="$REPO/scripts/vmrun.sh"
     [ "${VMRUN_REDO:-0}" = 1 ] && export PKG_REDO=1
+    [ "${VMRUN_REUSE:-0}" = 1 ] && export PKG_REUSE_LOAD=1
     mkdir -p "$outdir"; outdir=$(cd "$outdir" && pwd)
     ours_env
     row=$first; tries=0
@@ -455,6 +488,7 @@ pkgs)
         guarded "$outdir/" "${VMRUN_TIMEOUT:-7200}" "$REPO/scripts/pkg-jit-test/run-one-package.sh" "$outdir" "$row" >> "$outdir/driver.log" 2>&1 < /dev/null
         rc=$?
         release_lock
+        sleep 3                     # a call that waits for the lock looks each 2 seconds
         if [ "$rc" -eq 4 ] && [ "$tries" -lt 5 ]; then
             # The memory check refused a VM start: the same row again, later.
             tries=$((tries + 1)); echo "row $row: memory check refused, try $tries"; sleep 120; continue
@@ -476,9 +510,30 @@ run)
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" "$@" < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$(cog_mem)" "$RUNDIR/rt.image" "$@" < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$(cog_mem)" "$COG_FRAMES" "$RUNDIR/rt.image" "$@" < /dev/null
     fi
     echo "run rc=$? (directory: $RUNDIR)"
+    ;;
+
+cogbuild)
+    # Build the Cog tree that has the changes of docs/upstream
+    # ($PHARO_WORK/cogbuild-all, source $PHARO_WORK/wt/cog-all), under the lock,
+    # and copy its core library and its socket plugin into the app of the VM
+    # name cogp.  The other libraries of that app are the stock ones: a local
+    # Cog build has no freetype, cairo and libgit2.
+    acquire_lock "cogbuild"
+    check_memory_before_start
+    [ -d "$WORK/cogbuild-all" ] || { say "no build tree $WORK/cogbuild-all"; exit 2; }
+    cmake --build "$WORK/cogbuild-all" -j4 > "$WORK/cogbuild-all/build-last.log" 2>&1
+    rc=$?
+    grep -E ' error |Error [0-9]|FAILED' "$WORK/cogbuild-all/build-last.log" | head -20
+    src=$WORK/cogbuild-all/build/vm/Debug/Pharo.app/Contents/MacOS/Plugins
+    dst=$WORK/cogp-app/Pharo.app/Contents/MacOS/Plugins
+    if [ "$rc" -eq 0 ]; then
+        cp "$src/libPharoVMCore.dylib" "$dst/" && cp "$src/libSocketPlugin.dylib" "$dst/" || exit 2
+        ls -la "$dst/libPharoVMCore.dylib" "$dst/libSocketPlugin.dylib"
+    fi
+    echo "cogbuild rc=$rc (log: $WORK/cogbuild-all/build-last.log)"
     ;;
 
 build)
@@ -491,7 +546,7 @@ build)
     ;;
 
 *)
-    sed -n '3,49p' "${BASH_SOURCE[0]}"
+    sed -n '3,52p' "${BASH_SOURCE[0]}"
     exit 2
     ;;
 esac

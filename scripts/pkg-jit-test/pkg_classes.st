@@ -10,6 +10,10 @@
    PKG_PREFIXES   package name prefixes, with commas between them: a test
                   class is in the list too when the name of its package starts
                   with one of the prefixes
+   PKG_FIXTURES   class names, with commas between them, of fixture classes.
+                  A fixture class is not in the list.  A class in a package
+                  with TestResources in its name is a fixture too.  The file
+                  <prefix>_fixtures.txt gets the classes that were left out.
 
  A test class is a non-abstract TestCase subclass.  The file
  <prefix>_packages.txt gets the package names that the repository gave,
@@ -18,7 +22,7 @@
 
  The names are in the environment and not in this file, so the method
  literals of the image do not name them."
-| env prefix prefixes repoName repoPackages classes |
+| env prefix prefixes repoName repoPackages classes fixtureNames isFixture fixtures |
 env := [ :name | (OSEnvironment current at: name ifAbsent: [ '' ]) trimBoth ].
 prefix := env value: 'SUNIT_PREFIX'.
 prefix isEmpty ifTrue: [ prefix := '/tmp/sunit' ].
@@ -44,6 +48,14 @@ classes := (TestCase allSubclasses select: [ :c |
 		pn := c package name asString.
 		(repoPackages includes: pn) or: [ prefixes anySatisfy: [ :pre | pn beginsWith: pre ] ] ] ])
 	asSortedCollection: [ :a :b | a name <= b name ].
+"Fixture classes: a test of the package runs them, and some fail on purpose."
+fixtureNames := (((env value: 'PKG_FIXTURES') substrings: ',') collect: [ :s | s trimBoth ]) asSet.
+isFixture := [ :c | (fixtureNames includes: c name asString)
+	or: [ #('TestResources' 'TestsResources' 'Test-Resources' 'Tests-Resources') anySatisfy: [ :part | c package name asString includesSubstring: part ] ] ].
+fixtures := classes select: isFixture.
+classes := classes reject: isFixture.
+(prefix , '_fixtures.txt') asFileReference ensureDelete; writeStreamDo: [ :o |
+	fixtures do: [ :c | o nextPutAll: c name; tab; nextPutAll: c package name asString; lf ] ].
 (prefix , '_class_names.txt') asFileReference ensureDelete; writeStreamDo: [ :o |
 	classes do: [ :c | o nextPutAll: c name; lf ] ].
 classes size
