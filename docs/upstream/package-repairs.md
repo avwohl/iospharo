@@ -1208,3 +1208,44 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `127.0.0.1` in their URL.  We install nothing without the word of the
   owner.  The row is not clean.
 
+## Kepler (`ba-st/Kepler`, row 107)
+
+- State before: 41 tests, 37 pass, 4 errors on the two VMs.
+- Cause: `Subscription class>>of:to:toBeNotifiedSending:` and
+  `Subscription>>notifyAbout:` send `argumentCount` to a Symbol, as Stardust
+  does (see the Stardust section).
+- Repair here: `patches/ba-st-kepler.patch` uses `numArgs` in the two places.
+- Result: 41 of 41 pass on the two VMs.
+
+## MicroUML (`olekscode/MicroUML`, row 110)
+
+- State before: 83 tests, 78 pass, 1 failure, 4 errors on the two VMs
+  (`Error: Package names should be uppercase`).
+- Cause: the `setUp` of `MicroUMLCodeGeneratorTest` makes classes in a
+  package with the name `__MicroUML__Dummy-Package__`.
+  `PackageOrganizer>>addPackage:` of Pharo 14 refuses a name that does not
+  start with an upper-case letter.  The class is in the system before the
+  error comes, so a later test found classes of an earlier test (the
+  failure).
+- Repair here: `fixes/olekscode-microuml.st` uses the name
+  `Z_MicroUML__Dummy-Package__`.
+- Result: 83 of 83 pass on the two VMs.
+
+## pharo-openapi-generator (`alkalinan/pharo-openapi-generator`, row 112)
+
+- State before: `LOAD-FAIL` (`KeyNotFound: key 'BaselineOfOpenAPI'`).
+- Causes, all in the repository, which is an unfinished state:
+  - The repository has no `.project` file and no `src/.properties`, so
+    Iceberg finds no package in `src`.
+  - The classes `OAContact`, `OAInfo`, `OAComponents` and `OAOperation`,
+    which the code and the tests use, are not in the repository.
+  - One test has a literal `#{...}` that Pharo 14 does not read, and one
+    test uses a mock that does not pass `visit:` on.
+  - The baseline pins a version of Mocketry of 2019.
+- Repair here: `patches/alkalinan-pharo-openapi-generator.patch` adds the
+  two project files and the four classes (as small as the tests need),
+  nests the JSON mapping of the info object, corrects the two tests and
+  names the present Mocketry.
+- Limit: the four classes are ours.  The author must add the real ones.
+- Result: 16 of 16 pass on the two VMs.
+
