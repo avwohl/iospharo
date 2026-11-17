@@ -117,6 +117,15 @@ using namespace pharo;
 // Global interpreter pointer for event callback
 static Interpreter* gTestInterpreter = nullptr;
 
+// Path of one state file of the SUnit runner: <prefix>_<name>.  The prefix is
+// the SUNIT_PREFIX environment variable, and /tmp/sunit when the variable is
+// not set.  The runner in the image builds the same paths
+// (SUnitRunner class>>tmpPath:).
+static std::string sunitStatePath(const char* name) {
+    const char* prefix = GET_DEBUG_STR(SUNIT_PREFIX);
+    return std::string(prefix ? prefix : "/tmp/sunit") + "_" + name;
+}
+
 // Event callback to signal input semaphore when events arrive
 static void testEventCallback(void* context) {
     (void)context;
@@ -1033,8 +1042,13 @@ int main(int argc, char* argv[]) {
         // hang at high priority and block the eval from completing).
         // Coupled to our runner-script's marker convention; harmless on
         // images without it.  2026-05-09 A3 fix.
+        // The marker has the prefix of the runner state files (SUNIT_PREFIX,
+        // /tmp/sunit when not set), because the runner looks for
+        // <prefix>_run_completed.txt.  With a fixed /tmp/sunit path, an eval
+        // on a runner image with a private prefix started the whole suite.
+        const std::string markerPath = sunitStatePath("run_completed.txt");
         if (FILE* f = GET_DEBUG_BOOL(PHARO_EVAL_NO_SUNIT_MARKER) ? nullptr
-                      : std::fopen("/tmp/sunit_run_completed.txt", "w")) {
+                      : std::fopen(markerPath.c_str(), "w")) {
             std::fprintf(f, "eval-mode marker — set by test_load_image to skip SUnitRunner auto-restart\n");
             std::fclose(f);
         }
@@ -1517,7 +1531,7 @@ int main(int argc, char* argv[]) {
 
                 // Check for test completion
                 if (testMode) {
-                    FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+                    FILE* rf = fopen(sunitStatePath("test_results.txt").c_str(), "r");
                     if (rf) {
                         char buf[256];
                         bool complete = false;
@@ -1594,7 +1608,7 @@ int main(int argc, char* argv[]) {
 
         // In test mode, print results file if it exists
         if (testMode) {
-            FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+            FILE* rf = fopen(sunitStatePath("test_results.txt").c_str(), "r");
             if (rf) {
                 std::cout << "\n=== SUnit Test Results ===" << std::endl;
                 char line[256];
@@ -1604,7 +1618,7 @@ int main(int argc, char* argv[]) {
                 fclose(rf);
                 std::cout << "=========================" << std::endl;
             } else {
-                std::cout << "\n[TEST] No results file at /tmp/sunit_test_results.txt" << std::endl;
+                std::cout << "\n[TEST] No results file at " << sunitStatePath("test_results.txt") << std::endl;
                 std::cout << "The image may not have completed test execution." << std::endl;
             }
         }

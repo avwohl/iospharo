@@ -433,6 +433,7 @@ DEBUG_BOOL_RT(PHARO_INTERACTIVE)            // bare launches default to NON-inte
 DEBUG_BOOL_RT(PHARO_EVAL_SUSPEND_MORPHIC)   // eval mode: suspend the Morphic processes before evaluating (pre-2026-10-12 default).  Off = Cog parity: the UI process keeps running, so `World defer:` blocks run
 DEBUG_BOOL(PHARO_T1_COMPILE_ALL)        // T1 compiles every hot method, not only code with a loop (pre-2026-10-13 policy; see noteMethodEntrySlow)
 DEBUG_BOOL_RT(PHARO_EVAL_NO_SUNIT_MARKER)   // eval mode: do not touch /tmp/sunit_run_completed.txt.  Set it for an eval run beside a live sunit-sweep.sh, which reads that file as "batch finished"
+DEBUG_STR_RT(SUNIT_PREFIX)                   // prefix of the SUnit runner state files (<prefix>_run_completed.txt, <prefix>_test_results.txt, ...); not set = /tmp/sunit.  The runner in the image reads the same variable (SUnitRunner class>>tmpPath:)
 DEBUG_BOOL(PHARO_TRACE_WEDGE_NIL)        // full-suite wedge: at a nil-receiver DNU, dump the real activeContext_ chain to find the T1-miscompiled method
 DEBUG_BOOL_RT(PHARO_NO_DELAY_HARD_RESTART)  // opt out of the VM-core self-heal: don't signal the registered image-side recovery semaphore (which drives Delay scheduler restartTimerEventLoop) on a [DELAY-DEATH] wedge
 DEBUG_BOOL(PHARO_COMPILE_LOG)            // DIAGNOSTIC: log [COMPILE]/[RECOMPILE] <selector> for each JIT compile, to find run-once / transient-method compile waste

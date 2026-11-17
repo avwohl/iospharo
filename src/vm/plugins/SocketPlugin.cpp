@@ -466,6 +466,65 @@ extern "C" int sp_getLocalHostName(char* buf, int len) {
     return rc;
 }
 
+// The IPv4 address of this host on the network, 4 bytes in network order.
+// Backs primitiveResolverLocalAddress (NetNameResolver localHostAddress).
+//
+// POSIX: the first IPv4 address of an interface that is up and is not the
+// loopback.  An interface that is also running, with an address outside
+// 169.254/16, wins over one that is only up.  Stock Cog
+// (sqResolverLocalAddress) looks only at interfaces with the names "eth0" and
+// "wlan0", so it answers 0.0.0.0 on macOS and on a Linux with other interface
+// names; its source marks that code as a TODO.
+// Windows: the first address of the host name that is not a loopback address,
+// as in Cog.
+//
+// Answers 0 on success.  With no such address, out is 0.0.0.0 (the image maps
+// that value to the loopback address), as in Cog.
+extern "C" int sp_getLocalAddress(unsigned char out[4]) {
+    if (!out) return -1;
+    out[0] = out[1] = out[2] = out[3] = 0;
+#ifdef _WIN32
+    char name[256];
+    if (gethostname(name, sizeof(name)) != 0) return -1;
+    name[sizeof(name) - 1] = '\0';
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* res = nullptr;
+    if (getaddrinfo(name, nullptr, &hints, &res) != 0) return -1;
+    for (struct addrinfo* p = res; p; p = p->ai_next) {
+        if (p->ai_family != AF_INET || !p->ai_addr) continue;
+        const unsigned char* b = reinterpret_cast<const unsigned char*>(
+            &reinterpret_cast<const struct sockaddr_in*>(p->ai_addr)->sin_addr);
+        if (b[0] == 127) continue;
+        memcpy(out, b, 4);
+        break;
+    }
+    freeaddrinfo(res);
+    return 0;
+#else
+    struct ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return -1;
+    const struct ifaddrs* best = nullptr;      // up, running, not link-local
+    const struct ifaddrs* fallback = nullptr;  // up, not loopback
+    for (const struct ifaddrs* ifa = list; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) continue;
+        const unsigned char* b = reinterpret_cast<const unsigned char*>(
+            &reinterpret_cast<const struct sockaddr_in*>(ifa->ifa_addr)->sin_addr);
+        const bool linkLocal = (b[0] == 169 && b[1] == 254);
+        if ((ifa->ifa_flags & IFF_RUNNING) && !linkLocal) { best = ifa; break; }
+        if (!fallback) fallback = ifa;
+    }
+    const struct ifaddrs* pick = best ? best : fallback;
+    if (pick)
+        memcpy(out, &reinterpret_cast<const struct sockaddr_in*>(pick->ifa_addr)->sin_addr, 4);
+    freeifaddrs(list);
+    return 0;
+#endif
+}
+
 void socketPluginShutdown() {
     if (!gIORunning.load()) return;
 

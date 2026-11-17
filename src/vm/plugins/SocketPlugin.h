@@ -45,4 +45,12 @@ extern "C"
 #endif
 int sp_getLocalHostName(char* buf, int len);
 
+// The IPv4 address of this host on the network, 4 bytes in network order.
+// Returns 0 on success; out is 0.0.0.0 when no interface has such an address.
+// Backs primitiveResolverLocalAddress (NetNameResolver localHostAddress).
+#ifdef __cplusplus
+extern "C"
+#endif
+int sp_getLocalAddress(unsigned char out[4]);
+
 #endif // SOCKET_PLUGIN_H

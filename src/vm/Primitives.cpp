@@ -33372,18 +33372,21 @@ PrimitiveResult Interpreter::primitiveResolverHostNameResult(int argCount) {
 
 // primitiveResolverLocalAddress
 // Stack: receiver -> ByteArray (4 bytes, IPv4 address)
+extern "C" int sp_getLocalAddress(unsigned char out[4]);
 PrimitiveResult Interpreter::primitiveResolverLocalAddress(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
-    // Create a 4-byte ByteArray with 127.0.0.1
+    // The address of an interface that is up and is not the loopback
+    // (SocketPlugin.cpp).  Until 2026-11-17 this primitive answered
+    // 127.0.0.1 on every machine, and NetNameResolver localHostAddress was
+    // the loopback address on a connected machine.
+    unsigned char addr[4];
+    if (sp_getLocalAddress(addr) != 0) return PrimitiveResult::Failure;
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
     if (byteArrayClass.isNil()) return PrimitiveResult::Failure;
     uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
     Oop result = memory_.allocateBytes(classIndex, 4);
     if (result.isNil()) return PrimitiveResult::Failure;
-    memory_.storeByte(0, result, 127);
-    memory_.storeByte(1, result, 0);
-    memory_.storeByte(2, result, 0);
-    memory_.storeByte(3, result, 1);
+    for (int i = 0; i < 4; i++) memory_.storeByte(i, result, addr[i]);
     popN(1);  // pop receiver
     push(result);
     return PrimitiveResult::Success;
