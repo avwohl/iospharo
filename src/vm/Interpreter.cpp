@@ -932,6 +932,15 @@ bool Interpreter::ensureFrameAtEntry() const {
 bool Interpreter::atInterruptPoint() const {
     const uint8_t* ip = instructionPointer_;
     if (!ip || !method_.isObject()) return true;
+    // The entry of a block that valueNoContextSwitch (primitive 209) activated
+    // is not an interrupt point: Cog activates such a block with
+    // mayContextSwitch false (primitiveFullClosureValueNoContextSwitch).  The
+    // mark is the entry address, and the first check at another address
+    // removes the mark.
+    if (__builtin_expect(noSwitchEntryIp_ != nullptr, 0)) {
+        if (ip == noSwitchEntryIp_) return false;
+        noSwitchEntryIp_ = nullptr;
+    }
     namespace S = jit::SistaV1;
     uint8_t op = *ip;
     // Cog's interrupt points are a method or block activation (its frame
@@ -15390,14 +15399,16 @@ past_sista_block:
     bool finArmedAtEntry = finalizationCheckAfterGC_;
     if (::pharo::mcfMode()) {
         if (mcfActivate(method)) {
-            if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
+            if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_
+                                 && !ensureFrameAtEntry(), 0)) {
                 finalizationCheckAfterGC_ = false;
                 signalFinalizationIfNeeded();
             }
             return;
         }
     } else if (canJITActivate(method) && tryJITActivation(method, argCount)) {
-        if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
+        if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_
+                             && !ensureFrameAtEntry(), 0)) {
             finalizationCheckAfterGC_ = false;
             signalFinalizationIfNeeded();
         }
@@ -15419,7 +15430,12 @@ past_sista_block:
     // is typically `self assert:equals:` whose args (pre-drain tally) are
     // already on the operand stack evaluated by caller.  Preemption here
     // doesn't disturb them.
-    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+    //
+    // Not at the entry of an ensure: or ifCurtailed: method (primitive 198):
+    // the signal can switch to the finalization process, and Cog makes no
+    // process switch there (see isUnwindMarkerMethod).  The flag stays set,
+    // and the next activation or the next checkpoint gives the signal.
+    if (__builtin_expect(finalizationCheckAfterGC_ && !ensureFrameAtEntry(), 0)) {
         finalizationCheckAfterGC_ = false;
         signalFinalizationIfNeeded();
     }
@@ -26865,8 +26881,11 @@ void Interpreter::drainMournQueueNatively() {
         }
     }
     if (weakKeyAssociationClassIndex_ == 0xFFFFFFFF) {
-        // Couldn't find WKA class — fall back to P50/P51 path.
-        signalFinalizationIfNeeded();
+        // Couldn't find WKA class — fall back to P50/P51 path.  The signal
+        // can switch process, and activateMethod calls this drain before the
+        // new frame is complete: leave the signal to the end of the
+        // activation or to the next checkpoint.
+        finalizationCheckAfterGC_ = true;
         return;
     }
     if (weakArrayClassIndex_ == 0) {

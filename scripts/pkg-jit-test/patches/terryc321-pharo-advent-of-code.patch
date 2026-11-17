@@ -1,0 +1,18 @@
+diff --git a/src/BaselineOfPharoAdventOfCode/BaselineOfPharoAdventOfCode.class.st b/src/BaselineOfPharoAdventOfCode/BaselineOfPharoAdventOfCode.class.st
+index ba99d81..d53af48 100644
+--- a/src/BaselineOfPharoAdventOfCode/BaselineOfPharoAdventOfCode.class.st
++++ b/src/BaselineOfPharoAdventOfCode/BaselineOfPharoAdventOfCode.class.st
+@@ -24,9 +24,8 @@ BaselineOfPharoAdventOfCode >> baseline: spec [
+ 	spec for: #common do: [
+ 			spec baseline: 'PetitParser2' 
+ 			with: [ spec repository: 'github://kursjan/petitparser2' ];
+-			package: 'AdventOfCode' with: [ spec requires: #( 'PetitParser2' ) ]]
+-		
+-		
+-			
+-		
++			package: 'Advent-Of-Code-2015' with: [ spec requires: #( 'PetitParser2' ) ];
++			package: 'Advent-Of-Code-2016';
++			package: 'Advent-Of-Code-2020';
++			package: 'AdventCode2025' ]
+ ]

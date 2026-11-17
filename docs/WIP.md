@@ -147,15 +147,15 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweepcogp14-new1` | patched Cog | 39339 | 1 | 114 | 1 | the two VMs differ in 1 test |
 | `sweep14-new2` | ours | 39340 | 0 | 114 | 1 | 1 batch stopped, see below |
 | `sweep14-new3` | ours, `f9cac33f` | 39339 | 1 | 114 | 1 | no batch stopped |
+| `sweep14-new4` | ours, audit fixes, entries 25 and 26 | 39340 | 0 | 114 | 1 | no batch stopped |
 
 Defects that these sweeps showed, each with its repair:
 
 - Our VM switched process at the entry of `ensure:` (the stopped batch of
   `sweep14-new2`; `ZdcSocketStreamTest` stopped the image in 4 of 25 runs).
   Fixed in `f9cac33f`.  A code audit then found one more path to the same
-  state and two smaller differences from Cog.  The three are fixed in the
-  tree and are in the next sweep.  Text: [vm-compat-bugs.md](vm-compat-bugs.md),
-  the first entry.
+  state and two smaller differences from Cog.  The three are fixed, and
+  `sweep14-new4` has them.  Text: [vm-compat-bugs.md](vm-compat-bugs.md).
 - TaskIt stops a worker that holds a task (the failure of `sweep14-new3`,
   `TKTFutureTest`, and the old open lead of `TKTCommonQueueWorkerPoolTest`).
   This is an image defect that stock Cog has too.  The repair is
@@ -200,10 +200,21 @@ Rows 1 to 11:
 
 No test of these rows has a result on our VM that is not the result on Cog.
 
+Found by the MuTalk row and open: our VM signals an error at a recursion
+depth of 56000 frames, and Cog has no such limit
+([vm-compat-bugs.md](vm-compat-bugs.md), the first entry).  The owner must
+decide if the limit goes.
+
+The driver has these parts for a package with a defect:
+`patches/<label>.patch` (the load comes from a local clone with the patch;
+written for Buoy and Pharo-Advent-Of-Code), `fixes/<label>.st` (entries filed
+in after the load; written for glorp and XML-XMLParser), and a new manifest
+row for PharoMisc.  None of the five has a run yet.
+
 Not done, in order:
 
-1. Run the sweep of our VM and of the patched Cog with the tree of this
-   moment (the audit fixes, entries 25 and 26).
+1. Run the sweep of the patched Cog with the image of this moment (entries
+   25 and 26), and the TaskIt loops on stock Cog with the repair.
 2. Run rows 12 to 200 of the package manifest, then repair each row that
    does not pass (the package, our VM, or Cog).  Open rows: mutalk on Cog,
    Pharo-Advent-Of-Code, Buoy, PharoMisc, the skips of XMLParser.

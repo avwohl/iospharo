@@ -12,7 +12,9 @@
                   with one of the prefixes
 
  A test class is a non-abstract TestCase subclass.  The file
- <prefix>_packages.txt gets the package names that the repository gave.
+ <prefix>_packages.txt gets the package names that the repository gave,
+ <prefix>_repos.txt the names of all Iceberg repositories of the image, and
+ <prefix>_error.txt the error of the repository lookup, if it had one.
 
  The names are in the environment and not in this file, so the method
  literals of the image do not name them."
@@ -24,11 +26,17 @@ prefixes := (((env value: 'PKG_PREFIXES') substrings: ',') collect: [ :s | s tri
 repoName := env value: 'PKG_REPO'.
 repoPackages := Set new.
 repoName isEmpty ifFalse: [
-	[ (Smalltalk globals at: #IceRepository) registry do: [ :r |
+	[ | registry |
+	  registry := (Smalltalk globals at: #IceRepository) registry.
+	  (prefix , '_repos.txt') asFileReference ensureDelete; writeStreamDo: [ :o |
+		registry do: [ :r | o nextPutAll: r name asString; lf ] ].
+	  registry do: [ :r |
 		(r name sameAs: repoName) ifTrue: [
 			r workingCopy packages do: [ :p |
 				p isLoaded ifTrue: [ repoPackages add: p name asString ] ] ] ] ]
-		on: Error do: [ :e | ] ].
+		on: Error do: [ :e |
+			(prefix , '_error.txt') asFileReference ensureDelete; writeStreamDo: [ :o |
+				o nextPutAll: e class name; nextPutAll: ': '; nextPutAll: (e messageText ifNil: [ '' ]) asString; lf ] ] ].
 (prefix , '_packages.txt') asFileReference ensureDelete; writeStreamDo: [ :o |
 	repoPackages asSortedCollection do: [ :n | o nextPutAll: n; lf ] ].
 classes := (TestCase allSubclasses select: [ :c |

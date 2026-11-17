@@ -22,7 +22,7 @@
 #                                          image fixes, and no runner inside
 #   vmrun.sh interactive <vm> <image> <outdir>   scripts/interactive-classes.txt
 #                                          in an interactive session
-#   vmrun.sh pkgs  <outdir> <first-row> [last-row] [ours-vm] [cog-vm]
+#   vmrun.sh pkgs [--redo] <outdir> <first-row> [last-row] [ours-vm] [cog-vm]
 #                                          packages of scripts/pkg-jit-test/
 #                                          packages-200.tsv: load from GitHub
 #                                          on Cog, tests on Cog and on our VM
@@ -51,7 +51,10 @@ set -u
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=${PHARO_WORK:-/tmp/pharo-work}
-LOCK=/tmp/pharo-vmrun.lock
+# The lock is a symbolic link whose text is the process id of the holder.
+# ln -s makes the link and the id in one step, so no call can see a lock that
+# has no holder yet.  $LOCK.what has the text for the status display.
+LOCK=/tmp/pharo-vmrun.lck
 VM_PATTERN='test_load_image|Pharo\.app/Contents/MacOS/Pharo'
 
 MIN_FREE=${VMRUN_MIN_FREE:-25}
@@ -85,48 +88,66 @@ resolve_vm() {                      # sets VM (binary) and KIND (ours|cog)
     [ -x "$VM" ] || { say "no VM binary at $VM"; exit 2; }
 }
 
-lock_holder_alive() { [ -f "$LOCK/pid" ] && kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; }
+lock_holder() { readlink "$LOCK" 2>/dev/null; }
+lock_holder_alive() { local h; h=$(lock_holder); [ -n "$h" ] && kill -0 "$h" 2>/dev/null; }
 
 acquire_lock() {                    # $1 = text for the status display
-    local waited=0 limit=${VMRUN_WAIT:-3600}
-    while ! mkdir "$LOCK" 2>/dev/null; do
-        if ! lock_holder_alive; then
-            rm -rf "$LOCK"          # the holder died without cleanup
+    local waited=0 limit=${VMRUN_WAIT:-3600} h
+    while ! ln -s "$$" "$LOCK" 2>/dev/null; do
+        h=$(lock_holder)
+        if [ -n "$h" ] && ! kill -0 "$h" 2>/dev/null; then
+            # The holder died without cleanup.  mv is atomic: one call wins.
+            mv "$LOCK" "$LOCK.dead.$$" 2>/dev/null && rm -f "$LOCK.dead.$$"
             continue
         fi
         if [ "$waited" -ge "$limit" ]; then
-            say "another call holds the lock for more than ${limit}s: $(cat "$LOCK/what" 2>/dev/null)"
+            say "another call holds the lock for more than ${limit}s: $(cat "$LOCK.what" 2>/dev/null)"
             exit 75
         fi
-        [ $((waited % 60)) -eq 0 ] && say "waiting for: $(cat "$LOCK/what" 2>/dev/null)"
+        [ $((waited % 60)) -eq 0 ] && say "waiting for: $(cat "$LOCK.what" 2>/dev/null)"
         sleep 2; waited=$((waited + 2))
     done
-    echo $$ > "$LOCK/pid"
-    printf '%s\n' "$1" > "$LOCK/what"
+    printf '%s\n' "$1" > "$LOCK.what"
+    rm -f "$LOCK.memory-guard"
     trap 'release_lock' EXIT
     trap 'cleanup_run; exit 130' INT TERM HUP
 }
 
 release_lock() {
     cleanup_run
-    [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+    if [ "$(lock_holder)" = "$$" ]; then rm -f "$LOCK" "$LOCK.what" "$LOCK.memory-guard"; fi
 }
 
 RUNTAG=""                           # a string that is in the command line of every process of this run
 GUARD_PID=""
+CMD_PID=""                          # the command that guarded() started
+
+# The processes of a run: each process that has the run tag in its command
+# line and is a VM, a timeout that started a VM, or a script that starts VMs.
+# A tail, a grep or an editor on a file of the run directory is not one.
+tagged_pids() {                     # $1 = run tag
+    local p
+    for p in $(pgrep -f "$1" 2>/dev/null); do
+        [ "$p" = "$$" ] && continue
+        ps -o command= -p "$p" 2>/dev/null \
+            | grep -Eq "$VM_PATTERN|^([^ ]*/)?timeout |sunit-sweep\.sh|cog-sweep\.sh|run-one-package\.sh" && echo "$p"
+    done
+}
 
 cleanup_run() {
     [ -n "$GUARD_PID" ] && kill "$GUARD_PID" 2>/dev/null
     GUARD_PID=""
+    [ -n "$CMD_PID" ] && kill "$CMD_PID" 2>/dev/null
+    CMD_PID=""
     [ -n "$RUNTAG" ] || return 0
     local i pids
     for i in 1 2 3 4 5 6 7 8 9 10; do
-        pids=$(pgrep -f "$RUNTAG" 2>/dev/null | grep -v "^$$\$")
+        pids=$(tagged_pids "$RUNTAG")
         [ -z "$pids" ] && break
         if [ "$i" -le 5 ]; then kill $pids 2>/dev/null; else kill -9 $pids 2>/dev/null; fi
         sleep 1
     done
-    pids=$(pgrep -f "$RUNTAG" 2>/dev/null | grep -v "^$$\$")
+    pids=$(tagged_pids "$RUNTAG")
     [ -n "$pids" ] && say "WARNING: still alive after kill -9: $pids"
     RUNTAG=""
 }
@@ -159,14 +180,17 @@ check_no_foreign_vm() {
 memory_guard() {                    # runs beside the VM; $1 = run tag
     # The guard does not stop after the first kill: a sweep or a package run
     # starts more VMs after the one that the guard stopped.
-    local f rss
+    local f rss p
     while sleep 5; do
         f=$(free_pct)
-        rss=$(ps -axo rss=,command= | grep -F "$1" | grep -v grep | awk '{ s += $1 } END { print int(s / 1024) }')
+        rss=$(for p in $(tagged_pids "$1"); do ps -o rss= -p "$p" 2>/dev/null; done | awk '{ s += $1 } END { print int(s / 1024) }')
         if [ "${f:-100}" -lt "$KILL_FREE" ] || [ "${rss:-0}" -gt "$MAX_RSS_MB" ]; then
             say "MEMORY-GUARD: free ${f}%, VM ${rss} MB: stopping the VM"
-            echo "MEMORY-GUARD free=${f}% rss=${rss}MB" >> "$LOCK/memory-guard"
-            pgrep -f "$1" | grep -v "^$$\$" | xargs kill 2>/dev/null
+            echo "MEMORY-GUARD free=${f}% rss=${rss}MB" >> "$LOCK.memory-guard"
+            # The VM processes only: the script that starts the VMs goes on.
+            for p in $(tagged_pids "$1"); do
+                ps -o command= -p "$p" 2>/dev/null | grep -Eq "$VM_PATTERN" && kill "$p" 2>/dev/null
+            done
             sleep 10
         fi
     done
@@ -180,12 +204,20 @@ guarded() {
     check_memory_before_start
     memory_guard "$RUNTAG" &
     GUARD_PID=$!
-    timeout -k 10 "$limit" "$@"
+    # In the background, with a wait: bash runs the INT/TERM trap at once
+    # during a wait, and only after the end of a command in the foreground.
+    timeout -k 10 "$limit" "$@" &
+    CMD_PID=$!
+    wait "$CMD_PID"
     local rc=$?
+    CMD_PID=""
     cleanup_run
-    [ -f "$LOCK/memory-guard" ] && { tail -n 1 "$LOCK/memory-guard" >&2; rm -f "$LOCK/memory-guard"; rc=78; }
+    [ -f "$LOCK.memory-guard" ] && { tail -n 1 "$LOCK.memory-guard" >&2; rm -f "$LOCK.memory-guard"; rc=78; }
     return $rc
 }
+
+# Stock Cog gets the old-space limit of our VM (see ours_env).
+cog_mem() { echo "--maxOldSpaceSize=${VMRUN_OLD_SPACE_MB:-6144}M"; }
 
 ours_env() {
     # No PHARO_EVAL_NO_SUNIT_MARKER here: sunit-sweep.sh asks a runner image for
@@ -226,6 +258,7 @@ while [ $# -gt 0 ]; do
         --timeout)     VMRUN_TIMEOUT=$2; shift 2 ;;
         --limit)       VMRUN_TEST_LIMIT=$2; shift 2 ;;
         --repeat)      VMRUN_REPEAT=$2; shift 2 ;;   # test: N runs, one VM after the other, counts at the end
+        --redo)        VMRUN_REDO=1; shift ;;        # pkgs: run a package again that has a row
         *) break ;;
     esac
 done
@@ -233,15 +266,16 @@ done
 case "$cmd" in
 status)
     echo "free memory: $(free_pct)%   swap used: $(swap_mb) MB   load:$(uptime | sed 's/.*load averages*://')"
-    if lock_holder_alive; then echo "lock: held by $(cat "$LOCK/pid"): $(cat "$LOCK/what" 2>/dev/null)"; else echo "lock: free"; fi
+    if lock_holder_alive; then echo "lock: held by $(lock_holder): $(cat "$LOCK.what" 2>/dev/null)"; else echo "lock: free"; fi
     pids=$(vm_pids)
     if [ -n "$pids" ]; then echo "VM processes:"; ps -o pid=,rss=,etime=,command= -p $(echo $pids | tr ' ' ',') | cut -c1-170; else echo "VM processes: none"; fi
     ;;
 
 stop)
     if lock_holder_alive; then
-        holder=$(cat "$LOCK/pid"); say "stopping call $holder: $(cat "$LOCK/what" 2>/dev/null)"
-        kill "$holder" 2>/dev/null; sleep 3
+        holder=$(lock_holder); say "stopping call $holder: $(cat "$LOCK.what" 2>/dev/null)"
+        kill "$holder" 2>/dev/null
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do kill -0 "$holder" 2>/dev/null || break; sleep 1; done
     fi
     pids=$(vm_pids); [ -n "$pids" ] && { say "VM processes still alive: $pids"; exit 1; }
     echo "no VM process"
@@ -265,7 +299,7 @@ test)
             ours_env
             guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
         else
-            guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" $headless "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
+            guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" $headless "$(cog_mem)" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
         fi
         rc=$?
         if [ "$repeat" -eq 1 ]; then
@@ -294,7 +328,7 @@ eval)
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" --headless "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" --headless "$(cog_mem)" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
     fi
     rc=$?
     if [ -f eval_out.txt ]; then tr '\r' '\n' < eval_out.txt; echo; else echo "NO-OUTPUT rc=$rc (log: $RUNDIR/vm.log)"; tail -5 vm.log; fi
@@ -317,7 +351,7 @@ prep)
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "${expr}Smalltalk snapshot: true andQuit: true" > vm.log 2>&1 < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$RUNDIR/rt.image" eval --save "${expr}1" > vm.log 2>&1 < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$(cog_mem)" "$RUNDIR/rt.image" eval --save "${expr}1" > vm.log 2>&1 < /dev/null
     fi
     rc=$?
     grep -a -o '\(FIXED\|ADDED\|SKIP\) [A-Za-z0-9 ]*>>[A-Za-z0-9_:]*' vm.log | sort -u | awk '{ print $1 }' | sort | uniq -c | tr '\n' ' '; echo
@@ -346,7 +380,7 @@ sweep)
     else
         # cog-sweep.sh runs <dir>/pharo <image>: give it a directory with this VM.
         cogdir=$outdir/cogdir; rm -rf "$cogdir"; mkdir -p "$cogdir"
-        printf '#!/bin/bash\nexec "%s" --headless "$@"\n' "$VM" > "$cogdir/pharo"; chmod +x "$cogdir/pharo"
+        printf '#!/bin/bash\nexec "%s" --headless %s "$@"\n' "$VM" "$(cog_mem)" > "$cogdir/pharo"; chmod +x "$cogdir/pharo"
         cp "$image" "$cogdir/Pharo.image" && cp "${image%.image}.changes" "$cogdir/Pharo.changes" && cp "$(dirname "$image")"/*.sources "$cogdir/"
         # The same curated class order as the sweep of our VM; the runner adds
         # every other TestCase subclass of the image after it.
@@ -379,7 +413,7 @@ interactive)
         export PHARO_INTERACTIVE=1 PHARO_EVAL_NO_SUNIT_MARKER=1
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$(cog_mem)" "$RUNDIR/rt.image" eval "$expr" > "$outdir/run.log" 2>&1 < /dev/null
     fi
     rc=$?
     if [ -f "${SUNIT_PREFIX}_test_results.txt" ]; then
@@ -391,27 +425,43 @@ interactive)
     echo "interactive rc=$rc"
     ;;
 
+check)
+    # The memory check, for a script that vmrun.sh started and that starts
+    # more than one VM (run-one-package.sh).  No lock: the caller has it.
+    check_memory_before_start
+    ;;
+
 pkgs)
     # Rows <first>..<last> of scripts/pkg-jit-test/packages-200.tsv, one package
     # after the other.  For each package: stock Cog loads the package from
     # GitHub and saves the image, then stock Cog and our VM run the tests of
     # the package with run_sunit.st (scripts/pkg-jit-test/run-one-package.sh).
-    # The memory check and the guard are new for each package.  A package that
-    # is in <outdir>/summary.tsv is not run again.
+    # The lock is free between two packages, so a short call (a test, an eval)
+    # gets its turn.  A package with a final row in <outdir>/summary.tsv is
+    # not run again (--redo runs it again).
     outdir=${1:?usage: vmrun.sh pkgs <outdir> <first-row> [last-row] [ours-vm] [cog-vm]}; first=${2:?first row}; last=${3:-$first}
     resolve_vm "${5:-cog}"; COG=$VM
     resolve_vm "${4:-ours}"; OURS=$VM
     export COG OURS
-    acquire_lock "pkgs $(basename "$outdir") $first-$last"
+    export VMRUN_CHECK="$REPO/scripts/vmrun.sh"
+    [ "${VMRUN_REDO:-0}" = 1 ] && export PKG_REDO=1
     mkdir -p "$outdir"; outdir=$(cd "$outdir" && pwd)
     ours_env
-    row=$first
+    row=$first; tries=0
     while [ "$row" -le "$last" ]; do
-        guarded "$outdir/" "${VMRUN_TIMEOUT:-5400}" "$REPO/scripts/pkg-jit-test/run-one-package.sh" "$outdir" "$row" >> "$outdir/driver.log" 2>&1 < /dev/null
+        label=$(tail -n +2 "$REPO/scripts/pkg-jit-test/packages-200.tsv" | sed -n "${row}p" | cut -f1)
+        [ -n "$label" ] || { echo "row $row: no such row"; break; }
+        acquire_lock "pkgs $(basename "$outdir") row $row $label"
+        guarded "$outdir/" "${VMRUN_TIMEOUT:-7200}" "$REPO/scripts/pkg-jit-test/run-one-package.sh" "$outdir" "$row" >> "$outdir/driver.log" 2>&1 < /dev/null
         rc=$?
-        [ "$rc" -eq 3 ] && { echo "row $row: no such row"; break; }
-        if [ "$rc" -ne 0 ]; then echo "row $row: rc=$rc (log: $outdir/driver.log)"; fi
-        tail -n 1 "$outdir/summary.tsv" 2>/dev/null | cut -c1-230
+        release_lock
+        if [ "$rc" -eq 4 ] && [ "$tries" -lt 5 ]; then
+            # The memory check refused a VM start: the same row again, later.
+            tries=$((tries + 1)); echo "row $row: memory check refused, try $tries"; sleep 120; continue
+        fi
+        tries=0
+        [ "$rc" -ne 0 ] && echo "row $row: rc=$rc (log: $outdir/driver.log)"
+        awk -F'\t' -v l="$label" '$1 == l { r = $0 } END { if (r != "") print r; else print l "\tNO-ROW" }' "$outdir/summary.tsv" 2>/dev/null | cut -c1-230
         row=$((row + 1))
     done
     ;;
@@ -426,7 +476,7 @@ run)
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" "$RUNDIR/rt.image" "$@" < /dev/null
     else
-        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$RUNDIR/rt.image" "$@" < /dev/null
+        guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-900}" "$VM" --headless "$(cog_mem)" "$RUNDIR/rt.image" "$@" < /dev/null
     fi
     echo "run rc=$? (directory: $RUNDIR)"
     ;;

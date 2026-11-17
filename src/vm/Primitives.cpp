@@ -5160,6 +5160,8 @@ PrimitiveResult Interpreter::primitiveFullClosureValueNoContextSwitch(int argCou
     }
 
     activateBlock(closure, argCount);
+    // No process switch at the entry of this block (see atInterruptPoint).
+    noSwitchEntryIp_ = instructionPointer_;
     return PrimitiveResult::Success;
 }
 

@@ -1,5 +1,39 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
+## OPEN 2026-11-17 — a recursion deeper than 56000 frames gets an error that Cog does not give
+
+Found by the package run (MuTalk, `MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis`).
+
+Stock Cog v12 has no limit for the depth of a recursion.  At each overflow
+of a stack page, `StackInterpreter>>handleStackOverflow` moves frames to
+heap Contexts.  Cog sends `#stackOverflow` only to a process whose
+`shouldOverflow` slot is true, and only `ProcessTest>>testStackOverflow`
+sets that slot.  A recursion with no end runs on Cog until a time limit
+stops the process or the memory is full.
+
+Our VM signals `Error: stack overflow` in each process at a depth of 56000
+frames (`Interpreter::handleStackOverflow`, `StackOverflowLimit`,
+`frameLimit_`).  The entry of 2026-11-14 in this file made that limit count
+the heap Context chain too.
+
+Effects:
+
+- A recursion that is deep and has an end (more than 56000 frames) works on
+  Cog and stops with an error on our VM.  No test of the Pharo 14 suite and
+  no package test of rows 1 to 11 has such a recursion.
+- The MuTalk test passes on our VM in 25 ms, because the error stops the
+  recursion.  On Cog the SUnit time limit of 10 s stops the recursion, and
+  Cog used 13 GB before that time.  The memory guard of `scripts/vmrun.sh`
+  stopped Cog.
+
+The change that makes our VM equal to Cog: at the limit of the inline
+frames, a process without `shouldOverflow` moves its frames to heap
+Contexts and continues.  The old-space limit and the low-space signal then
+are the only limits.  The change is in `pushFrame`, `handleStackOverflow`,
+`setFrameLimit` and the depth tests of machine code.  Not done.  The owner
+must decide, because the change removes a guard against a recursion with no
+end.
+
 ## FIXED 2026-11-17 — a process switch at the entry of `ensure:` left a context with no unwind block
 
 Symptom: `ZdcSocketStreamTest` stopped the image in 4 of 25 runs with the
@@ -13,8 +47,8 @@ printed an unhandled error from a process in its termination:
 The runners before `run_sunit.st` did not show the defect.  They ran with a
 session in which the error of a forked process did not stop the image.
 
-Cause: Pharo 14's `BlockClosure>>ensure:` copies its argument into its first
-temporary in its first statement (`handler := aBlock`), and
+Cause: `BlockClosure>>ensure:` of Pharo 14 copies its argument into its first
+temporary in its first statement (`handler := aBlock`).
 `Context>>unwindBlock` reads the unwind block from that temporary.  The
 image depends on a rule of Cog: Cog makes no interrupt check when it
 activates a method with primitive 198 (`ensure:`, `ifCurtailed:`).  See
@@ -23,10 +57,10 @@ activates a method with primitive 198 (`ensure:`, `ifCurtailed:`).  See
 Our VM had a part of that rule: `suppressContextSwitch_` held back the forced
 yield at the entry of such a method.  The timer check and the check for
 external semaphore signals ran at the same point.  A signal from the socket
-I/O thread made a higher priority process ready, and the process switch left
-an `ensure:` context whose first temporary was still nil.  When that process
-was terminated in that state, `Context>>unwindTo:` found an unwind context
-with no unwind block.
+I/O thread made a process of a higher priority ready.  The process switch
+left an `ensure:` context whose first temporary was still nil.  When another
+process terminated the first process in that state, `Context>>unwindTo:`
+found an unwind context with no unwind block.
 
 A dump from a debug image showed the state: the context of `ensure:` at its
 first bytecode (pc 44), the argument in slot 1, and nil in slots 2 to 4.
@@ -38,9 +72,51 @@ checks that can switch process wait for the next interrupt point.
 Test: `scripts/vmrun.sh test --repeat 40 ours ZdcSocketStreamTest` gives 40
 complete runs of 40.
 
-Not checked: a block that runs through `valueNoContextSwitch` (primitives 221
-and 222) still has an interrupt point at its entry on our VM.  Cog has none
-there.  No test shows a failure from that difference.
+### Second path of the same defect, found by a code audit (2026-11-17)
+
+A read-only audit of the fix compared each process-switch rule of Cog with
+our VM.  The audit found one more path to the same state, and two smaller
+differences.  The three are fixed.
+
+- The finalization signal after a GC primitive.  `Smalltalk garbageCollect`
+  with objects to finalize sets a flag, and the end of the next method
+  activation gives the signal to the finalization process (priority 50).
+  That code did not go through `atInterruptPoint`.  When the next activation
+  was `ensure:`, the switch came before `handler := aBlock`.  Fix: the three
+  sites in `Interpreter::activateMethod` do not give the signal while
+  `ensureFrameAtEntry()` is true.  The flag stays set, and the next
+  activation or the next checkpoint gives the signal.
+- The mourn-queue drain at the start of an activation signalled the
+  finalization semaphore when the image had no `WeakKeyAssociation` class.
+  The new frame was not complete at that point.  Fix: that branch sets the
+  flag of the first item.
+- The entry of a block that `valueNoContextSwitch` (primitive 209) activates
+  was an interrupt point in the interpreter.  Cog activates such a block with
+  `mayContextSwitch` false.  The audit found no image code that depends on
+  the rule: `ensure:` has its unwind block before the send.  Fix:
+  `primitiveFullClosureValueNoContextSwitch` records the entry address, and
+  `atInterruptPoint` answers false at that address.  Machine code made no
+  check there before the change.
+
+Rules of Cog that the audit compared and found equal in our VM:
+
+- the primitives that can switch process
+- the place of a preempted process in its run queue (`preemptionYields`)
+- no preemption by a process of the same priority
+- no check at a return
+- the order of the semaphores that the VM signals
+- `primitiveSuspend`
+
+Differences that the audit found and that are not changed:
+
+- `handleForceYield` has a rule that Cog does not have.  After a process
+  above priority 40 ran for 50 ms without a stop, a process of a lower
+  priority gets the processor.
+- The Delay scheduler gets a recovery signal after 5 s with no new timer.
+- `primitiveRelinquishProcessor` runs the timer and signal checks.
+
+No test shows a failure from these three.  The three are leads in
+[deferred.md](deferred.md).
 
 ## FIXED 2026-11-17 — four defects found by the repair of the skipped tests
 

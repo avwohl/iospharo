@@ -1,0 +1,26 @@
+diff --git a/source/Buoy-Metaprogramming-Pharo-Extensions/Symbol.extension.st b/source/Buoy-Metaprogramming-Pharo-Extensions/Symbol.extension.st
+deleted file mode 100644
+index e652fd1..0000000
+--- a/source/Buoy-Metaprogramming-Pharo-Extensions/Symbol.extension.st
++++ /dev/null
+@@ -1,7 +0,0 @@
+-Extension { #name : 'Symbol' }
+-
+-{ #category : '*Buoy-Metaprogramming-Pharo-Extensions' }
+-Symbol >> argumentCount [
+-
+-	^self numArgs
+-]
+diff --git a/source/Buoy-Metaprogramming/KeywordMessageSendingCollector.class.st b/source/Buoy-Metaprogramming/KeywordMessageSendingCollector.class.st
+index 5e9bbb1..e60779c 100644
+--- a/source/Buoy-Metaprogramming/KeywordMessageSendingCollector.class.st
++++ b/source/Buoy-Metaprogramming/KeywordMessageSendingCollector.class.st
+@@ -23,7 +23,7 @@ KeywordMessageSendingCollector class >> sendingAllMessagesBeginningWith: aPrefix
+ KeywordMessageSendingCollector class >> sendingAllMessagesMatching: aFilterBlock to: aReceiver withAll: anArgumentCollection [
+ 
+ 	^ self new
+-		initializeSendingAllMessagesMatching: [ :selector | selector argumentCount = anArgumentCollection size and: [ aFilterBlock value: selector ] ]
++		initializeSendingAllMessagesMatching: [ :selector | selector numArgs = anArgumentCollection size and: [ aFilterBlock value: selector ] ]
+ 		to: aReceiver
+ 		withAll: anArgumentCollection asArray
+ ]

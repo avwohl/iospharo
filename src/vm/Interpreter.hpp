@@ -1330,6 +1330,9 @@ private:
     // request table here); the image grows its own ExternalObjectsArray.
     int64_t vmMaxExternalSemaphores_ = 65536;
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
+    // Entry address of the block that primitive 209 (valueNoContextSwitch)
+    // activated last; atInterruptPoint() answers false there and clears it.
+    mutable const uint8_t* noSwitchEntryIp_ = nullptr;
 
     // Sampling profiler state (primitiveProfileSemaphore/Start/Sample/Primitive).
     // Cog semantics: profileStart:'s argument is a HIGH-RES-CLOCK TICK DELTA
