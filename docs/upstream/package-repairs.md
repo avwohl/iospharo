@@ -1069,3 +1069,87 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   TeX goes on the machine; then the pin and the four tests get their
   repair.  The row is not clean.
 
+## MyPrecious (`SmalltalkWeb/MyPrecious`, row 101)
+
+- State before: stock Cog stopped in the middle of the row (72 tests run, 1
+  error).  Our VM ran the 109 tests: 108 pass, 1 error
+  (`testReconnectsIfOtherSideIsDisconnected`, `TestFailedByForkedProcess`).
+- Cause, one defect of the package: a connection that is closed makes the
+  receive service of `MpConnection` loop with no end.
+  `SocketStream>>next:` answers an empty ByteArray at the end of a stream,
+  with no signal.  `MpConnection>>receiveObject` then makes a task for 0
+  bytes.  The task fails in a TaskIt worker, the service has a step delay
+  of 0 ms, and nothing stops it.
+  - On our VM the failed tasks make the error of the test.
+  - On stock Cog the loop keeps the processor from the other processes of
+    its priority, the queue of failed tasks grows, and old space reaches
+    its limit.  Stock Cog then stops the VM (the low-space defect of Cog,
+    `docs/upstream/cog-changes.md`).
+- Repair here (`fixes/smalltalkweb-myprecious.st`): a short read signals
+  `MpConnectionFailed`, `receiveObject` stops the receive service when the
+  connection is closed, and a new test
+  (`testStopsReceivingWhenOtherSideClosesConnection`, in the two middleware
+  test classes) checks that.
+- Result: 111 of 111 pass on the two VMs, and stock Cog runs the full row.
+
+## Stardust (`ba-st/Stardust`, row 102) and the Buoy patch
+
+- State before: 71 tests, 48 pass, 23 errors on the two VMs
+  (`InstanceCreationFailed: The amount of model creators (3) should match
+  the amount of arguments (4)`).
+- Cause: `GenericModelCreator class>>assertSizeOf:equalsArgumentCountOf:`
+  sends `argumentCount` to a Symbol.  Stardust relied on the extension
+  `Symbol>>argumentCount` of Buoy, which answers `numArgs`.  That extension
+  replaces a method of Pharo 14, and our Buoy patch removes it so that Buoy
+  loads.  The method of Pharo 14 answers `numArgs + 1` (a Symbol in the
+  place of a block).
+- Repair here: `patches/ba-st-stardust.patch` uses `numArgs` in the two
+  places.
+- Result: 71 of 71 pass on the two VMs.
+
+## GitHub-Pharo-API (`Evref-BL/GitHub-Pharo-API`, row 104)
+
+- State before: 50 tests, 46 pass, 4 errors on the two VMs
+  (`UndeclaredVariableRead: GitlabApi`).
+- Cause: three tests of `GithubUsersTest` are copies of tests of the GitLab
+  project and make a `GitlabApi`.  The baseline rightly does not load that
+  class.  A fourth test calls one of the three.
+- Repair here: `fixes/evref-bl-github-pharo-api.st` uses `GithubApi`.  The
+  tests replace the HTTP client with a mock, so no request leaves the
+  machine.
+- Result: 50 of 50 pass on the two VMs.
+
+## FamixTagging (`moosetechnology/FamixTagging`, row 105)
+
+- State before: 115 tests, 0 pass, 114 errors, 1 expected failure on the two
+  VMs (`UndeclaredVariableRead` of the model classes).
+- Causes:
+  - The model classes need `MooseEntity` and `MooseModel`.  Nothing loaded
+    Famix.  The baseline has `spec for: #needsFamix`, and its
+    `customProjectAttributes` answers `#NeedsFamix`: Metacello compares the
+    case, so the Famix part of the baseline never applies.  The CI of the
+    package loads Famix first.
+  - The expected failure `testProviderMethodToTags` hides a gap:
+    `FamixTag>>isLinkedTo:dependancyDirection:in:` does not look at the
+    children of the tagged entities.
+- Repair here: the manifest row loads Famix (groups `Core` and
+  `TestModels`) first.  `fixes/moosetechnology-famixtagging.st` repairs the
+  method and removes the mark.
+- Result: 115 of 115 pass on the two VMs.
+
+## SmaCC (`j-brant/SmaCC`, row 106)
+
+- State before: 565 tests, 540 pass, 25 errors on the two VMs.
+- Causes, all in the code generator of SmaCC and its tests, which are for
+  an older Pharo:
+  - 12 errors: `SmaCCIncrementalParser class>>incrementalParserFrom:` makes
+    a subclass with no class-side slot, and then compiles a class-side
+    method that uses the variable.
+  - 5 errors: the generator gives a Symbol to `OCMessageNode>>selector:`,
+    which wants a selector node in Pharo 14.
+  - 6 errors: tests make classes with
+    `subclass:instanceVariableNames:classVariableNames:category:`.
+  - 2 errors: `asClass` on a name.
+- Repair here: `fixes/j-brant-smacc.st`.
+- Result: 565 of 565 pass on the two VMs.
+
