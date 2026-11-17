@@ -368,8 +368,8 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `?start=1&limit=10`.  See "URLs with the same query fields in another
   order" below: the defect is in the image, and image fix 34 repairs it.
   The package has no fixes file any more.
-- Hyperspace result: 197 of 197 pass on the two VMs (with the first repair,
-  a change of the test; the run with image fix 34 is in work).
+- Hyperspace result: 197 of 197 pass on the two VMs, with image fix 34 and
+  no fixes file.
 
 ## PharoWiki (`chicoary/PharoWiki`, row 26)
 
@@ -1368,7 +1368,7 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `SuperluminalHttpbinStandIn` (a `ZnServer` on `127.0.0.1` with the routes
   that the tests use) and `SuperluminalMemcachedStandIn` (the text protocol
   of memcached).  The tests find them when the CI variables are absent.  The
-  four URL texts have the fields in the order of the code.  No assertion is
+  URL order has its repair in the image (image fix 34).  No assertion is
   gone.
 - Limits: the tests check the client code of the package against the
   stand-ins, not against httpbin and memcached.  The route `/cache` of the
@@ -1433,6 +1433,9 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   [../image_issues.md](../image_issues.md)).  The packages need no change
   for it, and the changes of test texts that the first repairs made are
   gone.
+- Result with image fix 34 and no package change for the URL order:
+  Hyperspace 197 of 197, Stargate 520 of 520 and Superluminal 203 of 203 on
+  the two VMs.
 
 ## Stargate (`ba-st/Stargate`, row 81)
 
@@ -1451,7 +1454,7 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   VM.
 - With the load: 520 tests, 519 pass, 1 failure on the two VMs
   (`testComplexPagination`, the URL order above).
-- Result with image fix 34: in work.
+- Result with image fix 34: 520 of 520 pass on the two VMs.
 
 ## Esope (`moosetechnology/Esope`, row 109)
 

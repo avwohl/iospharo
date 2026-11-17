@@ -172,6 +172,7 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweep14-new11` | ours, gate, entries 31 to 33, socket options, file plugin, hash generator | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass as on the patched Cog |
 | `sweepcogp14-new7` | patched Cog with the low-space change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 | `sweepcogp14-new8` | patched Cog with the file plugin change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
+| `sweep14-new12` | ours, entries 31 to 34, VM parameter 11 | 39374 | 0 | 87 | 1 | 39462 tests (1 new test of entry 34); no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass |
 
 Defects that these sweeps showed, each with its repair:
 
@@ -233,27 +234,27 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 17:45, rows 1 to 120 (the record of each repair is
-[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 121 to
+State on 2026-11-17 at 18:30, rows 1 to 131 (the record of each repair is
+[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 132 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).  The command
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 107 rows are clean: each test passes on stock Cog and on our VM.
+- 113 rows are clean: each test passes on stock Cog and on our VM.
 - 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
   14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 9 rows are not clean yet.  Each has a repair in work or an open point
-  (row 119 is new and is not in the table yet):
+- 14 rows are not clean yet.  The table has the rows with an open point.
+  Rows 119, 121, 122, 124 and 126 have a repair whose run is in work, and
+  rows 130 and 131 are new:
 
 | Row | Package | State | Work |
 |---|---|---|---|
 | 57 | EscapeAnalysisPharo | 81 of 82 pass | the analyzer of the package is repaired (33 entries).  Open: 1 skip of the author, a known wrong answer of the analyzer; a repair changes the answer of three other tests, so the author must decide |
 | 71 | Pillar | 62 of 66 pass | open: 4 PDF tests need TeX (`latexmk`, `lualatex`), which the machine does not have; the owner must decide.  Behind them: the pin of OSSubprocess `v2.0.0` in the baseline of Pillar does not work on Pharo 14 |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
-| 81 | Stargate | 519 of 520 pass | second round: a test compares a URL text, and the order of the query fields differs |
 | 82 | MCP | stock Cog 1166 of 1167, our VM 1165 | 1 test fails on our VM only (the limit of 56000 frames; the VM repair is in work on the branch `deep-recursion`).  The 1 skip cannot apply on Pharo 14 |
 | 84 | Soil | 1167 of 1184 pass, 17 skips | 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`).  Open: 3 coverage tests of the package ask for 93 percent, and the measured coverage is 81 to 86 percent |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
@@ -268,6 +269,8 @@ The package run found these defects outside the packages:
 | `RBNamespace>>renameClass:to:around:` loses method changes | Pharo image | Chanel | image fix 31 |
 | `Duration>>asDelay` rounds down, so a wait can end early | Pharo image | PharoMisc (Tasks) | image fix 32 |
 | The uninstall of an object-specific MetaLink skips a node when two nodes collide in a set, and a later uninstall removes a method two times | Pharo image | a sweep of our VM (`LinkInstallerTest`, 2 of 13 batches) | image fix 33; the two new tests fail before and pass after on the two VMs |
+| Two URLs with the same query fields in another order are equal in Pharo 13 and not equal in Pharo 14 (`ZnUrl>>equals:` and the new `OrderedDictionary>>=`) | Pharo image | Hyperspace, Stargate, Superluminal | image fix 34; the three rows pass with it, and `sweep14-new12` is clean |
+| VM parameter 11 (the count of objects that scavenges moved to old space) was always 0 | our VM | Stargate (a test asserts a positive value) | repaired in `ObjectMemory` and `Primitives`; `sweep14-new12` is clean |
 | The identity hash generator used 32-bit arithmetic and did not read its start value from the image header | our VM | the work on the row above (the order of hashed collections differed from Cog) | repaired in `ObjectMemory`; `sweep14-new11` is clean |
 | The stock `NewFilePlugin` reads past a buffer, writes into an Array and into a read-only object, and stops the VM for a copy of a closed handle | stock Cog | `scripts/cogdiff/newfile_plugin_checks.st` and `newfile_plugin_ours_checks.st` | local branch `fix/newfile-plugin-buffer-and-handle-checks`, built and tested on the patched Cog |
 | `Socket>>setPort:` on a port in use gives no error | stock Cog | PharoMisc | local branch `fix/socket-listen-bind-result`, tested on the patched Cog |
