@@ -1,0 +1,17 @@
+diff --git a/source/Stardust/GenericModelCreator.class.st b/source/Stardust/GenericModelCreator.class.st
+index ea1d209..699abc7 100644
+--- a/source/Stardust/GenericModelCreator.class.st
++++ b/source/Stardust/GenericModelCreator.class.st
+@@ -18,10 +18,10 @@ Class {
+ GenericModelCreator class >> assertSizeOf: creators equalsArgumentCountOf: instanceCreationSelector [
+ 
+ 	AssertionChecker
+-		enforce: [ creators size = instanceCreationSelector argumentCount ]
++		enforce: [ creators size = instanceCreationSelector numArgs ]
+ 		because: [ 'The amount of model creators (<1p>) should match the amount of arguments (<2p>) on the instance creation message: <3p>'
+ 				expandMacrosWith: creators size
+-				with: instanceCreationSelector argumentCount
++				with: instanceCreationSelector numArgs
+ 				with: instanceCreationSelector ]
+ 		raising: InstanceCreationFailed
+ ]

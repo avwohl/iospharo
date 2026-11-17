@@ -237,16 +237,15 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 101 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).
 
-- 85 rows are clean: each test passes on stock Cog and on our VM.  In one of them (70, BioSmalltalk) 7 tests cannot apply on Pharo 14 and skip; `scripts/pkg-jit-test/not-applicable/` names each such test with its proof, and `scripts/pkg-jit-test/row-state.py <outdir>` prints the state of each row.
+- 87 rows are clean: each test passes on stock Cog and on our VM.  In one of them (70, BioSmalltalk) 7 tests cannot apply on Pharo 14 and skip; `scripts/pkg-jit-test/not-applicable/` names each such test with its proof, and `scripts/pkg-jit-test/row-state.py <outdir>` prints the state of each row.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 12 rows are not clean yet.  Each has a repair in work or an open point:
+- 10 rows are not clean yet.  Each has a repair in work or an open point:
 
 | Row | Package | State | Work |
 |---|---|---|---|
 | 57 | EscapeAnalysisPharo | 81 of 82 pass | the analyzer of the package is repaired (33 entries).  Open: 1 skip of the author, a known wrong answer of the analyzer; a repair changes the answer of three other tests, so the author must decide |
 | 71 | Pillar | 37 of 66 pass | second round: the patch did not bring the package `Microdown-Toc` into the image; 4 PDF tests need LaTeX |
-| 72 | Microdown | 1604 of 1605 pass | second round, 1 error |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
 | 81 | Stargate | 519 of 520 pass | second round: a test compares a URL text, and the order of the query fields differs |
 | 87 | Superluminal | 150 of 203 pass | an agent writes a stand-in for the HTTP test service on port 80 |
@@ -254,7 +253,6 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 | 83 | Kendrick | 219 of 240 pass | second round: 16 errors (API changes of Roassal and DataFrame, the DSL), 1 failure, 4 expected failures |
 | 84 | Soil | 1119 of 1139 pass, 2 failures, 18 skips | second round: two lint failures and 4 skips of lint and coverage tests; 14 skips cannot apply (8 Windows lock tests, 6 cases with no meaning) |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
-| 91 | Turbo | 265 of 270 pass | the 5 expected failures are plain failures now: the new pictures of the first round are not what the code draws; second round with probes |
 | 100 | Sagan | stock Cog 48 of 133, our VM 45 | the tests use SQLite now (the machine has no PostgreSQL); second round: "database is locked" in the pooled tests, and 3 tests that differ between the VMs |
 
 The package run found these defects outside the packages:

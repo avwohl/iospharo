@@ -980,3 +980,50 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Result: 1205 tests, 1198 pass and 7 skips on the two VMs, in a run from a
   new load.
 
+## Microdown (`pillar-markup/Microdown`, row 72)
+
+- State before: 1605 tests, 1584 pass, 1 failure, 3 errors, 17 skips on the
+  two VMs.
+- Causes and repairs (`fixes/pillar-markup-microdown.st`):
+  - `MicMetaDataBlockTest`: our image fix 20 used `at:`, which the newer
+    Microdown of the repository does not have.  The image fix uses `atKey:`
+    now, which the two versions have.
+  - 2 errors: `MicSyncTesterStrategy>>verify:` sends
+    `Smalltalk image lastUpdateString`, which Pharo 14 does not have.
+  - 1 failure: a test expects the text of an old compiler error for an
+    empty source.
+  - 8 skips of `MicBlogCreatorTest` "for the CI server": the tests copy CSS
+    files from the clone of the repository, which the package run has.  The
+    skips go.
+  - 5 skips of `MicReferenceCheckerTest`: two tests use an old API.
+    `MicAnalysisReportWriter>>buildReportSTONFormatOn:` wrote each result
+    under each group and put file objects into the STON text.
+    `MicUnreferencedFigureResult` had no `errorType` and no
+    `stonFormatExplanation`, which its sibling classes have.  One test was a
+    copy of another test with no figure in its document.
+  - `MicDumperTest>>testTable`: `MicRealDumper>>visitTable:` was a stub.
+  - `MicHTMLConfigurationTest>>testWriteDocumentCSS` had no body.
+  - `MicParsesAndRendersAllCommentsTest>>testSmokeSignalAndChoke` renders
+    the comment of each class and needs more than the 10 s of SUnit.  The
+    class has a time limit of 15 minutes now.
+- Result: 1605 of 1605 pass on the two VMs, in a run from a new load.
+
+## Turbo (`pavel-krivanek/turbo`, row 91)
+
+- State before: 270 tests, 265 pass, 5 expected failures on the two VMs.
+- Causes:
+  - The 5 expected pictures of `TbFlowLayoutTest` (two children in a
+    vertical flow, in the centre) are one cell off.  The free space is odd,
+    so the layout gives a position with a half cell.  `TbCanvas>>at:write:`
+    rounds a half up.  The pictures were drawn for a half that is cut off.
+    The layout code is right, and the other tests of the class agree with
+    it.
+  - `TbBounds>>atRandom` could answer a point on the right or bottom edge,
+    which `containsPoint:` does not count as inside.  `TbBoundsTest>>testAtRandom`
+    failed in about 1 run of 10 (372 of 4000 points outside on stock Cog
+    before the repair, 0 after).
+- Repair here: `fixes/pavel-krivanek-turbo.st`: the 5 pictures, with the
+  line ends of the package (CR), no mark of an expected failure, and
+  `atRandom` with an offset from 0.
+- Result: 270 of 270 pass on the two VMs, in a run from a new load.
+
