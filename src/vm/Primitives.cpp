@@ -5714,8 +5714,10 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             }
             case 10: // Scavenge time (ms) — not tracked; 0/N is safe image-side
                 return Oop::fromSmallInteger(0);
-            case 11: // Tenures count
-                return Oop::fromSmallInteger(0);
+            case 11: { // Tenures count: objects tenured by scavenges (Cog statTenures)
+                extern uint64_t g_tenureCount;
+                return Oop::fromSmallInteger(static_cast<int64_t>(g_tenureCount));
+            }
             case 34: // Cumulative bytes allocated (Cog statAllocatedBytes).
                      // Monotonic allocation clock — Illimani/FiLiP timestamps
                      // every sampled allocation and mourning with it

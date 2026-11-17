@@ -78,7 +78,17 @@ say() { printf 'vmrun: %s\n' "$*" >&2; }
 free_pct() { memory_pressure 2>/dev/null | awk -F': ' '/free percentage/ { gsub("%", "", $2); print int($2) }'; }
 swap_mb()  { sysctl -n vm.swapusage 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "used") { v = $(i + 2); u = substr(v, length(v)); n = v + 0; if (u == "G") n *= 1024; print int(n) } }'; }
 
-vm_pids() { pgrep -f "$VM_PATTERN" 2>/dev/null; }
+# The processes whose PROGRAM is a VM.  pgrep -f looks at the whole command
+# line, so a shell with the path of a VM in its text (a script that someone
+# started with "sh -c '... test_load_image ...'") matched too.  On 2026-11-17
+# such a shell was "a VM that this call did not start" for 6 minutes, and
+# each other call was refused: the package loop stopped at row 86.
+vm_pids() {
+    local p
+    for p in $(pgrep -f "$VM_PATTERN" 2>/dev/null); do
+        ps -o comm= -p "$p" 2>/dev/null | grep -Eq "$VM_PATTERN" && echo "$p"
+    done
+}
 
 resolve_vm() {                      # sets VM (binary) and KIND (ours|cog)
     case "$1" in
@@ -203,7 +213,7 @@ memory_guard() {                    # runs beside the VM; $1 = run tag
             echo "MEMORY-GUARD free=${f}% rss=${rss}MB" >> "$LOCK.memory-guard"
             # The VM processes only: the script that starts the VMs goes on.
             for p in $(tagged_pids "$1"); do
-                ps -o command= -p "$p" 2>/dev/null | grep -Eq "$VM_PATTERN" && kill "$p" 2>/dev/null
+                ps -o comm= -p "$p" 2>/dev/null | grep -Eq "$VM_PATTERN" && kill "$p" 2>/dev/null
             done
             sleep 10
         fi
@@ -539,9 +549,10 @@ run)
 cogbuild)
     # Build the Cog tree that has the changes of docs/upstream
     # ($PHARO_WORK/cogbuild-all, source $PHARO_WORK/wt/cog-all), under the lock,
-    # and copy its core library and its socket plugin into the app of the VM
-    # name cogp.  The other libraries of that app are the stock ones: a local
-    # Cog build has no freetype, cairo and libgit2.
+    # and copy its core library, its socket plugin and its file plugin
+    # (NewFilePlugin) into the app of the VM name cogp.  The other libraries
+    # of that app are the stock ones: a local Cog build has no freetype, cairo
+    # and libgit2.
     acquire_lock "cogbuild"
     check_memory_before_start
     [ -d "$WORK/cogbuild-all" ] || { say "no build tree $WORK/cogbuild-all"; exit 2; }
@@ -551,8 +562,9 @@ cogbuild)
     src=$WORK/cogbuild-all/build/vm/Debug/Pharo.app/Contents/MacOS/Plugins
     dst=$WORK/cogp-app/Pharo.app/Contents/MacOS/Plugins
     if [ "$rc" -eq 0 ]; then
-        cp "$src/libPharoVMCore.dylib" "$dst/" && cp "$src/libSocketPlugin.dylib" "$dst/" || exit 2
-        ls -la "$dst/libPharoVMCore.dylib" "$dst/libSocketPlugin.dylib"
+        [ -f "$dst/libNewFilePlugin.dylib.stock" ] || cp "$dst/libNewFilePlugin.dylib" "$dst/libNewFilePlugin.dylib.stock"
+        cp "$src/libPharoVMCore.dylib" "$dst/" && cp "$src/libSocketPlugin.dylib" "$dst/" && cp "$src/libNewFilePlugin.dylib" "$dst/" || exit 2
+        ls -la "$dst/libPharoVMCore.dylib" "$dst/libSocketPlugin.dylib" "$dst/libNewFilePlugin.dylib"
     fi
     echo "cogbuild rc=$rc (log: $WORK/cogbuild-all/build-last.log)"
     ;;

@@ -1,2 +1,6 @@
 # Buoy replaces Symbol>>argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
 Buoy ba-st-buoy
+# The baseline of Teapot v4 has no pharo14.x branch (patches/ba-st-dependencies-teapot.patch).
+Teapot ba-st-dependencies-teapot ba-st-dependencies Teapot v4 /source Deployment
+# Launchpad needs its Pharo 14 patch (patches/ba-st-launchpad.patch).
+Launchpad ba-st-launchpad

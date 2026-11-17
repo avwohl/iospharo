@@ -179,6 +179,46 @@ anyone sends it.
   | stock Cog | none: the VM stops, and then gets a segmentation fault in the code that prints the report |
   | Cog with the change | `OutOfMemory` (the recursion ends, and the image goes on) |
 
+- A full sweep of the Pharo 14 tests on the Cog with the change
+  (`sweepcogp14-new7`, 39461 tests) has the same result as the sweep before
+  the change: 39373 pass, and no batch stopped.
 - Not tested: Windows, Linux, and a run with no old-space limit where the
   system refuses memory.
+
+## NewFilePlugin: checks of the buffer and of the handles
+
+- Defects, measured on stock Cog v12.0.6 (macOS arm64, 2026-11-17) with
+  `scripts/cogdiff/newfile_plugin_checks.st` and
+  `scripts/cogdiff/newfile_plugin_ours_checks.st`:
+  - A read of 3 bytes into a ByteArray of 2 bytes answers 3.  The read and
+    write primitives do not check the buffer, so the plugin writes past the
+    object.
+  - A read into an Array answers 2.  The plugin writes bytes into pointer
+    slots.
+  - A read into a read-only ByteArray answers 2.
+  - A copy of the handle of a closed file, given to the close primitive,
+    stops the VM with `Abort trap: 6`.  The handle holds a C pointer, and the
+    plugin frees the pointer a second time.
+- Defects that the sources show (not measured on stock Cog):
+  - `NewFile_memoryUnmap` (unix) tests the reference count the wrong way
+    round.  It unmaps while references remain, and never at the last one.
+  - A second memory map after the file changed size answers the old mapping.
+    The image gives the view the new size.
+  - A read-write map after a read-only map of the same file answers the
+    read-only mapping.
+  - `NewDirectory_open` (unix) gives `opendir()` the path of the image, which
+    has no terminating NUL.
+  - `NewFile_seek` (unix) uses a NULL handle.
+- Change, in two commits:
+  - Slang (`NewFilePlugin.class.st`): the four read and write primitives
+    check the buffer (a byte or word object, the range in bytes, and no read
+    into a read-only object).  A handle must be a byte object of the size of
+    a pointer.  The primitives that allocate read their arguments again
+    after the allocation.
+  - C (`UnixFile.c`, `Win32File.c`, new `NewFileHandles.h`): a handle holds a
+    token from a counter that never repeats, and a table has the live
+    tokens.  A token that is not live acts as a NULL handle.  The map and
+    unmap defects and the two NULL and NUL defects are repaired.
+- State: committed on the branch.  The build and the test are in work.  The
+  Windows side was not compiled.
 

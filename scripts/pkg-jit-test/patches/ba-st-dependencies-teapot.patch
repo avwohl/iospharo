@@ -1,0 +1,13 @@
+diff --git a/source/BaselineOfTeapot/BaselineOfTeapot.class.st b/source/BaselineOfTeapot/BaselineOfTeapot.class.st
+index 51c9925..21e0d17 100644
+--- a/source/BaselineOfTeapot/BaselineOfTeapot.class.st
++++ b/source/BaselineOfTeapot/BaselineOfTeapot.class.st
+@@ -24,7 +24,7 @@ BaselineOfTeapot >> baseline: spec [
+         for: #( #'pharo7.x' #'pharo8.x' #'pharo9.x' )
+         do: [ spec package: 'Teapot-Tests' with: [ spec requires: 'Teapot-Core' ] ].
+       spec
+-        for: #( #'pharo10.x' #'pharo11.x' #'pharo12.x' #'pharo13.x' )
++        for: #( #'pharo10.x' #'pharo11.x' #'pharo12.x' #'pharo13.x' #'pharo14.x' )
+         do: [
+           spec package: 'Teapot-Tests' with: [ spec requires: #( 'Teapot-Core' 'Zinc-Zodiac' ) ] ].
+ 

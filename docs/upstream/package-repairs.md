@@ -658,3 +658,26 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   the owner.
 - Result: the run with the repair is in work.
 
+## FAST-Java (`moosetechnology/FAST-JAVA`, row 76)
+
+- State before: 914 tests, 902 pass, 1 failure, 8 errors, 3 skips on the two
+  VMs.
+- Causes:
+  - 9 tests: the dependency FAST (branch `v3`) sends `#children`,
+    `#childrenSelectors` and `#parentSelectors`.  Famix renamed these methods
+    (`#containedEntities`, `#containedEntitySelectors`,
+    `#containerSelectors`).  The old names are only in the package
+    `Famix-Deprecated`, and the baseline of FAST-Java does not load that
+    package.
+  - 2 skips: `JavaSmaCCParamsMethodTest>>testBlockScope` and `testScope`
+    start with `self skip`, and their code was a comment that calls
+    `#fastScope`, a method that does not exist.  The scope code is now in
+    `FASTJavaLocalResolverVisitor`.
+  - 1 skip: `JavaSmaCCReturnAttributeAccessTest>>testReturnExpressionType`
+    (skipped in 2023 "to let CI pass") expects `FASTJavaQualifiedName` for
+    `a.b` in a method.  The importer makes a `FASTJavaClassProperty` there,
+    and two other tests of the package assert that.
+- Repair here: `fixes/moosetechnology-fast-java.st`.  6 methods of FAST use
+  the new names.  The 3 tests have a body for the code as it is.
+- Result: 914 of 914 pass on the two VMs.
+

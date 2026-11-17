@@ -271,27 +271,47 @@ if [ -f "$HERE/patches/$label.patch" ]; then
 fi
 
 # A package with a locks file (locks/<label>.txt) has a dependency that needs
-# the patch of another row of the manifest.  Each line has the baseline name
-# of the dependency and the label of that row.  The load starts with the load
-# of the dependency from a local clone with the patch and a Metacello lock of
-# its baseline.  The load of the package then keeps that dependency.
+# a patch.  The load starts with the load of the dependency from a local
+# clone with the patch and a Metacello lock of its baseline.  The load of the
+# package then keeps that dependency.  A line has one of two forms:
+#   <baseline> <label>
+#       the dependency is the row <label> of the manifest, with the patch of
+#       that row
+#   <baseline> <patch-label> <owner> <repository> <branch> <directory> [group]
+#       the dependency is not a row.  <directory> is the directory of the
+#       repository that has the code (/source, /src, or - for the top), and
+#       the patch is patches/<patch-label>.patch
 lock_expr=""
 if [ -f "$HERE/locks/$label.txt" ]; then
-    while read -r lock_baseline lock_label _; do
+    while read -r lock_baseline lock_label lock_owner lock_repo lock_branch lock_sub lock_group _; do
         case "$lock_baseline" in ''|'#'*) continue ;; esac
-        dline=$(tail -n +2 "$MANIFEST" | awk -F'\t' -v l="$lock_label" '$1 == l' | head -1)
-        downer=$(printf '%s' "$dline" | cut -f2)
-        drepo=$(printf '%s' "$dline" | cut -f3)
-        dbranch=$(printf '%s' "$dline" | cut -f4)
-        # The directory of the repository that has the code (for example /source).
-        dsub=$(printf '%s' "$dline" | cut -f15 | sed -n "s|.*github://$downer/$drepo:$dbranch\([^']*\)'.*|\1|p")
+        if [ -n "$lock_owner" ]; then
+            # The long form: a dependency that is not a row of the manifest.
+            # The line names its repository, and the patch is
+            # patches/<lock_label>.patch.
+            downer=$lock_owner; drepo=$lock_repo; dbranch=$lock_branch
+            dsub=$lock_sub; [ "$dsub" = "-" ] && dsub=""
+            dline="x"
+            if [ -n "$lock_group" ]; then dloadtext="Metacello new baseline: '$lock_baseline'; repository: 'gitlocal://$OUT/patched/$label/$drepo$dsub'; onConflict: [:e | e useIncoming]; load: #('$lock_group')."
+            else dloadtext="Metacello new baseline: '$lock_baseline'; repository: 'gitlocal://$OUT/patched/$label/$drepo$dsub'; onConflict: [:e | e useIncoming]; load."
+            fi
+        else
+            dline=$(tail -n +2 "$MANIFEST" | awk -F'\t' -v l="$lock_label" '$1 == l' | head -1)
+            downer=$(printf '%s' "$dline" | cut -f2)
+            drepo=$(printf '%s' "$dline" | cut -f3)
+            dbranch=$(printf '%s' "$dline" | cut -f4)
+            # The directory of the repository that has the code (for example /source).
+            dsub=$(printf '%s' "$dline" | cut -f15 | sed -n "s|.*github://$downer/$drepo:$dbranch\([^']*\)'.*|\1|p")
+            dloadtext=$(printf '%s' "$dline" | cut -f15 | sed "s|github://$downer/$drepo:$dbranch|gitlocal://$OUT/patched/$label/$drepo|g")
+        fi
         ddir=$OUT/patched/$label/$drepo
         if [ -n "$dline" ] && [ -f "$HERE/patches/$lock_label.patch" ] \
             && patched_clone "$lock_label" "$downer" "$drepo" "$dbranch" "$ddir"; then
             # Metacello does not load a locked project that is not in the
-            # image.  The dependency is loaded first, with the load
-            # expression of its own row, and then locked.
-            dload=$(headless_load "$(printf '%s' "$dline" | cut -f15 | sed "s|github://$downer/$drepo:$dbranch|gitlocal://$ddir|g")")
+            # image.  The dependency is loaded first (with the load
+            # expression of its own row, or of the long form), and then
+            # locked.
+            dload=$(headless_load "$dloadtext")
             lock_expr="$lock_expr $dload Metacello new baseline: '$lock_baseline'; repository: 'gitlocal://$ddir$dsub'; lock."
         else
             row_out "PATCH-FAIL lock=$lock_label"

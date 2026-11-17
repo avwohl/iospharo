@@ -38,17 +38,13 @@ The stock VM in `/tmp/harness` comes from
 | SocketPlugin: a failed `bind` or `listen` of the listen primitives gives an error | `fix/socket-listen-bind-result` | `cog-socket-listen-bind-result.patch` | committed on the branch, tested |
 | SocketPlugin: an integer option value of each length, and `SO_LINGER` | `fix/socket-option-values` | `cog-socket-option-values.patch` | committed on the branch, tested |
 | Spur: low space before the old-space limit | `fix/low-space-signal-before-old-space-limit` | `cog-low-space-before-old-space-limit.patch` | committed on the branch, tested |
+| NewFilePlugin: checks of the buffer and of the handles | `fix/newfile-plugin-buffer-and-handle-checks` | `cog-newfile-plugin-buffer-and-handle-checks.patch` | committed on the branch (2 commits); the build and the test are in work |
 
 The defect, the change and the test of each row are in
 [cog-changes.md](cog-changes.md).
 
 ## Cog defects with no change yet
 
-- The stock `NewFilePlugin` writes past the buffer of a read, writes bytes
-  into an Array, writes into a read-only object, and stops the VM for a copy
-  of the handle of a closed file
-  (`scripts/cogdiff/newfile_plugin_checks.st`,
-  `scripts/cogdiff/newfile_plugin_ours_checks.st`).
 - A segmentation fault in the garbage collector in the PharoMisc row of the
   package run (`TkThreadTest>>testFinalization`, with three sockets on one
   port).  The cause is not known.

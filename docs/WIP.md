@@ -65,6 +65,18 @@ The 220 tests in groups:
   works on the runner (worktree branch `wt-runner`).
 - The runner for our VM does not work on stock Cog (`TIMEOUT(prim-stuck)` on
   each test).  Same agent.
+- `scripts/vmrun.sh` looked for VM processes in the full command line of
+  each process.  A shell whose command text had the path of a VM binary was
+  "a VM that this call did not start", and the script refused each VM start
+  of each other call while that shell was alive (6 minutes on 2026-11-17 at
+  13:40).  The package loop stopped at row 86, and four other runs did
+  nothing.  Fixed: the script looks at the program of a process, not at its
+  arguments.  The runs that were refused ran again.
+- The fixes file of a package is one chunk.  A line of temporaries in the
+  middle of the file is a syntax error of the whole chunk, and the image
+  reports the error only at the prep of the row.
+  `scripts/gen-image-fixes.py` now stops for such a file, for a string that
+  does not end and for brackets that do not balance.
 
 ### Host facts found on 2026-11-17
 
@@ -158,6 +170,7 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweep14-new10` | ours, gate (first form), file plugin | 39337 | 0 | 87 | 1 | 34 errors: the rename test, and 33 of `LinkInstallerTest` (entry 33) |
 | `sweepcogp14-new6` | patched Cog, gate, entries 31 to 33 | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped |
 | `sweep14-new11` | ours, gate, entries 31 to 33, socket options, file plugin, hash generator | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass as on the patched Cog |
+| `sweepcogp14-new7` | patched Cog with the low-space change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 
 Defects that these sweeps showed, each with its repair:
 
@@ -241,7 +254,7 @@ The package run found these defects outside the packages:
 | `Duration>>asDelay` rounds down, so a wait can end early | Pharo image | PharoMisc (Tasks) | image fix 32 |
 | The uninstall of an object-specific MetaLink skips a node when two nodes collide in a set, and a later uninstall removes a method two times | Pharo image | a sweep of our VM (`LinkInstallerTest`, 2 of 13 batches) | image fix 33; the two new tests fail before and pass after on the two VMs |
 | The identity hash generator used 32-bit arithmetic and did not read its start value from the image header | our VM | the work on the row above (the order of hashed collections differed from Cog) | repaired in `ObjectMemory`; `sweep14-new11` is clean |
-| The stock `NewFilePlugin` reads past a buffer, writes into an Array and into a read-only object, and stops the VM for a copy of a closed handle | stock Cog | `scripts/cogdiff/newfile_plugin_checks.st` and `newfile_plugin_ours_checks.st` | open: no Cog change is written |
+| The stock `NewFilePlugin` reads past a buffer, writes into an Array and into a read-only object, and stops the VM for a copy of a closed handle | stock Cog | `scripts/cogdiff/newfile_plugin_checks.st` and `newfile_plugin_ours_checks.st` | local branch `fix/newfile-plugin-buffer-and-handle-checks`; the build and the test are in work |
 | `Socket>>setPort:` on a port in use gives no error | stock Cog | PharoMisc | local branch `fix/socket-listen-bind-result`, tested on the patched Cog |
 | `SO_RCVBUF` 65536 becomes 8 MB; `SO_LINGER` cannot be set | stock Cog | `scripts/cogdiff/socket_options.st` | local branch `fix/socket-option-values`, tested on the patched Cog |
 | Segmentation fault in the garbage collector in `TkThreadTest>>testFinalization` after the multicast tests bind their sockets | stock Cog | PharoMisc | open, cause not known |
@@ -296,8 +309,12 @@ is pushed):
   (branch `fix/low-space-signal-before-old-space-limit`,
   `docs/upstream/cog-low-space-before-old-space-limit.patch`).  With the
   change, `scripts/cogdiff/lowspace_recursion.st` gives `OutOfMemory` on the
-  patched Cog, and stock Cog stops.  A sweep of the patched Cog with the
-  change is in work.
+  patched Cog, and stock Cog stops.  The sweep of the patched Cog with the
+  change (`sweepcogp14-new7`) has the same result as the sweep before it.
+- The stock `NewFilePlugin` (buffer checks, handles, memory maps): written
+  on the branch `fix/newfile-plugin-buffer-and-handle-checks`
+  (`docs/upstream/cog-newfile-plugin-buffer-and-handle-checks.patch`).  The
+  build and the test are in work.
 - The segmentation fault in the garbage collector in the PharoMisc row: the
   cause is not known.
 - The segmentation fault of `MorphicWindowManagerTest` in an interactive

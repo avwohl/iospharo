@@ -2575,6 +2575,7 @@ uint64_t g_lastAllocAddr = 0;      // corpse forensics: last allocateSlots resul
 uint64_t g_lastAllocScav = 0;      // g_scavengeCount at that allocation
 uint32_t g_lastAllocClassIdx = 0;  // its class index
 uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
+uint64_t g_tenureCount = 0;     // objects copied to old space by a scavenge (VM parameter 11, as Cog statTenures)
 // Bumped by every scavenge and full GC: raw oops recorded before a change of
 // epoch may now name a different object (debug-only consumers).
 uint64_t g_gcEpoch = 0;
@@ -2855,6 +2856,7 @@ GCResult ObjectMemory::scavenge() {
         ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
             destStart + (overflow ? 8 : 0));
         forward.add(obj, newHdr);
+        g_tenureCount++;
         // Smear forensics (PHARO_WATCH_OLDOFF armed): if a young pointer
         // array carried a >=4 run of one object ref INTO tenure, the run was
         // formed in eden before this scavenge.

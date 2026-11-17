@@ -1,0 +1,38 @@
+diff --git a/src/BaselineOfKendrick/BaselineOfKendrick.class.st b/src/BaselineOfKendrick/BaselineOfKendrick.class.st
+index f6e1fbc..2a88220 100644
+--- a/src/BaselineOfKendrick/BaselineOfKendrick.class.st
++++ b/src/BaselineOfKendrick/BaselineOfKendrick.class.st
+@@ -17,14 +17,30 @@ BaselineOfKendrick >> baseline: spec [
+ 	<baseline>
+ 	spec for: #common do: [ 
+ 		spec blessing: #baseline.
+-		spec repository: 'https://github.com/KendrickOrg/kendrick'.
+ 		spec
+ 			baseline: 'PolyMath' with: [ 
+ 				spec
+-					repository: 'github://PolyMathOrg/PolyMath:v1.0.5';
++					repository: 'github://PolyMathOrg/PolyMath:master';
+ 					loads: 'Core' ];
+ 			baseline: 'DataFrame'
+-			with: [ spec repository: 'github://PolyMathOrg/DataFrame:v2.0' ].
++			with: [ spec repository: 'github://PolyMathOrg/DataFrame/src' ];
++			baseline: 'PetitParser'
++			with: [ 
++				spec
++					repository: 'github://moosetechnology/PetitParser:v3.x.x/src';
++					loads: 'Core' ];
++			baseline: 'CollectionExtensions'
++			with: [ 
++				spec
++					repository: 'github://pharo-contributions/CollectionExtensions:v1.x.x/src';
++					loads: 'Core' ];
++			baseline: 'AIGraphAlgorithms' with: [ 
++				spec
++					repository: 'github://pharo-ai/graph-algorithms:master/src';
++					loads: 'GraphGenerators' ].
++		spec package: 'Kendrick-Core' with: [ 
++			spec requires:
++					#( 'DataFrame' 'PolyMath' 'PetitParser' 'CollectionExtensions' 'AIGraphAlgorithms' ) ].
+ 
+ 		spec
+ 			group: 'Core' with: #( 'Kendrick-Core' );
