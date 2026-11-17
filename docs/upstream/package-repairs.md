@@ -656,7 +656,8 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   test writes a secret into the login keychain of the user and removes the
   secret in `tearDown`.  We do not write into a keychain without the word of
   the owner.
-- Result: the run with the repair is in work.
+- Result: 932 tests, 931 pass and 1 skip (the keychain test) on the two
+  VMs.  The run had the environment with no key.
 
 ## FAST-Java (`moosetechnology/FAST-JAVA`, row 76)
 

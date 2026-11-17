@@ -219,6 +219,14 @@ anyone sends it.
     token from a counter that never repeats, and a table has the live
     tokens.  A token that is not live acts as a NULL handle.  The map and
     unmap defects and the two NULL and NUL defects are repaired.
-- State: committed on the branch.  The build and the test are in work.  The
-  Windows side was not compiled.
+- Test (2026-11-17, macOS 27, arm64, the Cog build with the change):
+  - `scripts/cogdiff/newfile_plugin_checks.st`: the 36 lines are the lines
+    of our VM.  The three reads above fail the primitive.
+  - `scripts/cogdiff/newfile_plugin_ours_checks.st`: no stop of the VM.  A
+    copy of the handle of a closed file does nothing (the answer of the
+    stock plugin for a NULL handle).  A second map after the file grew, and
+    a read-write map after a read-only map, answer no mapping.
+  - The 42 tests of the package `ronsaldo/pharo-newfile` pass.
+- Not tested: Windows (the Windows sources have the same changes, and they
+  were not compiled) and Linux.
 

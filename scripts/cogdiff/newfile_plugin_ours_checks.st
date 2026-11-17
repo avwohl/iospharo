@@ -17,6 +17,11 @@
      plugin answers the read-only mapping (read from the stock sources, not
      run).  Our VM answers no mapping.
 
+ Measured 2026-11-17 on the Cog build with the change of
+ docs/upstream/cog-newfile-plugin-buffer-and-handle-checks.patch: no stop of
+ the VM; H1 {#sameValue->0. #rejected->0} (a token that is not live acts as a
+ NULL handle, so the close does nothing); M5, M6 and M7 as our VM.
+
  Measured 2026-11-17 on our VM:
    H1 a copy of a closed handle against a new file, 20 rounds: {#sameValue->0. #rejected->20}
    M5 second map after the file grew: #(10 nil)

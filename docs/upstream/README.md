@@ -38,7 +38,7 @@ The stock VM in `/tmp/harness` comes from
 | SocketPlugin: a failed `bind` or `listen` of the listen primitives gives an error | `fix/socket-listen-bind-result` | `cog-socket-listen-bind-result.patch` | committed on the branch, tested |
 | SocketPlugin: an integer option value of each length, and `SO_LINGER` | `fix/socket-option-values` | `cog-socket-option-values.patch` | committed on the branch, tested |
 | Spur: low space before the old-space limit | `fix/low-space-signal-before-old-space-limit` | `cog-low-space-before-old-space-limit.patch` | committed on the branch, tested |
-| NewFilePlugin: checks of the buffer and of the handles | `fix/newfile-plugin-buffer-and-handle-checks` | `cog-newfile-plugin-buffer-and-handle-checks.patch` | committed on the branch (2 commits); the build and the test are in work |
+| NewFilePlugin: checks of the buffer and of the handles | `fix/newfile-plugin-buffer-and-handle-checks` | `cog-newfile-plugin-buffer-and-handle-checks.patch` | committed on the branch (2 commits), tested |
 
 The defect, the change and the test of each row are in
 [cog-changes.md](cog-changes.md).

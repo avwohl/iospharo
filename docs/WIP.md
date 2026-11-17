@@ -254,7 +254,7 @@ The package run found these defects outside the packages:
 | `Duration>>asDelay` rounds down, so a wait can end early | Pharo image | PharoMisc (Tasks) | image fix 32 |
 | The uninstall of an object-specific MetaLink skips a node when two nodes collide in a set, and a later uninstall removes a method two times | Pharo image | a sweep of our VM (`LinkInstallerTest`, 2 of 13 batches) | image fix 33; the two new tests fail before and pass after on the two VMs |
 | The identity hash generator used 32-bit arithmetic and did not read its start value from the image header | our VM | the work on the row above (the order of hashed collections differed from Cog) | repaired in `ObjectMemory`; `sweep14-new11` is clean |
-| The stock `NewFilePlugin` reads past a buffer, writes into an Array and into a read-only object, and stops the VM for a copy of a closed handle | stock Cog | `scripts/cogdiff/newfile_plugin_checks.st` and `newfile_plugin_ours_checks.st` | local branch `fix/newfile-plugin-buffer-and-handle-checks`; the build and the test are in work |
+| The stock `NewFilePlugin` reads past a buffer, writes into an Array and into a read-only object, and stops the VM for a copy of a closed handle | stock Cog | `scripts/cogdiff/newfile_plugin_checks.st` and `newfile_plugin_ours_checks.st` | local branch `fix/newfile-plugin-buffer-and-handle-checks`, built and tested on the patched Cog |
 | `Socket>>setPort:` on a port in use gives no error | stock Cog | PharoMisc | local branch `fix/socket-listen-bind-result`, tested on the patched Cog |
 | `SO_RCVBUF` 65536 becomes 8 MB; `SO_LINGER` cannot be set | stock Cog | `scripts/cogdiff/socket_options.st` | local branch `fix/socket-option-values`, tested on the patched Cog |
 | Segmentation fault in the garbage collector in `TkThreadTest>>testFinalization` after the multicast tests bind their sockets | stock Cog | PharoMisc | open, cause not known |
@@ -311,10 +311,13 @@ is pushed):
   change, `scripts/cogdiff/lowspace_recursion.st` gives `OutOfMemory` on the
   patched Cog, and stock Cog stops.  The sweep of the patched Cog with the
   change (`sweepcogp14-new7`) has the same result as the sweep before it.
-- The stock `NewFilePlugin` (buffer checks, handles, memory maps): written
-  on the branch `fix/newfile-plugin-buffer-and-handle-checks`
+- The stock `NewFilePlugin` (buffer checks, handles, memory maps): written,
+  built and tested on the branch
+  `fix/newfile-plugin-buffer-and-handle-checks`
   (`docs/upstream/cog-newfile-plugin-buffer-and-handle-checks.patch`).  The
-  build and the test are in work.
+  patched Cog and our VM give the same 36 lines for
+  `scripts/cogdiff/newfile_plugin_checks.st`, and the 42 tests of the
+  package pass.  A sweep of the patched Cog with the change is in work.
 - The segmentation fault in the garbage collector in the PharoMisc row: the
   cause is not known.
 - The segmentation fault of `MorphicWindowManagerTest` in an interactive
