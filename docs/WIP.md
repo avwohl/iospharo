@@ -235,21 +235,21 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 18:30, rows 1 to 131 (the record of each repair is
-[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 132 to
+State on 2026-11-17 at 19:00, rows 1 to 134 (the record of each repair is
+[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 135 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).  The command
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 113 rows are clean: each test passes on stock Cog and on our VM.
+- 119 rows are clean: each test passes on stock Cog and on our VM.
 - 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
   14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 14 rows are not clean yet.  The table has the rows with an open point.
-  Rows 119, 122, 126, 130, 131 and 132 have a repair whose run is in work.
-  Rows 121 and 124 are in a second round:
+- 11 rows are not clean yet.  The table has the rows with an open point.
+  Rows 119 and 126 have a repair whose run is in work.  Rows 121 and 124
+  are in a second round:
 
 | Row | Package | State | Work |
 |---|---|---|---|

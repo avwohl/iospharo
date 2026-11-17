@@ -1516,3 +1516,72 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   difference" (our VM loads the Cairo of Homebrew, Cog loads the Cairo of
   its bundle); nobody measured that.
 
+## DebuggingSpy (`Pharo-XP-Tools/DebuggingSpy`, row 122)
+
+- State before: 113 tests, 71 pass, 2 failures, 38 errors, 2 skips on the
+  two VMs (`UndeclaredVariableRead` of `properties` and of `Breakpoint`,
+  compile errors).
+- Cause: the manifest row loaded the branch `P12`, the port of the package
+  for Pharo 12.  That code uses classes and variables that Pharo 14 does not
+  have.  The repository has a branch `P14`, its default branch, which the CI
+  of the repository runs on Pharo 14.
+- Repair: the manifest row loads the branch `P14` (and NeoJSON first, which
+  the tests use).  No change of the package.
+- Result: 227 of 227 pass on the two VMs.
+
+## Famix-ExecutionFlow (`moosetechnology/Famix-ExecutionFlow`, row 130)
+
+- State before: 8 tests, 8 errors on the two VMs (`UndeclaredVariableRead`
+  of `FamixEFDirectMethodCall`).
+- Cause: the baseline of the package does not name Famix.  The load gives
+  only warnings ("depends on the following classes": `MooseModel`,
+  `MooseEntity`, `FamixTMethod`), does not define the classes of three
+  packages, and ends with success.  The CI of the package uses a Moose
+  image, which has Famix.
+- Repair: the manifest row loads Famix (`Core`, `Basic`,
+  `EntitiesSmalltalk`) first.  For the owner of the package: the baseline
+  must name Famix.
+- Result: 8 of 8 pass on the two VMs.
+
+## gaussian-mixture-model (`pharo-ai/gaussian-mixture-model`, row 131)
+
+- State before: 9 tests, 5 pass, 4 errors on the two VMs
+  (`PMSingularMatrixError: lupInverse encountered a singular matrix`).
+- Causes, all in the package:
+  - The fit (the EM algorithm) does not regularise the covariance matrices.
+    In the data of the tests each cluster has the same x value for all its
+    points, so the covariance matrix of a cluster has a variance of 0 and no
+    inverse.  The tests passed in 2022 by the start points that the Random
+    generator of Pharo 9 gave for the seed 3.  Pharo 14 has another
+    generator.
+  - With a small variance the density of a far point is 0.0 for the two
+    clusters, and the responsibilities are 0.0 / 0.0 (NaN).  `labels` then
+    answers 0, which is no cluster.  The expected values of the tests
+    (`#(1 1 1 0 0 0)`, `#(1 0)`) have this 0.
+  - `labels` answered an OrderedCollection, and the test compares with an
+    Array.  The two are never equal, so `testLabels` could not pass.
+- Repair (`fixes/pharo-ai-gaussian-mixture-model.st`):
+  - `updateParametersFor:` adds 1e-6 to the diagonal of each covariance
+    matrix (the default of scikit-learn for the same algorithm).
+  - `calculateResponsibilitiesFor:` computes with logarithms.
+  - `labels` answers an Array.
+  - Three tests assert what the model must give and what does not depend on
+    the start points: the first three points have one label, the last three
+    have the other label, each label is 1 or 2, `predict:` of the fit data
+    gives the labels of the fit, and two new points get the label of their
+    cluster.  `testFitX` has two more checks.
+- For the owner of the package: the expected values of three tests changed.
+- Result: 9 of 9 pass on the two VMs.
+
+## PharoCodex (`StefanKrecher/PharoCodex`, row 132)
+
+- State before: 16 tests, 11 pass, 5 errors on the two VMs
+  (`UndeclaredVariableRead` of `NeoJSONWriter` and `NeoJSONReader`; one
+  "only integers should be used as indices" that comes from the same cause).
+- Cause: the baseline of the package does not name NeoJSON.
+- Repair: the manifest row loads NeoJSON first.  For the owner of the
+  package: the baseline must name NeoJSON.
+- The tests use no network service and no key: the transports of the tests
+  are stand-ins in memory.
+- Result: 16 of 16 pass on the two VMs.
+
