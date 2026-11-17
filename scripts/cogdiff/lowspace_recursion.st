@@ -10,8 +10,9 @@
    stock Cog   no answer: the VM stops with 'Could not allocate new object in
                the old space' when the old space reaches its limit, and then
                with a segmentation fault in the code that prints the report.
-               The patched Cog (cogp) has no change for this and does the
-               same.
+   patched Cog 'OutOfMemory: ' (cogp with the change of
+               docs/upstream/cog-low-space-before-old-space-limit.patch;
+               before that change cogp did the same as stock Cog)
    our VM      'Error: stack overflow: recursion deeper than 56000 frames'
                (a limit that Cog does not have, docs/vm-compat-bugs.md)
  The answer that the image is made for: OutOfMemory, from the low space

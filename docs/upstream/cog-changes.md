@@ -147,3 +147,38 @@ anyone sends it.
 - Test (2026-11-17, macOS 27, arm64): with the change, the patched Cog and
   our VM give the same answer for each of the 72 calls of the script.
 - Not tested: Windows and Linux.
+
+## Spur: low space before the old-space limit
+
+- Defect: with an old-space limit (`--maxOldSpaceSize`, or when the system
+  refuses a new segment), a process that allocates with no end stops the VM
+  with "Could not allocate new object in the old space".  The image gets no
+  low-space signal, so the low space watcher of the image cannot stop the
+  process.
+- Cause: `SpurMemoryManager>>sufficientSpaceAfterGC:` reports low space only
+  when the free old space is below the threshold of the image
+  (`lowSpaceThreshold`, 400000 bytes in Pharo).  One scavenge can tenure
+  more than that, and `SpurGenerationScavenger>>copyToOldSpace:bytes:format:`
+  then stops the VM.
+- Change (one method): when old space cannot grow, space is low as soon as
+  the free old space is less than two new spaces.  One new space is for the
+  next scavenge.  The other is for the low space watcher and for the unwind
+  of the process that the watcher stops.  Before that answer the method runs
+  one full GC if old space has grown by more than a new space since the last
+  one.
+- The change is in Slang, so the build runs the code generation again.  On
+  this Mac: file the method into the code generation image
+  (`build/vmmaker/image/VMMaker.image` of the build tree), then build.  The
+  generation runs because the image is newer than the generated sources.
+- Test (2026-11-17, macOS 27, arm64): `scripts/cogdiff/lowspace_recursion.st`
+  with an old space of 1024 MB (a recursion with no end, in an image with
+  the low space watcher).
+
+  | VM | Answer |
+  |---|---|
+  | stock Cog | none: the VM stops, and then gets a segmentation fault in the code that prints the report |
+  | Cog with the change | `OutOfMemory` (the recursion ends, and the image goes on) |
+
+- Not tested: Windows, Linux, and a run with no old-space limit where the
+  system refuses memory.
+

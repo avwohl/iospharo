@@ -56,8 +56,8 @@ G. BioCutadaptWrapperTest>>testExecuteWithFiltering needs the program cutadapt
    (testExecuteBasic, testExecuteQualityTrim) pass on the text of the shell
    error 'cutadapt: command not found'; this file does not change them."
 
-| rewrite |
-rewrite := [ :clsName :sel :oldText :newText | | cls |
+"A helper block for the entries below.  The file is one chunk with the declarations of the header, so the block is in a global for the time of the file-in."
+Smalltalk globals at: #PkgFixRewrite put: [ :clsName :sel :oldText :newText | | cls |
 	cls := resolve value: clsName.
 	(cls notNil and: [ cls includesSelector: sel ])
 		ifTrue: [
@@ -102,7 +102,7 @@ fix value: #BioFASTQSamples value: #testFilesDirectoryName
 	^ (super testFilesDirectoryName asFileReference / ''fastq_files'') fullName'.
 
 #(testGenBankComplementStrand testGenBankFeatureTypes testParseGenBankFromFile) do: [ :each |
-	rewrite value: #BioDnaFeaturesViewerTest value: each
+	(Smalltalk globals at: #PkgFixRewrite) value: #BioDnaFeaturesViewerTest value: each
 		value: '''DnaFeaturesViewer/examples/example_sequence.gb'''
 		value: '(BioObject testFilesFullDirectoryName / ''DnaFeaturesViewer'' / ''example_sequence.gb'') fullName' ].
 
@@ -256,12 +256,12 @@ add value: #GtUnixSubprocess value: #stderr value: 'accessing' value:
 	cls ifNotNil: [
 		cls selectors asSortedCollection do: [ :selector |
 			((cls >> selector) sourceCode includesSubstring: 'BioSpecies ')
-				ifTrue: [ rewrite value: className value: selector value: 'BioSpecies ' value: 'BioPathwaySpecies ' ] ] ] ].
+				ifTrue: [ (Smalltalk globals at: #PkgFixRewrite) value: className value: selector value: 'BioSpecies ' value: 'BioPathwaySpecies ' ] ] ] ].
 
 "=== E. the Phylip tokenizers are in BioPhylipPetitParser ==="
 
 #(firstLineTokenizer speciesDNALineTokenizer speciesDNANamedBlockTokenizer) do: [ :each |
-	rewrite value: #BioPhylipParserTest value: each value: 'BioPhylipParser new' value: 'BioPhylipPetitParser new' ].
+	(Smalltalk globals at: #PkgFixRewrite) value: #BioPhylipParserTest value: each value: 'BioPhylipParser new' value: 'BioPhylipPetitParser new' ].
 
 "=== F. BioReaction>>enzymes includes the enzymes of the catalyses ==="
 
@@ -371,3 +371,5 @@ fix value: #BioCutadaptWrapperTest value: #testExecuteWithFiltering
 	result := wrapper execute.
 	self assert: result isNotNil.
 	self assert: (result result includesSubstring: ''Total reads processed'')'.
+
+Smalltalk globals removeKey: #PkgFixRewrite ifAbsent: [ ].

@@ -275,8 +275,7 @@ old space" and does not signal low space.  Cause, from the Cog sources:
 free old space is below the threshold of the image (400000 bytes).  One
 scavenge can move more than that to the old space, and
 `SpurGenerationScavenger>>copyToOldSpace:bytes:format:` then stops the VM.
-A change for Cog (low space when the old space cannot grow and has less free
-space than the size of the new space) is not written yet.
+The change for Cog is written, built and tested (see the list below).
 
 Cog changes in work (each one is a local branch of `~/src/pharo-vm`; nothing
 is pushed):
@@ -293,9 +292,12 @@ is pushed):
   written, built and tested: the patched Cog and our VM give the same answer
   for the 72 calls of `scripts/cogdiff/socket_options.st` (branch
   `fix/socket-option-values`).
-- The low-space signal at the old-space limit: written and reviewed, not
-  built (branch `fix/low-space-signal-before-old-space-limit`, the change
-  needs a VMMaker run).
+- The low-space signal at the old-space limit: written, built and tested
+  (branch `fix/low-space-signal-before-old-space-limit`,
+  `docs/upstream/cog-low-space-before-old-space-limit.patch`).  With the
+  change, `scripts/cogdiff/lowspace_recursion.st` gives `OutOfMemory` on the
+  patched Cog, and stock Cog stops.  A sweep of the patched Cog with the
+  change is in work.
 - The segmentation fault in the garbage collector in the PharoMisc row: the
   cause is not known.
 - The segmentation fault of `MorphicWindowManagerTest` in an interactive
