@@ -1,35 +1,77 @@
-"moosetechnology/Famix: four skipped tests and one expected failure.  All
-five are tests whose own source is out of date.  No VM is at fault.
+"moosetechnology/Famix: causes and repairs.
 
-1. FamixMetricsTest>>testLCOM2 and testLCOM3 start with 'self skip'.  The
-   methods lcom2 and lcom3 exist (FamixTLCOMMetrics) and the expected values
-   in the test agree with the formulas of calculateLCOM2 and calculateLCOM3
-   for ClassA to ClassF1 (checked by hand against the classes of
-   Moose-TestResources-LCOM).  The repair removes the skip.  The last line of
-   testLCOM2 asked for 'classG lcom3' (a copy and paste error): the line now
-   asks for 'classG lcom2'.  By the formula, lcom2 of ClassG is
-   1 - 1/(1*3) = 2/3, not 0.
+1. FamixMetricsTest>>testLCOM2 and testLCOM3 (error: FamixStClass does not
+   understand #lcom2 and #lcom3).  The class FamixStClass of the Smalltalk
+   metamodel does not use the trait FamixTLCOMMetrics, which has lcom2 and
+   lcom3.  The Java metamodel puts the trait in its class with the line
+   'class --|> #TLCOMMetrics' in FamixJavaGenerator, but
+   FamixPharoSmalltalkGenerator does not have the line.  The first entry adds
+   the line to defineHierarchy of the generator.  The second entry adds the
+   trait to the trait composition of the generated class FamixStClass (a
+   change of the composition of the instance side also changes the class
+   side).  Both tests start with 'self skip'; the entries remove the skip.
+   The last line of testLCOM2 asked for 'classG lcom3' (a copy and paste
+   error).  By the formula, lcom2 of ClassG is 1 - 1/(1*3) = 2/3, so the
+   line asks for 'classG lcom2'.
 
-2. FamixMetricsTest>>testMartinCohesionFamixPackage starts with 'self skip'
-   and a flag 'should be rethink with FamixNG'.  The repair removes the skip.
-   The expected values may be out of date; only a run can decide.
+2. FamixMetricsTest>>testMartinCohesionFamixPackage (failure: got 5.0
+   instead of 1.0).  Martin's relational cohesion of a package is
+   H = (R + 1) / N, with R the number of relations between classes of the
+   package and N the number of classes of the package.  The expected values
+   of the test are right: for the package P1 of the blueprint resources
+   there are nine relations among nine classes, so H = 10/9, and so on.
+   The method FamixTCohesionCouplingMetrics>>martinCohesion is wrong.  It
+   keeps only the target classes that are inside the same namespace as the
+   source class ('withinContainerUsing: FamixTNamespace').  In the
+   Smalltalk metamodel every class is in the namespace Smalltalk, so every
+   used class counts (also Object and the classes of other packages) and
+   the value is too big.  FamixJavaPackage>>martinCohesion has the same code
+   with 'FamixTPackage', which is the definition.  The entry changes the
+   trait method to use FamixTPackage.  The test starts with 'self skip';
+   the entry removes the skip.
 
 3. FamixTest2ModelTest>>testRootUniqueness starts with 'self skip' for an
-   issue of the Moose project.  MooseModel class>>root answers
+   old issue of the Moose project.  MooseModel class>>root answers
    MooseModelRoot root, and FamixTest2Model class inherits the method, so
-   the superclass test (FamixTest2Model root identical to MooseModel root)
-   holds.  The repair removes the override, so the test of MooseModelTest
-   runs for the subclass.
+   the test of the superclass runs for the subclass.  The entry removes the
+   override.
 
 4. FamixPackageNavigationChefTest>>testStaticProviderPackages is marked
-   expectedFailure.  The result of the query is the three packages of the
-   test plus Moose-TestResources-KGB-PExtensions (the test run says
-   'additions: a FamixStPackage PExtensions', 'missing: empty').  The test
-   testProviderPackages of the same class, with the same query, lists
-   pExtensions.  The comment of the test says that static and other
-   associations are no longer distinguished, so the two tests are the same
-   query.  The mark hides an expectation that is out of date.  The repair adds
-   pExtensions to the expected packages and removes the mark."
+   expectedFailure.  The query answers the three packages of the test plus
+   Moose-TestResources-KGB-PExtensions, the same as testProviderPackages of
+   the same class.  The expected set is out of date.  The entry adds
+   pExtensions and removes the mark."
+
+
+"The generator of the Smalltalk metamodel lacks the LCOM trait for the class."
+(Smalltalk globals at: #FamixPharoSmalltalkGenerator ifAbsent: [ nil ])
+	ifNil: [ Stdio stdout nextPutAll: 'SKIP FamixPharoSmalltalkGenerator>>defineHierarchy (absent)'; lf; flush ]
+	ifNotNil: [ :gen |
+		(gen includesSelector: #defineHierarchy)
+			ifFalse: [ Stdio stdout nextPutAll: 'SKIP FamixPharoSmalltalkGenerator>>defineHierarchy (absent)'; lf; flush ]
+			ifTrue: [ | src |
+				src := (gen >> #defineHierarchy) sourceCode.
+				(src includesSubstring: 'TLCOMMetrics')
+					ifTrue: [ Stdio stdout nextPutAll: 'SKIP FamixPharoSmalltalkGenerator>>defineHierarchy (defect not present)'; lf; flush ]
+					ifFalse: [
+						gen compile: (src copyReplaceAll: '	class --|> #TClass.
+' with: '	class --|> #TClass.
+	class --|> #TLCOMMetrics.
+') classified: (gen >> #defineHierarchy) protocolName.
+						Stdio stdout nextPutAll: 'FIXED FamixPharoSmalltalkGenerator>>defineHierarchy'; lf; flush ] ] ].
+
+"The generated class FamixStClass: add the trait."
+(Smalltalk globals at: #FamixStClass ifAbsent: [ nil ]) ifNotNil: [ :cls |
+	(cls traitComposition includesTrait: FamixTLCOMMetrics)
+		ifTrue: [ Stdio stdout nextPutAll: 'SKIP FamixStClass (FamixTLCOMMetrics already in the composition)'; lf; flush ]
+		ifFalse: [
+			cls setTraitComposition: cls traitComposition + FamixTLCOMMetrics.
+			Stdio stdout nextPutAll: 'FIXED FamixStClass (added FamixTLCOMMetrics)'; lf; flush ] ].
+
+fix value: #FamixTCohesionCouplingMetrics value: #martinCohesion
+	value: [ :source | source includesSubstring: 'withinContainerUsing: FamixTNamespace' ]
+	value: (((Smalltalk globals at: #FamixTCohesionCouplingMetrics) >> #martinCohesion) sourceCode
+		copyReplaceAll: 'withinContainerUsing: FamixTNamespace' with: 'withinContainerUsing: FamixTPackage').
 
 fix value: #FamixMetricsTest value: #testLCOM2
 	value: [ :source | source includesSubstring: 'self skip' ]

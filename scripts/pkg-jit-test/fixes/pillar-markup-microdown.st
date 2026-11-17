@@ -58,6 +58,17 @@ E. MicReferenceCheckerTest, 5 skips.
    testReportingSTONFormatUnknownAnchorDir (same body, same expectation, a
    figure is never used).  The repair gives it two figures with one anchor.
 
+I. MicUnreferencedFigureResult (error SubclassResponsibility in
+   MicReferenceCheckerTest>>testReportingSTONFormatDuplicatedFigure).  The
+   class lacks the class-side #errorType and the instance-side
+   #stonFormatExplanation that its sister result classes have; MicResult
+   answers 'subclassResponsibility' for both.  The STON report asks the
+   class for #errorType of each group, so any report with an unreferenced
+   figure signalled the error.  The repair adds the two methods (the entry is
+   a label and the source file, as for the anchor results).  The test
+   document in entry E now also refers to the figure (*@fig1@*), so the only
+   result is the duplicated anchor that the test is about.
+
 F. MicDumperTest>>testTable and MicRealDumper>>visitTable:.  The visitor
    method was a stub ('aTable children first accept: self': a table has no
    children, its cells are in #rows) and the test expected the string
@@ -81,7 +92,7 @@ H. MicParsesAndRendersAllCommentsTest>>testSmokeSignalAndChoke.  Skipped
 
 "--- A ---"
 fix value: #MicMetaDataBlockTest value: #testCreatingAnInstanceInitializeTheMetadatDictionary
-	value: [ :s | s includesSubstring: 'metadata at: ' ]
+	value: [ :s | (s includesSubstring: 'metadata at: ') or: [ s includesSubstring: 'self skip' ] ]
 	value:
 'testCreatingAnInstanceInitializeTheMetadatDictionary
 
@@ -218,6 +229,8 @@ fix value: #MicReferenceCheckerTest value: #testReportingSTONFormatDuplicatedFig
 ![a caption 1](figures/f.png anchor=fig1)
 
 ![a caption 2](figures/f.png anchor=fig1)
+
+See *@fig1@*.
 '' ].
 	doubleFigure ensureCreateFile.
 	checker := MicReferenceChecker new.
@@ -318,3 +331,15 @@ add value: #'MicParsesAndRendersAllCommentsTest class' value: #defaultTimeLimit 
 	"The test renders the comment of each class of the image: more than the 10 seconds of the default."
 
 	^ 15 minutes'.
+
+"--- I: the result of an unreferenced figure in the STON report ---"
+add value: #'MicUnreferencedFigureResult class' value: #errorType value: 'kinds' value:
+'errorType
+
+	^ ''UnreferencedFigure'''.
+
+add value: #MicUnreferencedFigureResult value: #stonFormatExplanation value: 'accessing' value:
+'stonFormatExplanation
+	"As the other results: a label and the file that holds the figure."
+
+	^ Association new key: anchorLabel value: source'.
