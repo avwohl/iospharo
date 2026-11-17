@@ -1,0 +1,38 @@
+diff --git a/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st b/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st
+index 2361436..e5b0b1d 100644
+--- a/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st
++++ b/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st
+@@ -12,6 +12,6 @@ BaselineOfEasyUI >> baseline: spec [
+ 	spec for: #common do: [ 
+ 		spec
+ 			baseline: 'PharoMisc'
+-			with: [ spec repository: 'github://bouraqadi/PharoMisc:pharo12' ].
++			with: [ spec repository: 'github://bouraqadi/PharoMisc:pharo12/Pharo' ].
+ 		spec package: 'EasyUI' with: [ spec requires: #( 'PharoMisc' ) ] ]
+ ]
+diff --git a/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st b/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st
+index 665e73f..27b81c9 100644
+--- a/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st
++++ b/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st
+@@ -12,7 +12,7 @@ BaselineOfNetworkExtras >> baseline: spec [
+ 	spec for: #'common' do: [
+ 		spec 
+ 			baseline: #Concurrency with: [
+-				spec repository: 'github://bouraqadi/PharoMisc:pharo12'];
++				spec repository: 'github://bouraqadi/PharoMisc:pharo12/Pharo'];
+ 			package: #NetNameResolverBugFix;
+ 			package: #NetworkExtras with: [
+ 				spec requires: #(Concurrency NetNameResolverBugFix)
+diff --git a/Pharo/BaselineOfTasks/BaselineOfTasks.class.st b/Pharo/BaselineOfTasks/BaselineOfTasks.class.st
+index a6d4c9d..6d9e49e 100644
+--- a/Pharo/BaselineOfTasks/BaselineOfTasks.class.st
++++ b/Pharo/BaselineOfTasks/BaselineOfTasks.class.st
+@@ -13,7 +13,7 @@ BaselineOfTasks >> baseline: spec [
+ 		spec 
+ 			baseline: 'StateMachine' with: [
+ 				spec
+-					repository: 'github://bouraqadi/PharoMisc:pharo12' ].
++					repository: 'github://bouraqadi/PharoMisc:pharo12/Pharo' ].
+ 		spec 
+ 			package: 'Tasks'.
+ 	]

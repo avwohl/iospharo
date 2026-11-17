@@ -435,7 +435,7 @@ missing:
 
 ## Image and test repairs of 2026-11-17 (Pharo 14)
 
-The Pharo 14 image (build 791) had 220 tests that did not pass on our VM and on stock Cog.  The repairs are in the entries files in `scripts/image-fixes/`.  The generator `scripts/gen-image-fixes.py` joins the entries files with the helper blocks of `00-header.st` and writes `scripts/pharo-image-fixes.st`.  Each entry has a guard that reads the current method source, so the entry applies only when the defect is present.  A pristine Pharo 14 build 791 image gives 139 FIXED, 35 ADDED and 6 SKIP lines.  Our VM and stock Cog give the same counts.
+The Pharo 14 image (build 791) had 220 tests that did not pass on our VM and on stock Cog.  The repairs are in the entries files in `scripts/image-fixes/`.  The generator `scripts/gen-image-fixes.py` joins the entries files with the helper blocks of `00-header.st` and writes `scripts/pharo-image-fixes.st`.  Each entry has a guard that reads the current method source, so the entry applies only when the defect is present.  A pristine Pharo 14 build 791 image gives 151 FIXED, 40 ADDED and 6 SKIP lines.  Our VM and stock Cog give the same counts.
 
 The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-image-repairs-2026-11-17.md`.  The table gives one row for each entries file.  The `10-` file is in the section above.  The `20-NA-platform-windows.st` file repairs 3 tests, and the record shows that the other 16 tests of that group cannot apply on macOS arm64.
 
@@ -490,6 +490,33 @@ The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-imag
 | `25-taskit-worker-pool-race.st` | `TKTCommonQueueWorkerPool`, `TKTCommonQueueWorkerPoolTest`, `TKTFutureTest` | The pool stops a worker that holds a task | image code | section "TaskIt worker pool" above |
 | `26-taskit-first-complete-tests.st` | `TKTFutureTest` (4 tests of `firstCompleteOf:`) | Test depends on the order of two callbacks in a worker pool | test | section "TaskIt worker pool" above |
 | `27-atomic-shared-queue-wakeups.st` | `AtomicSharedQueue`, `WaitfreeQueue`, new `AtomicSharedQueueTest` | A reader loses a wake-up; a terminated reader leaves the queue locked | image code | section "TaskIt worker pool" above |
+| `28-simple-formatter-comments.st` | `OCSimpleFormatter`, `OCParseCodeSnippetTest>>testSimpleFormattedCode` (23 skips) | The simple formatter dropped the comments of an expression, of a block and of a brace array | image code and test | none |
+| `29-code-importer-snippets.st` | `CodeImporterCodeSnippetTest>>testCodeImporter` (3 skips) | Skip for an empty source, and a stale skip mark for the source ` ]` | test | none |
+| `30-ffi-callback-from-other-thread.st` | `TFUFFICallbackTest>>testCallbacksInOtherThread` (1 skip) | Stock Cog stops when a callback of the same-thread runner comes from another thread; the skip now is only for a VM without the repair | Cog, test | `upstream/README.md` |
+
+### The code snippet skips (2026-11-17, repaired)
+
+`OCCodeSnippet` has a list of tests to skip for each snippet, and its class
+comment says that these tests "should be fixed".  26 tests of the Pharo 14
+suite skipped for that list, on our VM and on stock Cog.
+
+- 23 skips of `OCParseCodeSnippetTest>>testSimpleFormattedCode`, for the
+  snippets with comments.  The test compares the output of
+  `OCSimpleFormatter` with the expected text of the other formatter.
+  `OCSimpleFormatter` printed a comment only at a statement of a sequence,
+  at a temporary, at a block argument and at a method, and dropped each
+  other comment.  Entry 28 makes the formatter print each comment of the
+  AST one time, and gives the snippets an expected text for the simple
+  formatter where the two formatters differ
+  (`OCCodeSnippet>>simpleFormattedCode`).  Six snippets outside the group
+  passed before only because the two formatters dropped the same comments.
+  They have an expected text now too.
+- 3 skips of `CodeImporterCodeSnippetTest>>testCodeImporter` (entry 29).
+
+Open, found on the way: the parser loses comments.  The source
+`1 "A" true "B" false "C" nil "D" self "E" super "F" thisContext "G"` gives
+an AST with the comments A, E, F and G only.  The formatter cannot print a
+comment that the AST does not have.
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 

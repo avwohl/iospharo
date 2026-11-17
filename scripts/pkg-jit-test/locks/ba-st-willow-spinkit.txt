@@ -1,0 +1,2 @@
+# Buoy replaces Symbol>>argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
+Buoy ba-st-buoy

@@ -24,10 +24,14 @@
 #   5. Our VM does the same, on another copy of the same image.
 #   6. One line goes to <outdir>/summary.tsv.
 #
-# A package can have two files in this directory:
+# A package can have these files in this directory:
 #   patches/L.patch   a git diff of the repository of the package.  The load
 #                     then comes from a local clone with the patch (for a
 #                     defect that stops the load)
+#   locks/L.txt       dependencies that need the patch of another row.  Each
+#                     line: the baseline name of the dependency and the label
+#                     of that row.  The load takes the dependency from a
+#                     local clone with the patch (a Metacello lock)
 #   fixes/L.st        entries in the form of scripts/image-fixes/, filed in
 #                     after the load (for a defect in the code or in a test)
 #   fixtures/L.txt    names of test classes that are fixtures: another test
@@ -191,19 +195,52 @@ status_list() {
     awk -F'\t' 'NF == 5 && $4 ~ /^(PASS|FAIL|ERROR|SKIP|TIMEOUT|XFAIL)$/ { print $2 ">>" $3 " " $4 }' "$1" | LC_ALL=C sort
 }
 
+# A load in a headless image must not wait for an answer.  Metacello gives a
+# warning to its default action when the load expression has no onWarning:
+# block.  The default action of MCMergeOrLoadWarning (the image has changes
+# in a package, and the load has another version of that package) opens a
+# dialog and waits: the load of Hyperspace, which loads Zinc from GitHub,
+# stopped there until the time limit.  With this block the load takes the
+# incoming version (the answer true), as onConflict: useIncoming does, and
+# each other warning goes to the log.
+#   headless_load <load expression>
+headless_load() {
+    printf '%s' "$1" | sed 's/; *load\([:.]\)/; onWarning: [ :w | Stdio stdout nextPutAll: #WARNING; nextPut: Character space; nextPutAll: w class name; nextPut: Character space; nextPutAll: w messageText asString utf8Encoded; lf; flush. (w class name = #MCMergeOrLoadWarning) ifTrue: [ w resume: true ] ifFalse: [ w resume ] ]; load\1/g'
+}
+# A baseline of a repository can name the repository itself for another
+# baseline of it.  In the clone, such a reference names the clone, so each
+# part of the package comes from the patched code.
+#   self_references <owner> <repo> <branch> <directory>
+self_references() {
+    local f
+    grep -rl --include='*.st' "github://$1/$2:$3" "$4" 2>/dev/null | while IFS= read -r f; do
+        sed -i '' "s|github://$1/$2:$3|gitlocal://$4|g" "$f" || return 1
+    done
+}
+# A local clone of a repository that has a patch of this directory as a
+# commit.  The name of the directory is the name of the Iceberg repository.
+#   patched_clone <label of the patch file> <owner> <repo> <branch> <directory>
+patched_clone() {
+    rm -rf "$5"
+    git clone -q --branch "$4" "https://github.com/$2/$3.git" "$5" >> "$OUT/log/$label.patch.log" 2>&1 \
+        && git -C "$5" apply "$HERE/patches/$1.patch" >> "$OUT/log/$label.patch.log" 2>&1 \
+        && self_references "$2" "$3" "$4" "$5" \
+        && git -C "$5" add -A >> "$OUT/log/$label.patch.log" 2>&1 \
+        && git -C "$5" -c user.name=package-run -c user.email=package-run@localhost commit -q -m "local patch of the package run" >> "$OUT/log/$label.patch.log" 2>&1
+}
+if [ -f "$HERE/patches/$label.patch" ] || [ -f "$HERE/locks/$label.txt" ]; then
+    rm -rf "$OUT/patched/$label"; mkdir -p "$OUT/patched/$label"
+    : > "$OUT/log/$label.patch.log"
+fi
+
 # A package with a patch file (patches/<label>.patch, a git diff of its
 # repository) is loaded from a local clone that has the patch as a commit.
 # The patch repairs a defect of the package that stops the load.
 if [ -f "$HERE/patches/$label.patch" ]; then
-    # The name of the directory is the name of the Iceberg repository, and
     # pkg_classes.st looks for the repository by the name of the manifest.
     pdir=$OUT/patched/$label/$repo
-    rm -rf "$OUT/patched/$label"; mkdir -p "$OUT/patched/$label"
-    if git clone -q --branch "$branch" "https://github.com/$owner/$repo.git" "$pdir" > "$OUT/log/$label.patch.log" 2>&1 \
-        && git -C "$pdir" apply "$HERE/patches/$label.patch" >> "$OUT/log/$label.patch.log" 2>&1 \
-        && git -C "$pdir" add -A >> "$OUT/log/$label.patch.log" 2>&1 \
-        && git -C "$pdir" -c user.name=package-run -c user.email=package-run@localhost commit -q -m "local patch of the package run" >> "$OUT/log/$label.patch.log" 2>&1; then
-        load_expr=$(printf '%s' "$load_expr" | sed "s|github://$owner/$repo:$branch|gitlocal://$pdir|")
+    if patched_clone "$label" "$owner" "$repo" "$branch" "$pdir"; then
+        load_expr=$(printf '%s' "$load_expr" | sed "s|github://$owner/$repo:$branch|gitlocal://$pdir|g")
         case "$load_expr" in
             *"gitlocal://$pdir"*) ;;
             *) row_out "PATCH-FAIL load-expression"; echo "[$ROW] $label: the load expression does not name github://$owner/$repo:$branch"; exit 0 ;;
@@ -214,6 +251,41 @@ if [ -f "$HERE/patches/$label.patch" ]; then
         exit 0
     fi
 fi
+
+# A package with a locks file (locks/<label>.txt) has a dependency that needs
+# the patch of another row of the manifest.  Each line has the baseline name
+# of the dependency and the label of that row.  The load starts with the load
+# of the dependency from a local clone with the patch and a Metacello lock of
+# its baseline.  The load of the package then keeps that dependency.
+lock_expr=""
+if [ -f "$HERE/locks/$label.txt" ]; then
+    while read -r lock_baseline lock_label _; do
+        case "$lock_baseline" in ''|'#'*) continue ;; esac
+        dline=$(tail -n +2 "$MANIFEST" | awk -F'\t' -v l="$lock_label" '$1 == l' | head -1)
+        downer=$(printf '%s' "$dline" | cut -f2)
+        drepo=$(printf '%s' "$dline" | cut -f3)
+        dbranch=$(printf '%s' "$dline" | cut -f4)
+        # The directory of the repository that has the code (for example /source).
+        dsub=$(printf '%s' "$dline" | cut -f15 | sed -n "s|.*github://$downer/$drepo:$dbranch\([^']*\)'.*|\1|p")
+        ddir=$OUT/patched/$label/$drepo
+        if [ -n "$dline" ] && [ -f "$HERE/patches/$lock_label.patch" ] \
+            && patched_clone "$lock_label" "$downer" "$drepo" "$dbranch" "$ddir"; then
+            # Metacello does not load a locked project that is not in the
+            # image.  The dependency is loaded first, with the load
+            # expression of its own row, and then locked.
+            dload=$(headless_load "$(printf '%s' "$dline" | cut -f15 | sed "s|github://$downer/$drepo:$dbranch|gitlocal://$ddir|g")")
+            lock_expr="$lock_expr $dload Metacello new baseline: '$lock_baseline'; repository: 'gitlocal://$ddir$dsub'; lock."
+        else
+            row_out "PATCH-FAIL lock=$lock_label"
+            echo "[$ROW] $label: no clone of $lock_label with its patch (log/$label.patch.log)"
+            exit 0
+        fi
+    done < "$HERE/locks/$label.txt"
+    # The load takes the locked repository and gives no warning.
+    load_expr=$(printf '%s' "$load_expr" | sed 's/; *load\([:.]\)/; onLock: [ :lockEvent | lockEvent honor ]; load\1/g')
+fi
+
+load_expr=$(headless_load "$load_expr")
 
 # 1. load.  The image as the load left it stays in img/<label>.loaded.image.
 # With PKG_REUSE_LOAD=1 a later run starts from that image and makes no
@@ -230,7 +302,7 @@ memory_ok load
 # Iceberg tries an SSH clone first and falls back to HTTPS after an
 # authentication error.  The load asks for HTTPS at once.
 ( cd "$SCRATCH" && exec timeout -k 10 "$LOAD_TIMEOUT" "$COG" --headless "$COG_MEM" "$COG_FRAMES" "$img" eval --save \
-    "Iceberg remoteTypeSelector: #httpsUrl. $load_expr" ) > "$OUT/log/$label.load.log" 2>&1 < /dev/null &
+    "Iceberg remoteTypeSelector: #httpsUrl.$lock_expr $load_expr" ) > "$OUT/log/$label.load.log" 2>&1 < /dev/null &
 VM_PID=$!; wait "$VM_PID"; load_rc=$?; VM_PID=""
 trim_log "$OUT/log/$label.load.log"
 echo "[load exit=$load_rc]" >> "$OUT/log/$label.load.log"

@@ -927,3 +927,59 @@ Upstream note: Title: AtomicSharedQueue: lost wake-ups with two readers, and
 a locked queue after the termination of a reader.  Project: pharo
 (Collections-Atomic, Collections-Atomic-Tests).  The released image does not
 have the package Collections-Atomic-Tests, so the tests are in a new class.
+
+## Simple-formatter-comments (added after the repair run)
+
+- Review: a read-only proposal by one agent and a check by a second agent,
+  then a run on our VM.
+- Entries: `scripts/image-fixes/28-simple-formatter-comments.st`
+- Methods: `OCSimpleFormatter>>basicFormatCommentFor:`, `format:`,
+  `formatStatementCommentsFor:`, `formatCommentsFor:`, `formatBlock:`,
+  `formatArray:`, `privateFormatMethodPatternMonoLineFor:`, new
+  `hoistedCommentsFor:` and `collectHoistedCommentsOf:into:`; new
+  `OCCodeSnippet>>simpleFormattedCode` and
+  `OCCodeSnippet class>>simpleFormattedCodes`;
+  `OCParseCodeSnippetTest>>testSimpleFormattedCode`;
+  `OCCodeSnippet class>>badComments`
+
+`OCParseCodeSnippetTest>>testSimpleFormattedCode` skipped for the 23 snippets
+of the group `badComments` ("The simple one is too much broken").
+`OCSimpleFormatter` dropped each comment that was not at a statement of a
+sequence, at a temporary, at a block argument or at a method.  The entry
+makes the formatter print each comment of the AST one time.  A comment in an
+expression goes behind the statement, in source order.  The test compared
+with the expected text of the other formatter, which drops and moves
+comments, so a snippet now can have its own expected text for the simple
+formatter.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `OCParseCodeSnippetTest>>testSimpleFormattedCode` (23 snippets) | image-code and test | repaired | The simple formatter dropped comments; the expected text was the text of another formatter. |
+
+State on our VM: 1412 tests of `OCParseCodeSnippetTest`, all pass (before:
+23 skips).
+
+Upstream note: Title: OCSimpleFormatter drops comments.  Project: pharo
+(AST-Core, AST-Core-Tests).  Found on the way and not repaired: the parser
+loses the comments B, C and D of the source
+`1 "A" true "B" false "C" nil "D" self "E" super "F" thisContext "G"`.
+
+## Code-importer-snippets (added after the repair run)
+
+- Entries: `scripts/image-fixes/29-code-importer-snippets.st`
+- Methods: `CodeImporterCodeSnippetTest>>testCodeImporter`,
+  `OCCodeSnippet class>>badExpressions`
+
+`testCodeImporter` skipped for a source with separators only (2 snippets),
+with the remark that the code importer needs a plain expression, and the
+snippet ` ]` had a skip mark with a FIXME.  CodeImporter handles the three
+sources: for the empty source it makes no declaration, for a method chunk
+with no source the compiler signals the error that the test expects, and
+`]` has no meaning in the chunk format.  The two skips go, and the checks of
+the test apply.
+
+| Test | Defect in | State | Cause |
+|---|---|---|---|
+| `CodeImporterCodeSnippetTest>>testCodeImporter` (3 snippets) | test | repaired | A skip that the code under test did not need. |
+
+State on our VM: all tests of `CodeImporterCodeSnippetTest` pass.

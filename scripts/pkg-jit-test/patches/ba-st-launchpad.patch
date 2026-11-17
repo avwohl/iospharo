@@ -1,0 +1,83 @@
+diff --git a/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st b/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st
+index 09660c5..fd34bb3 100644
+--- a/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st
++++ b/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st
+@@ -43,6 +43,12 @@ BaselineOfLaunchpad >> baseline: spec [
+   spec for: #'pharo13.x' do: [
+       self setUpPharo11Packages: spec.
+       spec preLoadDoIt: #closeWelcomeWindow
++    ].
++  spec for: #'pharo14.x' do: [
++      self
++        setUpPharo11Packages: spec;
++        setUpPharo14Packages: spec.
++      spec preLoadDoIt: #closeWelcomeWindow
+     ]
+ ]
+ 
+@@ -184,6 +190,15 @@ BaselineOfLaunchpad >> setUpPharo11Packages: spec [
+ 		group: 'Tools' with: 'Launchpad-Development-Tools'
+ ]
+ 
++{ #category : 'baselines' }
++BaselineOfLaunchpad >> setUpPharo14Packages: spec [
++
++	spec
++		package: 'Launchpad-Pharo14-Compatibility';
++		group: 'Deployment' with: 'Launchpad-Pharo14-Compatibility';
++		group: 'Tests' with: 'Launchpad-Pharo14-Compatibility'
++]
++
+ { #category : 'baselines' }
+ BaselineOfLaunchpad >> setUpSUnitPackages: spec [
+ 
+diff --git a/source/Launchpad-Pharo14-Compatibility/CommandLineArguments.extension.st b/source/Launchpad-Pharo14-Compatibility/CommandLineArguments.extension.st
+new file mode 100644
+index 0000000..cb8651b
+--- /dev/null
++++ b/source/Launchpad-Pharo14-Compatibility/CommandLineArguments.extension.st
+@@ -0,0 +1,17 @@
++Extension { #name : 'CommandLineArguments' }
++
++{ #category : '*Launchpad-Pharo14-Compatibility' }
++CommandLineArguments >> copySubcommand [
++	"Pharo 14 removed this message (Pharo 13 and older have it).  Answer the arguments without the first one."
++
++	^ self class withArguments: arguments allButFirst
++]
++
++{ #category : '*Launchpad-Pharo14-Compatibility' }
++CommandLineArguments >> optionAt: aString ifPresent: presentBlock ifAbsent: absentBlock [
++	"Pharo 14 removed this message (Pharo 13 and older have it)."
++
++	| option |
++	option := self optionAt: aString ifAbsent: [ ^ absentBlock value ].
++	^ presentBlock value: option
++]
+diff --git a/source/Launchpad-Pharo14-Compatibility/CommandLineHandler.extension.st b/source/Launchpad-Pharo14-Compatibility/CommandLineHandler.extension.st
+new file mode 100644
+index 0000000..a15292b
+--- /dev/null
++++ b/source/Launchpad-Pharo14-Compatibility/CommandLineHandler.extension.st
+@@ -0,0 +1,14 @@
++Extension { #name : 'CommandLineHandler' }
++
++{ #category : '*Launchpad-Pharo14-Compatibility' }
++CommandLineHandler class >> prepareSubcommand: commandLineArguments [
++	"Pharo 14 removed this message (Pharo 13 and older have it)."
++
++	"strip the subcommand name from the arguments"
++	commandLineArguments withFirstArgument: [ :arg |
++		arg = self commandName
++			ifTrue: [ ^ commandLineArguments copySubcommand ] ].
++
++	"not a subcommand hence we keep the same args"
++	^ commandLineArguments
++]
+diff --git a/source/Launchpad-Pharo14-Compatibility/package.st b/source/Launchpad-Pharo14-Compatibility/package.st
+new file mode 100644
+index 0000000..541c91a
+--- /dev/null
++++ b/source/Launchpad-Pharo14-Compatibility/package.st
+@@ -0,0 +1 @@
++Package { #name : 'Launchpad-Pharo14-Compatibility' }

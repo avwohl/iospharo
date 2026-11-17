@@ -33,6 +33,7 @@ The stock VM in `/tmp/harness` comes from
 | Typed store primitives respect the write barrier | `fix/write-barrier-typed-stores` | `cog-write-barrier-typed-stores.patch` | committed on the branch, tested |
 | `primitiveDoNamedPrimitiveWithArgs`: `PrimErrNotFound` | `fix/named-primitive-not-found-in-simulation` | `cog-named-primitive-not-found.patch` | committed on the branch, tested |
 | Code-generation VM for macOS arm64 that starts on macOS 27 | `fix/vmmaker-bootstrap-vm-darwin-arm64` | `cog-vmmaker-bootstrap-vm-darwin-arm64.patch` | tested, not committed: the change is a version pin, and the owner must approve a pin |
+| FFI: a callback from another thread with the same-thread runner | `fix/same-thread-runner-callback-from-other-thread` | `cog-same-thread-runner-callback-from-other-thread.patch` | committed on the branch (2 commits), tested |
 
 ### SocketPlugin: local address from any interface that is up
 
@@ -103,3 +104,45 @@ The stock VM in `/tmp/harness` comes from
   completes, and the VM that the build makes answers `42 factorial`.
 - Not checked: the other platforms keep their old VM, and no check was made
   that those start on current systems.
+
+### FFI: a callback from another thread with the same-thread runner
+
+- Defect: `sameThreadCallbackEnter` calls `ptEnterInterpreterFromCallback`
+  on the thread that made the callback.  When that thread is not the VM
+  thread, two threads run the interpreter, and the VM stops with a
+  segmentation fault.  The image has
+  `TFUFFICallbackTest>>testCallbacksInOtherThread` set to skip for this
+  runner, with that cause in a remark.
+- Change, first commit: for a callback from another thread, the calling
+  thread waits on a platform semaphore.  `callbackFrontend` already puts
+  each invocation in the queue of pending callbacks, so the image runs the
+  callback in the VM thread.  `sameThreadCallbackExit` gives the signal.
+  The worker runner does the same for a thread that is not its own.
+- Change, second commit, from a review of the first:
+  - A lock for the callback stack of a runner.  `callbackFrontend` pushed
+    with no lock from any thread, and `primitiveCallbackReturn` tested and
+    popped in two steps.  The worker runner had the same exposure.
+  - The runner keeps the VM thread as a `pthread_t` from
+    `primitiveGetSameThreadRunnerAddress`.  `ioVMThread` is set only in a
+    build with `PHARO_VM_IN_WORKER_THREAD`, and on Windows its type cannot
+    hold a `pthread_t`.
+- Test (2026-11-17, macOS 27, arm64, the stock app with the core library of
+  the changed build): the 14 tests of `TFUFFICallbackTest` pass, 8 runs of
+  8.  `testCallbacksInOtherThread` passes for the same-thread runner and
+  for the worker runner.  On the stock VM the same-thread case stops the
+  VM, so the test skips there.
+- Not tested: Windows and Linux, and two threads that call back at the same
+  time.
+- The image side: `scripts/image-fixes/30-ffi-callback-from-other-thread.st`
+  keeps the skip only for a VM without the change.  Our VM always ran such
+  a callback in the VM thread.
+
+## Cog changes in work
+
+- Low space before the old-space limit
+  (`fix/low-space-signal-before-old-space-limit`, a change in
+  `SpurMemoryManager>>sufficientSpaceAfterGC:`, in the worktree, not
+  committed, not built).  With `--maxOldSpaceSize`, a recursion with no end
+  stops the VM with "Could not allocate new object in the old space", and
+  the image gets no low-space signal.  The threshold of the image is 400000
+  bytes, and one scavenge can move more than that to the old space.

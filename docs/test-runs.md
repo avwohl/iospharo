@@ -57,6 +57,13 @@ the runner `scripts/pharo-headless-test/run_sunit.st`
 A sweep of our VM takes about 8 minutes on an M4 Mac.  `interactive` runs
 the classes of `scripts/interactive-classes.txt` in an interactive session.
 
+To run a part of the class list again (for a batch that stopped):
+
+    scripts/vmrun.sh sweep --from 1301 --to 1400 ours <test.image> <outdir>
+
+This form has no retry pass and no interactive pass, so a batch that stops
+shows as stopped (`rc=139` for a segmentation fault).
+
 ## The 200 packages
 
     scripts/vmrun.sh pkgs <outdir> <first-row> [last-row]
@@ -84,6 +91,9 @@ A package that has a defect can have these files in `scripts/pkg-jit-test/`:
 
 - `patches/<label>.patch`: a git diff of the repository of the package.  The
   load then comes from a local clone with the patch.
+- `locks/<label>.txt`: dependencies that need the patch of another row.  Each
+  line has the baseline name of the dependency and the label of that row.
+  The load takes the dependency from a local clone with the patch.
 - `fixes/<label>.st`: entries in the form of `scripts/image-fixes/`.
 - `fixtures/<label>.txt`: the names of test classes that are fixtures of
   other tests.

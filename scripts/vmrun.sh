@@ -83,7 +83,10 @@ resolve_vm() {                      # sets VM (binary) and KIND (ours|cog)
         cogp)  # the stock app with the VM core and the socket plugin of the build with
                # the changes of docs/upstream (a local Cog build lacks freetype, cairo
                # and libgit2, so the stock app keeps its own third-party libraries)
-               VM=$WORK/cogp-app/Pharo.app/Contents/MacOS/Pharo; KIND=cog ;;
+               VM=$WORK/cogp-app/Pharo.app/Contents/MacOS/Pharo; KIND=cog
+               # This build runs a callback from another thread in the VM
+               # thread (scripts/image-fixes/30-ffi-callback-from-other-thread.st).
+               export PHARO_FFI_CALLBACK_FROM_OTHER_THREAD=1 ;;
         */test_load_image) VM=$1; KIND=ours ;;
         */Pharo)           VM=$1; KIND=cog ;;
         *) say "unknown VM: $1"; exit 2 ;;
@@ -264,6 +267,8 @@ while [ $# -gt 0 ]; do
         --limit)       VMRUN_TEST_LIMIT=$2; shift 2 ;;
         --repeat)      VMRUN_REPEAT=$2; shift 2 ;;   # test: N runs, one VM after the other, counts at the end
         --old-space)   VMRUN_OLD_SPACE_MB=$2; shift 2 ;;   # old-space limit in MB, for our VM and for stock Cog
+        --from)        VMRUN_FROM=$2; shift 2 ;;     # sweep of our VM: first class index
+        --to)          VMRUN_TO=$2; shift 2 ;;       # sweep of our VM: last class index; no retry pass, no interactive pass
         --redo)        VMRUN_REDO=1; shift ;;        # pkgs: run a package again that has a row
         --reuse)       VMRUN_REDO=1; VMRUN_REUSE=1; shift ;;   # pkgs: again, from the image of the earlier load
         *) break ;;
@@ -330,7 +335,8 @@ eval)
     acquire_lock "eval $name $(basename "$file")"
     fresh_rundir "${VMRUN_IMAGE:-$(default_image "$name")}"
     cd "$RUNDIR" || exit 2
-    expr="| r | r := [ (Smalltalk compiler evaluate: '$file' asFileReference contents) displayString ] on: Error do: [ :e | 'EVAL-ERROR ' , e class name , ': ' , (e messageText ifNil: [ '' ]) ]. 'eval_out.txt' asFileReference writeStreamDo: [ :o | o nextPutAll: r ]. r size"
+    # A String answer goes out whole: displayString cuts a long String.
+    expr="| r | r := [ | v | v := Smalltalk compiler evaluate: '$file' asFileReference contents. v isString ifTrue: [ v ] ifFalse: [ v displayString ] ] on: Error do: [ :e | 'EVAL-ERROR ' , e class name , ': ' , (e messageText ifNil: [ '' ]) ]. 'eval_out.txt' asFileReference writeStreamDo: [ :o | o nextPutAll: r ]. r size"
     if [ "$KIND" = ours ]; then
         ours_env
         guarded "$RUNDIR/" "${VMRUN_TIMEOUT:-300}" "$VM" "$RUNDIR/rt.image" eval "$expr" > vm.log 2>&1 < /dev/null
@@ -385,6 +391,13 @@ sweep)
     if [ "$KIND" = ours ]; then
         ours_env
         export SUNIT_TIMEOUT_MULT=${SUNIT_TIMEOUT_MULT:-1} STEP=${STEP:-50} PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-3600} RETRY_DAMAGED=1 RETRY_STEP=5
+        # A part of the class list (to run a batch again that stopped): no
+        # retry pass, so a batch that stops shows as stopped.
+        if [ -n "${VMRUN_FROM:-}" ] || [ -n "${VMRUN_TO:-}" ]; then
+            export START_AT=${VMRUN_FROM:-1} RETRY_DAMAGED=0
+            [ -n "${VMRUN_TO:-}" ] && export TOTAL=$VMRUN_TO
+            VMRUN_NO_INTERACTIVE=1
+        fi
         guarded "$outdir/" "${VMRUN_TIMEOUT:-7200}" "$REPO/scripts/sunit-sweep.sh" "$VM" "$image" "$outdir" > "$outdir/driver.log" 2>&1 < /dev/null
         rc=$?
     else
