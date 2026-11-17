@@ -176,7 +176,10 @@ guarded() {
 }
 
 ours_env() {
-    export PHARO_EVAL_NO_SUNIT_MARKER=1 PHARO_MAX_STEPS=4000000000000 PHARO_CODE_ZONE_MB=192
+    # No PHARO_EVAL_NO_SUNIT_MARKER here: sunit-sweep.sh asks a runner image for
+    # its class count with an eval, and that eval must write the marker, or the
+    # image starts the whole suite inside the eval.
+    export PHARO_MAX_STEPS=4000000000000 PHARO_CODE_ZONE_MB=192
     export PHARO_MAX_OLD_SPACE_MB=${VMRUN_OLD_SPACE_MB:-6144}
 }
 
