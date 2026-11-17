@@ -233,13 +233,14 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 14:10, rows 1 to 93 (the record of each repair is
-[upstream/package-repairs.md](upstream/package-repairs.md)):
+State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
+[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 101 to
+200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).
 
-- 73 rows are clean: each test passes on stock Cog and on our VM.
+- 77 rows are clean: each test passes on stock Cog and on our VM.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 17 rows are not clean yet.  Each has a repair in work:
+- 20 rows are not clean yet.  Each has a repair in work:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -259,7 +260,10 @@ State on 2026-11-17 at 14:10, rows 1 to 93 (the record of each repair is
 | 88 | mongotalk | 23 of 88 pass | the tests need a MongoDB server; a stand-in in the image is written (wire protocol `OP_MSG`, 18 commands); run in work |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 90 | pharo-test-analysis | no load | patch of the baseline (a package name that does not exist) and a fixtures file; run in work |
-| 91 | Turbo | 265 of 270 pass | the 5 expected pictures were drawn for a half cell that is cut off, and the canvas rounds a half up; new pictures; run in work |
+| 91 | Turbo | 265 of 270 pass | the 5 expected failures are plain failures now: the new pictures of the first round are not what the code draws; second round with probes |
+| 96 | Iris | 128 of 131 pass | 3 tests that fail on purpose (probably fixtures of another test); an agent checks |
+| 97 | pharo-gsoc2025 | 1455 of 1456 pass | 1 failure: a count of nodes of a DrTests coverage result; an agent works on it |
+| 100 | Sagan | 37 of 133 pass, 61 errors, 35 timeouts | the tests need a PostgreSQL server on port 5432; an agent checks whether the tests can use SQLite |
 
 The package run found these defects outside the packages:
 
