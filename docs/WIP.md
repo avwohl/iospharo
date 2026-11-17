@@ -237,15 +237,14 @@ State on 2026-11-17 at 15:20, rows 1 to 100 (the record of each repair is
 [upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 101 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).
 
-- 84 rows are clean: each test passes on stock Cog and on our VM.
+- 85 rows are clean: each test passes on stock Cog and on our VM.  In one of them (70, BioSmalltalk) 7 tests cannot apply on Pharo 14 and skip; `scripts/pkg-jit-test/not-applicable/` names each such test with its proof, and `scripts/pkg-jit-test/row-state.py <outdir>` prints the state of each row.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 13 rows are not clean yet.  Each has a repair in work or an open point:
+- 12 rows are not clean yet.  Each has a repair in work or an open point:
 
 | Row | Package | State | Work |
 |---|---|---|---|
 | 57 | EscapeAnalysisPharo | 81 of 82 pass | the analyzer of the package is repaired (33 entries).  Open: 1 skip of the author, a known wrong answer of the analyzer; a repair changes the answer of three other tests, so the author must decide |
-| 70 | BioSmalltalk | 1193 of 1205 pass | second round: a stand-in for a Glamorous Toolkit class broke 12 tests |
 | 71 | Pillar | 37 of 66 pass | second round: the patch did not bring the package `Microdown-Toc` into the image; 4 PDF tests need LaTeX |
 | 72 | Microdown | 1604 of 1605 pass | second round, 1 error |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |

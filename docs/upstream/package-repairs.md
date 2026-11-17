@@ -948,3 +948,35 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
     `fixes/javierlarre-pharo-test-analysis.st` adds the method.
 - Result: 71 of 71 pass on the two VMs, in a run from a new load.
 
+## BioSmalltalk (`hernanmd/BioSmalltalk`, row 70)
+
+- State before: 1205 tests, 1147 pass, 2 failures, 56 errors on the two VMs.
+- Causes and repairs (`fixes/hernanmd-biosmalltalk.st`):
+  - 11 tests read test files that are only in the archive
+    `resources/BioSmalltalkResourceFiles.zip` of the repository.  Nothing
+    takes the files out.  The repair takes the archive of the clone apart in
+    the working directory one time.
+  - 18 tests open files that no repository has (`/tmp/bed/*.bed`,
+    `/tmp/maf_test/test.maf`, two GFF3 files of a download).  The `setUp` of
+    the tests writes small files with the content that the assertions
+    describe, and the `tearDown` removes them.
+  - 12 tests send `metabolite:`, `protein:` and `gene:` to `BioSpecies`.
+    The class of the pathway code has the name `BioPathwaySpecies` now.
+  - 8 tests of the Phylip parser use tokenizers of `BioPhylipParser`.  A
+    rewrite moved them to `BioPhylipPetitParser`.
+  - 1 test: `BioReaction>>enzymes` did not answer the enzymes of the
+    catalyses of the reaction.
+  - 1 test needs the program `cutadapt`.  The test uses the program when
+    the machine has it, and a small `awk` program with the same options and
+    summary text when not.
+- 7 tests cannot apply on Pharo 14 (`not-applicable/hernanmd-biosmalltalk.txt`):
+  `BioGtUnixSubprocessTest` tests an adapter for a class of Glamorous
+  Toolkit.  Their `setUp` now skips with a text that says so.  A first
+  repair made a stand-in for the Glamorous Toolkit class.  The package then
+  chose that adapter for each external program, and 12 other tests broke.
+  The stand-in is gone.
+- Limits: the GFF3, BED and MAF files are ours, made from the assertions.
+  The `awk` program is not `cutadapt`.
+- Result: 1205 tests, 1198 pass and 7 skips on the two VMs, in a run from a
+  new load.
+
