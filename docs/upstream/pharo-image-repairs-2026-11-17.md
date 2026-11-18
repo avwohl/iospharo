@@ -1152,3 +1152,46 @@ the equality of header collections too.  The owner of Zinc must decide.
 |---|---|---|---|
 | `ZnUrlTest>>testEqualsWithQueryFieldsInAnotherOrder` (new, 8 cases; each case has the answer of Pharo 13) | image code | repaired | The equality of URLs took the order of the query fields from `OrderedDictionary>>=`. |
 
+## Taskit-andthen-order (found by a sweep)
+
+- Entries: `scripts/image-fixes/35-taskit-andthen-order.st`
+- Methods: `TKTFuture>>andThen:`, `deploySuccess:`, `deployFailure:`,
+  `onSuccessDo:`, `onFailureDo:`, `initialize`, new `criticalLock`; two new
+  instance variables of `TKTFuture`; a new class
+  `TKTFutureStateWithRegistrationHook` in `TaskIt-Tests`; three new tests of
+  `TKTFutureTest`
+
+Two defects of `TKTFuture`.
+
+1. The class comment says that the blocks of `andThen:` run one after the
+   other, and shows a cascade of `andThen:` sends to one future.
+   `andThen:` registers each block with `onSuccessDo:`, and
+   `deploySuccess:` schedules one task for each callback on the common
+   runner, a pool of workers.  The blocks run in parallel.
+   `testFutureAndThenExecutesInOrder` failed one time in about eleven
+   sweeps ("Got #(2 3 1) instead of #(1 2 3)").
+2. `onSuccessDo:` tests the state of the future and then registers the
+   callback.  `deploySuccess:` installs the result and then walks the
+   callbacks.  The two are not atomic.  A deployment by another process
+   between the test and the registration leaves the callback with no task.
+
+The repair of 1 chains the blocks of one future, and so it registers
+callbacks from worker processes.  It needs the repair of 2: one mutex for
+the registration and for the installation of the result.  The callback
+tasks are scheduled outside of the mutex.
+
+| Test | Before, stock Cog and our VM | After, stock Cog, patched Cog and our VM |
+|---|---|---|
+| `testFutureAndThenExecutesInOrderWithSlowFirstCallback` (new: the first block waits 100 ms) | fails 5 of 5 runs | passes 20 of 20 runs |
+| `testCallbackRegisteredWhileAnotherProcessDeploysIsScheduled` (new: a state object deploys from another process at the registration) | fails 5 of 5 runs | passes 20 of 20 runs |
+| `testFutureAndThenRunsLaterBlocksWhenABlockEndsItsProcess` (new: the first block ends its process) | passes (no chain before the repair) | passes 20 of 20 runs; the chain with no `ensure:` gives an error |
+| `testFutureAndThenExecutesInOrder` (the test of the image) | passes 1000 of 1000 runs in a loop; failed one time in a sweep | passes; 3000 cascades give the right order |
+
+Full sweeps with entries 1 to 35: our VM (`sweep14-new13`) and the patched
+Cog (`sweepcogp14-new10`) each have 39465 tests, 39377 pass, 0 failures and
+0 errors.
+
+For the owner of TaskIt: `valueSemaphore` gives one signal, so of two
+processes that wait for one future only one is woken.  The entry does not
+change that.
+

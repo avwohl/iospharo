@@ -497,6 +497,7 @@ The record of each repair (cause, fix and proof) is in `docs/upstream/pharo-imag
 | `32-duration-wait-rounds-up.st` | `Duration>>asDelay`, new `DurationTest>>testAsDelayDoesNotRoundDown` | A wait for a Duration can end up to 1 millisecond before the Duration has passed | image code | section "Defects that the package run found" below |
 | `33-metalink-uninstall-order.st` | `MetaLinkInstaller>>uninstallFromAllAnonymousNodes:`, `MetaLinkNodesMapper>>findNodeLike:forObject:`, two new tests of `LinkInstallerTest` | The uninstall of an object-specific link skips a node when two nodes collide in the node set of the link; a later uninstall for the same object removes the method two times (`KeyNotFound`) | image code | section "Defects that the package run found" |
 | `34-znurl-query-order.st` | `ZnUrl>>equals:`, new `ZnUrlTest>>testEqualsWithQueryFieldsInAnotherOrder` | Two URLs with the same query fields in another order are equal in Pharo 13 and not equal in Pharo 14 | image code | section "Defects that the package run found" |
+| `35-taskit-andthen-order.st` | `TKTFuture>>andThen:`, `deploySuccess:`, `deployFailure:`, `onSuccessDo:`, `onFailureDo:`, `initialize`; 3 new tests of `TKTFutureTest` | The blocks of several `andThen:` sends to one future run in any order; a callback that one process registers while another process deploys the result can be lost | image code | section "Defects that the package run found" |
 
 ### The code snippet skips (2026-11-17, repaired)
 
@@ -526,8 +527,9 @@ comment that the AST does not have.
 
 The tests of the image do not show the first two defects and the fourth
 one.  Tests of packages of the 200-package run showed them.  The third
-defect showed in some sweeps of our VM only, and is in this list because the
-same work found it.
+defect showed in some sweeps of our VM only, and the fifth in one sweep of
+the patched Cog; the two are in this list because the same work found
+them.
 
 - `RBNamespace>>renameClass:to:around:` (entry 31, found by Chanel).  The
   method adds the rename change to the changes of the namespace and keeps
@@ -598,6 +600,42 @@ same work found it.
   - Another place for the repair is `ZnMultiValueDictionary>>=`.  That also
     changes the equality of header collections, so entry 34 does the small
     change.
+- The order of `andThen:` blocks in TaskIt (entry 35, found by a sweep).
+  `TKTFutureTest>>testFutureAndThenExecutesInOrder` failed one time in a
+  sweep of the patched Cog ("Got #(2 3 1) instead of #(1 2 3)") and passed
+  in about ten sweeps before.
+  - The class comment of `TKTFuture` promises that the blocks of `andThen:`
+    run one after the other, and its example is a cascade of `andThen:`
+    sends to one future.  `andThen:` registers each block as a normal
+    callback, and the deployment schedules one task for each callback on a
+    pool with more than one worker.  So the blocks run in parallel.
+  - A loop of 1000 runs of the test does not show the defect on stock Cog
+    or on our VM.  A new test makes the first block wait 100 ms.  Before
+    the repair it fails 5 of 5 runs on each VM.
+  - The repair chains the blocks: a block runs after the future of the
+    block before it has its value.  That future gets its value in an
+    `ensure:`, so a block that ends its process does not stop the later
+    blocks.
+  - The chain registers a callback in one worker while another worker can
+    deploy.  In `TKTFuture` these two steps were not atomic: a deployment
+    between the test of the state and the registration lost the callback.
+    The entry puts the two steps under one mutex.  A new test forces the
+    interleaving with a state object that deploys from another process at
+    the registration.  Before the repair it fails 5 of 5 runs on each VM.
+  - After the repair: the three new tests pass 20 of 20 runs on stock Cog,
+    the patched Cog and our VM; 3000 cascades give the right order with no
+    future left unfinished on stock Cog and on our VM; the sweeps
+    `sweep14-new13` (our VM) and `sweepcogp14-new10` (patched Cog) each
+    have 39465 tests, 39377 pass, 0 failures and 0 errors.
+  - Not repaired: `valueSemaphore` gives one signal, so two processes that
+    wait for one future are not both woken.
+  - An observation with no cause yet: a test of `TKTFutureTest` that
+    compiled a method into an anonymous class had an error in a run of the
+    whole class as one suite from an eval, on the two VMs
+    (`shouldLogWithEpicea` sent to nil in the Epicea monitor).  The runners
+    of the sweeps set the test case of the test environment themselves, so
+    they do not show it.  The tests of entry 33 compile into an anonymous
+    class too and pass in the same kind of run.
 
 ## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
 

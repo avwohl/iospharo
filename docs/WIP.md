@@ -174,6 +174,8 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweepcogp14-new8` | patched Cog with the file plugin change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 | `sweep14-new12` | ours, entries 31 to 34, VM parameter 11 | 39374 | 0 | 87 | 1 | 39462 tests (1 new test of entry 34); no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass |
 | `sweepcogp14-new9` | patched Cog, entries 31 to 34 (the library was a diagnostic build of the Cog GC crash hunt: a debug file write in `indexForSelector:in:at:`; the sweep is no reference) | 39373 | 1 | 87 | 1 | 39462 tests; no batch stopped; 1 failure that no sweep had before: `TKTFutureTest>>testFutureAndThenExecutesInOrder` ("Got #(2 3 1) instead of #(1 2 3)": three callbacks of one future ran in another order); the cause is in work |
+| `sweep14-new13` | ours with the deep recursion change, entries 31 to 35 | 39377 | 0 | 87 | 1 | 39465 tests (3 new tests of entry 35); no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass |
+| `sweepcogp14-new10` | patched Cog with the store check change of the Cogit, entries 31 to 35 | 39377 | 0 | 87 | 1 | 39465 tests; no batch stopped; the same 88 tests do not pass |
 
 Defects that these sweeps showed, each with its repair:
 
