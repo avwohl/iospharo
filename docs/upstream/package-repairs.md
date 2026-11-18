@@ -1512,9 +1512,24 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Result on our VM: 31 pass, 1 failure that Cog does not have:
   `AntDesignIconsLibraryTest>>testSerializeAsFormMaxWidthMaxHeight` ("Got a
   Bitmap of length 992 instead of a Bitmap of length 992": the same size,
-  other pixel values).  The cause is in work.  An old note said "a library
-  difference" (our VM loads the Cairo of Homebrew, Cog loads the Cairo of
-  its bundle); nobody measured that.
+  other pixel values).
+- The cause is a defect of our VM, and not the Cairo library (an old note
+  said "a library difference"; nobody had measured that).  Measured:
+  - The Form that Cairo draws (1024 by 1025 pixels) is equal word for word
+    in three runs: stock Cog with its Cairo 1.18.4, stock Cog with the
+    Cairo 1.18.6 of Homebrew, and our VM with Cairo 1.18.6.
+  - The scaled Form is not equal: stock Cog gives the control Bitmap of the
+    test, and our VM differs in 138 of 992 words.
+  - `Form>>scaledToSize:` uses WarpBlt with smoothing.  Our primitive
+    (`primitiveWarpBits`) does not step and pick pixels as the stock plugin
+    does (`BitBltSimulation>>warpLoop`).  A probe with no icon differs in
+    each of 15 warp results.  With the primitive taken out, the Smalltalk
+    code of the image does the warp, and our VM passes 32 of 32.
+  - A second defect from the same probe: the alpha blend of the rules 24
+    and 34 of `copyBits` rounds in another way than the stock plugin.
+- The repair of our VM (a port of the stock warp loop and blend functions,
+  with a script that compares each case word for word with stock Cog) is in
+  work on the branch `warpblt-stock-algorithm`.
 
 ## DebuggingSpy (`Pharo-XP-Tools/DebuggingSpy`, row 122)
 
@@ -1753,4 +1768,47 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   extension file of `TraitBuilderEnhancer` is gone (no code of the package
   uses its two methods).
 - Result: the load ends with no error, and 4 of 4 tests pass on the two VMs.
+
+## CodeParadise (`ErikOnBike/CodeParadise`, row 121)
+
+- State before: 33 tests, 19 pass, 1 failure, 13 skips on the two VMs.  The
+  13 are tests with `self skip` as their first statement.
+- A first repair took the skips out with a stand-in for the client
+  environment.  A run showed that it was wrong: the tests then failed on
+  stock Cog, and one of them hung on our VM.  That repair is gone.
+- The hang, measured:
+  - `CpClientCommunicator>>checkConnection` with no URL calls `reconnect`,
+    which fails inside a handler that takes each Error and answers nil, and
+    calls `checkConnection` again.  The recursion has no end.
+  - The time limit of SUnit signals `TestTookTooMuchTime`, an Error.  The
+    same handler takes the signal when the signal comes inside it.  In 200
+    trials the signal ended the test in 41 on stock Cog and in 13 on our VM.
+  - Our VM then had a limit of 56000 frames for each process.  Its error
+    went into the same handler, a second one stopped the process with no
+    unwind, and the run had no end.  Since the deep recursion change of
+    2026-11-17 our VM has no such limit, and the test ends by the time
+    limit as on stock Cog.
+- Repair (`fixes/erikonbike-codeparadise.st`), with no stand-in:
+  - `checkConnection` does nothing when the communicator has no URL, and
+    `reconnect` asks the client environment only when one runs.
+  - 6 tests of `CpCommunicatorTest` run: the client comes from a helper,
+    three tests make their Semaphore before the connection (a race), and
+    setUp and tearDown stop the servers and close the clients.
+  - 2 of them were stale: commit 0fb2f0a (2021) made "always reconnect" the
+    default, and the tests assert the state with no reconnect strategy.
+    They now set that state.  Each assertion stays.
+  - `testLookAheadAt` was stale since commit 9f09c7f moved the index of
+    `ReadStream>>lookAheadAt:` by one.  It uses the present index.
+- 7 tests cannot apply in a server image
+  (`not-applicable/erikonbike-codeparadise.txt`, with the proof for each):
+  4 of `CpClientEnvironmentTest` and 3 of `CpEncodeDecodeObjectTest`.  The
+  code under test is the client side, which runs in a small image in the
+  browser.  The package refuses that code in an image with the server
+  classes.  Each of the 7 keeps its skip, with the reason as its text.
+- For the owner of the package: a reconnect that fails for a URL that is
+  set still calls `checkConnection` again at once.  And
+  `testSortedCollection` passes with a stand-in client environment; it is
+  in the list of 7 because the repair uses no stand-in.
+- Result of the agent's run: 26 pass and 7 skips on the two VMs.  The run of
+  the row from a new load is in work.
 

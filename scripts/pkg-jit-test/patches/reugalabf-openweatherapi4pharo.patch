@@ -1,0 +1,23 @@
+diff --git a/BaselineOfOpenWeatherMap/BaselineOfOpenWeatherMap.class.st b/BaselineOfOpenWeatherMap/BaselineOfOpenWeatherMap.class.st
+index e3ecccb..1ecb4ba 100644
+--- a/BaselineOfOpenWeatherMap/BaselineOfOpenWeatherMap.class.st
++++ b/BaselineOfOpenWeatherMap/BaselineOfOpenWeatherMap.class.st
+@@ -10,11 +10,17 @@ BaselineOfOpenWeatherMap >> baseline: spec [
+ 	<baseline>
+ 	spec for: #common do: [ 
+ 		self neoBaselines: spec.
++		spec
++			baseline: 'DatasetUtilities'
++			with: [
++				spec
++					repository: 'github://reugalabf/DatasetUtilities4Pharo:main';
++					loads: #( 'Core' ) ].
+ 		spec
+ 			package: #OpenWeatherMap
+ 			with: [ spec requires: #( 'NeoJSON' 'NeoCSV' ) ];
+ 			package: #'OpenWeatherMap-Tests'
+-			with: [ spec requires: #( 'OpenWeatherMap' ) ].
++			with: [ spec requires: #( 'OpenWeatherMap' 'DatasetUtilities' ) ].
+ 		spec
+ 			group: 'Core' with: #( 'OpenWeatherMap' );
+ 			group: 'Tests' with: #( 'OpenWeatherMap-Tests' );

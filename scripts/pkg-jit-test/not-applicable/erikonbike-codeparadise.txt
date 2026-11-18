@@ -1,0 +1,67 @@
+# Tests that cannot apply in a server image.  One test for each line:
+# Class>>selector.  A line that starts with # has the proof.
+#
+# CodeParadise runs a web application as two images: a server image (this one,
+# Pharo 14, has CpServerEnvironment) and a tiny client image that runs in the
+# browser (SqueakJS; docs/Implementation.md: "client-environment.image is a tiny
+# Smalltalk image ... based on Pharo Candle ... no Compiler").  The classes
+# under test below are client code.  By design the package refuses to run
+# them in an image that has the server side classes (the comments say: "to
+# prevent CompiledMethods from being installed" and "to prevent communicators
+# from crashing the image"; the author skipped the tests for that reason).
+#
+# Proof 1: each test, with the skip taken out, in the unchanged package in this
+# image (both VMs give the same text):
+#   CpClientEnvironmentTest>>testInstallClass, testInstallMethod,
+#   testInstallMethodWithClassVarAccess, testInstallMethodWithInstVarAccess:
+#     Error: Creating ClientEnvironment instances on the server is temporarily
+#     disabled because of deadlock issues
+#     (CpClientEnvironment class>>current: "Smalltalk classNamed:
+#     #CpServerEnvironment" is not nil)
+#   CpEncodeDecodeObjectTest>>testCompiledMethod,
+#   testCompiledMethodWithAdditionalMethodState:
+#     Error: ClientEnvironment sent CompiledMethod to ServerEnvironment
+#     (CpObjectDecoder>>decodeCompiledMethod: CpClientEnvironment isRunning)
+#   CpEncodeDecodeObjectTest>>testSortedCollection:
+#     Error: ClientEnvironment sent CompiledBlock to ServerEnvironment
+#     (CpObjectDecoder>>decodeCleanBlockClosure: CpClientEnvironment isRunning)
+#
+# Proof 2: the client environment is a singleton of the client image.  With a
+# stand-in for it (the class variable Current set, #current answering it; this
+# is NOT in the repair, it is a measurement) the tests still do not pass,
+# because the code under test expects the client image:
+#   testCompiledMethod, testCompiledMethodWithAdditionalMethodState:
+#     "Unknown type in decode stream".  CpObjectDecoder>>decodeCompiledMethod
+#     makes the method with 'CompiledMethod basicNew: bytecodeSize + 4 header:'.
+#     The 4 is the trailer size of the client image.  CompiledMethod trailerSize
+#     is 5 in this image, so the decoder reads one byte too few and the next
+#     literal starts at the wrong place.  With the trailer size of this image
+#     the decode works, and the test still fails ('Encode/decode ... >>
+#     #testCompiledMethod'): the decoded method is not equal to the original
+#     (see the .md: compareMethod:to:).
+#   testInstallMethod, testInstallMethodWithClassVarAccess,
+#   testInstallMethodWithInstVarAccess: the same decoder error is swallowed by
+#     CpClientEnvironment>>handleMessageReceived:, the method is not installed
+#     (MessageNotUnderstood #temporaryMethod), and the ensure: block of the
+#     test fails with KeyNotFound.  Also the cleanup of the tests makes an
+#     endless recursion in this image: Class>>removeMethod: of the package
+#     sends #removeInstanceMethod: while CpClientEnvironment isRunning, and
+#     Behavior>>removeInstanceMethod: sends #removeSelector:, which in Pharo
+#     14 sends #removeMethod: again.  (On the tiny image #removeSelector: does
+#     not call #removeMethod:.)  The run of the endless recursion stopped
+#     stock Cog with a segmentation fault (low space) once.
+#   testInstallClass: the test calls 'Object subclass:instanceVariableNames:
+#     classVariableNames:package:', which Pharo 14 does not have
+#     (MessageNotUnderstood), and the decoder of a class builds the class with
+#     the format of the client image.
+#
+# Open point for the owner: testSortedCollection PASSES on both VMs when the
+# stand-in is set.  It is kept as not applicable because the stand-in is the
+# thing the repair rule forbids (a fake client).  A decision for the owner.
+CpClientEnvironmentTest>>testInstallClass
+CpClientEnvironmentTest>>testInstallMethod
+CpClientEnvironmentTest>>testInstallMethodWithClassVarAccess
+CpClientEnvironmentTest>>testInstallMethodWithInstVarAccess
+CpEncodeDecodeObjectTest>>testCompiledMethod
+CpEncodeDecodeObjectTest>>testCompiledMethodWithAdditionalMethodState
+CpEncodeDecodeObjectTest>>testSortedCollection

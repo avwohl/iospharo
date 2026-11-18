@@ -12,7 +12,17 @@ absent (its comment says: Fail if it is not the case); the tests were written
 for a Pharo where the removal of an absent selector did nothing.  So setUp
 fails in 26 tests before the test body runs.  The repair is in the package
 test: removeGeneratedMethods in the two test classes removes only the
-selectors that exist.  No assertion is changed."
+selectors that exist.  No assertion is changed.
+
+One more test of this package needs no entry here:
+AntDesignIconsLibraryTest>>testSerializeAsFormMaxWidthMaxHeight compares the
+pixels of an icon that the package draws with Athens and Cairo and scales
+with Form>>scaledToSize: (a WarpBlt with smoothing) to a stored control Form.
+The control values are right: the Cairo drawing gives the same raw pixels with
+each Cairo build that was measured, and the stock VM gives exactly the control
+values.  The WarpBlt primitive of the VM of this project steps over the source
+quad in another way than the stock BitBlt plugin, so the scaled pixels differ.
+The repair is in that VM, not in the package or in the image."
 
 #(#AntDesignIconsLibraryTest #MaterialDesignIcons4LibraryTest) do: [ :className |
 	fix value: className value: #removeGeneratedMethods
