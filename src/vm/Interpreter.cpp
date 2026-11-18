@@ -3962,6 +3962,9 @@ void Interpreter::checkLowSpaceSignal() {
         flushMethodCache();
         memory_.recheckLowSpace();
         if (!memory_.lowSpaceCrossed()) return;
+        // The full GC compacts old space: an Oop read before it is stale.
+        lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
+        if (!lowSem.isObject() || lowSem.isNil()) return;
     }
     // A second signal while the image still unwinds the process that it
     // stopped is no use; see ObjectMemory::lowSpaceWorthSignalling.
@@ -15147,9 +15150,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
-        if (flushFramesAtLimit(method)) {
+        switch (flushFramesAtLimit(method)) {
+        case FlushResult::Flushed:
             activateMethod(method, argCount);   // frameDepth_ is 0: the push fits
             return;
+        case FlushResult::Failed:
+            return;   // the VM is stopped (stopVM): no signal on a broken stack
+        case FlushResult::NotApplicable:
+            break;
         }
         handleStackOverflow(argCount);
         return;
@@ -17006,9 +17014,14 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     }
 
     if (!pushFrame(methodToExecute, argCount)) {
-        if (flushFramesAtLimit(block)) {
+        switch (flushFramesAtLimit(block)) {
+        case FlushResult::Flushed:
             activateBlock(block, argCount);   // frameDepth_ is 0: the push fits
             return;
+        case FlushResult::Failed:
+            return;   // the VM is stopped (stopVM): no signal on a broken stack
+        case FlushResult::NotApplicable:
+            break;
         }
         handleStackOverflow(argCount);
         return;
@@ -17669,7 +17682,13 @@ void Interpreter::setFrameLimit() {
                 if (isContextObject(saved)) { below = saved; break; }
             }
         }
-        chainDepthBase_ = senderChainLength(below, ChainWalkCap);
+        // A chain longer than StackOverflowLimit is over the limit whatever its
+        // length (a flag that comes on late finds the heap chain of a deep
+        // process).  The base stops there: the signal headroom
+        // (SignalWholeDepthCap) is then counted from the limit and not from a
+        // length that no walk can know, so the handler has room to run.
+        chainDepthBase_ = std::min(senderChainLength(below, ChainWalkCap),
+                                   StackOverflowLimit);
         chainBaseStale_ = false;
     };
     // The mode is read here, on the cold path (a process can get shouldOverflow
@@ -17747,27 +17766,33 @@ bool Interpreter::processShouldOverflow(Oop process) {
 // - After the move frameDepth_ is 0 and the operand stack restarts at its
 //   base: executeFromContext builds the top frame from the Context.  Moving
 //   the frames alone would free the frame table but not the operand stack.
-bool Interpreter::flushFramesAtLimit(Oop& keep) {
-    if (processShouldOverflow(getActiveProcess())) return false;
+Interpreter::FlushResult Interpreter::flushFramesAtLimit(Oop& keep) {
+    if (processShouldOverflow(getActiveProcess())) return FlushResult::NotApplicable;
+    if (inSyncSend_) return FlushResult::NotApplicable;
     push(keep);
     Oop top = materializeFrameStack();
     if (!matfsComplete_ || !isContextObject(top)) {
         // An allocation of a Context failed: old space is full.  The image has
-        // had its low-space signal before this point (ObjectMemory keeps the
-        // headroom of one eden), so this is a real exhaustion.
+        // had its low-space signal before this point (ObjectMemory keeps
+        // headroom, see lowSpaceEffectiveBytes), so this is a real exhaustion.
         stopVM("Out of memory while moving the frames of a deep recursion to Contexts");
-        return false;
+        return FlushResult::Failed;
     }
     frameDepth_ = 0;          // the frames are Contexts now
     chainDepthBase_ = 0;      // frames since this flush
     if (!executeFromContext(top)) {
         stopVM("Cannot continue in the top Context of a deep recursion");
-        return false;
+        return FlushResult::Failed;
     }
     chainDepthBase_ = 0;
     setFrameLimit();
     keep = pop();
-    return true;
+    // The frame on top is not the frame that a JIT chain loop saw before the
+    // send, and frameDepth_ may equal the value it saved.  The loops compare
+    // this count around an activation (processSwitchedSince) and then leave
+    // the continuation of the frame to the interpreter.
+    processSwitchCount_++;
+    return FlushResult::Flushed;
 }
 
 // pushFrame's stack-overflow report, out of line so the hot push does not
@@ -22929,9 +22954,10 @@ Oop Interpreter::materializeFrameStackImpl() {
             frame.materializedContext = context;
             freshContext = true;
 
-            // GC SAFETY: allocateSlots may trigger fullGC, which compacts the heap
-            // and moves objects. All C++ locals holding Oops or raw pointers into
-            // heap objects are now stale. Re-derive them from GC roots.
+            // GC SAFETY: allocateSlots does not collect (ObjectMemory::allocateRaw
+            // only sets the request flags; the collections run at the next
+            // checkpoint), so no Oop moves here.  The re-derivation below is kept
+            // as a belt for an allocator that may collect.  Re-derive from GC roots.
             // - sender: re-read from the previous frame's materializedContext (a root)
             //   or from activeContext_ (a root) if this is the first frame
             if (i == startFrame) {

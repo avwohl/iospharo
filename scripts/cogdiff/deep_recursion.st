@@ -9,7 +9,7 @@
  The recursion with no end that ends in OutOfMemory is in lowspace_recursion.st.
 
  Measured 2026-11-17.  Stock Cog, patched Cog (cogp) and our VM (JIT on, and with
- PHARO_NO_JIT=1, and with PHARO_NO_MCF=1) give the same ten lines:
+ PHARO_NO_JIT=1, and with PHARO_NO_MCF=1) give the same eleven lines:
    block 1000000 deep with an end: 1000000
    method 1000000 deep with an end: 1000000
    method 300000 deep, thisContext at each level: 300000
@@ -19,6 +19,7 @@
    non-local return from depth 300000 to the top: 42
    non-local return from depth 100000 runs 100000 ensure blocks: 7->100000
    sender chain at depth 500000: true
+   shouldOverflow set at depth 200000, then 100000 frames more: error caught: #caught
    process stopped by a watcher at depth 1000000: true
  Before the change our VM stopped each recursion deeper than 56000 frames with
  'Error: stack overflow: recursion deeper than 56000 frames' (measured for the
@@ -58,6 +59,9 @@
 (Smalltalk at: #DeepProbe) compile: 'ensureNlrWith: blk depth: n
 	n = 0 ifTrue: [ ^ blk value: 7 ].
 	^ [ (self ensureNlrWith: blk depth: n - 1) + 1 ] ensure: [ count := (count ifNil: [ 0 ]) + 1 ]'.
+(Smalltalk at: #DeepProbe) compile: 'flagAt: n then: m
+	n = 0 ifTrue: [ Processor activeProcess shouldOverflow: true. ^ [ self plain: m ] ensure: [ Processor activeProcess shouldOverflow: false ] ].
+	^ (self flagAt: n - 1 then: m) + 1'.
 (Smalltalk at: #DeepProbe) compile: 'forever: n
 	^ (self forever: n + 1) + 1'.
 results := OrderedCollection new.
@@ -73,6 +77,7 @@ run value: 'ensure blocks run: 100000 levels' value: [ | p | p := (Smalltalk at:
 run value: 'non-local return from depth 300000 to the top' value: [ (Smalltalk at: #DeepProbe) new farNlr: 300000 ].
 run value: 'non-local return from depth 100000 runs 100000 ensure blocks' value: [ | p r | p := (Smalltalk at: #DeepProbe) new. r := p ensureNlr: 100000. r -> p count ].
 run value: 'sender chain at depth 500000' value: [ ((Smalltalk at: #DeepProbe) new chainLength: 500000) >= 500000 ].
+run value: 'shouldOverflow set at depth 200000, then 100000 frames more: error caught' value: [ [ (Smalltalk at: #DeepProbe) new flagAt: 200000 then: 100000. #noError ] on: Error do: [ :e | #caught ] ].
 run value: 'process stopped by a watcher at depth 1000000' value: [
 	| p stopped sem |
 	sem := Semaphore new.

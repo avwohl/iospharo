@@ -1765,9 +1765,14 @@ private:
     // #stackOverflow: move all inline frames to Contexts, restart the frame
     // count and the operand stack from the top Context, and answer true: the
     // caller then runs the activation again.  `keep` is rooted on the operand
-    // stack across the move and is answered back updated.  Answers false, and
-    // changes nothing, for a process that gets #stackOverflow.
-    bool flushFramesAtLimit(Oop& keep);
+    // stack across the move and is answered back updated.
+    // Answers NotApplicable, and changes nothing, for a process that gets
+    // #stackOverflow and for a send that the Sista helper drives (inSyncSend_:
+    // its loop counts frames and cannot take a restart of the frame table).
+    // Answers Failed after stopVM (no memory for the Contexts): the caller
+    // returns at once and does not signal anything.
+    enum class FlushResult { NotApplicable, Flushed, Failed };
+    FlushResult flushFramesAtLimit(Oop& keep);
     size_t senderChainLength(Oop context, size_t cap);
     // Cold part of every depth test: is `depth` inline frames (plus the chain)
     // at the limit?  Re-measures, repairs a stale base, manages the headroom.

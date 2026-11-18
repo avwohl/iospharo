@@ -1008,11 +1008,17 @@ public:
     }
     /// Free old space that the image must still have when it is told that space
     /// is low: the headroom below, or the image's own threshold if that is more.
+    /// The headroom covers what old space can still take between the crossing
+    /// and the delivery (the delivery waits for a checkpoint): the tenure of one
+    /// scavenge (up to one eden) and the burst of Contexts that a flush of a
+    /// deep recursion makes (FlushFrameLimit frames, up to LowSpaceFlushBurst
+    /// bytes).  The image needs memory of its own to unwind after the signal.
     size_t lowSpaceEffectiveBytes() const {
+        constexpr size_t LowSpaceFlushBurst = 16u * 1024 * 1024;
         size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
         size_t reservation  = static_cast<size_t>(oldSpaceEnd_ - oldSpaceStart_);
-        size_t headroom     = edenCapacity < reservation / 16 ? edenCapacity
-                                                              : reservation / 16;
+        size_t want         = edenCapacity + LowSpaceFlushBurst;
+        size_t headroom     = want < reservation / 8 ? want : reservation / 8;
         return lowSpaceThresholdBytes_ > headroom ? lowSpaceThresholdBytes_ : headroom;
     }
     /// Has old space grown by more than one eden since the last compacting GC?
@@ -1023,6 +1029,7 @@ public:
     }
     /// After a collection: clear the latch if the free space is back above the
     /// threshold, and then forget the free space of the last delivery.
+    /// fullGC calls this at its end, so a collection from any place counts.
     void recheckLowSpace() {
         if (freeOldSpaceBytes() >= lowSpaceEffectiveBytes()) {
             lowSpaceCrossed_ = false;

@@ -42,8 +42,26 @@ Part 1: no depth limit for a process that does not get `#stackOverflow`.
   return).  So the budget bounds the frame table and the operand stack (64
   slots for each frame) as before.  The heap chain under the frames is not
   counted and not walked.  A resume of such a process measures nothing.
+- If the flush cannot get memory for the Contexts, `flushFramesAtLimit` calls
+  `stopVM` with a message and answers `FlushResult::Failed`.  The caller then
+  returns at once.  It does not signal a Smalltalk error on a stack that is
+  off by one slot.
+- The flush adds 1 to `processSwitchCount_`.  The JIT loops that call
+  `activateMethod` compare `frameDepth_` with the value from before the call.
+  After a flush `frameDepth_` can equal that value while the frame on top is
+  new.  These loops already leave the continuation to the interpreter when
+  `processSwitchCount_` has changed.
+- A send that the Sista helper drives (`inSyncSend_`) is not flushed.  The loop
+  of `jitSistaCallSend` counts frames and cannot take a restart of the frame
+  table.  Such a send at the frame limit gets the catchable stack overflow
+  error.  Sista dispatch is off by default.
 - A process whose `shouldOverflow` slot is true keeps the old rule: the whole
-  depth, the chain walk at a resume, and `#stackOverflow` at 56000.
+  depth, the chain walk at a resume, and `#stackOverflow` at 56000.  The
+  measured chain is at most `StackOverflowLimit`.  A flag that comes on at a
+  depth of 200000 finds a heap chain that no walk can measure to its end.  With
+  the cap at the limit, the signal has its full headroom and the handler runs.
+  Before, the signal found no room and the VM ended the process without
+  running its `ensure:` blocks.
   `Interpreter::processShouldOverflow` reads the slot at each resume.  It also
   reads the slot at each trip of the limit.  So the VM finds a process that gets
   the flag while it runs.  `ProcessTest>>testStackOverflow` passes.
@@ -67,25 +85,34 @@ image.  Two things were wrong.
   process.  The second signal reached the handler of the first one
   (`OutOfMemory` in the handler).  Now the image gets a second signal only when
   the free space has fallen to half of the free space at the first signal
-  (`ObjectMemory::lowSpaceWorthSignalling`).  A collection that frees space
-  starts the rule again.
+  (`ObjectMemory::lowSpaceWorthSignalling`).  A full GC that frees the space
+  ends the crossing, the latch and this rule (`recheckLowSpace`, called at the
+  end of `fullGC`).
 - Nothing collected the garbage that the stopped process left.  The full GC
   runs at a growth of 512 MB over the last one.  A small old-space limit does
   not reach this growth, and the abort came first.  Now the checkpoint runs a
   full GC before it tells the image.  It does this if the old space grew by more
   than an eden since the last one.  The Cog change
   `docs/upstream/cog-low-space-before-old-space-limit.patch` does the same.  A
-  collection that frees enough ends the crossing.
+  collection that frees enough ends the crossing.  The full GC moves objects,
+  so `checkLowSpaceSignal` reads the low-space semaphore again after the GC.
+  Before this was done, the signal went to a stale Oop: a recursion with large
+  frames (26 temporaries, an array in each frame) aborted at 2048 MB and at
+  512 MB (`[STORE-OOB]` in the log, then the old-space abort).
+- The headroom (`ObjectMemory::lowSpaceEffectiveBytes`) is one eden plus 16 MB
+  (the Contexts of one flush), and at most 1/8 of the old space.  The checkpoint
+  delivers the signal, so the old space can take one scavenge tenure and one
+  flush between the crossing and the delivery.
 
 Measured on 2026-11-17 (release build, JIT on):
 
-- `scripts/cogdiff/deep_recursion.st` has ten checks.  They are: a recursion of
+- `scripts/cogdiff/deep_recursion.st` has eleven checks.  They are: a recursion of
   1000000 frames with an end, `thisContext` at each level, a non-local return
   at each of 200000 levels, a non-local return from a depth of 300000 to its
   home, an error at a depth of 300000 caught at the top, 100000 `ensure:`
-  blocks, a sender chain of 500000 contexts, and a watcher that stops an endless
-  recursion at a depth of 1000000.  Stock Cog, patched Cog and our VM give the
-  same ten lines.  Our VM gives them with the JIT, with `PHARO_NO_JIT=1` and
+  blocks, a sender chain of 500000 contexts, a `shouldOverflow` flag that comes on at a
+  depth of 200000, and a watcher that stops an endless recursion at a depth of 1000000.  Stock Cog, patched Cog and our VM give the
+  same eleven lines.  Our VM gives them with the JIT, with `PHARO_NO_JIT=1` and
   with `PHARO_NO_MCF=1`.
 - `scripts/vmrun.sh eval --old-space 1024 ours scripts/cogdiff/lowspace_recursion.st`
   answers `OutOfMemory: `, as the patched Cog does.

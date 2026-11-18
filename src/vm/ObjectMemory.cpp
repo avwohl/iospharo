@@ -4091,6 +4091,11 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
 
     // Record compacted size for threshold-based GC triggering
     lastCompactedSize_ = oldSpaceFree_ - oldSpaceStart_;
+    // A full GC from any place that frees the space ends the crossing and the
+    // hysteresis of the low-space signal (see lowSpaceWorthSignalling).  The
+    // latch must go with the hysteresis: a latch that outlives the crossing
+    // would be delivered with the space free.
+    recheckLowSpace();
 
     gcCount_++;
     totalGCTime_ += result.milliseconds;
@@ -4627,13 +4632,9 @@ Oop ObjectMemory::oopFromPointer(ObjectHeader* ptr) const {
     return Oop::fromObject(ptr, space);
 }
 
-// NOTE: As of 2026-05-27 `rememberedSet_` is populated here but never
-// iterated (only `.clear()`-ed by scavenge at line 1599).  Scavenge
-// instead does an O(oldSpace) full scan for old→young pointers (line
-// 1563) to tolerate missed barriers in JIT-emitted stores.  Wiring up
-// this set for use in scavenge would let us drop the full scan — see
-// `jit_remembered_set_dead.md` and the AsmjitT1.cpp:1925-1928 design
-// comment for the audit gap that needs closing first.
+// Scavenge iterates `rememberedSet_` (the holders of old->young pointers), so
+// a store into an old object needs this barrier (slotAtPutBarriered).  A
+// young object needs none.
 void ObjectMemory::rememberObject(Oop obj) {
     if (obj.isObject()) {
         ObjectHeader* hdr = obj.asObjectPtr();
