@@ -68,8 +68,11 @@ Part 1: no depth limit for a process that does not get `#stackOverflow`.
 - Machine code needs no change.  Its depth tests read `JITState::mcfDepthLimit`,
   which `setFrameLimit` sets to `min(frameLimit_, McfNativeDepthCap)`.  Both
   backends (arm64 and x86_64) read this field, and a refusal goes to the
-  interpreter, where the push trips and the flush runs.  The x86_64 backend
-  was read, not built.
+  interpreter, where the push trips and the flush runs.  After the merge
+  into `main` the four build trees built (`build-rel`, `build-nojit`,
+  `build-dbg`, `build-x86`), and `scripts/cogdiff/deep_recursion.st` gave
+  the same eleven lines on each of them (the x86_64 build ran under
+  Rosetta).
 - Searches along the sender chain had the bound 70000 (the home of a
   non-local return, the next `ensure:` block, the pinned contexts of the JIT
   eviction).  A chain can be longer now, so a non-local return from a depth of

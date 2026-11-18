@@ -242,9 +242,10 @@ State on 2026-11-17 at 20:00, rows 1 to 146 (the record of each repair is
 state of each row.
 
 - 125 rows are clean: each test passes on stock Cog and on our VM.
-- 2 rows are clean with tests that cannot apply on the machine: row 70
-  (BioSmalltalk, 7 tests for Glamorous Toolkit) and row 119 (AoC-in-Pharo,
-  6 tests that read puzzle input files of the author).
+- 3 rows are clean with tests that cannot apply on the machine: row 70
+  (BioSmalltalk, 7 tests for Glamorous Toolkit), row 82 (MCP, 1 test that
+  needs a World that steps the Transcript) and row 119 (AoC-in-Pharo, 6
+  tests that read puzzle input files of the author).
   `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 4 rows name repositories that are not public any more (51, 62, 66, 135).
@@ -259,7 +260,6 @@ state of each row.
 | 57 | EscapeAnalysisPharo | 81 of 82 pass | the analyzer of the package is repaired (33 entries).  Open: 1 skip of the author, a known wrong answer of the analyzer; a repair changes the answer of three other tests, so the author must decide |
 | 71 | Pillar | 62 of 66 pass | open: 4 PDF tests need TeX (`latexmk`, `lualatex`), which the machine does not have; the owner must decide.  Behind them: the pin of OSSubprocess `v2.0.0` in the baseline of Pillar does not work on Pharo 14 |
 | 75 | anthropic-sdk-pharo | 931 of 932 pass | the 1 skip writes into the login keychain: the owner must decide |
-| 82 | MCP | stock Cog 1166 of 1167, our VM 1165 | 1 test fails on our VM only (the limit of 56000 frames; the VM repair is in work on the branch `deep-recursion`).  The 1 skip cannot apply on Pharo 14 |
 | 84 | Soil | 1167 of 1184 pass, 17 skips | 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`).  Open: 3 coverage tests of the package ask for 93 percent, and the measured coverage is 81 to 86 percent |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
@@ -271,6 +271,7 @@ The package run found these defects outside the packages:
 
 | Defect | Where | Found by | State |
 |---|---|---|---|
+| Each process stopped at 56000 frames with an error that Cog does not give | our VM | MuTalk, MCP (1 test failed on our VM only) | repaired and merged (2026-11-17): a process with no `shouldOverflow` flag has no depth limit; `scripts/cogdiff/deep_recursion.st` gives the same 11 lines on stock Cog, the patched Cog and the four builds of our VM; the sweep of the branch build equals the reference; row 82 passes on the two VMs |
 | A segmentation fault in a full GC in 2 of 5 runs of one package: `Cogit>>indexForSelector:in:at:` follows a forwarded literal and writes the young object back into an old method with no store check | stock Cog | PharoMisc (row 6) | the cause is proved with a watch on the slot; local branch `fix/indexforselector-store-check` and `docs/upstream/cog-indexforselector-store-check.patch`; 10 of 10 runs clean with the change (5 of 9 crashed before).  An audit of our VM for the same class of defect is in work |
 | Our test runner starts the tests inside the image start, before the deferred start actions of the image (servers of Zinc and of packages start there); stock Cog runs the tests after them | our test runner (`scripts/pharo-headless-test/run_sunit_tests.st`) | PharoSmalltalkInteropServer (44 of 44 on Cog, 9 on our VM, no VM defect) | the package tests are repaired; the change of the runner is in design, with probes (`/tmp/pharo-work/runner2/`) |
 | The socket option primitives knew 6 names and gave a false success for each other name; a new socket had no `SO_REUSEADDR` | our VM | PharoMisc (multicast tests) | repaired in `SocketPlugin.cpp`; `sweep14-new11` is clean |
