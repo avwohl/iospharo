@@ -1627,3 +1627,35 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - Open: a port of the parser and the importer to the present metamodel is
   in work.
 
+## PharoSmalltalkInteropServer (`mumez/PharoSmalltalkInteropServer`, row 137)
+
+- State before: 44 tests.  Stock Cog passes 44.  Our VM passes 9, with 34
+  errors (`ConnectionClosed: Connection aborted to 127.0.0.1:8086`) and 1
+  failure (`testStatusStringWhenRunning`).
+- No defect of our VM.  Probes on the two VMs show that the socket plugin,
+  Zinc and Teapot work on our VM when the server runs.
+- Cause of the difference, in our test runner: the runner starts the tests
+  inside the image start, before the deferred start actions of the image.
+  `SisServer class>>startUp:` makes the server in such an action.  On stock
+  Cog the tests start after these actions, so the server runs before the
+  first test.  On our VM the first test that sends `SisServer current`
+  starts the server inside the test.  SUnit ends each process that a test
+  started, so the server stops at the end of that test, and each later
+  request has no server.  The change of the runner is in work (see
+  [../WIP.md](../WIP.md)).
+- Defects of the package that the difference showed.  They are there on
+  each VM, when the first `SisServer current` is in a test or when one test
+  runs alone:
+  - `SisTest` has no setUp, so the tests depend on a server that something
+    else started.
+  - `testStatusStringWhenRunning` passed on stock Cog only after an earlier
+    test put a setting into the server.  `SisServer>>statusString` printed
+    an empty list of settings as `#()` and a list with entries as `{...}`.
+- Repair (`fixes/mumez-pharosmalltalkinteropserver.st`):
+  - a new `SisTest>>setUp` starts the server when it does not run.  The
+    start is inside `DefaultExecutionEnvironment beActiveDuring:`, so the
+    server processes do not belong to the test and SUnit does not end them.
+  - `statusString` prints `{}` for no settings.  The text for a list with
+    entries is the same as before.
+- Result: 44 of 44 pass on the two VMs.
+
