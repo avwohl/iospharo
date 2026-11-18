@@ -125,7 +125,8 @@ Measured on 2026-11-17 (release build, JIT on):
   18 and 18; a recursion of 20000 frames, 200 times, 15 and 15.  A recursion of
   50000 frames, 80 times, crosses the flush point: 78 on the main VM and 168
   here.  A recursion of 1000000 frames takes about 75 ms.
-- The full sweep of the Pharo 14 tests: 39461 tests, 39373 pass, 0 fail, 0
+- The full sweep of the Pharo 14 tests with the final build
+  (`/tmp/pharo-work/sweep14-deep-final`): 39461 tests, 39373 pass, 0 fail, 0
   error, 87 skip, 1 expected failure, no batch with a return code other than 0,
   and the interactive pass 135 of 135.  This equals the main VM.
 
