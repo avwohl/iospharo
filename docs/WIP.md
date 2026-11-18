@@ -250,13 +250,14 @@ state of each row.
   tests that read puzzle input files of the author).
   `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
-- 4 rows name repositories that are not public any more (51, 62, 66, 135).
-  These rows cannot run.
-- 13 rows are not clean yet.  The table has the rows with an open point.
+- 5 rows cannot run: 4 name repositories that are not public any more (51,
+  62, 66, 135), and row 150 (pharo-agent) is a TypeScript program with no
+  Smalltalk code.
+- 12 rows are not clean yet.  The table has the rows with an open point.
   Rows 121, 124, 126, 138 and 147 are in a second round (row 147 has 2
   errors on our VM only: a connection to a telnet server in the image).
-  Row 146 has a repair whose run is in work.  Rows 149 and 150 do not load
-  and are with agents:
+  Row 146 is in a second round too (5 tests of a profiler give a count of
+  1).  Row 149 has a patch of its baseline whose run is in work:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -276,7 +277,7 @@ The package run found these defects outside the packages:
 |---|---|---|---|
 | Each process stopped at 56000 frames with an error that Cog does not give | our VM | MuTalk, MCP (1 test failed on our VM only) | repaired and merged (2026-11-17): a process with no `shouldOverflow` flag has no depth limit; `scripts/cogdiff/deep_recursion.st` gives the same 11 lines on stock Cog, the patched Cog and the four builds of our VM; the sweep of the branch build equals the reference; row 82 passes on the two VMs |
 | A segmentation fault in a full GC in 2 of 5 runs of one package: `Cogit>>indexForSelector:in:at:` follows a forwarded literal and writes the young object back into an old method with no store check | stock Cog | PharoMisc (row 6) | the cause is proved with a watch on the slot; local branch `fix/indexforselector-store-check` and `docs/upstream/cog-indexforselector-store-check.patch`; 10 of 10 runs clean with the change (5 of 9 crashed before).  An audit of our VM for the same class of defect is in work |
-| Our test runner starts the tests inside the image start, before the deferred start actions of the image (servers of Zinc and of packages start there); stock Cog runs the tests after them | our test runner (`scripts/pharo-headless-test/run_sunit_tests.st`) | PharoSmalltalkInteropServer (44 of 44 on Cog, 9 on our VM, no VM defect) | the package tests are repaired; the change of the runner is in design, with probes (`/tmp/pharo-work/runner2/`) |
+| The eval mode of our VM ran its text before the deferred start actions of the image (servers of Zinc and of packages start there).  The image loads the start script of the eval mode inside the first deferred action; stock Cog forks a process for the eval text, which runs after each action.  Each test run is an eval | our VM (`src/vm/test_load_image.cpp`, the eval mode) | PharoSmalltalkInteropServer (44 of 44 on Cog, 9 on our VM) | the design with probes is `/tmp/pharo-work/runner2/design-final.md`: the start script runs the deferred actions before the eval text.  The change is built in a work tree; the validation (rows 137 and 147 with no package repair, a full sweep) is in work |
 | The socket option primitives knew 6 names and gave a false success for each other name; a new socket had no `SO_REUSEADDR` | our VM | PharoMisc (multicast tests) | repaired in `SocketPlugin.cpp`; `sweep14-new11` is clean |
 | No `NewFilePlugin` | our VM | pharo-newfile (8 tests skip on our VM only) | ported (POSIX side), reviewed two times; the row passes 42 of 42 on the two VMs; `sweep14-new11` is clean |
 | `RBNamespace>>renameClass:to:around:` loses method changes | Pharo image | Chanel | image fix 31 |

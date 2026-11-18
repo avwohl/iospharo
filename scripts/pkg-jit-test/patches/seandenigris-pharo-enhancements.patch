@@ -1,0 +1,41 @@
+diff --git a/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st b/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st
+index 346bf79..c71402f 100644
+--- a/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st
++++ b/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st
+@@ -39,6 +39,6 @@ BaselineOfPharoEnhancements >> customProjectAttributes [
+ { #category : #testing }
+ BaselineOfPharoEnhancements >> isGTImage [
+ 	
+-	^ RPackageOrganizer default packageNames anySatisfy: [ :pn | pn beginsWith: 'Lepiter-' ].
++	^ PackageOrganizer default packageNames anySatisfy: [ :pn | pn beginsWith: 'Lepiter-' ].
+ 	"Implementation note: used to check for GToolkit prefix, but P7 has a GToolkit-Examples package. Lepiter, OTOH, could only be loaded in a GT image"
+ ]
+diff --git a/src/PharoEnhancements/TraitBuilderEnhancer.extension.st b/src/PharoEnhancements/TraitBuilderEnhancer.extension.st
+deleted file mode 100644
+index eb30e39..0000000
+--- a/src/PharoEnhancements/TraitBuilderEnhancer.extension.st
++++ /dev/null
+@@ -1,23 +0,0 @@
+-Extension { #name : 'TraitBuilderEnhancer' }
+-
+-{ #category : '*PharoEnhancements' }
+-TraitBuilderEnhancer >> allSlotsForBuilder: aBuilder [
+-
+- 	| resultingSlots |
+-
+- 	resultingSlots := self
+- 		eliminateDuplicates: aBuilder layoutDefinition slots , aBuilder traitComposition asTraitComposition slotsCopy
+- 		withSuperclassSlots: (aBuilder superclass ifNil: [#()] ifNotNil:[ :x | x allSlots]).
+-
+- 	^ resultingSlots
+-]
+-
+-{ #category : '*PharoEnhancements' }
+-TraitBuilderEnhancer >> configureClass: newClass superclass: superclass withLayoutType: layoutType slots: slots [
+-	| resultingSlots |
+-	self validateTraitComposition: self traitComposition ofClass: builder oldClass.
+-
+-	resultingSlots := self allSlotsForBuilder: builder.
+-
+-	newClass superclass: superclass withLayoutType: layoutType slots: resultingSlots
+-]

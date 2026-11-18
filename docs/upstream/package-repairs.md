@@ -1634,14 +1634,18 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   failure (`testStatusStringWhenRunning`).
 - No defect of our VM.  Probes on the two VMs show that the socket plugin,
   Zinc and Teapot work on our VM when the server runs.
-- Cause of the difference, in our test runner: the runner starts the tests
-  inside the image start, before the deferred start actions of the image.
-  `SisServer class>>startUp:` makes the server in such an action.  On stock
-  Cog the tests start after these actions, so the server runs before the
-  first test.  On our VM the first test that sends `SisServer current`
-  starts the server inside the test.  SUnit ends each process that a test
-  started, so the server stops at the end of that test, and each later
-  request has no server.  The change of the runner is in work (see
+- Cause of the difference, in the eval mode of our VM (the test run of each
+  VM is an eval of the same runner file).  The image runs its deferred
+  start actions in a list.  The first action is the command line handler.
+  On stock Cog that action forks a process for the eval text, so the text
+  runs after each other action.  Our VM gives the eval text to the image as
+  a start script, and the image loads the script inside the first action.
+  So on our VM the tests started before the other actions.
+  `SisServer class>>startUp:` makes the server in such an action.  On our
+  VM the first test that sends `SisServer current` started the server
+  inside the test.  SUnit ends each process that a test started, so the
+  server stopped at the end of that test, and each later request had no
+  server.  The change of the eval mode is in work (see
   [../WIP.md](../WIP.md)).
 - Defects of the package that the difference showed.  They are there on
   each VM, when the first `SisServer current` is in a test or when one test
@@ -1716,4 +1720,20 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   test is not changed.
 - Result: the test passes 300 of 300 runs on the two VMs, and the row
   passes 18 of 18 on the two VMs.
+
+## pharo-agent (`pharo-llm/pharo-agent`, row 150)
+
+- State: `LOAD-FAIL` (`KeyNotFound: key 'BaselineOfLLMPharoAgent' not
+  found`).
+- The row cannot run.  The repository is a command line program in
+  TypeScript that talks to a Pharo image from outside.  It has no Smalltalk
+  package and no baseline:
+  - `git ls-files` at the head of the branch `main` lists 56 files, 35 of
+    them `.ts`, and no directory `src`;
+  - the one `.st` file is `examples/run-sunit.st`;
+  - the README gives a shell command for the install and no load of code
+    into an image.
+- The baseline name and the path of the manifest row were a guess.
+- For the owner: the row has no test to run in an image.  Another package
+  can take its place in the manifest.
 
