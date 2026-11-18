@@ -1696,3 +1696,24 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   `Date today year`, as the test `testYearLimits` of the same class does.
 - Result: 22 of 22 pass on the two VMs.
 
+## Sindarin-DAP (`Pharo-XP-Tools/Sindarin-DAP`, row 145)
+
+- State before: 18 tests.  Our VM passed 18 in the run of the row.  Stock
+  Cog passed 17 and had 1 failure:
+  `DAPHistoryTest>>testMessagesShouldReturnInReverseChronologicalOrder`
+  ("Got 7 instead of 8").
+- No defect of a VM.  The test fails on the two VMs in repeated runs: 171 of
+  300 runs on stock Cog and 67 of 300 on our VM.  Our VM passed the run of
+  the row by accident.
+- Cause, in the package: `DAPHistory>>messages` sorts the messages by their
+  time stamp (`DateAndTime now`) with the block `[ tA >= tB ]`.  Messages
+  that arrive in one tick of the clock have the same time stamp, and the
+  sort then gives them in any order.  Measured: of 2000 time stamps taken
+  in a loop, 655 are distinct on stock Cog and 912 on our VM.
+- Repair (`fixes/pharo-xp-tools-sindarin-dap.st`): `addRequest:`,
+  `addEvent:` and `addResponse:` give each message an arrival number, and
+  `messages` sorts by the time stamp and then by the arrival number.  The
+  test is not changed.
+- Result: the test passes 300 of 300 runs on the two VMs, and the row
+  passes 18 of 18 on the two VMs.
+

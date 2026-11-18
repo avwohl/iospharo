@@ -237,13 +237,13 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 20:00, rows 1 to 146 (the record of each repair is
-[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 147 to
+State on 2026-11-17 at 21:00, rows 1 to 150 (the record of each repair is
+[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 151 to
 200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).  The command
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 125 rows are clean: each test passes on stock Cog and on our VM.
+- 130 rows are clean: each test passes on stock Cog and on our VM.
 - 3 rows are clean with tests that cannot apply on the machine: row 70
   (BioSmalltalk, 7 tests for Glamorous Toolkit), row 82 (MCP, 1 test that
   needs a World that steps the Transcript) and row 119 (AoC-in-Pharo, 6
@@ -252,10 +252,11 @@ state of each row.
   proof.
 - 4 rows name repositories that are not public any more (51, 62, 66, 135).
   These rows cannot run.
-- 15 rows are not clean yet.  The table has the rows with an open point.
-  Rows 121, 124 and 126 are in a second round.  Rows 138 and 142 to 146
-  are new and with agents for the first analysis (row 145 fails 1 test on
-  stock Cog only):
+- 13 rows are not clean yet.  The table has the rows with an open point.
+  Rows 121, 124, 126, 138 and 147 are in a second round (row 147 has 2
+  errors on our VM only: a connection to a telnet server in the image).
+  Row 146 has a repair whose run is in work.  Rows 149 and 150 do not load
+  and are with agents:
 
 | Row | Package | State | Work |
 |---|---|---|---|
