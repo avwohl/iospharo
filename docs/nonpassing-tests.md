@@ -93,9 +93,43 @@ because 8 of them run with two parameter sets.  The 1 failure of our VM is
    failures and errors, no skips), and the 7 Pharo 13 test defects of
    `scripts/image-fixes/10-pharo13-test-defects.st`
    ([image_issues.md](image_issues.md)).  The entries of
-   `scripts/image-fixes/` check for each defect before the change, so most
-   entries apply to Pharo 13 too.  No Pharo 13 sweep with the entries ran.
+   `scripts/image-fixes/` check for each defect before the change.  No
+   Pharo 13 run with the entries is recorded.  See "The 132 repairs and
+   Pharo 13" below.
 9. The package run: 256 tests are open.  See the package part.
+
+### The 132 repairs and Pharo 13
+
+The 132 repairs change classes of the standard Pharo 14 image (build 791 from
+`get.pharo.org`), not our harness.  Each repair was written and measured on
+Pharo 14 only.  A comparison of the source files (no VM run, 2026-11-18) of
+Pharo 13.1 (`Pharo13.1-64bit-81f6149.sources`) and Pharo 14
+(`Pharo14.0-64bit-42a90c7.sources`) gives:
+
+- 121 of the 132 test methods have the same source in Pharo 13.  2 more
+  differ only in a name and keep the same skip
+  (`BlockClosureTest>>testOnForkErrorTakesLessThanOneSecond`,
+  `ClapHelloTest>>testHelloBothShoutingAndWhispering`).
+- 8 tests are not in Pharo 13: the classes `DebugInfoTest`, `OCRengineTest`,
+  `RunnerLongDurationTest` and `StDebuggerClientModelTest` are new in
+  Pharo 14, and `OCArrayLiteralTest>>testLiteralArrayLongHavingAnotherArrayLong`
+  is a new test.
+- 1 test has the skip only in Pharo 14:
+  `ReflectivityOnStackTest>>testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually`
+  (Pharo issue 20072).
+- Of the methods that the entries 20 to 35 replace, 126 have the same source
+  in Pharo 13, 10 differ and 16 are not in Pharo 13.  An entry checks the
+  old source text first, so an entry for a method that differs makes no
+  change on Pharo 13.  The 10 methods that differ:
+  `BlockClosureTest>>testOnForkErrorTakesLessThanOneSecond`,
+  `ClapHelloTest>>testHelloBothShoutingAndWhispering`,
+  `ClyBrowserMorph>>spawnQueryBrowserOn:withState:`,
+  `OCASTTranslator>>visitArrayNode:`,
+  `ReflectivityOnStackTest>>testExecuteWithWaiting...ChangeMethodManually`,
+  `OCCodeReparator>>openMenu`, `NetNameResolver class>>localHostAddress`,
+  `OCCodeSnippet class>>badExpressions`,
+  `RBNamespace>>renameClass:to:around:`,
+  `RBTransformationsTest>>testRenameClassTransform`.
 
 ## Part A1: repaired, 132 tests
 
