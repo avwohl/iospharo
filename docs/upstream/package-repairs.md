@@ -1809,6 +1809,6 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   set still calls `checkConnection` again at once.  And
   `testSortedCollection` passes with a stand-in client environment; it is
   in the list of 7 because the repair uses no stand-in.
-- Result of the agent's run: 26 pass and 7 skips on the two VMs.  The run of
-  the row from a new load is in work.
+- Result, in a run from a new load: 26 pass and 7 skips on the two VMs; each
+  skip is in the not-applicable file.
 

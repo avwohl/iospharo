@@ -245,10 +245,11 @@ State on 2026-11-17 at 21:00, rows 1 to 150 (the record of each repair is
 state of each row.
 
 - 130 rows are clean: each test passes on stock Cog and on our VM.
-- 3 rows are clean with tests that cannot apply on the machine: row 70
+- 4 rows are clean with tests that cannot apply on the machine: row 70
   (BioSmalltalk, 7 tests for Glamorous Toolkit), row 82 (MCP, 1 test that
-  needs a World that steps the Transcript) and row 119 (AoC-in-Pharo, 6
-  tests that read puzzle input files of the author).
+  needs a World that steps the Transcript), row 119 (AoC-in-Pharo, 6 tests
+  that read puzzle input files of the author) and row 121 (CodeParadise, 7
+  tests of client code that runs in a small image in the browser).
   `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 5 rows cannot run: 4 name repositories that are not public any more (51,
@@ -268,7 +269,6 @@ state of each row.
 | 84 | Soil | 1167 of 1184 pass, 17 skips | 14 skips cannot apply (`not-applicable/apptivegrid-soil.txt`).  Open: 3 coverage tests of the package ask for 93 percent, and the measured coverage is 81 to 86 percent |
 | 89 | Teapot | 78 of 79 pass | 1 skip: `testHttpsGet` needs an HTTPS server in the image.  The SSL plugin of the two VMs takes a server certificate only from a keychain on macOS.  A plugin change is needed in our VM and in Cog; it must not touch a keychain of the user.  Not started |
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
-| 121 | CodeParadise | 26 pass, 7 skips that cannot apply (the agent's run) | the second repair has no stand-in: an endless recursion of the package with no URL is repaired, 6 tests of the communicator run, 7 client-side tests are in the not-applicable file.  The old hang on our VM came from the 56000-frame limit, which is gone.  The run from a new load is in work |
 | 124 | Iconography | stock Cog 32 of 32, our VM 31 | a defect of our VM, measured: WarpBlt (`Form>>scaledToSize:`) does not pick pixels as the stock plugin does; the Cairo drawing is equal word for word.  A second defect: the alpha blend of the rules 24 and 34 rounds in another way.  The port of the stock algorithm is in work on the branch `warpblt-stock-algorithm` |
 | 126 | Famix-Cpp | 20 of 30 pass, 10 expected failures | the row loads now.  The 10 are tests of a CSV parser that names classes of an older metamodel; a port of the parser is in work |
 
