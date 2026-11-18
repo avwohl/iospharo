@@ -1090,6 +1090,23 @@ int main(int argc, char* argv[]) {
               << "[ 'startup.st' asFileReference ensureDelete ]\n"
               << "  on: Error do: [:e | ].\n"
               ;
+            // Stock Cog runs the eval text in the forked command line handler
+            // process, after every deferred startup action (ZnServer starts its
+            // managed servers there, and packages start theirs).  This script
+            // runs inside the first deferred action (CommandLineHandler>>activate
+            // -> parseGeneralOptions -> runPreferences), so the other actions are
+            // still in the list.  Run them now, as Cog has done by then.  An
+            // error in one action is printed and does not stop the others or the
+            // eval text (a failed action is already out of the list).  Measured
+            // 2026-11-17 with a package whose tests use a server that its
+            // deferred action starts: stock Cog 44 of 44, our VM 9 of 44 before.
+            f
+              << "[[ Smalltalk session executeDeferredStartupActions: true ]\n"
+              << "    on: Error do: [:e |\n"
+              << "      Stdio stderr nextPutAll: '[DEFERRED-ERR] ', e printString; lf; flush.\n"
+              << "      e return ].\n"
+              << "  (Smalltalk session instVarNamed: 'deferredStartupActions') isEmpty ] whileFalse.\n"
+              ;
             // Suspending the Morphic processes before the eval is OPT-IN
             // (PHARO_EVAL_SUSPEND_MORPHIC).  Cog's `eval` suspends nothing,
             // and a suspended "Morphic UI Process" never runs `World defer:`
