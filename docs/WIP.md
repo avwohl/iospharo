@@ -15,6 +15,13 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## The list of tests that do not pass (2026-11-18)
+
+[nonpassing-tests.md](nonpassing-tests.md) lists each test that did not pass
+on our VM and on Cog, with the state of each test now: the 220 Pharo 14 tests
+of 2026-11-17, the tests found later, the tests that failed at times before,
+and the 291 tests of the package run.  The open points are in that file.
+
 ## Reboot on 2026-11-17 at about 22:30 -- what stopped and how to go on
 
 The owner did a reboot of the Mac.  A reboot ends each VM run, each agent
