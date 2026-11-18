@@ -1585,3 +1585,45 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
   are stand-ins in memory.
 - Result: 16 of 16 pass on the two VMs.
 
+## AoC-in-Pharo (`shnarazk/AoC-in-Pharo`, row 119)
+
+- State before: 20 tests, 7 pass, 13 errors on the two VMs (`OSEnvironment`,
+  `Dictionary` and `Array` do not understand `#atGrid:`; `SmallInteger` does
+  not understand `#y`).
+- Causes, in the package:
+  - The last commit of the repository (20b89cf) renamed `at:` to `atGrid:`
+    also in code whose receiver is not a `GridArray`.  Only `GridArray` has
+    `atGrid:`.
+  - `GridArray>>x:y:` and `x:y:put:` gave an Integer to `atGrid:`, which
+    takes a Point.
+- Repair (`fixes/shnarazk-aoc-in-pharo.st`): the 10 methods send `at:`
+  again, and the two `GridArray` methods use `at:` and `at:put:`.
+- 6 tests cannot apply on this machine (`Y2025Day05Test`, `Y2025Day08Test`).
+  They read puzzle input files from a directory `data` under the home
+  directory.  The repository has no such file, and Advent of Code asks that
+  the puzzle text and the inputs are not copied.  The setUp of the two
+  classes skips the test with that reason when the file is absent.
+  `not-applicable/shnarazk-aoc-in-pharo.txt` has the proof.
+- For the owner of the package: the solution of day 8 of 2025 is not
+  complete (`part2` answers 0), so `testPart2` cannot pass with the input
+  file either.
+- Result: 14 pass and 6 skips on the two VMs; each skip is in the
+  not-applicable file.
+
+## Famix-Cpp (`moosetechnology/Famix-Cpp`, row 126)
+
+- State before: `LOAD-FAIL` (an `OCUndeclaredVariableNotice` for `FMOne` in a
+  slot of a trait).
+- Cause: the baseline of the package does not name Famix and TinyLogger.
+- Repair of the load: the manifest row loads Famix (`Core`, `Basic`) and
+  TinyLogger first.  For the owner of the package: the baseline must name
+  the two.
+- With the load: 30 tests, 20 pass, 10 expected failures on the two VMs.
+  The 10 are tests of a parser and an importer for CSV exports
+  (`Famix-Cpp-Parser`).  That code names classes that the metamodel of the
+  package no longer has (`FamixCppType`, `FamixCppFileAnchor`,
+  `FamixCppSourcedEntity`).  The test class marks the tests as expected
+  failures.
+- Open: a port of the parser and the importer to the present metamodel is
+  in work.
+

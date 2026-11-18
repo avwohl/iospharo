@@ -1,0 +1,57 @@
+From 2a914dff12c466f40143845f7865efc8b988db96 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 17:07:40 -0500
+Subject: [PATCH] Cogit>>indexForSelector:in:at: stores a followed literal
+ without the store check
+
+Defect: when a Cog compaction of the machine code zone frees the target of a
+linked send, relocateIfCallOrMethodReference:mcpc:delta: unlinks the send and
+calls indexForSelector:in:at:, which scans the literal frame of the sending
+method.  A literal that is a forwarder (left by become:) is followed, and the
+followed object is written back into the method with objectMemory longAt:put:.
+That store skips the store check.  The sending method is usually old.  When
+the become: made an old literal into a young object (the old object becomes a
+forwarder to a young copy), the old method now refers to a young object, is not
+in the remembered set and has no remembered bit.
+
+How it shows (stock Cog v12.0.6, macOS arm64, found in the PharoMisc package
+tests): the next scavenge neither updates nor traces the young literal.  The
+young object moves or dies, and the literal of the method keeps the old address,
+which later holds another object or zeros.  The next full GC finds the method
+slot (markAndTrace), takes the stale value for a forwarder, and stops with a
+segmentation fault in fixFollowedField:ofObject:withInitialValue: or in
+markAndTrace.  The test LoArrayAutomaticEventGenerationTest>>testReset does
+subject collection: #(a b c): the literal Array of the (old) test method is
+become:d into a young LoSubjectArray, and later TkThreadTest>>testFinalization
+calls Smalltalk garbageCollect.  A watch on the literal slot (page protection)
+named indexForSelector:in:at: as the writer, called from compactCogCompiledCode.
+
+Change: write the followed literal with storePointer:ofObject:withValue:, which
+remembers the method when it is old and the value is young.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ smalltalksrc/VMMaker/Cogit.class.st | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/Cogit.class.st b/smalltalksrc/VMMaker/Cogit.class.st
+index f6e70810e..5722ccba0 100644
+--- a/smalltalksrc/VMMaker/Cogit.class.st
++++ b/smalltalksrc/VMMaker/Cogit.class.st
+@@ -8092,8 +8092,11 @@ Cogit >> indexForSelector: selector in: cogMethod at: mcpc [
+ 				                 + objectMemory baseHeaderSize + methodOop.
+ 			(objectMemory isOopForwarded: methodLiteral) ifTrue: [ 
+ 				methodLiteral := objectMemory followForwarded: methodLiteral.
+-				objectMemory longAt: (i * objectMemory bytesPerOop
+-				                 + objectMemory baseHeaderSize + methodOop) put: methodLiteral].
++				"The method is usually old and the followed literal can be young (a become
++				 of an old object into a young one).  Only storePointer:ofObject:withValue:
++				 adds the method to the remembered set; a plain longAt:put: leaves the method
++				 pointing at a young object that the next scavenge moves."
++				objectMemory storePointer: i ofObject: methodOop withValue: methodLiteral].
+ 
+ 			methodLiteral = selector ifTrue: [ 
+ 				self assert:
+-- 
+2.54.0 (Apple Git-157)
+

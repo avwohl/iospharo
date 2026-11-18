@@ -242,14 +242,15 @@ State on 2026-11-17 at 19:00, rows 1 to 134 (the record of each repair is
 state of each row.
 
 - 119 rows are clean: each test passes on stock Cog and on our VM.
-- 1 row (70, BioSmalltalk) is clean with 7 tests that cannot apply on Pharo
-  14.  `scripts/pkg-jit-test/not-applicable/` names each such test with its
+- 2 rows are clean with tests that cannot apply on the machine: row 70
+  (BioSmalltalk, 7 tests for Glamorous Toolkit) and row 119 (AoC-in-Pharo,
+  6 tests that read puzzle input files of the author).
+  `scripts/pkg-jit-test/not-applicable/` names each such test with its
   proof.
 - 3 rows name repositories that are not public any more (51, 62, 66; row
   135 is the fourth).  These rows cannot run.
-- 11 rows are not clean yet.  The table has the rows with an open point.
-  Rows 119 and 126 have a repair whose run is in work.  Rows 121 and 124
-  are in a second round:
+- 10 rows are not clean yet.  The table has the rows with an open point.
+  Rows 121, 124 and 126 are in a second round:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -262,6 +263,7 @@ state of each row.
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
 | 121 | CodeParadise | 19 of 33 pass (13 skips of the author, 1 failure) | the first repair was wrong and is gone: it took the skips out, and the tests then failed on stock Cog (4 errors, 1 timeout, 2 failures, 2 more errors).  On our VM `CpCommunicatorTest>>testClientSendBeforeConnection` hung with no timeout (Cog ends it after 11 s): a difference between the VMs, in work |
 | 124 | Iconography | stock Cog 32 of 32, our VM 31 | 1 test fails on our VM only (a Bitmap with other pixel values after an SVG drawing and a scaling); the cause is in work |
+| 126 | Famix-Cpp | 20 of 30 pass, 10 expected failures | the row loads now.  The 10 are tests of a CSV parser that names classes of an older metamodel; a port of the parser is in work |
 
 The package run found these defects outside the packages:
 
