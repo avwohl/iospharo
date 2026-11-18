@@ -1,68 +1,144 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
-## OPEN 2026-11-17 — a recursion deeper than 56000 frames gets an error that Cog does not give
+## FIXED 2026-11-17 — a recursion deeper than 56000 frames got an error that Cog does not give
 
-Found by the package run (MuTalk, `MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis`).
+Found by the package run (`MuTalk`, `MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis`,
+and `MCPToolContractsTest>>testEvaluateStopsAnEndlessRecursionWithinASecondOrTwo`).
 
-Stock Cog v12 has no limit for the depth of a recursion.  At each overflow
-of a stack page, `StackInterpreter>>handleStackOverflow` moves frames to
-heap Contexts.  Cog sends `#stackOverflow` only to a process whose
-`shouldOverflow` slot is true, and only `ProcessTest>>testStackOverflow`
-sets that slot.  A recursion with no end runs on Cog until a time limit
-stops the process or the memory is full.
+Stock Cog has no limit for the depth of a recursion.  At each overflow of a
+stack page, `StackInterpreter>>handleStackOverflow` moves frames to heap
+Contexts.  Cog sends `#stackOverflow` only to a process whose `shouldOverflow`
+slot is true, and only `ProcessTest>>testStackOverflow` sets that slot.  A
+recursion with no end runs on Cog until a time limit of the image stops the
+process, or until the memory is low.  Then the low space watcher of the image
+signals `OutOfMemory`.
 
-Our VM signals `Error: stack overflow` in each process at a depth of 56000
-frames (`Interpreter::handleStackOverflow`, `StackOverflowLimit`,
-`frameLimit_`).  The entry of 2026-11-14 in this file made that limit count
-the heap Context chain too.
+Our VM signalled `Error: stack overflow: recursion deeper than 56000 frames`
+in each process at a depth of 56000 frames.  Effects:
 
-Effects:
+- A recursion that has an end and is deeper than 56000 frames stopped with an
+  error.
+- The MCP test failed only for this reason: its evaluator stops an endless
+  recursion at a depth of 1000000 frames, and our VM raised its error first.
+- A recursion with no end ended in the abort at the old-space limit when the
+  VM tried to continue.  That limit was never reached before, because the depth
+  limit came first.
 
-- A recursion that is deep and has an end (more than 56000 frames) works on
-  Cog and stops with an error on our VM.  No test of the Pharo 14 suite and
-  no package test of rows 1 to 11 has such a recursion.
-- The MuTalk test passes on our VM in 25 ms, because the error stops the
-  recursion.  On Cog the SUnit time limit of 10 s stops the recursion, and
-  Cog used 13 GB before that time.  The memory guard of `scripts/vmrun.sh`
-  stopped Cog.
+Repair, in two parts.
 
-The change that makes our VM equal to Cog: at the limit of the inline
-frames, a process without `shouldOverflow` moves its frames to heap
-Contexts and continues.  The old-space limit and the low-space signal then
-are the only limits.  Not done.  The owner must decide, because the change
-removes a guard against a recursion with no end.
+Part 1: no depth limit for a process that does not get `#stackOverflow`.
 
-Design from a read-only study of the code (2026-11-17, not built, not run):
+- `Interpreter::flushFramesAtLimit` does what Cog does at a page overflow, for
+  all inline frames at once.  `activateMethod` and `activateBlock` call the
+  function when `pushFrame` fails.  The function pushes the method (or the block)
+  on the operand stack, so that a Context holds the Oop.  Then it makes the
+  Contexts (`materializeFrameStack`) and sets `frameDepth_` to 0.  Then it
+  builds the top frame again from the top Context (`executeFromContext`).  This
+  also gives the operand stack back.  Then the caller runs the activation
+  again.
+- The limit is `FlushFrameLimit` (32768, equal to `McfNativeDepthCap`), counted
+  from the last flush or resume.  `chainDepthBase_` counts the frames that
+  collapsed to Contexts since that point (`thisContext`, blocks, non-local
+  return).  So the budget bounds the frame table and the operand stack (64
+  slots for each frame) as before.  The heap chain under the frames is not
+  counted and not walked.  A resume of such a process measures nothing.
+- If the flush cannot get memory for the Contexts, `flushFramesAtLimit` calls
+  `stopVM` with a message and answers `FlushResult::Failed`.  The caller then
+  returns at once.  It does not signal a Smalltalk error on a stack that is
+  off by one slot.
+- The flush adds 1 to `processSwitchCount_`.  The JIT loops that call
+  `activateMethod` compare `frameDepth_` with the value from before the call.
+  After a flush `frameDepth_` can equal that value while the frame on top is
+  new.  These loops already leave the continuation to the interpreter when
+  `processSwitchCount_` has changed.
+- A send that the Sista helper drives (`inSyncSend_`) is not flushed.  The loop
+  of `jitSistaCallSend` counts frames and cannot take a restart of the frame
+  table.  Such a send at the frame limit gets the catchable stack overflow
+  error.  Sista dispatch is off by default.
+- A process whose `shouldOverflow` slot is true keeps the old rule: the whole
+  depth, the chain walk at a resume, and `#stackOverflow` at 56000.  The
+  measured chain is at most `StackOverflowLimit`.  A flag that comes on at a
+  depth of 200000 finds a heap chain that no walk can measure to its end.  With
+  the cap at the limit, the signal has its full headroom and the handler runs.
+  Before, the signal found no room and the VM ended the process without
+  running its `ensure:` blocks.
+  `Interpreter::processShouldOverflow` reads the slot at each resume.  It also
+  reads the slot at each trip of the limit.  So the VM finds a process that gets
+  the flag while it runs.  `ProcessTest>>testStackOverflow` passes.
+- Machine code needs no change.  Its depth tests read `JITState::mcfDepthLimit`,
+  which `setFrameLimit` sets to `min(frameLimit_, McfNativeDepthCap)`.  Both
+  backends (arm64 and x86_64) read this field, and a refusal goes to the
+  interpreter, where the push trips and the flush runs.  The x86_64 backend
+  was read, not built.
+- Searches along the sender chain had the bound 70000 (the home of a
+  non-local return, the next `ensure:` block, the pinned contexts of the JIT
+  eviction).  A chain can be longer now, so a non-local return from a depth of
+  300000 to its home gave `BlockCannotReturn`.  The bound is now
+  `ContextChainWalkCap` (2^27), a guard against a cyclic chain only.
 
-- Two modes.  A process with `shouldOverflow` true keeps the limit of the
-  whole depth and the `#stackOverflow` send.  Each other process counts
-  inline frames only, with a limit of 32768 (`McfNativeDepthCap`).
-- The flush at the limit is `materializeFrameStack()` and then
-  `executeFromContext()` on the top Context.  `transferTo` cannot do the
-  flush: it returns at once for the same process.
-- `handleStackOverflow` does the flush before it pops the send, and then
-  starts the activation again.  `pushFrame` gets no new instruction, and
-  machine code needs no change of its depth tests.  The J2J loops that drop
-  frames at `frameLimit_` need a test of the real capacity.
+Part 2: `OutOfMemory` for a recursion with no end.  The old space of our VM
+latches the crossing of the low space threshold, and the checkpoint tells the
+image.  Two things were wrong.
 
-Risks that the study found, each to check before the change goes in:
+- The image tells its watcher to arm the threshold again at once.  The crossing
+  then latched again at the next allocation while the image still unwound the
+  process.  The second signal reached the handler of the first one
+  (`OutOfMemory` in the handler).  Now the image gets a second signal only when
+  the free space has fallen to half of the free space at the first signal
+  (`ObjectMemory::lowSpaceWorthSignalling`).  A full GC that frees the space
+  ends the crossing, the latch and this rule (`recheckLowSpace`, called at the
+  end of `fullGC`).
+- Nothing collected the garbage that the stopped process left.  The full GC
+  runs at a growth of 512 MB over the last one.  A small old-space limit does
+  not reach this growth, and the abort came first.  Now the checkpoint runs a
+  full GC before it tells the image.  It does this if the old space grew by more
+  than an eden since the last one.  The Cog change
+  `docs/upstream/cog-low-space-before-old-space-limit.patch` does the same.  A
+  collection that frees enough ends the crossing.  The full GC moves objects,
+  so `checkLowSpaceSignal` reads the low-space semaphore again after the GC.
+  Before this was done, the signal went to a stale Oop: a recursion with large
+  frames (26 temporaries, an array in each frame) aborted at 2048 MB and at
+  512 MB (`[STORE-OOB]` in the log, then the old-space abort).
+- The headroom (`ObjectMemory::lowSpaceEffectiveBytes`) is one eden plus 16 MB
+  (the Contexts of one flush), and at most 1/8 of the old space.  The checkpoint
+  delivers the signal, so the old space can take one scavenge tenure and one
+  flush between the crossing and the delivery.
 
-- The operand stack.  The places that turn frames into a Context chain
-  (`collapseFramesToChain`: `thisContext`, blocks, non-local return) leave
-  the stack pointer where it is.  A recursion that makes a Context at each
-  level then grows the operand stack with no limit of frames to stop it.
-  The flush needs a second trigger on the use of the operand stack.
-- GC in the flush.  `pushFrame` allocates nothing now.  The flush allocates
-  up to 32768 Contexts in the middle of an activation, so the values that
-  the activation holds in C++ variables can move.
-- The end of a recursion with no end.  With the limit gone, the recursion
-  ends at the old-space limit, and `ObjectMemory.cpp` stops the VM there
-  (`std::abort`).  The flush must test the free old space and give the
-  low-space signal, so the image gets `OutOfMemory`.
-- A return through a long Context chain costs more than a return through
-  inline frames.
-- Tests that pass now because of the error (the two MuTalk tests) then end
-  through their time limit, as on Cog.
+Measured on 2026-11-17 (release build, JIT on):
+
+- `scripts/cogdiff/deep_recursion.st` has eleven checks.  They are: a recursion of
+  1000000 frames with an end, `thisContext` at each level, a non-local return
+  at each of 200000 levels, a non-local return from a depth of 300000 to its
+  home, an error at a depth of 300000 caught at the top, 100000 `ensure:`
+  blocks, a sender chain of 500000 contexts, a `shouldOverflow` flag that comes on at a
+  depth of 200000, and a watcher that stops an endless recursion at a depth of 1000000.  Stock Cog, patched Cog and our VM give the
+  same eleven lines.  Our VM gives them with the JIT, with `PHARO_NO_JIT=1` and
+  with `PHARO_NO_MCF=1`.
+- `scripts/vmrun.sh eval --old-space 1024 ours scripts/cogdiff/lowspace_recursion.st`
+  answers `OutOfMemory: `, as the patched Cog does.
+- `MCPToolContractsTest>>testEvaluateStopsAnEndlessRecursionWithinASecondOrTwo`
+  passes (503 ms).  `ProcessTest` (with `testStackOverflow`), `ContextTest`,
+  `BlockClosureTest`, `ExceptionTest`, `ProcessSpecificTest` and `SemaphoreTest`
+  pass with no failure.
+- Cost of the normal path, best of 5 on the main VM and on this build, in
+  milliseconds: `32 benchFib` 23 and 23; a recursion of 5000 frames, 1000 times,
+  18 and 18; a recursion of 20000 frames, 200 times, 15 and 15.  A recursion of
+  50000 frames, 80 times, crosses the flush point: 78 on the main VM and 168
+  here.  A recursion of 1000000 frames takes about 75 ms.
+- The full sweep of the Pharo 14 tests with the final build
+  (`/tmp/pharo-work/sweep14-deep-final`): 39461 tests, 39373 pass, 0 fail, 0
+  error, 87 skip, 1 expected failure, no batch with a return code other than 0,
+  and the interactive pass 135 of 135.  This equals the main VM.
+
+Left as it is:
+
+- MuTalk `MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis` passed in 25
+  ms because of the error.  It must now end by its time limit, as on Cog.  This
+  was not run for this change.  The test is in a package, and the package rows
+  must be run again.
+- A recursion of more than 32768 frames costs about twice as much as before for
+  each pass, because the frames return through Contexts.  Cog pays the same kind
+  of cost at the return from a stack page.
 
 ## FIXED 2026-11-17 — the identity hash sequence did not continue from the image, and had a 32-bit state
 

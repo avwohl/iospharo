@@ -872,6 +872,22 @@ private:
     // The MCF call stubs read the limit from JITState::mcfDepthLimit, which
     // holds min(frameLimit_, this): the process-relative limit, see below.
     static constexpr size_t McfNativeDepthCap = 32768;
+    // Bound of a walk along a Context sender chain that must find its target
+    // wherever the target is: the home of a non-local return, an ensure: block
+    // to run, a handler.  A process has no depth limit (see FlushFrameLimit),
+    // so the chain can be millions of Contexts long.  The bound is a guard
+    // against a cyclic chain (heap corruption) and no limit of depth: it is
+    // larger than any chain that the old space can hold.
+    static constexpr int ContextChainWalkCap = 1 << 27;
+    // The inline-frame budget of a process that does not get #stackOverflow
+    // (shouldOverflow not true), counted since the last flush or resume.  At
+    // this count the frames move to heap Contexts (flushFramesAtLimit) and the
+    // count restarts: no depth limit exists for such a process, as on Cog.  The
+    // budget bounds savedFrames_ (MaxFrameDepth) and the operand stack
+    // (MaxStackDepth / this = 64 slots for each frame).  It equals
+    // McfNativeDepthCap, so machine code runs up to the flush point.
+    static constexpr size_t FlushFrameLimit = 32768;
+    static_assert(FlushFrameLimit <= McfNativeDepthCap, "machine code must reach the flush point");
     // How often (in cold-path trips) a process that holds the signal headroom
     // re-measures its depth to see whether the signal is over.
     static constexpr unsigned SignalRemeasureMask = 255;
@@ -1651,7 +1667,15 @@ private:
     // It is 0 while the process holds the signal headroom, so that every push
     // reaches stackDepthExceeded().  Rule: frameLimit_ is only ever changed
     // by setFrameLimit(), which also publishes it to JITState.
-    size_t frameLimit_ = StackOverflowLimit;
+    //
+    // Two modes (wholeDepthLimited_).  A process whose shouldOverflow slot is
+    // true keeps the whole-depth limit StackOverflowLimit and gets #stackOverflow
+    // at it (as on Cog).  Each other process has no depth limit: its limit is
+    // FlushFrameLimit counted from the last flush or resume, and chainDepthBase_
+    // then counts only the frames that collapsed to Contexts since that point
+    // (an upper bound, never a chain walk).  At the limit flushFramesAtLimit
+    // moves the frames to heap Contexts, which also gives the operand stack back.
+    size_t frameLimit_ = FlushFrameLimit;
     // Contexts in the active process's sender chain that frameDepth_ does not
     // count.  Exact when measured (process resume, stackDepthExceeded); after
     // that only ever too HIGH: a return or unwind makes the chain shorter and
@@ -1664,6 +1688,9 @@ private:
     // The active process changed (setActiveProcess, tryReschedule) and the
     // next executeFromContext must measure the new process's chain.
     bool chainBaseStale_ = true;
+    // The active process holds shouldOverflow == true (read at each resume and
+    // each limit trip): the whole depth is limited, see frameLimit_.
+    bool wholeDepthLimited_ = false;
     // True while handleStackOverflow is driving a Smalltalk #error: signal so
     // the image can unwind (ensure:/ifCurtailed:) instead of a C++ hard-kill.
     // Grants StackOverflowSignalHeadroom extra inline frames and up to
@@ -1731,6 +1758,21 @@ private:
     void forgetProcessDepth(Oop process);
     size_t* mcfDepthLimitPtr_ = nullptr;   // &JITState::mcfDepthLimit, once mcfRun made it
     void setFrameLimit();
+    // True when `process` is a Process whose shouldOverflow slot is true.
+    bool processShouldOverflow(Oop process);
+    // The frame limit tripped in an activation of `keep` (a method or a block
+    // that the caller pushes a frame for).  For a process that does not get
+    // #stackOverflow: move all inline frames to Contexts, restart the frame
+    // count and the operand stack from the top Context, and answer true: the
+    // caller then runs the activation again.  `keep` is rooted on the operand
+    // stack across the move and is answered back updated.
+    // Answers NotApplicable, and changes nothing, for a process that gets
+    // #stackOverflow and for a send that the Sista helper drives (inSyncSend_:
+    // its loop counts frames and cannot take a restart of the frame table).
+    // Answers Failed after stopVM (no memory for the Contexts): the caller
+    // returns at once and does not signal anything.
+    enum class FlushResult { NotApplicable, Flushed, Failed };
+    FlushResult flushFramesAtLimit(Oop& keep);
     size_t senderChainLength(Oop context, size_t cap);
     // Cold part of every depth test: is `depth` inline frames (plus the chain)
     // at the limit?  Re-measures, repairs a stale base, manages the headroom.

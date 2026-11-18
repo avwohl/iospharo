@@ -13,8 +13,9 @@
    patched Cog 'OutOfMemory: ' (cogp with the change of
                docs/upstream/cog-low-space-before-old-space-limit.patch;
                before that change cogp did the same as stock Cog)
-   our VM      'Error: stack overflow: recursion deeper than 56000 frames'
-               (a limit that Cog does not have, docs/vm-compat-bugs.md)
+   our VM      before the change 'Error: stack overflow: recursion deeper than
+               56000 frames' (a limit that Cog does not have,
+               docs/vm-compat-bugs.md); after the change 'OutOfMemory: '
  The answer that the image is made for: OutOfMemory, from the low space
  watcher."
 | recurse |

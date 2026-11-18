@@ -1002,7 +1002,54 @@ public:
     /// fired, and disarmed itself on delivery" -- a distinction that cost two
     /// wrong readings of the same log on 2026-09-03, because the threshold is
     /// zero in both cases.
-    void noteLowSpaceDelivered() { lowSpaceDeliveries_++; }
+    void noteLowSpaceDelivered() {
+        lowSpaceDeliveries_++;
+        lowSpaceFreeAtDelivery_ = freeOldSpaceBytes();
+    }
+    /// Free old space that the image must still have when it is told that space
+    /// is low: the headroom below, or the image's own threshold if that is more.
+    /// The headroom covers what old space can still take between the crossing
+    /// and the delivery (the delivery waits for a checkpoint): the tenure of one
+    /// scavenge (up to one eden) and the burst of Contexts that a flush of a
+    /// deep recursion makes (FlushFrameLimit frames, up to LowSpaceFlushBurst
+    /// bytes).  The image needs memory of its own to unwind after the signal.
+    size_t lowSpaceEffectiveBytes() const {
+        constexpr size_t LowSpaceFlushBurst = 16u * 1024 * 1024;
+        size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
+        size_t reservation  = static_cast<size_t>(oldSpaceEnd_ - oldSpaceStart_);
+        size_t want         = edenCapacity + LowSpaceFlushBurst;
+        size_t headroom     = want < reservation / 8 ? want : reservation / 8;
+        return lowSpaceThresholdBytes_ > headroom ? lowSpaceThresholdBytes_ : headroom;
+    }
+    /// Has old space grown by more than one eden since the last compacting GC?
+    /// Then a collection may free space that the crossing counts as used.
+    bool oldSpaceGrewSinceCompact() const {
+        size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
+        return static_cast<size_t>(oldSpaceFree_ - oldSpaceStart_) > lastCompactedSize_ + edenCapacity;
+    }
+    /// After a collection: clear the latch if the free space is back above the
+    /// threshold, and then forget the free space of the last delivery.
+    /// fullGC calls this at its end, so a collection from any place counts.
+    void recheckLowSpace() {
+        if (freeOldSpaceBytes() >= lowSpaceEffectiveBytes()) {
+            lowSpaceCrossed_ = false;
+            lowSpaceFreeAtDelivery_ = 0;
+        }
+    }
+    /// The image re-arms its threshold at once after a signal, so the crossing
+    /// latches again at the next allocation while the process that the image
+    /// stops is still unwinding.  A second signal then reaches the handler of
+    /// the first (OutOfMemory inside the handler).  So after a delivery the
+    /// image gets the next signal only when the free space has fallen to half
+    /// of the free space at that delivery: a consumer that goes on is told
+    /// again, a consumer that the image has stopped is not.  A collection that
+    /// frees space (recheckLowSpace) starts the rule again.
+    bool lowSpaceWorthSignalling() const {
+        return lowSpaceFreeAtDelivery_ == 0 || freeOldSpaceBytes() < lowSpaceFreeAtDelivery_ / 2;
+    }
+    /// Drop the latch without a delivery (the crossing is latched again at the
+    /// next allocation that still finds the space low).
+    void dropLowSpaceLatch() { lowSpaceCrossed_ = false; }
     /// Peek at the latch.  Cleared by disarming (armLowSpaceThreshold(0)),
     /// which is what the interpreter does once it has actually signalled --
     /// so a crossing with no semaphore registered yet is not thrown away.
@@ -1097,6 +1144,7 @@ private:
     size_t lowSpaceThresholdBytes_ = 0;   // 0 = disarmed
     bool   lowSpaceCrossed_ = false;      // latched at the crossing
     uint64_t lowSpaceDeliveries_ = 0;     // times the image was actually signalled
+    size_t lowSpaceFreeAtDelivery_ = 0;   // free old space at the last delivery; 0 = none or recovered
 
     /// Called wherever oldSpaceFree_ advances.  Latches the crossing so the
     /// interpreter can signal TheLowSpaceSemaphore at its next safe point --
@@ -1110,13 +1158,7 @@ private:
         // used" and fire on every run.  A bisect knob must not quietly change
         // low-space semantics.  The image's own threshold always wins if it
         // asks for more than either.
-        size_t edenCapacity = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
-        size_t reservation  = static_cast<size_t>(oldSpaceEnd_ - oldSpaceStart_);
-        size_t headroom     = edenCapacity < reservation / 16 ? edenCapacity
-                                                              : reservation / 16;
-        size_t effective    = lowSpaceThresholdBytes_ > headroom
-                                  ? lowSpaceThresholdBytes_ : headroom;
-        if (freeOldSpaceBytes() < effective) lowSpaceCrossed_ = true;
+        if (freeOldSpaceBytes() < lowSpaceEffectiveBytes()) lowSpaceCrossed_ = true;
     }
 
     // Class table.
