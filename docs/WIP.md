@@ -173,7 +173,7 @@ The new runner has 39455 tests for Pharo 14 (2160 classes).
 | `sweepcogp14-new7` | patched Cog with the low-space change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 | `sweepcogp14-new8` | patched Cog with the file plugin change | 39373 | 0 | 87 | 1 | 39461 tests; no batch stopped; the same 88 tests do not pass |
 | `sweep14-new12` | ours, entries 31 to 34, VM parameter 11 | 39374 | 0 | 87 | 1 | 39462 tests (1 new test of entry 34); no batch stopped; interactive pass 135 of 135; the same 88 tests do not pass |
-| `sweepcogp14-new9` | patched Cog, entries 31 to 34 (the library had a test change for the Cog GC crash at that time) | 39373 | 1 | 87 | 1 | 39462 tests; no batch stopped; 1 failure that no sweep had before: `TKTFutureTest>>testFutureAndThenExecutesInOrder` ("Got #(2 3 1) instead of #(1 2 3)": three callbacks of one future ran in another order); the cause is in work |
+| `sweepcogp14-new9` | patched Cog, entries 31 to 34 (the library was a diagnostic build of the Cog GC crash hunt: a debug file write in `indexForSelector:in:at:`; the sweep is no reference) | 39373 | 1 | 87 | 1 | 39462 tests; no batch stopped; 1 failure that no sweep had before: `TKTFutureTest>>testFutureAndThenExecutesInOrder` ("Got #(2 3 1) instead of #(1 2 3)": three callbacks of one future ran in another order); the cause is in work |
 
 Defects that these sweeps showed, each with its repair:
 
@@ -271,6 +271,7 @@ The package run found these defects outside the packages:
 
 | Defect | Where | Found by | State |
 |---|---|---|---|
+| A segmentation fault in a full GC in 2 of 5 runs of one package: `Cogit>>indexForSelector:in:at:` follows a forwarded literal and writes the young object back into an old method with no store check | stock Cog | PharoMisc (row 6) | the cause is proved with a watch on the slot; local branch `fix/indexforselector-store-check` and `docs/upstream/cog-indexforselector-store-check.patch`; 10 of 10 runs clean with the change (5 of 9 crashed before).  An audit of our VM for the same class of defect is in work |
 | Our test runner starts the tests inside the image start, before the deferred start actions of the image (servers of Zinc and of packages start there); stock Cog runs the tests after them | our test runner (`scripts/pharo-headless-test/run_sunit_tests.st`) | PharoSmalltalkInteropServer (44 of 44 on Cog, 9 on our VM, no VM defect) | the package tests are repaired; the change of the runner is in design, with probes (`/tmp/pharo-work/runner2/`) |
 | The socket option primitives knew 6 names and gave a false success for each other name; a new socket had no `SO_REUSEADDR` | our VM | PharoMisc (multicast tests) | repaired in `SocketPlugin.cpp`; `sweep14-new11` is clean |
 | No `NewFilePlugin` | our VM | pharo-newfile (8 tests skip on our VM only) | ported (POSIX side), reviewed two times; the row passes 42 of 42 on the two VMs; `sweep14-new11` is clean |

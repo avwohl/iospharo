@@ -233,3 +233,54 @@ anyone sends it.
 - Not tested: Windows (the Windows sources have the same changes, and they
   were not compiled) and Linux.
 
+## Cogit: a followed literal goes back into the method with no store check
+
+- Defect: stock Cog (v12.0.6, macOS arm64) stops with a segmentation fault
+  in a full GC (`markAndTrace`, `fixFollowedField:ofObject:withInitialValue:`)
+  in some runs of the tests of the package PharoMisc: 2 of 5 runs with the
+  stock VM, 5 of 9 runs with a build of the same source and the stock
+  plugins.
+- Cause: `Cogit>>indexForSelector:in:at:` looks at each literal of a method.
+  It follows a literal that is a forwarder and writes the followed object
+  back into the method with `objectMemory longAt:put:`.  That store has no
+  store check.  When the method is old and the followed object is young,
+  the method is not in the remembered set.  The scavenges that come after do
+  not update the literal, and the object moves or dies.  The literal then
+  has an address that holds another object or zeros.  The next full GC reads
+  that address.
+- The way to the state:
+  - A test does `become:` on a literal Array of its method, with a new
+    object (`LoArrayAutomaticEventGenerationTest>>testReset` of PharoMisc:
+    `subject collection: #(a b c)`).  The old Array is then a forwarder to a
+    young object.
+  - A compaction of the machine code zone frees the target of a linked send
+    of that method before the next scavenge.  The compaction unlinks the
+    send and calls `indexForSelector:in:at:`
+    (`relocateIfCallOrMethodReference:mcpc:delta:`).
+  - A later test calls `Smalltalk garbageCollect`.
+- Evidence: a diagnostic print of the method at each GC shows that literal
+  0 changes from the old Array to the address of a young object.  The
+  method has no remembered bit, and the value stays for about 40 scavenges.
+  A watch on the literal slot by page protection named the writer:
+  `indexForSelector:in:at:`, called from `compactCogCompiledCode`.  The
+  diagnostics were local and are not in the change.
+- Change (one statement): the method writes the followed literal with
+  `storePointer:ofObject:withValue:`, which remembers an old method that
+  gets a young value.  No other Slang source of the Cogit has this pattern.
+- The change is in Slang, so the build runs the code generation again.
+- Test (2026-11-17, macOS 27, arm64): the tests of PharoMisc with the
+  package repairs of our run.
+
+  | VM | Runs | Runs with a segmentation fault |
+  |---|---|---|
+  | build of the stock source, stock plugins | 9 | 5 |
+  | the same build with the change | 10 | 0 (361 tests, 360 pass, 1 failure, as on our VM) |
+
+- No small script shows the defect.  Three scripts made the forwarder and
+  the compaction, and in each a store with the check repaired the literal
+  first.  The reproduction is the package row
+  (`PKG_FIXES_FILE=/tmp/pharo-work/g8/pharomisc-g8.st` with
+  `scripts/vmrun.sh pkgs --reuse`, row 6).
+- Not tested: Linux, Windows, x86_64.  A full sweep of the Pharo 14 tests on
+  the Cog with the change is in work.
+

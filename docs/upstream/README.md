@@ -39,6 +39,7 @@ The stock VM in `/tmp/harness` comes from
 | SocketPlugin: an integer option value of each length, and `SO_LINGER` | `fix/socket-option-values` | `cog-socket-option-values.patch` | committed on the branch, tested |
 | Spur: low space before the old-space limit | `fix/low-space-signal-before-old-space-limit` | `cog-low-space-before-old-space-limit.patch` | committed on the branch, tested |
 | NewFilePlugin: checks of the buffer and of the handles | `fix/newfile-plugin-buffer-and-handle-checks` | `cog-newfile-plugin-buffer-and-handle-checks.patch` | committed on the branch (2 commits), tested |
+| Cogit: a followed literal goes back into the method with no store check (a segmentation fault in a full GC) | `fix/indexforselector-store-check` | `cog-indexforselector-store-check.patch` | committed on the branch, tested with the package row that showed the crash |
 
 The defect, the change and the test of each row are in
 [cog-changes.md](cog-changes.md).
