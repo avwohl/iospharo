@@ -264,6 +264,7 @@ state of each row.
 | 121 | CodeParadise | 19 of 33 pass (13 skips of the author, 1 failure) | the first repair was wrong and is gone: it took the skips out, and the tests then failed on stock Cog (4 errors, 1 timeout, 2 failures, 2 more errors).  On our VM `CpCommunicatorTest>>testClientSendBeforeConnection` hung with no timeout (Cog ends it after 11 s): a difference between the VMs, in work |
 | 124 | Iconography | stock Cog 32 of 32, our VM 31 | 1 test fails on our VM only (a Bitmap with other pixel values after an SVG drawing and a scaling); the cause is in work |
 | 126 | Famix-Cpp | 20 of 30 pass, 10 expected failures | the row loads now.  The 10 are tests of a CSV parser that names classes of an older metamodel; a port of the parser is in work |
+| 137 | PharoSmalltalkInteropServer | stock Cog 44 of 44, our VM 9 of 44 before a repair | no VM defect (measured).  Our test runner starts the tests inside the image start, before the deferred start actions of the image; the package starts its HTTP server in such an action, so on our VM the first test started the server and SUnit ended it with that test.  A repair of the package tests is in a run.  The runner itself must change: a design with probes is in work |
 
 The package run found these defects outside the packages:
 
