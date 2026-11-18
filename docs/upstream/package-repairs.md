@@ -1737,3 +1737,20 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
 - For the owner: the row has no test to run in an image.  Another package
   can take its place in the manifest.
 
+## Pharo-Enhancements (`seandenigris/Pharo-Enhancements`, row 149)
+
+- State before: `LOAD-FAIL` (`UndeclaredVariableRead` of
+  `RPackageOrganizer` in `BaselineOfPharoEnhancements>>isGTImage`).
+- Causes, in the package:
+  - The baseline reads the class `RPackageOrganizer`, which Pharo 12 and
+    later do not have.
+  - `TraitBuilderEnhancer.extension.st` replaces two methods of the image
+    with copies of an older Pharo.  The copy of `allSlotsForBuilder:` leaves
+    the slots of the superclass out.  Pharo 14 builds each class with that
+    method, so a load of the file breaks the build of classes after it.
+- Repair (`patches/seandenigris-pharo-enhancements.patch`, for the owner of
+  the package): the baseline uses `PackageOrganizer default`, and the
+  extension file of `TraitBuilderEnhancer` is gone (no code of the package
+  uses its two methods).
+- Result: the load ends with no error, and 4 of 4 tests pass on the two VMs.
+

@@ -88,5 +88,25 @@ A defect of the image or of a test that also fails on stock Cog goes in
   processes run on our VM. On stock Cog the primitive only sleeps. The old
   runner polled at priority 80 with this primitive, so on Cog the test process
   never ran (TIMEOUT(prim-stuck)).
-- A recursion 100000 frames deep raises an error on our VM (20000 frames work). Cog works at 100000 and is
-  limited only by memory.
+- A recursion 100000 frames deep raised an error on our VM (20000 frames
+  worked).  Cog works at 100000 and is limited only by memory.  Repaired on
+  2026-11-17: a process with no `shouldOverflow` flag has no depth limit
+  (see [vm-compat-bugs.md](vm-compat-bugs.md)).
+- The eval mode of our VM ran the eval text before the deferred start
+  actions of the image.  Each test run is an eval, so the tests of our VM
+  started in an image that had not finished its start.
+  - The image keeps its deferred start actions in a list.  The first action
+    is the command line handler.  The Zinc servers and the servers of
+    packages start in later actions.
+  - Stock Cog forks a process for the eval text in the first action.  The
+    text runs after each other action.
+  - Our VM gives the eval text to the image as a start script
+    (`startup.st`).  The image loads the script inside the first action.
+  - Repaired on 2026-11-17 in `src/vm/test_load_image.cpp`: the start
+    script runs the other deferred actions before the eval text.  The
+    script prints an error of an action (`[DEFERRED-ERR]`) and goes on.
+  - Measured with package row 137, whose tests use an HTTP server that a
+    deferred action starts, with no repair of the package: stock Cog 44 of
+    44; our VM 9 of 44 before the change and 44 of 44 after it.
+  - The design, the probes and the attacks of a second reader are in
+    `/tmp/pharo-work/runner2/design-final.md`.
