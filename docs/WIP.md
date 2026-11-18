@@ -15,6 +15,116 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Reboot on 2026-11-17 at about 22:30 -- what stopped and how to go on
+
+The owner did a reboot of the Mac.  A reboot ends each VM run, each agent
+and each workflow, and it clears `/tmp`.  The work directory
+`/tmp/pharo-work` was a symbolic link into a session directory under
+`/private/tmp`, so its contents can be gone after the reboot.
+
+### What is safe
+
+- `main` is pushed (the last commit before the reboot has this section).
+  The four build trees (`build-rel`, `build-nojit`, `build-dbg`,
+  `build-x86`) are built from it.
+- `~/pharo-work-save/2026-11-17` (about 1.3 GB) has a copy of what the work
+  directory held and what is hard to make again:
+
+| Directory of the copy | Contents |
+|---|---|
+| `pkgs1/` | `summary.tsv`, `res/` and `log/` of the package run (rows 1 to 163) |
+| `sweeps/` | the result files of `sweep14-new12`, `-new13`, `-new14`, `sweepcogp14-new9`, `-new10` |
+| `images/` | `cog14`, `ours14`, `cog13`, and the images with entries 1 to 34 (`14g`) and 1 to 35 (`14h`) |
+| `stock/` | `/tmp/harness14` and `/tmp/harness`: the stock VMs and the unchanged images (Pharo 14 build 791, Pharo 13) |
+| `cogp-app/`, `cogp-dylibs/` | the patched Cog (stock app with the three built libraries) and the code generation image `VMMaker.image` that has each Cog change |
+| `scratch/` | the text files of the agents (`ag/pkgfinal`, `ag/round2`, `ag/batch6`), `runner2/` (the eval mode design), `barrier/` (the audit findings), probes and scripts |
+| `worktrees/` | for each work tree: the changes that were not committed (a diff) and the new files |
+| `patchwork/` | the lists of tests that do not pass, one for each sweep |
+
+- The branches of the work trees are in the repository and stay.  The Cog
+  branches (`fix/...`, 10 of them) are in `~/src/pharo-vm` and stay.
+
+### How to go on after the reboot
+
+1. Make the work directory in a place that a reboot does not clear, and
+   link it (`/tmp` is empty after each reboot, so make the link again each
+   time, or set `PHARO_WORK`):
+
+   ```
+   mkdir -p ~/pharo-work && ln -sfn ~/pharo-work /tmp/pharo-work
+   S=~/pharo-work-save/2026-11-17
+   rsync -a $S/stock/harness14 $S/stock/harness /tmp/
+   rsync -a $S/images $S/cogp-app $S/pkgs1 /tmp/pharo-work/
+   rsync -a $S/sweeps/ /tmp/pharo-work/
+   rsync -a $S/scratch/ /tmp/pharo-work/
+   mkdir -p /tmp/pharo-work/patchwork && cp $S/patchwork/* /tmp/pharo-work/patchwork/
+   tr '\r' '\n' < /tmp/harness14/Pharo14*.sources > /tmp/pharo-work/patchwork/p14.sources.nl
+   ```
+
+2. Check: `scripts/vmrun.sh status` (no VM, lock free), then
+   `scripts/vmrun.sh eval ours scripts/cogdiff/deep_recursion.st` and the
+   same with `cog` and `cogp` (11 equal lines).
+3. The package run: `scripts/vmrun.sh pkgs /tmp/pharo-work/pkgs1 164 200`.
+   A row with a line in `summary.tsv` does not run again.  Row 164 was in
+   its run at the reboot.  The clones of the packages are gone; the load of
+   a row makes its clone again.
+4. The work trees: `git worktree prune`, then for each branch below
+   `git worktree add /tmp/pharo-work/wt/<name> <branch>`, the symbolic links
+   (`Frameworks`, `third_party/asmjit`, `scripts/pharo-headless-test` into
+   the main tree), `cmake -S . -B build-rel -G Ninja
+   -DCMAKE_BUILD_TYPE=Release`, and `git apply` of the saved diff.
+5. The patched Cog needs no build for a run: `cogp-app` is in the copy.  A
+   new Cog build needs `/tmp/pharo-work/cogbuild-all` again.  That is a
+   full build from the work tree `cog-all` of `~/src/pharo-vm`.  The saved
+   `VMMaker.image` goes to `build/vmmaker/image/`.  The tree `cog-all` had
+   3 files that were not committed; the diff is in the copy.
+
+### Work that the reboot stopped
+
+Each line: what, where the state is, and the next step.
+
+| Work | State at the reboot | Next step |
+|---|---|---|
+| Package run, rows 164 to 200 | rows 1 to 163 have a result | step 3 above |
+| Reruns of rows 151, 153, 154, then 157, 155, 156 (repairs are committed) | not run | `scripts/vmrun.sh pkgs --redo /tmp/pharo-work/pkgs1 <row> <row>`; rows 155 to 157 with `LOAD_TIMEOUT=2400 TEST_TIMEOUT=3600` |
+| Five audit leads of our VM (stale object pointers; `docs/vm-compat-bugs.md`, the first entry) | branch `store-barrier-audit`, no commit yet; lead 1 (the become of two objects of the same size) had a probe `scripts/cogdiff/become_remembered.st` and a change of 3 files, in the copy as a diff | start the workflow again (`vm-barrier-repairs-wf_9a7df7ec-f43.js` in the session's `workflows/scripts`), with the saved diff as the start for lead 1.  The leads are in `scratch/barrier/finding-1.md` to `finding-5.md` |
+| WarpBlt and alpha blend of our VM as the stock plugin (row 124) | branch `warpblt-stock-algorithm`, no commit yet; a port of 1058 lines in `Primitives.cpp`, a new `src/vm/BitBltStock.hpp` and `scripts/cogdiff/bitblt_warp_pixels.st`, in the copy; not built | start the workflow again (`vm-warpblt-repair-wf_34a48e2b-34f.js`); the draft patch and the report are in `scratch/ag/round2/opensmock-iconography.*` |
+| HTTPS server test of row 89 (a server identity from a PEM file in memory, no keychain) | branch `ssl-pem-identity`: 1 commit (8b79c33d); the review stage had a change of `sqMacSSL.c` that was not committed, in the copy | read `scratch/ssl89/report.md`, apply the diff, finish the review, build, run row 89, merge; then the Cog patch `scratch/ssl89/cog-squeakssl-mac-pem-identity.patch` |
+| `TKTNewProcessTaskRunnerTest>>testNewProcessTaskRunnerRunsInNewProcessEveryTime` failed 1 time in `sweep14-new14` ("Got 9 instead of 10") | an agent measured; no result came back; probes in `scratch/taskit36/` if it wrote some | measure again: 20000 rounds of the test body on each VM, with and without entry 35; then entry 36 |
+| Second rounds: row 126 (Famix-Cpp, 10 expected failures), row 138 (FAST, 2 failures), row 146 (pharo-instrumentation, 5 failures), row 147 (NeoConsole, 2 errors on our VM only) | agents ran; no result came back; partial files can be in `scratch/ag/round2/` | start each again with the second-round workflow (`package-rows-second-round-wf_99e9fd7b-897.js`); row 147 first: it is a difference between the VMs, and the eval mode change did not repair it |
+| New rows with no analysis yet | 158 (Pyramid, 5 skips), 159 (Iceberg, the run stops after 305 tests on the two VMs), 160 (MooseIDE, 104 skips), 163 (Druid, 34 errors and 1 expected failure) | the analyse workflow (`package-rows-analyse-verify-wf_8c002123-bea.js`) |
+
+### Decided or done on 2026-11-17 after the last long entry below
+
+- Image fix 34 (URL equality) and image fix 35 (TaskIt: the order of
+  `andThen:` blocks, and a lost callback) are in.  Sweeps with entries 1 to
+  35: our VM and the patched Cog each have 39465 tests, 39377 pass, 0
+  failures, 0 errors.
+- Our VM has no limit of 56000 frames any more (branch `deep-recursion`,
+  merged).
+- The eval mode of our VM runs the deferred start actions of the image
+  before the eval text (`src/vm/test_load_image.cpp`).  Each test run is an
+  eval of `scripts/pharo-headless-test/run_sunit.st` on the two VMs.  The
+  section "Running Pharo test suites" of `CLAUDE.md` still describes the two
+  older runner scripts; the owner must decide about a new text.
+- Stock Cog: the cause of the segmentation fault in a full GC is found
+  (`Cogit>>indexForSelector:in:at:`), with a change on a local branch and a
+  patch file.
+- The package run is at row 163: 133 rows clean, 4 clean with tests that
+  cannot apply, 5 rows that cannot run, 21 rows not clean.
+
+### Questions for the owner (no answer yet)
+
+- `ANTHROPIC_API_KEY` went to `api.anthropic.com` from tests of row 75 on
+  2026-11-17 (the service refused it as not valid).  A new key?
+- Row 75: 1 test writes into the login keychain.  Allow it, or keep the skip?
+- Row 71: 4 PDF tests need TeX (`latexmk`, `lualatex`).  Install it?
+- Row 113: 73 tests need a PostgreSQL server on `127.0.0.1:5432`.  Install it?
+- Row 57: 1 skip of the author; a repair changes the answer of 3 other tests.
+- Row 150 (pharo-agent) has no Smalltalk code.  Another package for the row?
+- Advent of Code inputs (row 119) are not in our repository.  Agree?
+- The `CLAUDE.md` section about the runners (see above).
+
 ## Right now (2026-11-17) -- every test that does not pass gets a fix
 
 The owner changed the focus on 2026-11-17.  The rule is in `CLAUDE.md`
@@ -238,13 +348,14 @@ of the package with `run_sunit.st`, each VM on its own copy of that image
 `<outdir>/res/<label>.diff`.  A package can have a fixes file
 (`scripts/pkg-jit-test/fixes/<label>.st`).
 
-State on 2026-11-17 at 21:00, rows 1 to 150 (the record of each repair is
-[upstream/package-repairs.md](upstream/package-repairs.md)).  Rows 151 to
-200 run now (`/tmp/pharo-work/fix33/pkgloop2.sh`).  The command
+State on 2026-11-17 at 22:30, rows 1 to 163 (the record of each repair is
+[upstream/package-repairs.md](upstream/package-repairs.md)).  The run of
+rows 164 to 200 stopped with the reboot (see the first section of this
+file).  The command
 `python3 scripts/pkg-jit-test/row-state.py /tmp/pharo-work/pkgs1` prints the
 state of each row.
 
-- 130 rows are clean: each test passes on stock Cog and on our VM.
+- 133 rows are clean: each test passes on stock Cog and on our VM.
 - 4 rows are clean with tests that cannot apply on the machine: row 70
   (BioSmalltalk, 7 tests for Glamorous Toolkit), row 82 (MCP, 1 test that
   needs a World that steps the Transcript), row 119 (AoC-in-Pharo, 6 tests
@@ -255,11 +366,10 @@ state of each row.
 - 5 rows cannot run: 4 name repositories that are not public any more (51,
   62, 66, 135), and row 150 (pharo-agent) is a TypeScript program with no
   Smalltalk code.
-- 12 rows are not clean yet.  The table has the rows with an open point.
-  Rows 121, 124, 126, 138 and 147 are in a second round (row 147 has 2
-  errors on our VM only: a connection to a telnet server in the image).
-  Row 146 is in a second round too (5 tests of a profiler give a count of
-  1).  Row 149 has a patch of its baseline whose run is in work:
+- 21 rows are not clean yet.  The table has the rows with an open point.
+  Not in the table: rows 151, 153, 154, 155, 156 and 157 have a repair that
+  did not run before the reboot, and rows 158, 159, 160 and 163 have no
+  analysis yet:
 
 | Row | Package | State | Work |
 |---|---|---|---|
@@ -271,6 +381,9 @@ state of each row.
 | 113 | P3 | 23 of 96 pass | open, for the owner: 73 tests need a PostgreSQL server on `127.0.0.1:5432` (database, user and password `postgres`); the machine has none, and a stand-in would not be an honest test |
 | 124 | Iconography | stock Cog 32 of 32, our VM 31 | a defect of our VM, measured: WarpBlt (`Form>>scaledToSize:`) does not pick pixels as the stock plugin does; the Cairo drawing is equal word for word.  A second defect: the alpha blend of the rules 24 and 34 rounds in another way.  The port of the stock algorithm is in work on the branch `warpblt-stock-algorithm` |
 | 126 | Famix-Cpp | 20 of 30 pass, 10 expected failures | the row loads now.  The 10 are tests of a CSV parser that names classes of an older metamodel; a port of the parser is in work |
+| 138 | FAST | 55 of 57 pass | the first repair (the present selector `asMetadescription`) took 9 errors away.  Open: 2 failures about a property that is multi-valued and derived; a second round did not come back before the reboot |
+| 146 | pharo-instrumentation | 12 of 17 pass | the first repair took 11 errors and 2 failures away.  Open: 5 tests of the call graph profiler give a count of 1; a second round did not come back before the reboot |
+| 147 | NeoConsole | stock Cog 7 of 7, our VM 5 | 2 errors on our VM only (`ConnectionClosed` to the telnet server of the package on port 4999).  The eval mode change did not repair it.  A second round did not come back before the reboot.  A difference between the VMs: do this row first |
 
 The package run found these defects outside the packages:
 
