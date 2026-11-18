@@ -1,0 +1,22 @@
+diff --git a/src/BaselineOfExtendedHeuristicCompletionBenchmarks/BaselineOfExtendedHeuristicCompletionBenchmarks.class.st b/src/BaselineOfExtendedHeuristicCompletionBenchmarks/BaselineOfExtendedHeuristicCompletionBenchmarks.class.st
+index 698d715..8c18049 100644
+--- a/src/BaselineOfExtendedHeuristicCompletionBenchmarks/BaselineOfExtendedHeuristicCompletionBenchmarks.class.st
++++ b/src/BaselineOfExtendedHeuristicCompletionBenchmarks/BaselineOfExtendedHeuristicCompletionBenchmarks.class.st
+@@ -12,7 +12,15 @@ BaselineOfExtendedHeuristicCompletionBenchmarks >> baseline: spec [
+ 	spec for: #common do: [
+ 			spec package: 'ExtendedHeuristicCompletion-Benchmarks'.
+ 
+-			"spec
++			spec
+ 				package: 'ExtendedHeuristicCompletion-Benchmarks-Tests'
+-				with: [ spec requires: #( 'ExtendedHeuristicCompletion-Benchmarks' ) ]" ]
++				with: [ spec requires: #( 'ExtendedHeuristicCompletion-Benchmarks' ) ].
++
++			spec package: 'ExtendedHeuristicCompletion-Model'.
++
++			spec
++				group: 'default'
++				with: #( 'ExtendedHeuristicCompletion-Benchmarks'
++						   'ExtendedHeuristicCompletion-Benchmarks-Tests' ).
++			spec group: 'model' with: #( 'ExtendedHeuristicCompletion-Model' ) ]
+ ]
