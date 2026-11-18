@@ -131,6 +131,49 @@ Pharo 13.1 (`Pharo13.1-64bit-81f6149.sources`) and Pharo 14
   `RBNamespace>>renameClass:to:around:`,
   `RBTransformationsTest>>testRenameClassTransform`.
 
+### Where the repairs go upstream
+
+The Pharo 14 image is built from `pharo-project/pharo` and from projects
+that `BaselineOfPharo` loads at a fixed version: Spec `v2.0.6`, NewTools
+`v0.11.0`, NewTools-DocumentBrowser `v1.1.1`, Microdown `v2.11.0`, Roassal
+`v1.7.7` (Roassal loads Geometry `v1.2.1`).  A repair in such a project gets
+into the image only when Pharo moves the version in `BaselineOfPharo`.  The
+repository of each class comes from the class files of `~/src/pharo`
+(branch `Pharo14`) and of each project at its version (2026-11-18).
+
+The development branch is `Pharo15` in `pharo-project/pharo`, Spec,
+NewTools and NewTools-DocumentBrowser, `dev` in Microdown and `master` in
+Geometry.  Each project also has a `Pharo14` branch, except Geometry.  The
+repairs were measured on Pharo 14 only.
+
+Groups of the record (A1 and A2 tests in brackets) by repository:
+
+- `pharo-project/pharo` (88: 84 of A1 and the 4 of A2): BlockClosureTest
+  (2), ClapHelloTest (1), Cly-async-results (2), Cly-misc-queries (5),
+  Cly-wrapper-queries (14), Debugger-kernel-skips (4), FloatTest (1),
+  Fuel-cleanblock (9), Fuel-widestring-globals (15), NA-platform-windows (3),
+  NavigationInteractionTest (1), OCArrayLiteralTest (1), OCParserTest (2),
+  OCProgramNodeTest (1), OCRengineTest (1), RGMCClassTest (1),
+  ReflectivityOnStackTest (1), ReleaseTest (1), Ring2ChunkImporterTest (2),
+  Rubric-anchors (3), RunnerLongDurationTest (2), SettingsStonReaderTest
+  (1), SlotErrorsTest (1), TFFI-disabled-tests (4), WeakAnnouncerTest (1),
+  WriteBarrierTest (2), network-tests (4), platform-unix-resolver (3).
+  The 4 tests of A2 also need the Cog patches of [upstream/](upstream/) in
+  `pharo-project/pharo-vm`.
+- `pharo-spec/Spec` (22): SpCodePresenterTest (3), SpEasy-skips (10),
+  SpMorphPresenterTest (1), SpRadioButtonInteractionTest (2),
+  SpTree-selection-skips (6).
+- `pharo-spec/NewTools` (12): CavWindowStrategyTest (1), StDebugger-skips
+  (9), StObjectTranscriptPresenterTest (1), StSettingsBrowserTest (1).
+- `pharo-spec/Spec` and `pharo-spec/NewTools-DocumentBrowser`:
+  presenter-examples (8).
+- `pharo-project/pharo` and `pharo-spec/NewTools`: St-evaluate-declare-global
+  (2).
+- `pharo-contributions/Geometry`: Geometry-intersections (3).
+- `pillar-markup/Microdown`: MicMetaDataBlockTest (1).
+- `pharo-project/pharo` and `pharo-spec/Spec`: the interactive-session
+  entries of A4 (`TaskbarMorph`, `SimulateMouseTest`, `SpTextPresenterTest`).
+
 ## Part A1: repaired, 132 tests
 
 | # | Test | Before | Defect in | Group in the record | Fix entry | Our VM | Patched Cog |
