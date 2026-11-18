@@ -1,5 +1,51 @@
 # VM-compatibility bugs (our VM fails, Cog passes)
 
+## OPEN 2026-11-17 — five leads from an audit for stale object pointers
+
+Stock Cog crashed in a full GC because a JIT routine wrote a young object
+into an old method with no store check (see
+[upstream/cog-changes.md](upstream/cog-changes.md), the last section).  An
+audit of our VM for the same class of defect ran on 2026-11-17: three
+readers, one for each area (interpreter and primitives, JIT, memory
+manager), and a second reader for each report.  The audit read the code.  It
+ran no probe, so each lead below is confirmed by reading only.
+
+1. `primitiveArrayBecome`, the branch for two objects of the same size
+   (`src/vm/Primitives.cpp`, the swap of the raw headers).  The header word
+   has the remembered bit, so the bit moves to the other object.  An old
+   object can then hold a young pointer and have the bit set with no entry
+   in the remembered set.  `rememberObject` does nothing for an object with
+   the bit.  A scavenge that trusts the set does not see the pointer.  Two
+   readers found this lead, and two second readers could not refute it.
+2. `syncClassTableToHeap` can make a new class table page before the full
+   GC of a snapshot.  The compaction moves the page, and the hidden
+   roots object keeps the old address.  The address goes into the saved
+   image.
+3. Primitive 598 (a new pinned object) allocates a small object in new
+   space.  A scavenge then moves a pinned object.
+4. `initialCompileFailedInsert` (`src/vm/jit/JITRuntime.hpp`) keeps a method
+   as a key of the compile-failed map and does not tell the GC on the
+   normal path.  A scavenge does not update a young key.
+5. The send path of `src/vm/Interpreter.cpp` keeps method pointers in C++
+   locals across a primitive call.  Primitives 130 and 131 run a GC in that
+   call.
+
+The repairs are in work on the branch `store-barrier-audit` (a work tree,
+one lead after the other: a probe that shows the defect, the repair, a
+build, then a review and a full sweep).
+
+Three reports did not hold:
+
+- the stack of remappable pointers of the plugins: no path moves an object
+  between a push and a pop;
+- the slots of a Context above its stack pointer: no code reads them;
+- old-space free list reuse: the knob is off in each build.
+
+One report is not decided:
+`raiseContextStackpTo` does not clear the slots that it exposes.  The audit
+found 48 places safe and wrote down why
+(`/tmp/pharo-work/barrier/audit-record.md`).
+
 ## FIXED 2026-11-17 — a recursion deeper than 56000 frames got an error that Cog does not give
 
 Found by the package run (`MuTalk`, `MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis`,
@@ -136,9 +182,9 @@ Measured on 2026-11-17 (release build, JIT on):
 Left as it is:
 
 - MuTalk `MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis` passed in 25
-  ms because of the error.  It must now end by its time limit, as on Cog.  This
-  was not run for this change.  The test is in a package, and the package rows
-  must be run again.
+  ms because of the error.  It now ends by its time limit, as on Cog.  The
+  row of the package ran again after the merge: 337 of 337 pass on the two
+  VMs, and the test passes in 1785 ms on our VM and in 1198 ms on stock Cog.
 - A recursion of more than 32768 frames costs about twice as much as before for
   each pass, because the frames return through Contexts.  Cog pays the same kind
   of cost at the return from a stack page.

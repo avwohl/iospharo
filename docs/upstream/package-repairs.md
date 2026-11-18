@@ -1659,3 +1659,40 @@ How to run one row again: `scripts/vmrun.sh pkgs --redo <outdir> <row>`.
     entries is the same as before.
 - Result: 44 of 44 pass on the two VMs.
 
+## HeuristicCompletion-Benchmarks (`omarabedelkader/HeuristicCompletion-Benchmarks`, row 142)
+
+- State before: the load gave 2 packages and no test class, so the row ran
+  no test.
+- Cause: the baseline of the repository has the package
+  `ExtendedHeuristicCompletion-Benchmarks-Tests` inside a comment, and does
+  not name the package `ExtendedHeuristicCompletion-Model`.
+- Repair (`patches/omarabedelkader-heuristiccompletion-benchmarks.patch`,
+  for the owner of the package): the baseline names the tests package and a
+  group `default` with the benchmarks and the tests.  The package `Model`
+  is in a group of its own: it uses names that Pharo 14 does not have, and
+  no test needs it.
+- Result: 14 of 14 pass on the two VMs.
+
+## pharo-dataset (`pharo-llm/pharo-dataset`, row 143)
+
+- State before: 14 tests, 13 pass, 1 error on the two VMs
+  (`CooCompletionDatasetExporter` does not understand
+  `#entriesAsCompletionJsonString`).
+- Cause: commit ff24157 of the repository deleted the method and left its
+  two senders (`writeToFileNamed:`, `writeToFileReference:`) and its test.
+- Repair (`fixes/pharo-llm-pharo-dataset.st`): the method is back, with the
+  body of the deleted method.
+- The tests use no network service and no key.
+- Result: 14 of 14 pass on the two VMs.
+
+## Pharotales_Books (`neAnasteisha/Pharotales_Books`, row 144)
+
+- State before: 22 tests, 21 pass, 1 failure on the two VMs ("Got 2026
+  instead of 2025").
+- Cause: `FairyTaleTest>>testInitialize` compares the year of a new object
+  with the fixed value 2025.  `FairyTale>>initialize` uses the year of
+  today.  The test passed only in 2025.
+- Repair (`fixes/neanasteisha-pharotales-books.st`): the test compares with
+  `Date today year`, as the test `testYearLimits` of the same class does.
+- Result: 22 of 22 pass on the two VMs.
+
