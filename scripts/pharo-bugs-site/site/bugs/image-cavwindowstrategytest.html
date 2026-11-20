@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CavWindowStrategyTest - Pharo test defects</title><meta name="description" content="CavWindowStrategyTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>CavWindowStrategyTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-CavWindowStrategyTest.st</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-CavWindowStrategyTest.st</code></li>
+<li>Methods: <code>CavWindowStrategyTest&gt;&gt;testExactReplaceStrategyDoesNotChangeExtentAndPosition</code></li>
+</ul>
+<p>The test skipped itself with an unconditional <code>self skip</code> followed by <code>self flag: #revisitAlexis</code>. The code under test, CavExactOnTopStrategy&gt;&gt;placePresenter:, already sets position and extent from the placeholder. With the skip and the flag removed, the test passes unchanged on both VMs. The two sibling tests (PopUp and Cascading strategy) make the same assertions and already passed. The fix entry replaces only the test method and keeps both assertions and the trailing comment.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CavWindowStrategyTest&gt;&gt;testExactReplaceStrategyDoesNotChangeExtentAndPosition</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional <code>self skip</code> and <code>self flag: #revisitAlexis</code> at the top of the test. The code under test works, so the skip was stale.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I changed only a test method, so no non-test code needs separate coverage. I ran the whole CavWindowStrategyTest class (3 tests) 3 times on our VM (ours) and 3 times on Cog with the fix applied. Result: 3/3 PASS every run on both VMs. I also ran it once on ours-nojit: 3/3 PASS. Before the fix the class had 2 PASS and 1 SKIP; I did not re-measure that baseline in this session (the 2 PASS are the siblings, which pass in the with-fix runs).</p>
+<p>Upstream note: Title: CavWindowStrategyTest: re-enable testExactReplaceStrategyDoesNotChangeExtentAndPosition. Project: Pharo (the test is in the pharo repository). The test called <code>self skip</code> with a <code>#revisitAlexis</code> flag. CavExactOnTopStrategy&gt;&gt;placePresenter: sets position and extent from the placeholder, so the test passes when the skip is removed. The PopUp and Cascading tests already make the same assertions. The change removes the two lines <code>self skip.</code> and <code>self flag: #revisitAlexis.</code>. I checked this on Pharo 14 build 791 with our VM and with Cog v12.0.6.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>CavWindowStrategyTest&gt;&gt;testExactReplaceStrategyDoesNotChangeExtentAndPosition</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((CavWindowStrategyTest selector: #testExactReplaceStrategyDoesNotChangeExtentAndPosition) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>CavWindowStrategyTest&gt;&gt;testExactReplaceStrategyDoesNotChangeExtentAndPosition before the fix (Pharo 14 build 791)</summary><pre class="code">testExactReplaceStrategyDoesNotChangeExtentAndPosition
+
+	| strategy |
+	
+	&quot;In setUp
+	placeHolder := (CavWindowPlaceHolder new position: 101@101; extent: 100@200).
+	&quot;
+	self skip.
+	self flag: #revisitAlexis.
+	strategy := CavExactOnTopStrategy new.
+	strategy placeHolder: placeHolder.
+	strategy placePresenter: presenter.
+	
+	self assert: presenter extent equals: 100@200.
+	self assert: presenter position equals: 101@101
+	
+	&quot;we cannot test that if there was one window with the same presenter it got removed.&quot;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-CavWindowStrategyTest.st (<a href="../files/image-fixes/20-CavWindowStrategyTest.st">download</a>)</summary><pre class="code">fix value: #CavWindowStrategyTest value: #testExactReplaceStrategyDoesNotChangeExtentAndPosition
+	value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ]
+	value:
+&#x27;testExactReplaceStrategyDoesNotChangeExtentAndPosition
+
+	| strategy |
+	
+	&quot;In setUp
+	placeHolder := (CavWindowPlaceHolder new position: 101@101; extent: 100@200).
+	&quot;
+	strategy := CavExactOnTopStrategy new.
+	strategy placeHolder: placeHolder.
+	strategy placePresenter: presenter.
+	
+	self assert: presenter extent equals: 100@200.
+	self assert: presenter position equals: 101@101
+	
+	&quot;we cannot test that if there was one window with the same presenter it got removed.&quot;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rename-class-changes - Pharo test defects</title><meta name="description" content="Rename-class-changes: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Rename-class-changes</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>3</dd><dt>Fix</dt><dd>image fix 31-rename-class-changes.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo and pharo-spec/NewTools</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/31-rename-class-changes.st</code></li>
+<li>Methods: <code>RBNamespace&gt;&gt;renameClass:to:around:</code>,
+<code>RBTransformationsTest&gt;&gt;testRenameClassTransform</code>,
+<code>ReRenameClassCommandTest&gt;&gt;testRenameClassCommandSuccess</code></li>
+</ul>
+<p>The method adds the rename change to the changes of the namespace and
+keeps the old value of <code>changes</code>.  Then the method runs the block and puts
+the old value back.  The method never makes the rename change the current
+<code>changes</code>.  The sibling method
+<code>perform:onlyWithChange:</code> has the line <code>changes := aCompositeRefactoryChange</code>
+at that place.  Without the line, the method changes that the block records
+are siblings of the rename change and not its parts.
+<code>ReRenameClassChange&gt;&gt;executeNotifying:</code> gives the new class name only to
+its parts.  A sibling keeps the old name, and <code>ReClassChange&gt;&gt;changeClass</code>
+answers nil for that name after the rename.</p>
+<p>The repair adds the line <code>changes := change</code>.</p>
+<p>Two tests of the image count the changes of a class rename at the top level
+of the model (11 and 7).  The counts are the rename change and the method
+changes as its siblings, which is the defect.  A first sweep with the repair
+showed the two tests (&quot;Got 1 instead of 11&quot;, &quot;Got 1 instead of 7&quot;).  The two
+tests now check that the model has one change, and that the rename change
+has the method changes as its parts (10 and 6).</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ChanelTestCaseNameCleanerTest&gt;&gt;testRenameTestCaseEndingWithTestsUpdateReferences</code> (package Chanel)</td>
+<td>image code</td>
+<td>repaired</td>
+<td>The method changes of a class rename kept the old class name.</td>
+</tr>
+<tr>
+<td><code>RBTransformationsTest&gt;&gt;testRenameClassTransform</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>The expected count was the count of the defect.</td>
+</tr>
+<tr>
+<td><code>ReRenameClassCommandTest&gt;&gt;testRenameClassCommandSuccess</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>The expected count was the count of the defect.</td>
+</tr>
+</tbody>
+</table>
+<p>No test of the image shows the defect.  The test is in the package
+<code>jecisc/Chanel</code> (row 13 of the package run): it failed on stock Cog and on
+our VM with <code>receiver of &quot;includesSelector:&quot; is nil</code>, and it passes on the
+two VMs with the repair.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ChanelTestCaseNameCleanerTest&gt;&gt;testRenameTestCaseEndingWithTestsUpdateReferences</code></td><td></td><td>repaired</td><td>not run</td><td>not run</td><td>-</td></tr><tr><td><code>RBTransformationsTest&gt;&gt;testRenameClassTransform</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr><tr><td><code>ReRenameClassCommandTest&gt;&gt;testRenameClassCommandSuccess</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  These classes are not in the Pharo image but in a package (see the record): ChanelTestCaseNameCleanerTest.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ChanelTestCaseNameCleanerTest selector: #testRenameTestCaseEndingWithTestsUpdateReferences) run) printString.
+((RBTransformationsTest selector: #testRenameClassTransform) run) printString.
+((ReRenameClassCommandTest selector: #testRenameClassCommandSuccess) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>RBTransformationsTest&gt;&gt;testRenameClassTransform before the fix (Pharo 14 build 791)</summary><pre class="code">testRenameClassTransform
+
+	| transformation class newClassName oldClassName |
+	newClassName := #RBNewDummyClassName.
+	oldClassName := RBClassToRename name asSymbol.
+	transformation := ReRenameClassRefactoring
+		                  rename: oldClassName
+		                  to: newClassName.
+	transformation generateChanges.
+
+	self assert: transformation model changes changes size equals: 11.
+
+	class := transformation model classNamed: newClassName.
+	self
+		assert: (class parseTreeForSelector: #method1)
+		equals: (self parseMethod: &#x27;method1 ^ self method2&#x27;).
+
+	self deny: (transformation model includesClassNamed: oldClassName).
+
+	class := transformation model classNamed:
+		         RBSubclassOfClassToRename name asSymbol.
+
+	self
+		assert: class superclass
+		equals:
+		(transformation model classNamed: &#x27;RBNewDummyClassName&#x27; asSymbol).
+
+	self
+		assert: (class parseTreeForSelector: #symbolReference)
+		equals: (self parseMethod: &#x27;symbolReference ^ #RBNewDummyClassName&#x27;).
+	self
+		assert: (class parseTreeForSelector: #reference)
+		equals: (self parseMethod: &#x27;reference ^ RBNewDummyClassName new&#x27;)</pre></details><details><summary>ReRenameClassCommandTest&gt;&gt;testRenameClassCommandSuccess before the fix (Pharo 14 build 791)</summary><pre class="code">testRenameClassCommandSuccess
+
+	| driver command context dialogMock |
+	command := StRenameClassCommand new.
+	context := StCommandContextMock new name: #ReClassToConvertTemporaryToInstanceVariable.
+	command context: context.
+	driver := command prepareDriver.
+	dialogMock := StRequestDialogMock new.
+	dialogMock response: &#x27;NewClassNameForTest&#x27;.
+	driver requestDialog: dialogMock.
+	driver
+		forTesting: true;
+		runRefactoring.
+
+	self assert: driver changes changes size equals: 7.</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>31-rename-class-changes.st (<a href="../files/image-fixes/31-rename-class-changes.st">download</a>)</summary><pre class="code">&quot;Refactoring-Core: a rename of a class loses the changes of its methods
+(2026-11-17).  Found by the package run: Chanel,
+ChanelTestCaseNameCleanerTest&gt;&gt;testRenameTestCaseEndingWithTestsUpdateReferences
+(MessageNotUnderstood: receiver of includesSelector: is nil, in
+ReAddMethodChange&gt;&gt;asUndoOperation).  The same on stock Cog and on our VM.
+
+RBNamespace&gt;&gt;renameClass:to:around: adds the rename change to the changes of
+the namespace, keeps the old value of &#x27;changes&#x27;, runs the block, and puts the
+old value back.  The method never makes the rename change the current
+&#x27;changes&#x27;, so the code that puts the old value back has no effect.  The
+sibling method perform:onlyWithChange: has the line
+&#x27;changes := aCompositeRefactoryChange&#x27; at that place.  Without the line, the
+method changes that the block records (the methods of the class that refer
+to its own name) are siblings of the rename change and not its parts.
+ReRenameClassChange&gt;&gt;executeNotifying: gives the new class name only to its
+parts.  A sibling keeps the old name, and ReClassChange&gt;&gt;changeClass answers
+nil for that name after the rename.
+
+The repair adds the line.  The guard is the Pharo 14 form of the method with
+no such line.
+
+Two tests of the image count the changes of a class rename at the top level
+of the model: RBTransformationsTest&gt;&gt;testRenameClassTransform (11) and
+ReRenameClassCommandTest&gt;&gt;testRenameClassCommandSuccess (7).  The counts are
+the rename change and the method changes as its siblings, which is the
+defect.  ReRenameClassChange&gt;&gt;executeNotifying: runs the parts of the rename
+change with the new class name, so the parts are where the method changes
+belong.  With the repair the model has one change, the rename change, and
+the method changes are its parts (10 and 6).  The two tests now check the
+two numbers.&quot;
+
+fix value: #RBNamespace value: #renameClass:to:around:
+	value: [ :source | (source includesSubstring: &#x27;oldChanges := changes.&#x27;)
+		and: [ (source includesSubstring: &#x27;changes := change.&#x27;) not ] ]
+	value:
+&#x27;renameClass: aRBClass to: aSymbol around: aBlock
+
+	| change value dict oldChanges |
+	change := changeFactory renameClass: aRBClass to: aSymbol.
+	changes addChange: change.
+	oldChanges := changes.
+	&quot;The changes that the block records are parts of the rename change, as in perform:onlyWithChange:.  The rename then gives them the new class name.&quot;
+	changes := change.
+	aBlock ensure: [ changes := oldChanges ].
+	self flushCaches.
+
+	dict := (newClasses includesKey: aRBClass name)
+		        ifTrue: [ newClasses ]
+		        ifFalse: [ changedClasses ].
+
+	self markAsRemoved: aRBClass name.
+	self unmarkAsRemoved: aSymbol.
+
+	value := dict at: aRBClass name.
+	dict removeKey: aRBClass name.
+	dict at: aSymbol put: value.
+
+	value first name: aSymbol.
+	value last name: aSymbol.
+
+	value first subclasses do: [ :each | each superclass: value first ].
+	value last subclasses do: [ :each | each superclass: value last ].
+
+	^ change&#x27;.
+
+fix value: #RBTransformationsTest value: #testRenameClassTransform
+	value: [ :source | source includesSubstring: &#x27;transformation model changes changes size equals: 11.&#x27; ]
+	value: ((RBTransformationsTest &gt;&gt; #testRenameClassTransform) sourceCode
+		copyReplaceAll: &#x27;self assert: transformation model changes changes size equals: 11.&#x27;
+		with: &#x27;&quot;The rename change is the one change of the model.  The changes of the methods are its parts, so that the rename gives them the new class name.&quot;
+	self assert: transformation model changes changes size equals: 1.
+	self assert: transformation model changes changes first changes size equals: 10.&#x27;).
+
+fix value: #ReRenameClassCommandTest value: #testRenameClassCommandSuccess
+	value: [ :source | source includesSubstring: &#x27;driver changes changes size equals: 7.&#x27; ]
+	value: ((ReRenameClassCommandTest &gt;&gt; #testRenameClassCommandSuccess) sourceCode
+		copyReplaceAll: &#x27;self assert: driver changes changes size equals: 7.&#x27;
+		with: &#x27;&quot;The rename change is the one change.  The changes of the methods are its parts.  (One read of the changes: ReInteractionDriver&gt;&gt;changes runs the transformation at each call.)&quot;
+	self assert: (driver changes changes collect: [ :each | each changes size ]) asArray equals: #( 6 ).&#x27;).
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

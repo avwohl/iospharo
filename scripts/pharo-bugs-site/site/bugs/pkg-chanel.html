@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Chanel (jecisc/Chanel, row 13) - Pharo test defects</title><meta name="description" content="Package: Chanel (jecisc/Chanel, row 13): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Chanel (jecisc/Chanel, row 13)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>jecisc-chanel.st</dd><dt>Upstream repository</dt><dd>jecisc/Chanel</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 369 tests, 329 pass, 40 errors on the two VMs.</li>
+<li>Result with <code>fixes/jecisc-chanel.st</code>: 369 of 369 pass on the two VMs.</li>
+<li>33 errors (<code>OCCompilationError</code>, undeclared variable): the tests compile
+method sources that use the names <code>test</code>, <code>test2</code>, <code>test3</code>, <code>test4</code>,
+<code>notTest</code> and <code>x</code> with no declaration.  <code>Behavior&gt;&gt;compile:</code> of Pharo 14
+does not permit an undeclared variable.  The helpers of
+<code>ChanelAbstractCleanerTest</code> that make a class or a trait now give the
+names as instance variables.  The change for the package is the same.</li>
+<li>6 errors (<code>ByteSymbol&gt;&gt;#parent:</code> not understood): the extension
+<code>OCMessageNode class&gt;&gt;superSendTo:</code> of Chanel gives a Symbol to
+<code>selector:</code>.  <code>OCMessageNode&gt;&gt;selector:</code> of Pharo 14 takes an
+<code>OCSelectorNode</code>.  The cleaner <code>ChanelEnsureSuperIsCalledCleaner</code> itself
+has the defect, not only its tests.</li>
+<li>1 error (<code>testRenameTestCaseEndingWithTestsUpdateReferences</code>): a defect of
+the Pharo image, <code>RBNamespace&gt;&gt;renameClass:to:around:</code>.  See
+pharo-image-repairs-2026-11-17.md.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 13&quot;
+Metacello new baseline: &#x27;Chanel&#x27;; repository: &#x27;github://jecisc/Chanel:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>13</td><td><code>jecisc-chanel</code></td><td>ok</td><td>tests=369 P=369 F=0 E=0 S=0 T=0 X=0</td><td>tests=369 P=369 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): jecisc-chanel.st (<a href="../files/packages/fixes/jecisc-chanel.st">download</a>)</summary><pre class="code">&quot;Chanel (jecisc/Chanel, master e5012fa).  Three defects, see docs/upstream/package-repairs.md.
+
+1. ChanelAbstractCleanerTest: the test methods compile sources that use the
+   variables test, test2, test3, test4, notTest and x without a declaration.
+   Behavior&gt;&gt;compile:methodInstaller: of Pharo 14 sets permitUndeclared: false,
+   so each compile fails with OCCompilationError.  The tests mean instance
+   variables (testRemoveUselessInstanceVariableRead).  The classes and the
+   traits that the test helpers create get the variables as slots.
+2. OCMessageNode class&gt;&gt;superSendTo: (extension of Chanel) passes a Symbol
+   to selector:, which takes an OCSelectorNode since Pharo 14.
+3. RBNamespace&gt;&gt;renameClass:to:around: of Pharo 14 does not make the rename
+   change the target of the changes that the block records.  This is a defect
+   of the image, and its repair is scripts/image-fixes/31-rename-class-changes.st
+   (1 test of ChanelTestCaseNameCleanerTest).&quot;
+
+fix value: #ChanelAbstractCleanerTest value: #createSubclassOf:named:
+	value: [ :source | (source includesSubstring: &#x27;slots:&#x27;) not ]
+	value:
+&#x27;createSubclassOf: aClass named: aSymbol
+
+	&quot;Pharo 14 compiles without undeclared variables.  The test sources use these names as instance and class-side instance variables.  A subclass of a class of this helper has the variables from its superclass.&quot;
+	| names |
+	names := #(test test2 test3 test4 notTest x).
+	^ aClass classInstaller make: [ :builder |
+		  builder
+			  superclass: aClass;
+			  name: aSymbol;
+			  slots: ((names reject: [ :each | aClass hasSlotNamed: each ]) collect: #asSlot);
+			  classSlots: ((names reject: [ :each | aClass class hasSlotNamed: each ]) collect: #asSlot);
+			  package: package name ]&#x27;.
+
+fix value: #ChanelAbstractCleanerTest value: #createTraitNamed:
+	value: [ :source | (source includesSubstring: &#x27;slots:&#x27;) not ]
+	value:
+&#x27;createTraitNamed: aSymbol
+
+	&quot;Pharo 14 compiles without undeclared variables.  A class that uses the trait gets the slots of the trait, so the class loses its own slots of the same names.&quot;
+	| names trait |
+	names := #(test test2 test3 test4 notTest x).
+	trait := Trait classInstaller make: [ :builder |
+		         builder
+			         beTrait;
+			         name: aSymbol;
+			         slots: (names collect: #asSlot);
+			         package: package name ].
+	class ifNotNil: [
+		class classInstaller update: class to: [ :builder |
+			builder slots: (class localSlots reject: [ :each | names includes: each name ]) ] ].
+	^ trait&#x27;.
+
+fix value: #&#x27;OCMessageNode class&#x27; value: #superSendTo:
+	value: [ :source | (source includesSubstring: &#x27;OCSelectorNode&#x27;) not ]
+	value:
+&#x27;superSendTo: aSelector
+	^ self receiver: OCVariableNode superNode selector: (OCSelectorNode value: aSelector)&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

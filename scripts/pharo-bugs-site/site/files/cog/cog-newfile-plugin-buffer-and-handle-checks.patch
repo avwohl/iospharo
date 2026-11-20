@@ -1,0 +1,1070 @@
+From b76510a5b3f680ffcbbe8424683b3a1fda2727e9 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 13:42:21 -0500
+Subject: [PATCH 1/2] NewFilePlugin: check the buffer and the handle objects in
+ the primitives
+
+The read and write primitives (primitiveFileReadInto,
+primitiveFileReadIntoAtFileOffset, primitiveFileWriteFrom,
+primitiveFileWriteFromAtFileOffset) gave the address of the buffer to C
+without a check.  Measured on stock Cog v12.0.6 (macOS arm64):
+ - a read of 3 bytes into a ByteArray of 2 bytes answers 3 (the plugin
+   writes past the buffer);
+ - a read into an Array answers 2 (the plugin writes bytes into pointer
+   slots);
+ - a read into a read-only ByteArray answers 2.
+
+The primitives now call checkBuffer:offset:size:forRead:.  The buffer must
+be a data object without pointers (isWordsOrBytes:, so not an Array and not
+a CompiledMethod), offset + size must not be more than byteSizeOf: the
+buffer (written so that it cannot overflow), and a buffer for a read must
+not be immutable.  Otherwise the primitive fails with PrimErrBadArgument,
+PrimErrBadIndex or PrimErrNoModification, before any C call.
+
+The handle objects (ExternalAddress) were read with firstIndexableField:
+without a check, so a SmallInteger or a short object gave a wild read.
+handleValueOf: now fails the primitive unless the handle is a byte object of
+BytesPerWord bytes.
+
+primitiveFileOpen, primitiveDirectoryOpen, primitiveDirectoryNext and
+primitiveMemoryMapWithProtection allocated an ExternalAddress and then used
+oops (path, handle) that were read before the allocation, which can move
+young objects.  They now read the path and the handle after the allocation,
+and do nothing when the allocation failed.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ smalltalksrc/VMMaker/NewFilePlugin.class.st | 96 +++++++++++++++++----
+ 1 file changed, 78 insertions(+), 18 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/NewFilePlugin.class.st b/smalltalksrc/VMMaker/NewFilePlugin.class.st
+index 8e8bed04b..a7ed070d3 100644
+--- a/smalltalksrc/VMMaker/NewFilePlugin.class.st
++++ b/smalltalksrc/VMMaker/NewFilePlugin.class.st
+@@ -27,6 +27,41 @@ NewFilePlugin class >> requiresPlatformFiles [
+ 	^true
+ ]
+ 
++{ #category : 'private' }
++NewFilePlugin >> checkBuffer: bufferOop offset: bufferOffset size: transferSize forRead: isRead [
++	"Answer true if bufferOop is a data object without pointers (bytes, 16-bit, 32-bit or 64-bit
++	 elements; not a compiled method) that holds bufferOffset + transferSize bytes, and, for a read
++	 into the buffer, is not immutable.  Otherwise fail the primitive and answer false.  The plugin
++	 writes or reads the bytes at firstIndexableField + bufferOffset, so nothing else may reach C."
++	<var: 'bufferOffset' type: #usqInt>
++	<var: 'transferSize' type: #usqInt>
++	<var: 'bufferSize' type: #usqInt>
++	| bufferSize |
++	(interpreterProxy isWordsOrBytes: bufferOop) ifFalse: [
++		interpreterProxy primitiveFailFor: PrimErrBadArgument.
++		^false ].
++	(isRead and: [ interpreterProxy isOopImmutable: bufferOop ]) ifTrue: [
++		interpreterProxy primitiveFailFor: PrimErrNoModification.
++		^false ].
++	bufferSize := interpreterProxy byteSizeOf: bufferOop.
++	"No overflow: bufferOffset <= bufferSize first, then the subtraction cannot wrap."
++	(bufferOffset <= bufferSize and: [ transferSize <= (bufferSize - bufferOffset) ]) ifFalse: [
++		interpreterProxy primitiveFailFor: PrimErrBadIndex.
++		^false ].
++	^true
++]
++
++{ #category : 'private' }
++NewFilePlugin >> handleValueOf: handleOop [
++	"Answer the C value in the ExternalAddress handleOop (the plugin keeps a handle token there).
++	 Fail the primitive if handleOop is not a byte object of the size of a pointer: the plugin must
++	 not read a pointer out of a SmallInteger, nil, or a short object."
++	<returnTypeC: #'void *'>
++	((interpreterProxy isBytes: handleOop) and: [ (interpreterProxy byteSizeOf: handleOop) = BytesPerWord ]) ifFalse: [
++		^self cCoerce: (interpreterProxy primitiveFailFor: PrimErrBadArgument) to: #'void *' ].
++	^self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: handleOop)) to: #'void *'
++]
++
+ { #category : 'file primitives' }
+ NewFilePlugin >> primitiveDeleteFile [
+ 	<var: 'pathIndex' type: 'char *'>
+@@ -54,7 +89,7 @@ NewFilePlugin >> primitiveDirectoryClose [
+ 	| directoryOop directoryPointer |
+ 	directoryOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		directoryPointer := self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: directoryOop)) to: #'NewDirectory_t *'.
++		directoryPointer := self cCoerce: (self handleValueOf: directoryOop) to: #'NewDirectory_t *'.
+ 		self cCode: 'NewDirectory_close(directoryPointer)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy pop: 1  "pop directory; leave rcvr on stack" ].
+@@ -86,12 +121,14 @@ NewFilePlugin >> primitiveDirectoryNext [
+ 	<var: 'stringPointer' type: #'char *'>
+ 	
+ 	| directoryOop directoryPointer stringOop stringPointer|
+-	directoryOop := interpreterProxy stackValue: 0.
+ 	stringOop := interpreterProxy instantiateClass: interpreterProxy classExternalAddress indexableSize: BytesPerWord.
++	"The allocation can move objects: read the handle from the stack after it."
++	directoryOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		directoryPointer := self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: directoryOop)) to: #'NewDirectory_t *'.
+-		stringPointer := self cCode: '(char *)NewDirectory_next(directoryPointer)'.
+-		self pointerAtPointer: (interpreterProxy firstIndexableField: stringOop) put: stringPointer.
++		directoryPointer := self cCoerce: (self handleValueOf: directoryOop) to: #'NewDirectory_t *'.
++		interpreterProxy failed ifFalse: [
++			stringPointer := self cCode: '(char *)NewDirectory_next(directoryPointer)'.
++			self pointerAtPointer: (interpreterProxy firstIndexableField: stringOop) put: stringPointer ]
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: stringOop ].
+ ]
+@@ -111,6 +148,11 @@ NewFilePlugin >> primitiveDirectoryOpen [
+ 	pathSize := interpreterProxy byteSizeOf: pathPointer.
+ 
+ 	directoryOop := interpreterProxy instantiateClass: interpreterProxy classExternalAddress indexableSize: BytesPerWord.
++	interpreterProxy failed ifTrue: [ ^nil ].
++	"The allocation can move the path: read it again, and only now take its address."
++	pathPointer := interpreterProxy stackValue: 0.
++	pathIndex := interpreterProxy firstIndexableField: pathPointer.
++	pathSize := interpreterProxy byteSizeOf: pathPointer.
+ 	
+ 	directoryPointer := self cCode: 'NewDirectory_open(pathIndex, pathSize)'.
+ 	self pointerAtPointer: (interpreterProxy firstIndexableField: directoryOop) put: directoryPointer.
+@@ -147,7 +189,7 @@ NewFilePlugin >> primitiveDirectoryRewind [
+ 	| directoryOop directoryPointer |
+ 	directoryOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		directoryPointer := self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: directoryOop)) to: #'NewDirectory_t *'.
++		directoryPointer := self cCoerce: (self handleValueOf: directoryOop) to: #'NewDirectory_t *'.
+ 		self cCode: 'NewDirectory_rewind(directoryPointer)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy pop: 1  "pop directory; leave rcvr on stack" ].
+@@ -161,7 +203,7 @@ NewFilePlugin >> primitiveFileClose [
+ 	| fileOop filePointer |
+ 	fileOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		self cCode: 'NewFile_close(filePointer)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy pop: 1  "pop file; leave rcvr on stack" ].
+@@ -176,7 +218,7 @@ NewFilePlugin >> primitiveFileGetSize [
+ 	| fileOop filePointer fileSize |
+ 	fileOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		fileSize := self cCode: 'NewFile_getSize(filePointer)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: (interpreterProxy signed64BitIntegerFor: fileSize)].
+@@ -201,6 +243,11 @@ NewFilePlugin >> primitiveFileOpen [
+ 	pathSize := interpreterProxy byteSizeOf: pathPointer.
+ 
+ 	fileOop := interpreterProxy instantiateClass: interpreterProxy classExternalAddress indexableSize: BytesPerWord.
++	interpreterProxy failed ifTrue: [ ^nil ].
++	"The allocation can move the path: read it again, and only now take its address."
++	pathPointer := interpreterProxy stackValue: 3.
++	pathIndex := interpreterProxy firstIndexableField: pathPointer.
++	pathSize := interpreterProxy byteSizeOf: pathPointer.
+ 	
+ 	filePointer := self cCode: 'NewFile_open(pathIndex, pathSize, mode, creationDisposition, flags)'.
+ 	self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop) put: filePointer.
+@@ -223,9 +270,12 @@ NewFilePlugin >> primitiveFileReadInto [
+ 	bufferOop := interpreterProxy stackValue: 2.
+ 	fileOop := interpreterProxy stackValue: 3.
+ 
++	"The buffer must be a data object without pointers, big enough, and for a read not immutable;
++	 else the primitive fails before the plugin touches memory."
++	(interpreterProxy failed not and: [ self checkBuffer: bufferOop offset: bufferOffset size: readSize forRead: true ]) ifFalse: [ ^nil ].
+ 	interpreterProxy failed ifFalse: [
+ 		bufferPointer := interpreterProxy firstIndexableField: bufferOop.
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		readResult := self cCode: 'NewFile_read(filePointer, bufferPointer, bufferOffset, readSize)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: (interpreterProxy signed64BitIntegerFor: readResult)].
+@@ -245,9 +295,12 @@ NewFilePlugin >> primitiveFileReadIntoAtFileOffset [
+ 	bufferOop := interpreterProxy stackValue: 3.
+ 	fileOop := interpreterProxy stackValue: 4.
+ 
++	"The buffer must be a data object without pointers, big enough, and for a read not immutable;
++	 else the primitive fails before the plugin touches memory."
++	(interpreterProxy failed not and: [ self checkBuffer: bufferOop offset: bufferOffset size: readSize forRead: true ]) ifFalse: [ ^nil ].
+ 	interpreterProxy failed ifFalse: [
+ 		bufferPointer := interpreterProxy firstIndexableField: bufferOop.
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		readResult := self cCode: 'NewFile_readAtOffset(filePointer, bufferPointer, bufferOffset, readSize, fileOffset)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: (interpreterProxy signed64BitIntegerFor: readResult)].
+@@ -263,7 +316,7 @@ NewFilePlugin >> primitiveFileSeek [
+ 	seekOffset := interpreterProxy signed64BitValueOf: (interpreterProxy stackValue: 1).
+ 	fileOop := interpreterProxy stackValue: 2.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		self cCode: 'NewFile_seek(filePointer, seekOffset, seekMode)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy pop: 3  "pop seek mode, offset and file; leave rcvr on stack"].
+@@ -278,7 +331,7 @@ NewFilePlugin >> primitiveFileTell [
+ 	| fileOop filePointer fileSize |
+ 	fileOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		fileSize := self cCode: 'NewFile_tell(filePointer)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: (interpreterProxy signed64BitIntegerFor: fileSize)].
+@@ -294,7 +347,7 @@ NewFilePlugin >> primitiveFileTruncate [
+ 	newFileSize := interpreterProxy positive64BitValueOf: (interpreterProxy stackValue: 0).
+ 	fileOop := interpreterProxy stackValue: 1.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		result := self cCode: 'NewFile_truncate(filePointer, newFileSize)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnBool: result ].
+@@ -313,9 +366,12 @@ NewFilePlugin >> primitiveFileWriteFrom [
+ 	bufferOop := interpreterProxy stackValue: 2.
+ 	fileOop := interpreterProxy stackValue: 3.
+ 
++	"The buffer must be a data object without pointers, big enough, and for a read not immutable;
++	 else the primitive fails before the plugin touches memory."
++	(interpreterProxy failed not and: [ self checkBuffer: bufferOop offset: bufferOffset size: writeSize forRead: false ]) ifFalse: [ ^nil ].
+ 	interpreterProxy failed ifFalse: [
+ 		bufferPointer := interpreterProxy firstIndexableField: bufferOop.
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		writeResult := self cCode: 'NewFile_write(filePointer, bufferPointer, bufferOffset, writeSize)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: (interpreterProxy signed64BitIntegerFor: writeResult)].
+@@ -335,9 +391,12 @@ NewFilePlugin >> primitiveFileWriteFromAtFileOffset [
+ 	bufferOop := interpreterProxy stackValue: 3.
+ 	fileOop := interpreterProxy stackValue: 4.
+ 
++	"The buffer must be a data object without pointers, big enough, and for a read not immutable;
++	 else the primitive fails before the plugin touches memory."
++	(interpreterProxy failed not and: [ self checkBuffer: bufferOop offset: bufferOffset size: writeSize forRead: false ]) ifFalse: [ ^nil ].
+ 	interpreterProxy failed ifFalse: [
+ 		bufferPointer := interpreterProxy firstIndexableField: bufferOop.
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		writeResult := self cCode: 'NewFile_writeAtOffset(filePointer, bufferPointer, bufferOffset, writeSize, fileOffset)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy methodReturnValue: (interpreterProxy signed64BitIntegerFor: writeResult)].
+@@ -357,10 +416,11 @@ NewFilePlugin >> primitiveMemoryMapWithProtection [
+ 	
+ 	| fileOop filePointer protectionFlags memoryMappedPointer memoryMappedPointerOop |
+ 	protectionFlags := interpreterProxy positive32BitValueOf:(interpreterProxy stackValue: 0).
+-	fileOop := interpreterProxy stackValue: 1.
+ 	memoryMappedPointerOop := interpreterProxy instantiateClass: interpreterProxy classExternalAddress indexableSize: BytesPerWord.
++	"The allocation can move objects: read the handle from the stack after it."
++	fileOop := interpreterProxy stackValue: 1.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		memoryMappedPointer := self cCode: 'NewFile_memoryMap(filePointer, protectionFlags)'.
+ 		self pointerAtPointer: (interpreterProxy firstIndexableField: memoryMappedPointerOop) put: memoryMappedPointer.
+ 	].
+@@ -375,7 +435,7 @@ NewFilePlugin >> primitiveMemoryUnmap [
+ 	| fileOop filePointer |
+ 	fileOop := interpreterProxy stackValue: 0.
+ 	interpreterProxy failed ifFalse: [
+-		filePointer := 	self cCoerce: (self pointerAtPointer: (interpreterProxy firstIndexableField: fileOop)) to: 'NewFile_t *'.
++		filePointer := 	self cCoerce: (self handleValueOf: fileOop) to: 'NewFile_t *'.
+ 		self cCode: 'NewFile_memoryUnmap(filePointer)'
+ 	].
+ 	interpreterProxy failed ifFalse: [ interpreterProxy pop: 1  "pop file; leave rcvr on stack" ].
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 8403e75beef2b697daa7ddc2626b16460c9fd187 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 13:42:21 -0500
+Subject: [PATCH 2/2] NewFilePlugin: handle tokens instead of C pointers, and
+ repairs in the C library
+
+The ExternalAddress that the image holds contained the C pointer of the
+NewFile_t or NewDirectory_t, and each call dereferenced and the close call
+freed whatever pointer the image gave back.  Measured on stock Cog v12.0.6
+(macOS arm64): the copy of the handle of a closed file, given to
+primitiveFileClose, stops the VM with "Abort trap: 6" (free of the same
+pointer twice).  A copy of a closed handle can also meet a later file at the
+same address.
+
+New include/common/NewFileHandles.h: a table of live handles.  The value
+that NewFile_open and NewDirectory_open answer is now a token from a counter
+that never repeats in the process; every function looks the token up (with
+its kind, file or directory) and a token that is not live is handled like a
+NULL handle (close, rewind, unmap do nothing; read, write, size answer -1,
+tell answers 0, truncate answers false, next answers NULL).  A stale token
+can never match a later file.  The table is sorted by token (binary search)
+and is used from the VM thread only.
+
+Other defects repaired in the same files:
+ - unix NewFile_memoryUnmap tested the count the wrong way round: it called
+   munmap while references remained and never at the last one.  Now it
+   unmaps at the last reference.
+ - unix and win NewFile_memoryMap: a second map after the file changed size
+   answered the old mapping, and the image gave the view the new size.  Now
+   it answers NULL (no mapping) when the file size is not the mapped size.
+ - a read-write map after a read-only map of the same file answered the
+   read-only mapping.  Now it answers NULL; a read-only map after a
+   read-write map still shares the mapping.
+ - unix NewDirectory_open gave opendir() the path of the image without a
+   terminating NUL; it now uses the NUL-terminated copy.
+ - unix NewFile_seek dereferenced a NULL handle (a closed file); it now does
+   nothing.
+ - win NewFile_preparePath used strlen() on the path of the image, which has
+   no NUL: it now uses the given size.
+ - win NewFile_seek called abort() for an unknown seek mode, which stops the
+   VM on bad input from the image: it now does nothing.
+ - the result of malloc/calloc is checked.
+
+The Windows sources are not compiled on this machine; they were checked with
+clang -fsyntax-only against a stub windows.h only.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../include/common/NewFileHandles.h           | 116 +++++++++++++++
+ plugins/NewFilePlugin/src/unix/UnixFile.c     | 135 +++++++++++++++---
+ plugins/NewFilePlugin/src/win/Win32File.c     | 113 ++++++++++++---
+ 3 files changed, 322 insertions(+), 42 deletions(-)
+ create mode 100644 plugins/NewFilePlugin/include/common/NewFileHandles.h
+
+diff --git a/plugins/NewFilePlugin/include/common/NewFileHandles.h b/plugins/NewFilePlugin/include/common/NewFileHandles.h
+new file mode 100644
+index 000000000..499d6791b
+--- /dev/null
++++ b/plugins/NewFilePlugin/include/common/NewFileHandles.h
+@@ -0,0 +1,116 @@
++#ifndef PHARO_NEWFILE_HANDLES_H
++#define PHARO_NEWFILE_HANDLES_H
++
++/*
++ * Table of the live file and directory handles.
++ *
++ * The image keeps the value that NewFile_open and NewDirectory_open answer
++ * in an ExternalAddress, and gives the value back with every later call.  The
++ * value is therefore input from the image.  It is not a C pointer: it is a
++ * token from a counter that never gives the same token twice in one process.
++ * Each call looks the token up in this table.  A token that is not in the
++ * table (a copy of the handle of a file that is closed, a handle of the wrong
++ * kind, a random number) finds no object, and the call fails as for a NULL
++ * handle.  Nothing is dereferenced or freed on the word of the image.
++ *
++ * The VM calls the plugin primitives from the VM thread only, so the table has
++ * no lock.
++ *
++ * The functions are static, so each source file of the plugin has its own copy
++ * of the table; a platform build compiles one of UnixFile.c and Win32File.c.
++ */
++
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++
++typedef enum NewFileHandleKind_e
++{
++    NewFileHandleKindFile = 1,
++    NewFileHandleKindDirectory,
++} NewFileHandleKind_t;
++
++typedef struct NewFileHandleEntry_s
++{
++    uintptr_t token;
++    int kind;
++    void *object;
++} NewFileHandleEntry_t;
++
++/* The entries are sorted by token, because tokens only grow. */
++static NewFileHandleEntry_t *NewFileHandles_entries = NULL;
++static size_t NewFileHandles_count = 0;
++static size_t NewFileHandles_capacity = 0;
++static uintptr_t NewFileHandles_lastToken = 0;
++
++/* Answer the index of the entry of the token, or -1. */
++static ptrdiff_t
++NewFileHandles_find(uintptr_t token)
++{
++    size_t low = 0, high = NewFileHandles_count;
++    while(low < high)
++    {
++        size_t middle = low + (high - low) / 2;
++        uintptr_t middleToken = NewFileHandles_entries[middle].token;
++        if(middleToken == token)
++            return (ptrdiff_t)middle;
++        if(middleToken < token)
++            low = middle + 1;
++        else
++            high = middle;
++    }
++    return -1;
++}
++
++/* Answer a new token for the object, or NULL when there is no memory or no token left. */
++static void *
++NewFileHandles_register(int kind, void *object)
++{
++    if(!object || NewFileHandles_lastToken == UINTPTR_MAX)
++        return NULL;
++
++    if(NewFileHandles_count == NewFileHandles_capacity)
++    {
++        size_t newCapacity = NewFileHandles_capacity ? NewFileHandles_capacity * 2 : 16;
++        NewFileHandleEntry_t *newEntries = realloc(NewFileHandles_entries, newCapacity * sizeof(NewFileHandleEntry_t));
++        if(!newEntries)
++            return NULL;
++        NewFileHandles_entries = newEntries;
++        NewFileHandles_capacity = newCapacity;
++    }
++
++    uintptr_t token = ++NewFileHandles_lastToken;
++    NewFileHandleEntry_t *entry = NewFileHandles_entries + NewFileHandles_count++;
++    entry->token = token;
++    entry->kind = kind;
++    entry->object = object;
++    return (void*)token;
++}
++
++/* Answer the object of the token if the token is live and of the kind, else NULL. */
++static void *
++NewFileHandles_lookup(int kind, void *token)
++{
++    ptrdiff_t index = NewFileHandles_find((uintptr_t)token);
++    if(index < 0 || NewFileHandles_entries[index].kind != kind)
++        return NULL;
++    return NewFileHandles_entries[index].object;
++}
++
++/* Like lookup, and take the entry out of the table.  The caller frees the object. */
++static void *
++NewFileHandles_release(int kind, void *token)
++{
++    ptrdiff_t index = NewFileHandles_find((uintptr_t)token);
++    if(index < 0 || NewFileHandles_entries[index].kind != kind)
++        return NULL;
++
++    void *object = NewFileHandles_entries[index].object;
++    memmove(NewFileHandles_entries + index, NewFileHandles_entries + index + 1,
++        (NewFileHandles_count - (size_t)index - 1) * sizeof(NewFileHandleEntry_t));
++    --NewFileHandles_count;
++    return object;
++}
++
++#endif // PHARO_NEWFILE_HANDLES_H
+diff --git a/plugins/NewFilePlugin/src/unix/UnixFile.c b/plugins/NewFilePlugin/src/unix/UnixFile.c
+index bb7a747b0..6f636b849 100644
+--- a/plugins/NewFilePlugin/src/unix/UnixFile.c
++++ b/plugins/NewFilePlugin/src/unix/UnixFile.c
+@@ -1,4 +1,5 @@
+ #include "NewFile.h"
++#include "NewFileHandles.h"
+ 
+ #include <unistd.h>
+ #include <sys/stat.h>
+@@ -18,6 +19,8 @@ static char *
+ makeCStringWithFixedString(const char *string, size_t stringSize)
+ {
+     char *cstring = malloc(stringSize + 1);
++    if(!cstring)
++        return NULL;
+     memcpy(cstring, string, stringSize);
+     cstring[stringSize] = 0;
+     return cstring;
+@@ -27,6 +30,8 @@ bool
+ NewDirectory_create(const char *path, size_t pathSize)
+ {
+     char *cpath = makeCStringWithFixedString(path, pathSize);
++    if(!cpath)
++        return false;
+     bool result = mkdir(cpath, 0755) == 0;
+     free(cpath);
+     return result;
+@@ -35,6 +40,8 @@ NewDirectory_create(const char *path, size_t pathSize)
+ bool NewDirectory_removeEmpty(const char *path, size_t pathSize)
+ {
+     char *cpath = makeCStringWithFixedString(path, pathSize);
++    if(!cpath)
++        return false;
+     bool result = rmdir(cpath) == 0;
+     free(cpath);
+     return result;
+@@ -44,19 +51,44 @@ NewDirectory_t *
+ NewDirectory_open(const char *path, size_t pathSize)
+ {
+     char *cpath = makeCStringWithFixedString(path, pathSize);
+-    DIR *handle = opendir(path);
++    if(!cpath)
++        return NULL;
++
++    /* The path of the image has no terminating NUL: open the copy that has one. */
++    DIR *handle = opendir(cpath);
+     free(cpath);
+     if(!handle)
+         return NULL;
+     
+     NewDirectory_t *directory = calloc(1, sizeof(NewDirectory_t));
++    if(!directory)
++    {
++        closedir(handle);
++        return NULL;
++    }
+     directory->handle = handle;
+-    return directory;
++
++    /* The handle of the image is a token, not the pointer. */
++    void *token = NewFileHandles_register(NewFileHandleKindDirectory, directory);
++    if(!token)
++    {
++        closedir(handle);
++        free(directory);
++        return NULL;
++    }
++    return (NewDirectory_t *)token;
++}
++
++static NewDirectory_t *
++NewDirectory_fromHandle(NewDirectory_t *handle)
++{
++    return NewFileHandles_lookup(NewFileHandleKindDirectory, handle);
+ }
+ 
+ bool
+-NewDirectory_rewind(NewDirectory_t *directory)
++NewDirectory_rewind(NewDirectory_t *handle)
+ {
++    NewDirectory_t *directory = NewDirectory_fromHandle(handle);
+     if(!directory)
+         return false;
+ 
+@@ -65,8 +97,9 @@ NewDirectory_rewind(NewDirectory_t *directory)
+ }
+ 
+ const char *
+-NewDirectory_next(NewDirectory_t *directory)
++NewDirectory_next(NewDirectory_t *handle)
+ {
++    NewDirectory_t *directory = NewDirectory_fromHandle(handle);
+     if(!directory)
+         return NULL;
+ 
+@@ -78,8 +111,10 @@ NewDirectory_next(NewDirectory_t *directory)
+ }
+ 
+ void
+-NewDirectory_close(NewDirectory_t *directory)
++NewDirectory_close(NewDirectory_t *handle)
+ {
++    /* A handle that is not live (closed before, or not from open) does nothing. */
++    NewDirectory_t *directory = NewFileHandles_release(NewFileHandleKindDirectory, handle);
+     if(!directory)
+         return;
+     
+@@ -93,12 +128,21 @@ struct NewFile_s
+     int memoryMapCount;
+     size_t memoryMapLength;
+     void *memoryMapAddress;
++    NewFileMemMapProtection_t memoryMapProtection;
+ };
+ 
++static NewFile_t *
++NewFile_fromHandle(NewFile_t *handle)
++{
++    return NewFileHandles_lookup(NewFileHandleKindFile, handle);
++}
++
+ PHARO_NEWFILE_EXPORT bool
+ NewFile_deleteFile(const char *path, size_t pathSize)
+ {
+     char *cpath = makeCStringWithFixedString(path, pathSize);
++    if(!cpath)
++        return false;
+     bool result = unlink(cpath) == 0;
+     free(cpath);
+     return result;
+@@ -148,19 +192,37 @@ NewFile_open(const char *path, size_t pathSize, NewFileOpenMode_t mode, NewFileC
+     }
+     
+     char *cpath = makeCStringWithFixedString(path, pathSize);
++    if(!cpath)
++        return NULL;
+     int fd = open(cpath, openFlags, openMode);
+     free(cpath);
+     if(fd < 0)
+         return NULL;
+ 
+     NewFile_t *newFile = calloc(1, sizeof(NewFile_t));
++    if(!newFile)
++    {
++        close(fd);
++        return NULL;
++    }
+     newFile->fileDescriptor = fd;
+-    return newFile;
++
++    /* The handle of the image is a token, not the pointer. */
++    void *token = NewFileHandles_register(NewFileHandleKindFile, newFile);
++    if(!token)
++    {
++        close(fd);
++        free(newFile);
++        return NULL;
++    }
++    return (NewFile_t *)token;
+ }
+ 
+ void
+-NewFile_close(NewFile_t *file)
++NewFile_close(NewFile_t *handle)
+ {
++    /* A handle that is not live (closed before, or not from open) does nothing. */
++    NewFile_t *file = NewFileHandles_release(NewFileHandleKindFile, handle);
+     if(!file)
+         return;
+ 
+@@ -169,8 +231,9 @@ NewFile_close(NewFile_t *file)
+ }
+ 
+ int64_t
+-NewFile_getSize(NewFile_t *file)
++NewFile_getSize(NewFile_t *handle)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -181,8 +244,12 @@ NewFile_getSize(NewFile_t *file)
+     return s.st_size;
+ }
+ 
+-void NewFile_seek(NewFile_t *file, int64_t offset, NewFileSeekMode_t seekMode)
++void NewFile_seek(NewFile_t *handle, int64_t offset, NewFileSeekMode_t seekMode)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
++    if(!file)
++        return;
++
+     int whence = 0;
+     switch(seekMode)
+     {
+@@ -203,16 +270,18 @@ void NewFile_seek(NewFile_t *file, int64_t offset, NewFileSeekMode_t seekMode)
+ }
+ 
+ int64_t
+-NewFile_tell(NewFile_t *file)
++NewFile_tell(NewFile_t *handle)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return 0;
+     return lseek(file->fileDescriptor, 0, SEEK_CUR);
+ }
+ 
+ bool
+-NewFile_truncate(NewFile_t *file, uint64_t newFileSize)
++NewFile_truncate(NewFile_t *handle, uint64_t newFileSize)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return false;
+     
+@@ -220,8 +289,9 @@ NewFile_truncate(NewFile_t *file, uint64_t newFileSize)
+ }
+ 
+ int64_t
+-NewFile_read(NewFile_t *file, void * buffer, size_t bufferOffset, size_t readSize)
++NewFile_read(NewFile_t *handle, void * buffer, size_t bufferOffset, size_t readSize)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -229,8 +299,9 @@ NewFile_read(NewFile_t *file, void * buffer, size_t bufferOffset, size_t readSiz
+ }
+ 
+ int64_t
+-NewFile_write(NewFile_t *file, const void * buffer, size_t bufferOffset, size_t writeSize)
++NewFile_write(NewFile_t *handle, const void * buffer, size_t bufferOffset, size_t writeSize)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -238,8 +309,9 @@ NewFile_write(NewFile_t *file, const void * buffer, size_t bufferOffset, size_t
+ }
+ 
+ int64_t
+-NewFile_readAtOffset(NewFile_t *file, void * buffer, size_t bufferOffset, size_t readSize, uint64_t offset)
++NewFile_readAtOffset(NewFile_t *handle, void * buffer, size_t bufferOffset, size_t readSize, uint64_t offset)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -247,8 +319,9 @@ NewFile_readAtOffset(NewFile_t *file, void * buffer, size_t bufferOffset, size_t
+ }
+ 
+ int64_t
+-NewFile_writeAtOffset(NewFile_t *file, const void * buffer, size_t bufferOffset, size_t writeSize, uint64_t offset)
++NewFile_writeAtOffset(NewFile_t *handle, const void * buffer, size_t bufferOffset, size_t writeSize, uint64_t offset)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -256,20 +329,30 @@ NewFile_writeAtOffset(NewFile_t *file, const void * buffer, size_t bufferOffset,
+ }
+ 
+ PHARO_NEWFILE_EXPORT void *
+-NewFile_memoryMap(NewFile_t *file, NewFileMemMapProtection_t protection)
++NewFile_memoryMap(NewFile_t *handle, NewFileMemMapProtection_t protection)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return NULL;
+ 
++    int64_t fileSize = NewFile_getSize(handle);
+     if(file->memoryMapCount > 0)
+     {
++        /* Share the mapping only if it still is what the caller asks for:
++         * the file has the size that was mapped, and a write mapping is not
++         * answered with a read-only one. */
++        if(fileSize < 0 || (uint64_t)fileSize != file->memoryMapLength)
++            return NULL;
++        if(protection == NewFileMemMapProtectionReadWrite && file->memoryMapProtection != NewFileMemMapProtectionReadWrite)
++            return NULL;
++
+         ++file->memoryMapCount;
+         return file->memoryMapAddress;
+     }
+ 
+-    file->memoryMapLength = NewFile_getSize(file);
+-    if(file->memoryMapLength == 0)
+-        return 0;
++    if(fileSize <= 0)
++        return NULL;
++    file->memoryMapLength = (size_t)fileSize;
+ 
+     int mmapProtection = PROT_NONE;
+     switch(protection)
+@@ -284,23 +367,29 @@ NewFile_memoryMap(NewFile_t *file, NewFileMemMapProtection_t protection)
+         break;
+     }
+ 
+-    file->memoryMapAddress = mmap(NULL, file->memoryMapLength, mmapProtection, MAP_SHARED, file->fileDescriptor, 0);
+-    if(file->memoryMapAddress == MAP_FAILED)
++    void *address = mmap(NULL, file->memoryMapLength, mmapProtection, MAP_SHARED, file->fileDescriptor, 0);
++    if(address == MAP_FAILED)
+         return NULL;
+ 
++    file->memoryMapAddress = address;
++    file->memoryMapProtection = protection;
+     ++file->memoryMapCount;
+     return file->memoryMapAddress;
+ }
+ 
+ PHARO_NEWFILE_EXPORT void
+-NewFile_memoryUnmap(NewFile_t *file)
++NewFile_memoryUnmap(NewFile_t *handle)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file || file->memoryMapCount <= 0)
+         return;
+ 
++    /* Unmap at the last reference, not while references remain. */
+     --file->memoryMapCount;
+-    if(!file->memoryMapCount)
++    if(file->memoryMapCount > 0)
+         return;
+ 
+     munmap(file->memoryMapAddress, file->memoryMapLength);
++    file->memoryMapAddress = NULL;
++    file->memoryMapLength = 0;
+ }
+diff --git a/plugins/NewFilePlugin/src/win/Win32File.c b/plugins/NewFilePlugin/src/win/Win32File.c
+index 9cda85716..134edbe98 100644
+--- a/plugins/NewFilePlugin/src/win/Win32File.c
++++ b/plugins/NewFilePlugin/src/win/Win32File.c
+@@ -1,4 +1,5 @@
+ #include "NewFile.h"
++#include "NewFileHandles.h"
+ 
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+@@ -10,6 +11,7 @@
+ #include <windows.h>
+ 
+ #include <stdlib.h>
++#include <string.h>
+ 
+ struct NewDirectory_s
+ {
+@@ -26,8 +28,22 @@ struct NewFile_s
+     int memoryMapCount;
+     HANDLE memoryMapHandle;
+     void *memoyMapAddress;
++    int64_t memoryMapLength;
++    NewFileMemMapProtection_t memoryMapProtection;
+ };
+ 
++static NewFile_t *
++NewFile_fromHandle(NewFile_t *handle)
++{
++    return NewFileHandles_lookup(NewFileHandleKindFile, handle);
++}
++
++static NewDirectory_t *
++NewDirectory_fromHandle(NewDirectory_t *handle)
++{
++    return NewFileHandles_lookup(NewFileHandleKindDirectory, handle);
++}
++
+ static WCHAR *
+ NewFile_utf8ToWideChar(const char *string, size_t stringLen)
+ {
+@@ -68,7 +84,7 @@ NewFile_preparePath(const char *path, size_t pathSize)
+     // Add the \\?\ prefix to absolute paths
+     if(NewFile_isAbsolutePath(path, pathSize))
+     {
+-        size_t pathLength = strlen(path);
++        size_t pathLength = pathSize;
+         char *stringWithPrefix = calloc(4 + pathLength, 1);
+         memcpy(stringWithPrefix, "\\\\?\\", 4);
+         memcpy(stringWithPrefix + 4, path, pathLength);
+@@ -138,17 +154,35 @@ NewDirectory_open(const char *path, size_t pathSize)
+     }
+ 
+     NewDirectory_t *directory = calloc(1, sizeof(NewDirectory_t));
++    if(!directory)
++    {
++        FindClose(findHandle);
++        free(wpath);
++        return NULL;
++    }
+     directory->path = wpath;
+     directory->findHandle = findHandle;
+     directory->findData = findData;
+     directory->isFirst = true;
+     directory->elementName = NewFile_wideCharToUtf8(directory->findData.cFileName);
+-    return directory;
++
++    /* The handle of the image is a token, not the pointer. */
++    void *token = NewFileHandles_register(NewFileHandleKindDirectory, directory);
++    if(!token)
++    {
++        FindClose(directory->findHandle);
++        free(directory->elementName);
++        free(directory->path);
++        free(directory);
++        return NULL;
++    }
++    return (NewDirectory_t *)token;
+ }
+ 
+ PHARO_NEWFILE_EXPORT bool
+-NewDirectory_rewind(NewDirectory_t *directory)
++NewDirectory_rewind(NewDirectory_t *handle)
+ {
++    NewDirectory_t *directory = NewDirectory_fromHandle(handle);
+     if(!directory || directory->isFirst)
+         return true;
+ 
+@@ -168,8 +202,9 @@ NewDirectory_rewind(NewDirectory_t *directory)
+ }
+ 
+ PHARO_NEWFILE_EXPORT const char *
+-NewDirectory_next(NewDirectory_t *directory)
++NewDirectory_next(NewDirectory_t *handle)
+ {
++    NewDirectory_t *directory = NewDirectory_fromHandle(handle);
+     if(!directory)
+         return NULL;
+ 
+@@ -190,8 +225,10 @@ NewDirectory_next(NewDirectory_t *directory)
+ }
+ 
+ PHARO_NEWFILE_EXPORT void
+-NewDirectory_close(NewDirectory_t *directory)
++NewDirectory_close(NewDirectory_t *handle)
+ {
++    /* A handle that is not live does nothing. */
++    NewDirectory_t *directory = NewFileHandles_release(NewFileHandleKindDirectory, handle);
+     if(!directory)
+         return;
+ 
+@@ -265,13 +302,29 @@ NewFile_open(const char *path, size_t pathSize, NewFileOpenMode_t mode, NewFileC
+         return NULL;
+ 
+     NewFile_t *newFile = calloc(1, sizeof(NewFile_t));
++    if(!newFile)
++    {
++        CloseHandle(handle);
++        return NULL;
++    }
+     newFile->fileHandle = handle;
+-    return newFile;
++
++    /* The handle of the image is a token, not the pointer. */
++    void *token = NewFileHandles_register(NewFileHandleKindFile, newFile);
++    if(!token)
++    {
++        CloseHandle(handle);
++        free(newFile);
++        return NULL;
++    }
++    return (NewFile_t *)token;
+ }
+ 
+ PHARO_NEWFILE_EXPORT void
+-NewFile_close(NewFile_t *file)
++NewFile_close(NewFile_t *handle)
+ {
++    /* A handle that is not live does nothing. */
++    NewFile_t *file = NewFileHandles_release(NewFileHandleKindFile, handle);
+     if(!file)
+         return;
+ 
+@@ -285,8 +338,9 @@ NewFile_close(NewFile_t *file)
+ }
+ 
+ PHARO_NEWFILE_EXPORT int64_t
+-NewFile_getSize(NewFile_t *file)
++NewFile_getSize(NewFile_t *handle)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -298,8 +352,9 @@ NewFile_getSize(NewFile_t *file)
+ }
+ 
+ PHARO_NEWFILE_EXPORT void
+-NewFile_seek(NewFile_t *file, int64_t offset, NewFileSeekMode_t seekMode)
++NewFile_seek(NewFile_t *handle, int64_t offset, NewFileSeekMode_t seekMode)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return;
+ 
+@@ -319,15 +374,17 @@ NewFile_seek(NewFile_t *file, int64_t offset, NewFileSeekMode_t seekMode)
+         moveMethod = FILE_END;
+         break;
+     default:
+-        abort();
++        /* A seek mode from the image that is not known: do nothing. */
++        return;
+     }
+ 
+     SetFilePointerEx(file->fileHandle, largeIntegerOffset, NULL, moveMethod);
+ }
+ 
+ PHARO_NEWFILE_EXPORT int64_t
+-NewFile_tell(NewFile_t *file)
++NewFile_tell(NewFile_t *handle)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return 0;
+ 
+@@ -340,8 +397,9 @@ NewFile_tell(NewFile_t *file)
+ }
+ 
+ PHARO_NEWFILE_EXPORT bool
+-NewFile_truncate(NewFile_t *file, uint64_t newFileSize)
++NewFile_truncate(NewFile_t *handle, uint64_t newFileSize)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return false;
+ 
+@@ -364,8 +422,9 @@ NewFile_truncate(NewFile_t *file, uint64_t newFileSize)
+ }
+ 
+ PHARO_NEWFILE_EXPORT int64_t
+-NewFile_read(NewFile_t *file, void * buffer, size_t bufferOffset, size_t readSize)
++NewFile_read(NewFile_t *handle, void * buffer, size_t bufferOffset, size_t readSize)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -376,8 +435,9 @@ NewFile_read(NewFile_t *file, void * buffer, size_t bufferOffset, size_t readSiz
+ }
+ 
+ PHARO_NEWFILE_EXPORT int64_t
+-NewFile_write(NewFile_t *file, const void * buffer, size_t bufferOffset, size_t writeSize)
++NewFile_write(NewFile_t *handle, const void * buffer, size_t bufferOffset, size_t writeSize)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -389,8 +449,9 @@ NewFile_write(NewFile_t *file, const void * buffer, size_t bufferOffset, size_t
+ }
+ 
+ PHARO_NEWFILE_EXPORT int64_t
+-NewFile_readAtOffset(NewFile_t *file, void * buffer, size_t bufferOffset, size_t readSize, uint64_t offset)
++NewFile_readAtOffset(NewFile_t *handle, void * buffer, size_t bufferOffset, size_t readSize, uint64_t offset)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -405,8 +466,9 @@ NewFile_readAtOffset(NewFile_t *file, void * buffer, size_t bufferOffset, size_t
+ }
+ 
+ PHARO_NEWFILE_EXPORT int64_t
+-NewFile_writeAtOffset(NewFile_t *file, const void * buffer, size_t bufferOffset, size_t writeSize, uint64_t offset)
++NewFile_writeAtOffset(NewFile_t *handle, const void * buffer, size_t bufferOffset, size_t writeSize, uint64_t offset)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return -1;
+ 
+@@ -421,14 +483,23 @@ NewFile_writeAtOffset(NewFile_t *file, const void * buffer, size_t bufferOffset,
+     return writtenBytes;
+ }
+ 
+-PHARO_NEWFILE_EXPORT void * NewFile_memoryMap(NewFile_t *file, NewFileMemMapProtection_t protection)
++PHARO_NEWFILE_EXPORT void * NewFile_memoryMap(NewFile_t *handle, NewFileMemMapProtection_t protection)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file)
+         return NULL;
+ 
++    int64_t fileSize = NewFile_getSize(handle);
+     if(file->memoryMapCount)
+     {
+-        // TODO: Support changing the permission
++        // Share the mapping only if it still is what the caller asks for:
++        // the file has the size that was mapped, and a write mapping is not
++        // answered with a read-only one.
++        if(fileSize < 0 || fileSize != file->memoryMapLength)
++            return NULL;
++        if(protection == NewFileMemMapProtectionReadWrite && file->memoryMapProtection != NewFileMemMapProtectionReadWrite)
++            return NULL;
++
+         ++file->memoryMapCount;
+         return file->memoyMapAddress;
+     }
+@@ -456,16 +527,20 @@ PHARO_NEWFILE_EXPORT void * NewFile_memoryMap(NewFile_t *file, NewFileMemMapProt
+     if(!file->memoyMapAddress)
+     {
+         CloseHandle(file->memoryMapHandle);
++        file->memoryMapHandle = 0;
+         return NULL;
+     }
+ 
++    file->memoryMapLength = fileSize;
++    file->memoryMapProtection = protection;
+     file->memoryMapCount = 1;
+     return file->memoyMapAddress;
+ }
+ 
+ PHARO_NEWFILE_EXPORT void
+-NewFile_memoryUnmap(NewFile_t *file)
++NewFile_memoryUnmap(NewFile_t *handle)
+ {
++    NewFile_t *file = NewFile_fromHandle(handle);
+     if(!file || file->memoryMapCount == 0)
+         return;
+ 
+-- 
+2.54.0 (Apple Git-157)
+

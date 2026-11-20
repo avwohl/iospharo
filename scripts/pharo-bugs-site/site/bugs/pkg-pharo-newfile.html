@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: pharo-newfile (ronsaldo/pharo-newfile, row 50) - Pharo test defects</title><meta name="description" content="Package: pharo-newfile (ronsaldo/pharo-newfile, row 50): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: pharo-newfile (ronsaldo/pharo-newfile, row 50)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>ronsaldo/pharo-newfile</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: stock Cog 42 of 42 pass.  Our VM: 34 pass, 8 skip.  The 8
+tests of <code>NewFileTest</code> start with
+<code>NewFile primitiveIsAvailable ifFalse: [ ^ self skip ]</code>.</li>
+<li>Cause: a defect of our VM.  The package calls the plugin <code>NewFilePlugin</code>
+of the stock VM, and our VM did not have the plugin.</li>
+<li>Repair: <code>src/vm/plugins/NewFilePlugin.cpp</code> (20 primitives, the POSIX
+side).  The package needs no change.</li>
+<li>Result: 42 of 42 pass on the two VMs.</li>
+<li>The tests of the package reach 14 of the 20 primitives.
+<code>scripts/cogdiff/newfile_plugin_checks.st</code> has 36 more checks (directories,
+closed handles, buffers that are not ByteArrays, wrong arguments).  Our VM
+and stock Cog give the same answer for 33 of them.  The 3 others are
+defects of the stock plugin:
+<ul>
+<li>A read of 3 bytes into a ByteArray of 2 bytes answers 3: the stock
+plugin writes past the buffer.  Our VM fails the primitive.</li>
+<li>A read into an Array answers 2: the stock plugin writes bytes into the
+pointer slots of the Array.  Our VM fails the primitive.</li>
+<li>A read into a read-only ByteArray answers 2.  Our VM fails the
+primitive.</li>
+</ul>
+</li>
+<li><code>scripts/cogdiff/newfile_plugin_ours_checks.st</code> is for our VM only.  Stock
+Cog stopped with <code>Abort trap: 6</code> in <code>primitiveClose:</code> when the first form
+of the script had the check that gives a copy of the handle of a closed
+file to the close primitive (the stock plugin keeps a C pointer in the
+handle).  Our VM keeps an id that is never used again, and fails the
+primitive.</li>
+<li>Found in the package, not repaired, and no test shows the defect:
+<code>NewFile&gt;&gt;close</code> does not release the memory views of the file, and sets
+the handle to null.  A later <code>unmap</code> of a view then gives a null handle to
+the primitive, and the mapping stays until the VM exits.  The stock VM
+has the same result.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 50&quot;
+Metacello new baseline: &#x27;NewFiles&#x27;; repository: &#x27;github://ronsaldo/pharo-newfile:main/tonel&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>50</td><td><code>ronsaldo-pharo-newfile</code></td><td>ok</td><td>tests=42 P=42 F=0 E=0 S=0 T=0 X=0</td><td>tests=42 P=42 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><p>No fixes file; the record above says what changed.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

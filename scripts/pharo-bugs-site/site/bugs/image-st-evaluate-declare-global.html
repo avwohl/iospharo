@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>St-evaluate-declare-global - Pharo test defects</title><meta name="description" content="St-evaluate-declare-global: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>St-evaluate-declare-global</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-St-evaluate-declare-global.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo and pharo-spec/NewTools</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-St-evaluate-declare-global.st</code></li>
+<li>Methods: <code>StObjectContextPresenterTest&gt;&gt;testDoEvaluateDeclareGlobal</code>, <code>StPlaygroundPagePresenterTest&gt;&gt;testDoEvaluateDeclareGlobal</code>, <code>OCCodeReparator&gt;&gt;openMenu</code></li>
+</ul>
+<p>Both tests skipped themselves because they relied on catching OCUndeclaredVariableWarning and sending it declareGlobal. That warning is signalled only when the compiler has permitUndeclared set, and it has no declareGlobal method now (declareGlobal lives on OCCodeReparator). The presenters compile with the interaction model as requestor, so an undeclared uppercase variable goes through OCCodeReparator&gt;&gt;openMenu, which has no entry that declares a global. OCCodeReparator&gt;&gt;declareGlobal was unreachable from the UI, and only OCCodeReparatorTest called it. Fix: (1) OCCodeReparator&gt;&gt;openMenu gets a menu entry 'Declare new global variable' that runs declareGlobal, for uppercase names. (2) Both tests lose the skip. They swap UIManager default for an anonymous subclass whose chooseFrom:lines:title: picks that entry, run doEvaluateAndGo, then restore the old manager in ensure:. They still assert value is nil and that the global exists afterwards. No assertion was weakened.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StObjectContextPresenterTest&gt;&gt;testDoEvaluateDeclareGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Test skipped itself on an obsolete hook (OCUndeclaredVariableWarning&gt;&gt;declareGlobal). The real path is the OCCodeReparator menu, which had no declare-global entry. The test now drives that menu through a stub UIManager, and the menu gets the entry.</td>
+</tr>
+<tr>
+<td><code>StPlaygroundPagePresenterTest&gt;&gt;testDoEvaluateDeclareGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Same as the other test; it keeps the selectionInterval 1 to: 16 step.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Ran on both VMs, base image vs fixed image. Our VM: StObjectContextPresenterTest 1 PASS + 1 SKIP before, 2 PASS after. StPlaygroundPagePresenterTest 13 PASS + 1 SKIP before, 14 PASS after. OCCodeReparatorTest 7 PASS before and after. OCInteraciveAPITest 2 PASS before and after. Cog gave the same numbers in every case. OCCodeReparatorTest and OCInteraciveAPITest cover openMenu, declareGlobal and the interactive API. I did not run other test classes.</p>
+<p>Upstream note: Pharo (OpalCompiler-UI, NewTools/Spec2 tests): The test testDoEvaluateDeclareGlobal in StObjectContextPresenterTest and StPlaygroundPagePresenterTest has been skipped since the compiler API change. It hooked OCUndeclaredVariableWarning, which legacy interactive mode no longer signals. The proposal adds a 'Declare new global variable' entry to OCCodeReparator&gt;&gt;openMenu (declareGlobal exists but no UI path calls it) and rewrites the tests to answer the menu with a stub UIManager. Under review by the owner before any PR; none was made.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>StObjectContextPresenterTest&gt;&gt;testDoEvaluateDeclareGlobal</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StPlaygroundPagePresenterTest&gt;&gt;testDoEvaluateDeclareGlobal</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((StObjectContextPresenterTest selector: #testDoEvaluateDeclareGlobal) run) printString.
+((StPlaygroundPagePresenterTest selector: #testDoEvaluateDeclareGlobal) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>StObjectContextPresenterTest&gt;&gt;testDoEvaluateDeclareGlobal before the fix (Pharo 14 build 791)</summary><pre class="code">testDoEvaluateDeclareGlobal
+	| value |
+	
+	self skip: &#x27;Because a change in the compiler API, there is no way to hijack OCUndeclaredVariableWarning when the compiler is used a in legacy interactive mode (but such hijack is only performed in this test). So disable the test for now.&#x27;.
+
+	self deny: (Smalltalk globals includesKey: #MyGlobalForTest).
+	
+	self openInstance.
+	
+	presenter evaluator text: &#x27;MyGlobalForTest&#x27;. 
+	presenter whenActivatedDo: [ :selection | value := selection value ].
+
+	[presenter doEvaluateAndGo] on: OCUndeclaredVariableWarning do: [ :warn | warn declareGlobal ].
+	
+	self assert: value equals:  nil.
+	
+	self assert: (Smalltalk globals includesKey: #MyGlobalForTest).
+	Smalltalk globals removeKey: #MyGlobalForTest</pre></details><details><summary>StPlaygroundPagePresenterTest&gt;&gt;testDoEvaluateDeclareGlobal before the fix (Pharo 14 build 791)</summary><pre class="code">testDoEvaluateDeclareGlobal
+	| value |
+
+	self skip: &#x27;Because a change in the compiler API, there is no way to hijack OCUndeclaredVariableWarning when the compiler is used a in legacy interactive mode (but such hijack is only performed in this test). So disable the test for now.&#x27;.
+
+	self deny: (Smalltalk globals includesKey: #MyGlobalForTest).
+	
+	self openInstance.
+	
+	presenter contents: &#x27;MyGlobalForTest&#x27;.
+	presenter whenActivatedDo: [ :selection | value := selection value ].
+
+	presenter text selectionInterval: (1 to: 16).
+	[presenter doEvaluateAndGo] on: OCUndeclaredVariableWarning do: [ :warn | warn declareGlobal ].
+	
+	self assert: value equals:  nil.
+	
+	self assert: (Smalltalk globals includesKey: #MyGlobalForTest).
+	Smalltalk globals removeKey: #MyGlobalForTest</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-St-evaluate-declare-global.st (<a href="../files/image-fixes/20-St-evaluate-declare-global.st">download</a>)</summary><pre class="code">fix value: #StObjectContextPresenterTest value: #testDoEvaluateDeclareGlobal
+ value: [ :s | s includesSubstring: &#x27;self skip:&#x27; ]
+ value: &#x27;testDoEvaluateDeclareGlobal
+	| value oldManager stubClass |
+	self deny: (Smalltalk globals includesKey: #MyGlobalForTest).
+
+	self openInstance.
+
+	presenter evaluator text: &#x27;&#x27;MyGlobalForTest&#x27;&#x27;.
+	presenter whenActivatedDo: [ :selection | value := selection value ].
+
+	&quot;The compiler offers to repair the undeclared variable with a menu (OCCodeReparator&gt;&gt;openMenu). Answer the entry that declares a global.&quot;
+	oldManager := UIManager default.
+	stubClass := oldManager class newAnonymousSubclass.
+	stubClass compile: &#x27;&#x27;chooseFrom: labels lines: lines title: title
+	^ labels indexOf: &#x27;&#x27;&#x27;&#x27;Declare new global variable&#x27;&#x27;&#x27;&#x27; ifAbsent: [ 0 ]&#x27;&#x27;.
+	[ UIManager default: stubClass new.
+	presenter doEvaluateAndGo ] ensure: [ UIManager default: oldManager ].
+
+	self assert: value equals: nil.
+
+	self assert: (Smalltalk globals includesKey: #MyGlobalForTest).
+	Smalltalk globals removeKey: #MyGlobalForTest&#x27;.
+
+fix value: #StPlaygroundPagePresenterTest value: #testDoEvaluateDeclareGlobal
+ value: [ :s | s includesSubstring: &#x27;self skip:&#x27; ]
+ value: &#x27;testDoEvaluateDeclareGlobal
+	| value oldManager stubClass |
+	self deny: (Smalltalk globals includesKey: #MyGlobalForTest).
+
+	self openInstance.
+
+	presenter contents: &#x27;&#x27;MyGlobalForTest&#x27;&#x27;.
+
+	presenter text selectionInterval: (1 to: 16).
+	presenter whenActivatedDo: [ :selection | value := selection value ].
+
+	&quot;The compiler offers to repair the undeclared variable with a menu (OCCodeReparator&gt;&gt;openMenu). Answer the entry that declares a global.&quot;
+	oldManager := UIManager default.
+	stubClass := oldManager class newAnonymousSubclass.
+	stubClass compile: &#x27;&#x27;chooseFrom: labels lines: lines title: title
+	^ labels indexOf: &#x27;&#x27;&#x27;&#x27;Declare new global variable&#x27;&#x27;&#x27;&#x27; ifAbsent: [ 0 ]&#x27;&#x27;.
+	[ UIManager default: stubClass new.
+	presenter doEvaluateAndGo ] ensure: [ UIManager default: oldManager ].
+
+	self assert: value equals: nil.
+
+	self assert: (Smalltalk globals includesKey: #MyGlobalForTest).
+	Smalltalk globals removeKey: #MyGlobalForTest&#x27;.
+
+fix value: #OCCodeReparator value: #openMenu
+ value: [ :s | (s includesSubstring: &#x27;declareGlobal&#x27;) not and: [ s includesSubstring: &#x27;labels add: &#x27;&#x27;Define new trait&#x27;&#x27;.&#x27; ] ]
+ value: ((OCCodeReparator includesSelector: #openMenu)
+	ifTrue: [ (OCCodeReparator &gt;&gt; #openMenu) sourceCode
+		copyReplaceAll: &#x27;labels add: &#x27;&#x27;Define new trait&#x27;&#x27;.&#x27;
+		with: &#x27;labels add: &#x27;&#x27;Declare new global variable&#x27;&#x27;.
+			actions add: [ self declareGlobal ].
+			labels add: &#x27;&#x27;Define new trait&#x27;&#x27;.&#x27; ]
+	ifFalse: [ &#x27;&#x27; ]).
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

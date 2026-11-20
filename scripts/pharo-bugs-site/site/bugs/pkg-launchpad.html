@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Launchpad (ba-st/Launchpad, row 14) - Pharo test defects</title><meta name="description" content="Package: Launchpad (ba-st/Launchpad, row 14): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Launchpad (ba-st/Launchpad, row 14)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>ba-st-launchpad.st, ba-st-launchpad.patch</dd><dt>Upstream repository</dt><dd>ba-st/Launchpad</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>The package loads Buoy.  See the Buoy section
+(<code>locks/ba-st-launchpad.txt</code>).</li>
+<li>State with the load repair only: 123 tests, 48 pass, 1 fail, 74 errors on
+the two VMs.</li>
+<li>Cause of 71 tests: Launchpad calls <code>CommandLineArguments&gt;&gt;copySubcommand</code>,
+<code>CommandLineArguments&gt;&gt;optionAt:ifPresent:ifAbsent:</code> and
+<code>CommandLineHandler class&gt;&gt;prepareSubcommand:</code>.  Pharo 13 had the three
+methods.  Pharo 14 has a new design of the command line handler and does
+not have them.  The repository has its own copies of the methods for
+GemStone.</li>
+<li>Cause of 2 tests: <code>BaselineOfLaunchpad</code> has branches for <code>pharo10.x</code> to
+<code>pharo13.x</code> only, so the package <code>Launchpad-Tracing-Fuel</code> does not load on
+Pharo 14, and its test class does.</li>
+<li>Repair: <code>patches/ba-st-launchpad.patch</code> adds a package
+<code>Launchpad-Pharo14-Compatibility</code> with the three methods and a
+<code>pharo14.x</code> branch in the baseline.</li>
+<li>Cause of 1 test: three helper methods of Buoy
+(<code>OSPlatform&gt;&gt;environmentAt:put:</code> and two more) call the deprecated
+<code>OSPlatform&gt;&gt;environment</code>.  <code>fixes/ba-st-launchpad.st</code> makes them use
+<code>OSEnvironment current</code>.  The same change belongs in Buoy.</li>
+<li>Result: 123 of 123 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 14&quot;
+Metacello new baseline: &#x27;Launchpad&#x27;; repository: &#x27;github://ba-st/Launchpad:release-candidate/source&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>14</td><td><code>ba-st-launchpad</code></td><td>ok</td><td>tests=123 P=123 F=0 E=0 S=0 T=0 X=0</td><td>tests=123 P=123 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): ba-st-launchpad.st (<a href="../files/packages/fixes/ba-st-launchpad.st">download</a>)</summary><pre class="code">&quot;Launchpad (ba-st/Launchpad, release-candidate), test helper of Buoy:
+Buoy-Metaprogramming-Pharo-Extensions defines OSPlatform&gt;&gt;environmentAt:put:,
+environmentAt:ifPresent:ifAbsent: and removeEnvironmentKey: with &#x27;self
+environment&#x27;.  OSPlatform&gt;&gt;environment is deprecated in Pharo 14 (the method is
+in Deprecated14) and its message says &#x27;Use OSEnvironment current instead&#x27;.
+LaunchpadRootCommandTest&gt;&gt;set:to:during: and ConfigurationFromEnvironmentProviderTest
+call these three methods, so a Deprecation reaches the test (seen:
+testHandlingStartGreeterApplicationWithMixedConfiguration).  The three methods
+answer through OSEnvironment current, which is what &#x27;environment&#x27; answers.
+The same change belongs in Buoy (see docs/upstream/package-repairs.md).&quot;
+
+fix value: #OSPlatform value: #environmentAt:ifPresent:ifAbsent:
+	value: [ :source | source includesSubstring: &#x27;self environment&#x27; ]
+	value:
+&#x27;environmentAt: aVariableName ifPresent: aBlock ifAbsent: anAbsentBlock
+
+	^ OSEnvironment current
+		  at: aVariableName
+		  ifPresent: aBlock
+		  ifAbsent: anAbsentBlock&#x27;.
+
+fix value: #OSPlatform value: #environmentAt:put:
+	value: [ :source | source includesSubstring: &#x27;self environment&#x27; ]
+	value:
+&#x27;environmentAt: variableName put: value
+
+	OSEnvironment current at: variableName put: value&#x27;.
+
+fix value: #OSPlatform value: #removeEnvironmentKey:
+	value: [ :source | source includesSubstring: &#x27;self environment&#x27; ]
+	value:
+&#x27;removeEnvironmentKey: variableName
+
+	OSEnvironment current removeKey: variableName&#x27;.
+</pre></details><details open><summary>Patch of the package source: ba-st-launchpad.patch (<a href="../files/packages/patches/ba-st-launchpad.patch">download</a>)</summary><pre class="code">diff --git a/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st b/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st
+index 09660c5..fd34bb3 100644
+--- a/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st
++++ b/source/BaselineOfLaunchpad/BaselineOfLaunchpad.class.st
+@@ -43,6 +43,12 @@ BaselineOfLaunchpad &gt;&gt; baseline: spec [
+   spec for: #&#x27;pharo13.x&#x27; do: [
+       self setUpPharo11Packages: spec.
+       spec preLoadDoIt: #closeWelcomeWindow
++    ].
++  spec for: #&#x27;pharo14.x&#x27; do: [
++      self
++        setUpPharo11Packages: spec;
++        setUpPharo14Packages: spec.
++      spec preLoadDoIt: #closeWelcomeWindow
+     ]
+ ]
+ 
+@@ -184,6 +190,15 @@ BaselineOfLaunchpad &gt;&gt; setUpPharo11Packages: spec [
+ 		group: &#x27;Tools&#x27; with: &#x27;Launchpad-Development-Tools&#x27;
+ ]
+ 
++{ #category : &#x27;baselines&#x27; }
++BaselineOfLaunchpad &gt;&gt; setUpPharo14Packages: spec [
++
++	spec
++		package: &#x27;Launchpad-Pharo14-Compatibility&#x27;;
++		group: &#x27;Deployment&#x27; with: &#x27;Launchpad-Pharo14-Compatibility&#x27;;
++		group: &#x27;Tests&#x27; with: &#x27;Launchpad-Pharo14-Compatibility&#x27;
++]
++
+ { #category : &#x27;baselines&#x27; }
+ BaselineOfLaunchpad &gt;&gt; setUpSUnitPackages: spec [
+ 
+diff --git a/source/Launchpad-Pharo14-Compatibility/CommandLineArguments.extension.st b/source/Launchpad-Pharo14-Compatibility/CommandLineArguments.extension.st
+new file mode 100644
+index 0000000..cb8651b
+--- /dev/null
++++ b/source/Launchpad-Pharo14-Compatibility/CommandLineArguments.extension.st
+@@ -0,0 +1,17 @@
++Extension { #name : &#x27;CommandLineArguments&#x27; }
++
++{ #category : &#x27;*Launchpad-Pharo14-Compatibility&#x27; }
++CommandLineArguments &gt;&gt; copySubcommand [
++	&quot;Pharo 14 removed this message (Pharo 13 and older have it).  Answer the arguments without the first one.&quot;
++
++	^ self class withArguments: arguments allButFirst
++]
++
++{ #category : &#x27;*Launchpad-Pharo14-Compatibility&#x27; }
++CommandLineArguments &gt;&gt; optionAt: aString ifPresent: presentBlock ifAbsent: absentBlock [
++	&quot;Pharo 14 removed this message (Pharo 13 and older have it).&quot;
++
++	| option |
++	option := self optionAt: aString ifAbsent: [ ^ absentBlock value ].
++	^ presentBlock value: option
++]
+diff --git a/source/Launchpad-Pharo14-Compatibility/CommandLineHandler.extension.st b/source/Launchpad-Pharo14-Compatibility/CommandLineHandler.extension.st
+new file mode 100644
+index 0000000..a15292b
+--- /dev/null
++++ b/source/Launchpad-Pharo14-Compatibility/CommandLineHandler.extension.st
+@@ -0,0 +1,14 @@
++Extension { #name : &#x27;CommandLineHandler&#x27; }
++
++{ #category : &#x27;*Launchpad-Pharo14-Compatibility&#x27; }
++CommandLineHandler class &gt;&gt; prepareSubcommand: commandLineArguments [
++	&quot;Pharo 14 removed this message (Pharo 13 and older have it).&quot;
++
++	&quot;strip the subcommand name from the arguments&quot;
++	commandLineArguments withFirstArgument: [ :arg |
++		arg = self commandName
++			ifTrue: [ ^ commandLineArguments copySubcommand ] ].
++
++	&quot;not a subcommand hence we keep the same args&quot;
++	^ commandLineArguments
++]
+diff --git a/source/Launchpad-Pharo14-Compatibility/package.st b/source/Launchpad-Pharo14-Compatibility/package.st
+new file mode 100644
+index 0000000..541c91a
+--- /dev/null
++++ b/source/Launchpad-Pharo14-Compatibility/package.st
+@@ -0,0 +1 @@
++Package { #name : &#x27;Launchpad-Pharo14-Compatibility&#x27; }
+</pre></details><details open><summary>Version locks: ba-st-launchpad.txt (<a href="../files/packages/locks/ba-st-launchpad.txt">download</a>)</summary><pre class="code"># Buoy replaces Symbol&gt;&gt;argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
+Buoy ba-st-buoy
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

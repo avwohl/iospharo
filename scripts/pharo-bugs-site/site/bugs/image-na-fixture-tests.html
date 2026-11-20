@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NA-fixture-tests - Pharo test defects</title><meta name="description" content="NA-fixture-tests: Not applicable (proof incomplete for 10 tests)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>NA-fixture-tests</h1><dl class="meta"><dt>State</dt><dd><span class="st st-na">Not applicable (proof incomplete for 10 tests)</span></dd><dt>Defect in</dt><dd>none: fixture classes that other tests run, skipped by design</dd><dt>Tests</dt><dd>35</dd><dt>Fix</dt><dd>none</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><p class="note">Open: <code>AllTestFailTest</code> (4 tests) and <code>DependencyTest</code> (6 tests) have no other test that runs them.  A skip is accepted only for a fixture that another test runs, so these 10 tests are still open.</p><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+</ul>
+<p>All 35 tests are fixtures, and none has a defect to repair. They exist as data for other tests. MockTest class&gt;&gt;initialize sets ShouldIgnore to true so the TestRunner/RottenTestsFinder fixture classes are not run by the normal suite sweep, and RTFFakeTestSuperClassTest&gt;&gt;shouldIgnore defaults to true. The consumer tests call doNotIgnore in setUp and ignore in tearDown. ClyTestedClassMockTest&gt;&gt;testExpectedFailure is a fixture whose purpose is to be an expected failure; the Cly*Query tests look it up by its pragma. I made no change to any test or image method, so there is no fix file. Eight of the 35 tests (AllTestFailTest 4, DependencyTest 6 is separate: see tests list) have no consumer test at all, and LongTest's only consumer skips itself; both are noted under blockers.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MockTest subclasses: EmptyTest&gt;&gt;test1-4, GreenTest&gt;&gt;testPass/testPassAgain, RedTest&gt;&gt;testFail/testPass/testWithError, YellowTest&gt;&gt;testFail/testPass, FailThenPassTest&gt;&gt;testFailAtFirstRunning/testPass</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Fixtures whose skip is the by-design ShouldIgnore flag (true after MockTest class&gt;&gt;initialize). Consumers: NewTestRunnerTest (26 tests; uses GreenTest, RedTest, YellowTest, FailThenPassTest), ShuffleSuitePreparatorTest (EmptyTest suite, 2 tests), SuitePreparatorTest, StdReporterTest, XmlReporterTest, NewCommandLineRunnerTest (GreenTest). Measured: NewTestRunnerTest 26/26 pass, ShuffleSuitePreparatorTest 2/2, SuitePreparatorTest 1/1, on both VMs. MockTest classPool ShouldIgnore = true on both VMs via evalfile.</td>
+</tr>
+<tr>
+<td><code>AllTestFailTest&gt;&gt;testFail1-4</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Fixture whose four tests assert false. With MockTest doNotIgnore, AllTestFailTest suite run gives 4 ran, 0 passed, 4 failures on both VMs. Failing is its purpose. No test or method in the image references AllTestFailTest (allReferencesTo: size 0), so no consumer exists to cite.</td>
+</tr>
+<tr>
+<td><code>DependencyTest&gt;&gt;testDataIs10..15ThenIncrement</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Fixture for order dependence: only testDataIs10 resets the shared counter, so the other five pass only when run in selector order. TestSuite run order is shuffled; with the flag off, 3 runs of the six tests gave 1 or 2 passes on both VMs and the failing set varied from run to run on each VM (ours 2,1,.. passes; Cog 1,1,..). The pass count difference seen in one earlier run (ours 4 vs Cog 1) comes from the random order, not from the VM. No test in the image references DependencyTest, so no consumer exists to cite.</td>
+</tr>
+<tr>
+<td><code>LongTest&gt;&gt;testIsTakingTooLong</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Fixture run only by RunnerLongDurationTest, whose two tests call self skip as their first statement. That is a different cluster (clusters/RunnerLongDurationTest.txt). LongTest itself is a 3 s Delay wait and an assertion that would pass.</td>
+</tr>
+<tr>
+<td><code>RTFFakeTestClassTest&gt;&gt;testCallingSuperHelper, testFailingButNotConsideredAsRotten, testHelperHelperAssertHelper, testWithAssertionInHelperRun, testWithAssertionInSuperHelperRun, testWithAssertionRun, testWithHelperHelper, testWithNoAssertionInHelperRun, testWithNoAssertionInSuperHelperRun, testWithoutAssertionRun</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Fixture data for RottenTestsFinder. RTFFakeTestSuperClassTest&gt;&gt;shouldIgnore defaults to true. RottenTestsFinderTest (subclass of RTFMetaTest, which calls doNotIgnore) analyzes RTFFakeTestClassTest suite and asserts 3 rotten tests, so it needs the fixture tests to run. RTFSelfCallStackBuilderTest, RTFSelfCallVisitorInterpreterTest, RTFPrimitiveCallsCollectorTest and RTFLeadsToAssertPrimitiveCallCheckerTest also use the class. Measured on both VMs: RottenTestsFinderTest 1/1, RTFSelfCallStackBuilderTest 5/5, RTFSelfCallVisitorInterpreterTest 2/2, RTFPrimitiveCallsCollectorTest 1/1, RTFLeadsToAssertPrimitiveCallCheckerTest 1/1 pass. RTFMetaTest itself has 0 tests (abstract).</td>
+</tr>
+<tr>
+<td><code>ClyTestedClassMockTest&gt;&gt;testExpectedFailure</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Fixture whose body is assert: false with the expectedFailure pragma; it must stay an expected failure. ClyExpectedFailedTestMethodsQueryTest (35 pass) asserts that the query finds exactly #(testExpectedFailure) in this class, ClyExpectedFailureMethodGroupProviderTest (1 pass) and ClyTestedEnvironmentPluginTest (10 pass) use the class. Removing the mark or the failure would break these. The test fails by design on both VMs.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: No image change was made, so nothing was compared with and without a fix. I ran the consumer classes on both VMs (ours and Cog, no fix applied): NewTestRunnerTest 26 pass, RunnerLongDurationTest 2 skip, ShuffleSuitePreparatorTest 2 pass, SuitePreparatorTest 1 pass, RottenTestsFinderTest 1, RTFSelfCallStackBuilderTest 5, RTFSelfCallVisitorInterpreterTest 2, RTFPrimitiveCallsCollectorTest 1, RTFLeadsToAssertPrimitiveCallCheckerTest 1, ClyExpectedFailedTestMethodsQueryTest 35, ClyExpectedFailureMethodGroupProviderTest 1, ClyTestedEnvironmentPluginTest 10 pass. Our VM and Cog gave identical counts in every class. The tests were run once per VM, not three times, since nothing was repaired.</p>
+<p>Open points: Three gaps in the &quot;fixture run by another test that passes&quot; proof. (1) AllTestFailTest (4 tests) and DependencyTest (6 tests) have no referencing test in the image; I showed they are designed to fail or to depend on order, but no consumer passes for them. (2) LongTest&gt;&gt;testIsTakingTooLong is used only by RunnerLongDurationTest, whose tests both call self skip; those belong to another cluster (RunnerLongDurationTest), and when that cluster removes the skips, LongTest will run under it. (3) I did not run StdReporterTest, XmlReporterTest or NewCommandLineRunnerTest (GreenTest consumers). The summary text also contains a garbled count: the fixture tests are 35, with no overlap between the groups in the tests list.</p>
+<p>Upstream note: No upstream change proposed. Observations only: AllTestFailTest and DependencyTest in TestRunner-FakeTests have no consumer test in the image, and RunnerLongDurationTest (consumer of LongTest) skips both of its tests with self skip.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>AllTestFailTest&gt;&gt;testFail1</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>AllTestFailTest&gt;&gt;testFail2</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>AllTestFailTest&gt;&gt;testFail3</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>AllTestFailTest&gt;&gt;testFail4</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>ClyTestedClassMockTest&gt;&gt;testExpectedFailure</code></td><td>XFAIL</td><td>not applicable</td><td>XFAIL</td><td>XFAIL</td><td>-</td></tr><tr><td><code>DependencyTest&gt;&gt;testDataIs10ThenIncrement</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>DependencyTest&gt;&gt;testDataIs11ThenIncrement</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>DependencyTest&gt;&gt;testDataIs12ThenIncrement</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>DependencyTest&gt;&gt;testDataIs13ThenIncrement</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>DependencyTest&gt;&gt;testDataIs14ThenIncrement</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>DependencyTest&gt;&gt;testDataIs15ThenIncrement</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>EmptyTest&gt;&gt;test1</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>EmptyTest&gt;&gt;test2</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>EmptyTest&gt;&gt;test3</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>EmptyTest&gt;&gt;test4</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>FailThenPassTest&gt;&gt;testFailAtFirstRunning</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>FailThenPassTest&gt;&gt;testPass</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>GreenTest&gt;&gt;testPass</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>GreenTest&gt;&gt;testPassAgain</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>LongTest&gt;&gt;testIsTakingTooLong</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testCallingSuperHelper</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testFailingButNotConsideredAsRotten</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testHelperHelperAssertHelper</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithAssertionInHelperRun</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithAssertionInSuperHelperRun</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithAssertionRun</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithHelperHelper</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithNoAssertionInHelperRun</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithNoAssertionInSuperHelperRun</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RTFFakeTestClassTest&gt;&gt;testWithoutAssertionRun</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RedTest&gt;&gt;testFail</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RedTest&gt;&gt;testPass</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>RedTest&gt;&gt;testWithError</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>YellowTest&gt;&gt;testFail</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>YellowTest&gt;&gt;testPass</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image on macOS arm64: they skip (the fixtures and the platform tests skip by design).</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((AllTestFailTest selector: #testFail1) run) printString.
+((AllTestFailTest selector: #testFail2) run) printString.
+((AllTestFailTest selector: #testFail3) run) printString.
+((AllTestFailTest selector: #testFail4) run) printString.
+((ClyTestedClassMockTest selector: #testExpectedFailure) run) printString.
+((DependencyTest selector: #testDataIs10ThenIncrement) run) printString.
+((DependencyTest selector: #testDataIs11ThenIncrement) run) printString.
+((DependencyTest selector: #testDataIs12ThenIncrement) run) printString.
+((DependencyTest selector: #testDataIs13ThenIncrement) run) printString.
+((DependencyTest selector: #testDataIs14ThenIncrement) run) printString.
+((DependencyTest selector: #testDataIs15ThenIncrement) run) printString.
+((EmptyTest selector: #test1) run) printString.
+((EmptyTest selector: #test2) run) printString.
+((EmptyTest selector: #test3) run) printString.
+((EmptyTest selector: #test4) run) printString.
+((FailThenPassTest selector: #testFailAtFirstRunning) run) printString.
+((FailThenPassTest selector: #testPass) run) printString.
+((GreenTest selector: #testPass) run) printString.
+((GreenTest selector: #testPassAgain) run) printString.
+((LongTest selector: #testIsTakingTooLong) run) printString.
+((RTFFakeTestClassTest selector: #testCallingSuperHelper) run) printString.
+((RTFFakeTestClassTest selector: #testFailingButNotConsideredAsRotten) run) printString.
+((RTFFakeTestClassTest selector: #testHelperHelperAssertHelper) run) printString.
+((RTFFakeTestClassTest selector: #testWithAssertionInHelperRun) run) printString.
+((RTFFakeTestClassTest selector: #testWithAssertionInSuperHelperRun) run) printString.
+((RTFFakeTestClassTest selector: #testWithAssertionRun) run) printString.
+((RTFFakeTestClassTest selector: #testWithHelperHelper) run) printString.
+((RTFFakeTestClassTest selector: #testWithNoAssertionInHelperRun) run) printString.
+((RTFFakeTestClassTest selector: #testWithNoAssertionInSuperHelperRun) run) printString.
+((RTFFakeTestClassTest selector: #testWithoutAssertionRun) run) printString.
+((RedTest selector: #testFail) run) printString.
+((RedTest selector: #testPass) run) printString.
+((RedTest selector: #testWithError) run) printString.
+((YellowTest selector: #testFail) run) printString.
+((YellowTest selector: #testPass) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>AllTestFailTest&gt;&gt;testFail1 before the fix (Pharo 14 build 791)</summary><pre class="code">testFail1
+
+	self assert: false</pre></details><details><summary>AllTestFailTest&gt;&gt;testFail2 before the fix (Pharo 14 build 791)</summary><pre class="code">testFail2
+
+	self assert: false</pre></details><details><summary>AllTestFailTest&gt;&gt;testFail3 before the fix (Pharo 14 build 791)</summary><pre class="code">testFail3
+
+	self assert: false</pre></details><details><summary>AllTestFailTest&gt;&gt;testFail4 before the fix (Pharo 14 build 791)</summary><pre class="code">testFail4
+
+	self assert: false</pre></details><details><summary>ClyTestedClassMockTest&gt;&gt;testExpectedFailure before the fix (Pharo 14 build 791)</summary><pre class="code">testExpectedFailure
+	&lt;expectedFailure&gt;
+	self assert: false description: &#x27;it is example test with expected failure&#x27;</pre></details><details><summary>DependencyTest&gt;&gt;testDataIs10ThenIncrement before the fix (Pharo 14 build 791)</summary><pre class="code">testDataIs10ThenIncrement
+
+	self 
+		resetData;
+		assertCountThenIncrement: 0</pre></details><details><summary>DependencyTest&gt;&gt;testDataIs11ThenIncrement before the fix (Pharo 14 build 791)</summary><pre class="code">testDataIs11ThenIncrement
+
+	self assertCountThenIncrement: 1</pre></details><details><summary>DependencyTest&gt;&gt;testDataIs12ThenIncrement before the fix (Pharo 14 build 791)</summary><pre class="code">testDataIs12ThenIncrement
+
+	self assertCountThenIncrement: 2</pre></details><details><summary>DependencyTest&gt;&gt;testDataIs13ThenIncrement before the fix (Pharo 14 build 791)</summary><pre class="code">testDataIs13ThenIncrement
+
+	self assertCountThenIncrement: 3</pre></details><details><summary>DependencyTest&gt;&gt;testDataIs14ThenIncrement before the fix (Pharo 14 build 791)</summary><pre class="code">testDataIs14ThenIncrement
+
+	self assertCountThenIncrement: 4</pre></details><details><summary>DependencyTest&gt;&gt;testDataIs15ThenIncrement before the fix (Pharo 14 build 791)</summary><pre class="code">testDataIs15ThenIncrement
+
+	self assertCountThenIncrement: 5</pre></details><details><summary>EmptyTest&gt;&gt;test1 before the fix (Pharo 14 build 791)</summary><pre class="code">test1</pre></details><details><summary>EmptyTest&gt;&gt;test2 before the fix (Pharo 14 build 791)</summary><pre class="code">test2</pre></details><details><summary>EmptyTest&gt;&gt;test3 before the fix (Pharo 14 build 791)</summary><pre class="code">test3</pre></details><details><summary>EmptyTest&gt;&gt;test4 before the fix (Pharo 14 build 791)</summary><pre class="code">test4</pre></details><details><summary>FailThenPassTest&gt;&gt;testFailAtFirstRunning before the fix (Pharo 14 build 791)</summary><pre class="code">testFailAtFirstRunning
+
+	self assert: self class counter equals: 1</pre></details><details><summary>FailThenPassTest&gt;&gt;testPass before the fix (Pharo 14 build 791)</summary><pre class="code">testPass
+
+	self assert: true</pre></details><details><summary>GreenTest&gt;&gt;testPass before the fix (Pharo 14 build 791)</summary><pre class="code">testPass
+
+	self assert: true</pre></details><details><summary>GreenTest&gt;&gt;testPassAgain before the fix (Pharo 14 build 791)</summary><pre class="code">testPassAgain
+
+	self assert: true</pre></details><details><summary>LongTest&gt;&gt;testIsTakingTooLong before the fix (Pharo 14 build 791)</summary><pre class="code">testIsTakingTooLong
+
+	(Delay forSeconds: 3) wait.
+	 self assert: true</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testCallingSuperHelper before the fix (Pharo 14 build 791)</summary><pre class="code">testCallingSuperHelper
+	self superAssertHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testFailingButNotConsideredAsRotten before the fix (Pharo 14 build 791)</summary><pre class="code">testFailingButNotConsideredAsRotten
+
+	self assert: false.
+
+	self assert: true</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testHelperHelperAssertHelper before the fix (Pharo 14 build 791)</summary><pre class="code">testHelperHelperAssertHelper
+	
+	self helperHelper; assertHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithAssertionInHelperRun before the fix (Pharo 14 build 791)</summary><pre class="code">testWithAssertionInHelperRun
+	self assertHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithAssertionInSuperHelperRun before the fix (Pharo 14 build 791)</summary><pre class="code">testWithAssertionInSuperHelperRun
+	self superAssertHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithAssertionRun before the fix (Pharo 14 build 791)</summary><pre class="code">testWithAssertionRun
+	self assert: true</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithHelperHelper before the fix (Pharo 14 build 791)</summary><pre class="code">testWithHelperHelper
+	self helperHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithNoAssertionInHelperRun before the fix (Pharo 14 build 791)</summary><pre class="code">testWithNoAssertionInHelperRun
+	self rottenHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithNoAssertionInSuperHelperRun before the fix (Pharo 14 build 791)</summary><pre class="code">testWithNoAssertionInSuperHelperRun
+	self superNotAssertHelper</pre></details><details><summary>RTFFakeTestClassTest&gt;&gt;testWithoutAssertionRun before the fix (Pharo 14 build 791)</summary><pre class="code">testWithoutAssertionRun
+	false
+		ifTrue: [ self assert: true ]</pre></details><details><summary>RedTest&gt;&gt;testFail before the fix (Pharo 14 build 791)</summary><pre class="code">testFail
+
+	self assert: false</pre></details><details><summary>RedTest&gt;&gt;testPass before the fix (Pharo 14 build 791)</summary><pre class="code">testPass
+
+	self assert: true</pre></details><details><summary>RedTest&gt;&gt;testWithError before the fix (Pharo 14 build 791)</summary><pre class="code">testWithError
+
+	self assert: nil</pre></details><details><summary>YellowTest&gt;&gt;testFail before the fix (Pharo 14 build 791)</summary><pre class="code">testFail
+
+	self assert: false</pre></details><details><summary>YellowTest&gt;&gt;testPass before the fix (Pharo 14 build 791)</summary><pre class="code">testPass
+	self assert: true.</pre></details><h2>Fix</h2><p>No fix: the tests cannot apply on this machine (proof in the record above).</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

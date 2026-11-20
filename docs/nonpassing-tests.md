@@ -8,7 +8,10 @@ results.  No VM ran to make this file.
 Web site for the Pharo group: https://www.awohl.com/pharo_bugs1/ (one page
 per defect of the image, the tests, stock Cog and the packages, with a test
 and the fix; no page for a defect of our VM).  The generator is
-`scripts/pharo-bugs-site/gen.py`.
+`scripts/pharo-bugs-site/gen.py`, and `scripts/pharo-bugs-site/site/` is the
+published copy.  The run data of the site are in `results/2026-11-17/` (the
+last sweep of each VM, the interactive pass, the package summary) and
+`results/pharo-ci-counts-2026-11-20.txt` (the counts of the Pharo CI).
 
 Sources:
 

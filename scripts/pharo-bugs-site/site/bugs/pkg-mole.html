@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Mole (ba-st/Mole, row 37) and Hyperspace (ba-st/Hyperspace, row 15) - Pharo test defects</title><meta name="description" content="Package: Mole (ba-st/Mole, row 37) and Hyperspace (ba-st/Hyperspace, row 15): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Mole (ba-st/Mole, row 37) and Hyperspace (ba-st/Hyperspace, row 15)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>ba-st/Hyperspace, ba-st/Mole</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>The two packages load Buoy.  See the Buoy section: the files
+<code>locks/ba-st-mole.txt</code> and <code>locks/ba-st-hyperspace.txt</code>.</li>
+<li>Mole: 74 of 74 pass on the two VMs.</li>
+<li>Hyperspace also loads Zinc from GitHub, and the image has Zinc.  The load
+stopped at a dialog (&quot;merge or load&quot;) until the time limit.  The package
+run now answers that warning with &quot;load&quot; (<code>headless_load</code> in
+<code>run-one-package.sh</code>).</li>
+<li>Hyperspace, <code>ZnUrlHyperspaceExtensionsTest&gt;&gt;testStartLimit</code>: the test
+expects that one URL is equal to <code>?limit=10&amp;start=1</code> and to
+<code>?start=1&amp;limit=10</code>.  See &quot;URLs with the same query fields in another
+order&quot; below: the defect is in the image, and image fix 34 repairs it.
+The package has no fixes file any more.</li>
+<li>Hyperspace result: 197 of 197 pass on the two VMs, with image fix 34 and
+no fixes file.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 37&quot;
+Metacello new baseline: &#x27;Mole&#x27;; repository: &#x27;github://ba-st/Mole:release-candidate/source&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>37</td><td><code>ba-st-mole</code></td><td>ok</td><td>tests=74 P=74 F=0 E=0 S=0 T=0 X=0</td><td>tests=74 P=74 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Version locks: ba-st-mole.txt (<a href="../files/packages/locks/ba-st-mole.txt">download</a>)</summary><pre class="code"># Buoy replaces Symbol&gt;&gt;argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
+Buoy ba-st-buoy
+</pre></details><details open><summary>Version locks: ba-st-hyperspace.txt (<a href="../files/packages/locks/ba-st-hyperspace.txt">download</a>)</summary><pre class="code"># Buoy replaces Symbol&gt;&gt;argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
+Buoy ba-st-buoy
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

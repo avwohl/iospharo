@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>presenter-examples - Pharo test defects</title><meta name="description" content="presenter-examples: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>presenter-examples</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>8</dd><dt>Fix</dt><dd>image fix 20-presenter-examples.st</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools-DocumentBrowser and pharo-spec/Spec</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-presenter-examples.st</code></li>
+<li>Methods: <code>SpDemo class&gt;&gt;example</code>, <code>SpComponentListSelectionExample class&gt;&gt;example</code>, <code>SpCodeEditorPresenter class&gt;&gt;example</code>, <code>MicTextPresenter class&gt;&gt;example</code>, <code>MicrodownPresenter class&gt;&gt;example</code>, <code>SpToolbarToggleButtonPresenter class&gt;&gt;example</code>, <code>SpMenuItemPresenter class&gt;&gt;example</code>, <code>SpMenuPresenter class&gt;&gt;example</code></li>
+</ul>
+<p>Each of the 8 presenter test classes inherits SpSmokeTest&gt;&gt;testExample, which skips when the presenter class under test has no class-side #example. The defect is missing image code: none of the 8 presenter classes (MicTextPresenter, MicrodownPresenter, SpCodeEditorPresenter, SpDemo, SpMenuItemPresenter, SpMenuPresenter, SpToolbarToggleButtonPresenter, SpComponentListSelectionExample) had #example. The fix adds one class-side #example to each. Six reuse existing sample code in the image (open or exampleSample, SpCodePresenter's text example, SpToolbarPresenter's toolbar pattern). The two menu examples are different. The existing exampleWithSubMenu and exampleWithGroups call openWithSpecAt:, which runs MenuMorph&gt;&gt;invokeAt:in:allowKeyboard:, a modal loop that waits for a user to dismiss the menu. That version timed out after 10 s on both VMs. So SpMenuItemPresenter class&gt;&gt;example and SpMenuPresenter class&gt;&gt;example host the menu in an SpMenuButtonPresenter inside a window (the same pattern as the existing exampleWithinMenuButton) and return the window. The test is not weakened.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MicTextPresenterTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>MicTextPresenter class has no #example</td>
+</tr>
+<tr>
+<td><code>MicrodownPresenterTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>MicrodownPresenter class has no #example</td>
+</tr>
+<tr>
+<td><code>SpCodeEditorPresenterTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpCodeEditorPresenter class has no #example (its superclass is SpPresenter, so it does not inherit SpCodePresenter class&gt;&gt;example)</td>
+</tr>
+<tr>
+<td><code>SpDemoTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpDemo class has #open with an &lt;example&gt; pragma but no #example</td>
+</tr>
+<tr>
+<td><code>SpMenuItemPresenterTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpMenuItemPresenter class has no #example. The existing popup-based exampleWithSubMenu is modal (10 s timeout), so the new example uses a menu button in a window.</td>
+</tr>
+<tr>
+<td><code>SpMenuPresenterTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpMenuPresenter class has no #example. The existing popup-based exampleWithGroups is modal (10 s timeout), so the new example uses a menu button in a window.</td>
+</tr>
+<tr>
+<td><code>SpToolbarToggleButtonMorphTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpToolbarToggleButtonPresenter class has no #example</td>
+</tr>
+<tr>
+<td><code>SpTransmissionWithComponentListTest&gt;&gt;testExample</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpComponentListSelectionExample class has #open with an &lt;example&gt; pragma but no #example</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: All 8 owning test classes were run whole, on our VM (JIT build, vm-base/test_load_image) and on Cog, with the base image and with the fix image, with 60 s per test. On both VMs each class went from N PASS + 1 SKIP to N+1 PASS with nothing else changed. Counts (PASS before, then after): MicTextPresenterTest 21 to 22, MicrodownPresenterTest 25 to 26, SpCodeEditorPresenterTest 16 to 17, SpDemoTest 11 to 12, SpMenuItemPresenterTest 12 to 13, SpMenuPresenterTest 12 to 13, SpToolbarToggleButtonMorphTest 11 to 12, SpTransmissionWithComponentListTest 11 to 12. SpMenuBarPresenterTest (a subclass of SpMenuPresenter, which has its own #example) was 13 PASS before and after on both VMs. SpMockMenuPresenterTest produced no RT lines, so it was not measured; the class may not exist. Each testExample was run 3 times on each VM: 24 of 24 PASS on ours, 24 of 24 PASS on Cog. The ours-nojit VM was not run. The new methods are only added; no existing method was replaced, so no other test class covers a changed method.</p>
+<p>Upstream note: Title: Add class-side #example to presenters that lack one (Spec2, Microdown, in the Pharo image). SpSmokeTest&gt;&gt;testExample skips whenever the presenter class does not respond to #example, so eight tests never ran: MicTextPresenter, MicrodownPresenter, SpCodeEditorPresenter, SpDemo, SpMenuItemPresenter, SpMenuPresenter, SpToolbarToggleButtonPresenter and SpComponentListSelectionExample. The PR adds an #example to each so the smoke test runs. The menu examples use SpMenuButtonPresenter so that the example window opens without a modal popup loop (MenuMorph&gt;&gt;invokeAt:in:allowKeyboard: does not return until the user dismisses the menu). This is a draft only; the owner must review it before any PR is opened. Nothing was submitted.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>MicTextPresenterTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>MicrodownPresenterTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpCodeEditorPresenterTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpDemoTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpMenuItemPresenterTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpMenuPresenterTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpToolbarToggleButtonMorphTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpTransmissionWithComponentListTest&gt;&gt;testExample</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((MicTextPresenterTest selector: #testExample) run) printString.
+((MicrodownPresenterTest selector: #testExample) run) printString.
+((SpCodeEditorPresenterTest selector: #testExample) run) printString.
+((SpDemoTest selector: #testExample) run) printString.
+((SpMenuItemPresenterTest selector: #testExample) run) printString.
+((SpMenuPresenterTest selector: #testExample) run) printString.
+((SpToolbarToggleButtonMorphTest selector: #testExample) run) printString.
+((SpTransmissionWithComponentListTest selector: #testExample) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>SpSmokeTest&gt;&gt;testExample before the fix (Pharo 14 build 791)</summary><pre class="code">testExample
+	&quot;We do not use #shouldnt:raise: to get feedback on the CI&quot;
+
+	self flag: #todo.	&quot;All widgets should have an example. When it will be done remove this skip&quot;
+	(self classToTest respondsTo: #example) ifFalse: [ self skip ].
+
+	[ window := self classToTest example ]
+		on: Error
+		do: [ :e | 
+			self
+				fail:
+					&#x27;Broken class example: &#x27; , self classToTest asString
+						,
+							&#x27;
+&#x27; , e signalerContext shortStack ]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-presenter-examples.st (<a href="../files/image-fixes/20-presenter-examples.st">download</a>)</summary><pre class="code">&quot;presenter-examples: eight presenter test classes skip testExample because the
+ presenter class has no class-side #example.  Each presenter gets one.&quot;
+add value: #&#x27;SpDemo class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Open the demo window.&quot;
+	^ self open&#x27;.
+add value: #&#x27;SpComponentListSelectionExample class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Open the component list selection example.&quot;
+	^ self open&#x27;.
+add value: #&#x27;SpCodeEditorPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Show a code editor with a short text.&quot;
+	^ self new
+		text: &#x27;&#x27;42 factorial&#x27;&#x27;;
+		open&#x27;.
+add value: #&#x27;MicTextPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Show the Microdown sample document as rich text.&quot;
+	^ self exampleSample&#x27;.
+add value: #&#x27;MicrodownPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Show the Microdown cheat sheet in an editable Microdown presenter.&quot;
+	^ self new
+		document: MicTextPresenter cheetSheet;
+		open&#x27;.
+add value: #&#x27;SpToolbarToggleButtonPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Show a toolbar with two toggle buttons.&quot;
+	| toolbar |
+	toolbar := SpToolbarPresenter new.
+	toolbar
+		beBoth;
+		add: (self new
+				 icon: (self iconNamed: #smallOk);
+				 label: &#x27;&#x27;Toggle&#x27;&#x27;;
+				 yourself);
+		add: (self new
+				 icon: (self iconNamed: #smallOk);
+				 label: &#x27;&#x27;Selected&#x27;&#x27;;
+				 beSelected;
+				 yourself).
+	^ toolbar open&#x27;.
+add value: #&#x27;SpMenuItemPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Show a button that opens a menu with items, one of them with a sub menu.
+	 The menu opens inside a window; a popup menu opened at a position runs a
+	 modal loop and does not return until the user dismisses the menu.&quot;
+	| presenter menuButton |
+	(presenter := SpPresenter new)
+		layout: (SpBoxLayout newTopToBottom
+			add: (SpBoxLayout newLeftToRight
+					addLast: (menuButton := presenter newMenuButton) expand: false;
+					yourself)
+				expand: false;
+			yourself).
+	menuButton menu: [
+		SpMenuPresenter new
+			addItem: [ :item | item name: &#x27;&#x27;Test 1&#x27;&#x27;; action: [ &quot;action&quot; ] ];
+			addItem: [ :item |
+				item
+					name: &#x27;&#x27;Test 2&#x27;&#x27;;
+					subMenu: (SpMenuPresenter new
+						addItem: [ :subMenuItem | subMenuItem name: &#x27;&#x27;SubMenu 1&#x27;&#x27;; action: [ ] ];
+						addItem: [ :subMenuItem | subMenuItem name: &#x27;&#x27;SubMenu 2&#x27;&#x27;; action: [ ] ];
+						yourself) ];
+			addItem: [ :item | item name: &#x27;&#x27;Test 3&#x27;&#x27;; action: [ &quot;action&quot; ] ];
+			yourself ].
+	^ presenter open&#x27;.
+add value: #&#x27;SpMenuPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+
+	&quot;Show a button that opens a menu with two groups of items.  The menu opens
+	 inside a window; a popup menu opened at a position runs a modal loop and
+	 does not return until the user dismisses the menu.&quot;
+	| presenter menuButton |
+	(presenter := SpPresenter new)
+		layout: (SpBoxLayout newTopToBottom
+			add: (SpBoxLayout newLeftToRight
+					addLast: (menuButton := presenter newMenuButton) expand: false;
+					yourself)
+				expand: false;
+			yourself).
+	menuButton menu: [
+		SpMenuPresenter new
+			addGroup: [ :group | group
+				addItem: [ :item | item name: &#x27;&#x27;Group 1. Test 1&#x27;&#x27;; action: [ &quot;action&quot; ] ];
+				addItem: [ :item | item name: &#x27;&#x27;Group 1. Test 2&#x27;&#x27;; action: [ &quot;action&quot; ] ] ];
+			addGroup: [ :group | group
+				addItem: [ :item | item name: &#x27;&#x27;Group 2. Test 1&#x27;&#x27;; action: [ &quot;action&quot; ] ];
+				addItem: [ :item | item name: &#x27;&#x27;Group 2. Test 2&#x27;&#x27;; action: [ &quot;action&quot; ] ] ];
+			yourself ].
+	^ presenter open&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

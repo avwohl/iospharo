@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transcript presenter: two processes run TabSelectorMorph&gt;&gt;updateTabs on one morph - Pharo test defects</title><meta name="description" content="Transcript presenter: two processes run TabSelectorMorph&gt;&gt;updateTabs on one morph: Open: no fix">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Transcript presenter: two processes run TabSelectorMorph&gt;&gt;updateTabs on one morph</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: no fix</span></dd><dt>Defect in</dt><dd>the Pharo image or the test (not proven)</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>none</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools</dd></dl><h2>Summary</h2><p>Pharo 14 x86_64: about 3 failures in 1000 runs on our VM and on Cog.  The test process and the Morphic UI process, both at priority 40, run <code>TabSelectorMorph&gt;&gt;updateTabs</code> on one morph.  A gate in the fake GUI of the test harness (no World cycle of another process while the test process is ready) is in test; it is a change of the harness, not of the image.  No fix exists.  The rule of the project counts a test that fails at times as a test that fails.</p><h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((StObjectTranscriptPresenterTest selector: #testOpenedLogIsSelectedLog) run) printString.</pre><details><summary>StObjectTranscriptPresenterTest&gt;&gt;testOpenedLogIsSelectedLog</summary><pre class="code">testOpenedLogIsSelectedLog
+
+	| window |
+	
+	[  		
+		window := presenter open.
+		#thisIsATest emit.
+		presenter selectLastItem.
+		self 
+			
+			assert: presenter logList selectedItem  
+			equals: presenter selectedRecordInspector model inspectedObject ] 
+	ensure: [ window close ].</pre></details><h2>Fix</h2><p>None yet.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

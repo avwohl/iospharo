@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package row 151: kentbeck-smalltalkgenie - Pharo test defects</title><meta name="description" content="Package row 151: kentbeck-smalltalkgenie: Open: 2 tests (a repair is written, not run)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package row 151: kentbeck-smalltalkgenie</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: 2 tests (a repair is written, not run)</span></dd><dt>Defect in</dt><dd>the package (cause not proven for each test)</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>kentbeck-smalltalkgenie.st</dd><dt>Upstream repository</dt><dd>KentBeck/SmalltalkGenie</dd></dl><h2>Summary</h2><p>Same on both VMs; package uses Pharo 13 API: Context&gt;&gt;debugStack:on: is gone, and the stale RBTemporaryToInstanceVariableTransformation breaks under the Pharo 14 compiler (OCCompilationError). Repair fixes/kentbeck-smalltalkgenie.st is committed (f433b127) but NOT run; confidence from reading only.</p><p><b>Next step:</b> scripts/vmrun.sh pkgs --redo &lt;work directory&gt; 151 151; later steps of the refactoring test were never reached and can show a second defect.</p><h2>Results</h2><table><tr><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>ok</td><td>tests=64 P=62 F=1 E=1 S=0 T=0 X=0</td><td>tests=64 P=62 F=1 E=1 S=0 T=0 X=0</td></tr></table><h2>Test</h2><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>GenieActionTest&gt;&gt;testVariableRefactoringToolsTemporaryRefactorings</code></td><td>FAIL</td><td>FAIL</td></tr><tr><td><code>GenieProtocolTest&gt;&gt;testToolErrorsExposeDebugDetailsOnlyWhenExplicitlyEnabled</code></td><td>ERROR</td><td>ERROR</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): kentbeck-smalltalkgenie.st (<a href="../files/packages/fixes/kentbeck-smalltalkgenie.st">download</a>)</summary><pre class="code">&quot;KentBeck/SmalltalkGenie: two package methods use Pharo 13 APIs that Pharo 14 changed.
+
+GenieServer&gt;&gt;returnError:by: sent Context&gt;&gt;debugStack:on:.  Pharo 14 has no
+such method (the Deprecated14 package keeps only debugStackOn: and
+printDebugStackOn:, both with no depth limit, and both deprecated for
+printStackTraceOn:).  So the debug mode of a failed tool call raised
+MessageNotUnderstood.  The repair prints at most &#x27;stackSize&#x27; contexts by
+walking the sender chain, as debugStack:on: did.
+
+GenieServer&gt;&gt;handleTemporaryToInstanceVariable: used
+RBTemporaryToInstanceVariableTransformation.  In Pharo 14 the class that is
+tested and kept is ReTemporaryToInstanceVariableRefactoring (the old name is a
+deprecated alias).  The old Transformation class stays in category
+Model-Unused and has an old privateTransform: it removes the temporary from
+every method of the class BEFORE it adds the instance variable, and it
+compiles each method even when that method has no such temporary.  The
+compile of &#x27;promoteTemp ^ cache&#x27; then has an undeclared variable, which gives
+OCCompilationError.  The Re class adds the instance variable first and skips
+methods without the temporary.  The repair builds the Re class.&quot;
+
+fix value: #GenieServer value: #returnError:by:
+	value: [ :source | source includesSubstring: &#x27;debugStack:&#x27; ]
+	value:
+&#x27;returnError: anError by: resultDict
+
+	| errorInfo signalerContext |
+	errorInfo := Dictionary new.
+	errorInfo
+		at: &#x27;&#x27;description&#x27;&#x27; put: &#x27;&#x27;Tool execution failed&#x27;&#x27;;
+		at: &#x27;&#x27;type&#x27;&#x27; put: anError class name asString;
+		at: &#x27;&#x27;error_id&#x27;&#x27; put: UUID new asString.
+	self exposeDebugErrors ifTrue: [
+			errorInfo at: &#x27;&#x27;description&#x27;&#x27; put: anError description.
+			signalerContext := anError signalerContext.
+			errorInfo
+				at: &#x27;&#x27;stack_trace&#x27;&#x27; put: (String streamContents: [ :stream |
+							 | context remaining |
+							 context := signalerContext.
+							 remaining := self stackSize.
+							 [ context notNil and: [ remaining &gt; 0 ] ] whileTrue: [
+									 context printOn: stream.
+									 stream cr.
+									 context := context sender.
+									 remaining := remaining - 1 ] ]);
+				at: &#x27;&#x27;receiver&#x27;&#x27;
+				put: (self receiverErrorInfoFrom: signalerContext receiver) ].
+	resultDict at: &#x27;&#x27;error&#x27;&#x27; put: errorInfo.
+	^ resultDict&#x27;.
+
+fix value: #GenieServer value: #handleTemporaryToInstanceVariable:
+	value: [ :source | source includesSubstring: &#x27;RBTemporaryToInstanceVariableTransformation&#x27; ]
+	value:
+&#x27;handleTemporaryToInstanceVariable: request
+
+	^ self returnResultDo: [
+			  self
+				  executeVariableRefactoring:
+					  (ReTemporaryToInstanceVariableRefactoring
+						   class: (self classFromRefactoringRequest: request)
+						   selector: (request at: #method_name) asSymbol
+						   variable: (request at: #variable_name))
+				  request: request ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

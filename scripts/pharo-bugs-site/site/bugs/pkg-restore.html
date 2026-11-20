@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: ReStore (rko281/ReStoreForPharo, row 74) - Pharo test defects</title><meta name="description" content="Package: ReStore (rko281/ReStoreForPharo, row 74): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: ReStore (rko281/ReStoreForPharo, row 74)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>rko281-restoreforpharo.st</dd><dt>Upstream repository</dt><dd>rko281/ReStoreForPharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 2358 tests.  Stock Cog: 2355 pass, 1 failure, 1 error, 1
+expected failure.  Our VM: 2356 pass, 1 failure, 1 expected failure.</li>
+<li>Causes:
+<ul>
+<li><code>SSWReStoreTypeTest&gt;&gt;testVeryLargeString</code> (error on stock Cog only).
+The dependency Pharo-SQLite3 gives the bytes of a text to
+<code>sqlite3_bind_text</code> with the destructor <code>SQLITE_STATIC</code>.  With that
+value SQLite keeps the pointer and reads the bytes at the step.  The
+bytes are a ByteArray that nothing holds after the call.  The test
+allocates 10 MB between the bind and the step, the collector of Cog uses
+the memory again, and SQLite stores other bytes.  Our VM did not use the
+memory again in that time.  The defect is in Pharo-SQLite3, and each
+text bind has it.  The repair gives <code>SQLITE_TRANSIENT</code>, so SQLite makes
+a copy.</li>
+<li><code>SSWReStoreBlockIfNilQueryTest&gt;&gt;testSelectSimpleObjectWithFunctionIfNil</code>
+has the mark of an expected failure, and the test passes (an unexpected
+pass is a failure).  The mark goes.</li>
+<li><code>SSWReStoreGeneralTest&gt;&gt;test01Events</code> (expected failure).  The test
+needs the events of a list model of Dolphin Smalltalk.  The Pharo port
+uses an OrderedCollection, which sends no event.  The test now sends the
+event that the list model sends.  The mark goes.</li>
+<li><code>SSWReStoreDefaultWriteTest&gt;&gt;testRefreshExistingObjects</code> failed on
+stock Cog in one run of two.  ReStore keeps the objects that it reads in
+a cache with weak values.  The test asserts that an object still shows
+an old value, and the address of the object is a proxy that loads
+later.  When the collector runs between the setUp and the test, the
+object is read again and its proxy loads the new value.  With a process
+that forces a scavenge each millisecond the test failed in 13 of 30 runs
+on stock Cog.  The repair reads the value before the other session
+writes.  A sibling test gets the same line.  After the repair: 0
+failures in 30 such runs on each VM.</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/rko281-restoreforpharo.st</code> (7 entries).</li>
+<li>Result: 2358 of 2358 pass on the two VMs, in a run from a new load.</li>
+<li>For the owners: the bind defect is in <code>rko281/Pharo-SQLite3</code> and in
+<code>pharo-rdbms/Pharo-SQLite3</code>, which has the same code.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 74&quot;
+Metacello new baseline: &#x27;ReStore&#x27;; repository: &#x27;github://rko281/ReStoreForPharo:main&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>74</td><td><code>rko281-restoreforpharo</code></td><td>ok</td><td>tests=2358 P=2358 F=0 E=0 S=0 T=0 X=0</td><td>tests=2358 P=2358 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): rko281-restoreforpharo.st (<a href="../files/packages/fixes/rko281-restoreforpharo.st">download</a>)</summary><pre class="code">&quot;rko281-restoreforpharo: four groups of entries.
+
+1. SQLite3Library text binding (dependency rko281/Pharo-SQLite3).  The binding
+   of a text value passes the UTF-8 ByteArray of the text to sqlite3_bind_text
+   with the destructor argument 0 (SQLITE_STATIC).  SQLITE_STATIC means that
+   SQLite keeps the pointer and reads the bytes later, at sqlite3_step.  The
+   ByteArray is a temporary of SQLite3Library&gt;&gt;with:at:putText: and nothing keeps
+   the ByteArray alive (the cache &#x27;bindings&#x27; of the statement keeps the String,
+   not the encoded bytes).  After the bind call the ByteArray is garbage; its
+   memory can be moved or freed and reused by a collection before the step.
+   SSWReStoreTypeTest&gt;&gt;testVeryLargeString allocates 10 MB arrays between the
+   bind of the small varchar and the step, so the stock Cog collector reuses
+   the bytes of the small text, the row stores a wrong varchar, and the later
+   detect: finds no row (NotFound).  The repair passes SQLITE_TRANSIENT (-1),
+   with which SQLite copies the bytes in the bind call.  The destructor
+   argument becomes sqlite3_int64, because -1 must reach the 64-bit pointer
+   register intact (a C int leaves the upper 32 bits of the register
+   undefined).
+
+2. SSWReStoreBlockIfNilQueryTest&gt;&gt;isExpectedFailure.  The mark says that
+   testSelectSimpleObjectWithFunctionIfNil fails.  The test passes on both VMs
+   (unexpected pass).  The mark is stale: the repair removes the mark.
+
+3. SSWReStoreGeneralTest&gt;&gt;test01Events.  The test needs a list that triggers
+   the event #listChanged when the list changes (Dolphin ListModel).  Pharo has
+   no ListModel, and SSWReStoreTest class&gt;&gt;listModelClass answers
+   OrderedCollection, which triggers no event.  So the last assertion
+   (counter = #(1 2)) can never hold, and the test was marked as an expected
+   failure.  The repair triggers #listChanged by hand after each removal, which
+   is what ListModel does, and keeps all four assertions.  The mark is removed
+   in the same file.
+
+4. SSWReStoreDefaultWriteTest&gt;&gt;testRefreshExistingObjects and
+   &gt;&gt;testRefreshExistingRelatedObject.  ReStore keeps the objects that it
+   has read in a cache with weak values.  Each test reads john1 from the
+   cache, lets a second session change the postcode of the address of john1,
+   and then asserts that john1 still shows the old postcode (it is not
+   refreshed yet).  The address of john1 is a lazy proxy: it is read from the
+   database at the first access.  When a garbage collection has removed the
+   objects of the set-up from the cache between the set-up and the test, john1
+   is read from the database again with an unloaded address.  The address is
+   then loaded after the update of the second session, shows the new
+   postcode, and the assertion fails.  The test passes when no collection runs
+   in that time (almost always on our VM, sometimes not on stock Cog).  The
+   defect is in the test: it must load the address before the second session
+   changes it.  The repair reads the postcode of john1 once before the
+   update.  All assertions stay.&quot;
+
+fix value: #SQLite3Library value: #with:at:putText:
+	value: [ :source | source includesSubstring: &#x27;with: 0&#x27; ]
+	value:
+&#x27;with: aStatement at: aColumn putText: aString
+
+	| bytes |
+
+	bytes := self pharoStringToUTF8: aString.
+
+	&quot;SQLITE_TRANSIENT (-1): SQLite copies the bytes in this call.  With 0
+	(SQLITE_STATIC) SQLite reads the bytes at sqlite3_step, when the garbage
+	collector can have moved or reused the memory of the temporary ByteArray.&quot;
+	^ self
+		  apiBindText: aStatement
+		  atColumn: aColumn
+		  with: bytes
+		  with: bytes size
+		  with: -1&#x27;.
+
+fix value: #SQLite3Library value: #apiBindText:atColumn:with:with:with:
+	value: [ :source | source includesSubstring: &#x27;int anotherInteger&#x27; ]
+	value:
+&#x27;apiBindText: aStatement atColumn: aColumn with: aString with: anInteger with: anotherInteger
+	&quot;int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*))
+	The last argument is the destructor.  It is a pointer, so it is a 64-bit integer here (SQLITE_TRANSIENT is -1).&quot;
+
+	^ self ffiCall: #(int sqlite3_bind_text (sqlite3_stmt* aStatement, int aColumn, String aString, int anInteger, sqlite3_int64 anotherInteger))&#x27;.
+
+fix value: #SSWReStoreBlockIfNilQueryTest value: #isExpectedFailure
+	value: [ :source | source includesSubstring: &#x27;self selector =&#x27; ]
+	value:
+&#x27;isExpectedFailure
+
+	&quot;No test of this class is an expected failure.  One test was marked, and it passes.&quot;
+
+	^ super isExpectedFailure&#x27;.
+
+fix value: #SSWReStoreGeneralTest value: #expectedFailures
+	value: [ :source | source includesSubstring: &#x27;#(&#x27; ]
+	value:
+&#x27;expectedFailures
+
+	&quot;No test of this class is an expected failure now.&quot;
+
+	^ super expectedFailures&#x27;.
+
+fix value: #SSWReStoreGeneralTest value: #test01Events
+	value: [ :source | (source includesSubstring: &#x27;triggerEvent&#x27;) not ]
+	value:
+&#x27;test01Events
+
+	&quot;Check persistency of events&quot;
+
+	| t counter |
+
+	reStore refreshAllObjects.
+	t := (OwnerTest storedInstancesIn: reStore) last.
+	counter := OrderedCollection new.
+
+	reStore beginTransaction.
+	t single1 when: #something send: #yourself to: t.
+	t single1 name: &#x27;&#x27;blah&#x27;&#x27;.
+	t list when: #listChanged send: #add: to: counter with: 1.
+	t ownedList when: #listChanged send: #add: to: counter with: 2.
+	&quot;A Dolphin ListModel triggers #listChanged when it changes; an OrderedCollection does not, so the test triggers the event after each change&quot;
+	t list removeLast.
+	t list triggerEvent: #listChanged.
+	t ownedList removeLast.
+	t ownedList triggerEvent: #listChanged.
+	reStore rollbackTransaction.
+
+	self assert: (t single1 getEvents includesKey: #something).
+	self assert: (t list getEvents includesKey: #listChanged).
+	self assert: (t ownedList getEvents includesKey: #listChanged).
+	self assert: (counter asSortedCollection asArray = #(1 2))&#x27;.
+
+fix value: #SSWReStoreDefaultWriteTest value: #testRefreshExistingObjects
+	value: [ :source | (source includesSubstring: &#x27;loaded before&#x27;) not ]
+	value:
+&#x27;testRefreshExistingObjects
+
+	&quot;Test the use of the refresh message to refresh a collection of existing objects&quot;
+
+	| zoe1 newAge zoe2 john1 john2 |
+
+	zoe1 := SimplePerson storedInstances detect: [ :each | each fullName = &#x27;&#x27;Zoe Brown&#x27;&#x27;].
+	john1 := SimplePerson storedInstances detect: [ :each | each fullName = &#x27;&#x27;John Smith&#x27;&#x27;].
+	&quot;The address of john1 must be loaded before the second session changes it.  The cache of ReStore holds its objects weakly: after a garbage collection john1 is read again with an unloaded address, which would be loaded after the update.&quot;
+	john1 address postcode.
+
+	zoe2 := (SimplePerson storedInstancesIn: reStore2) detect: [ :each | each fullName = zoe1 fullName].
+	newAge := zoe1 age + 1.
+
+	john2 := (SimplePerson storedInstancesIn: reStore2) detect: [ :each | each fullName = john1 fullName].
+	reStore2 evaluateAsTransaction: 
+		[zoe2 age: newAge.
+		john2 address postcode: &#x27;&#x27;JS1 1JS&#x27;&#x27;].
+
+	self assert: zoe1 age = (newAge - 1).
+	self assert: (john1 address postcode ~= &#x27;&#x27;JS1 1JS&#x27;&#x27;).
+
+	self refreshDelay.
+	(Array with: zoe1 with: john1) refreshAll.
+
+	self assert: zoe1 age = newAge.
+	self assert: (john2 address postcode = &#x27;&#x27;JS1 1JS&#x27;&#x27;)&#x27;.
+
+fix value: #SSWReStoreDefaultWriteTest value: #testRefreshExistingRelatedObject
+	value: [ :source | (source includesSubstring: &#x27;loaded before&#x27;) not ]
+	value:
+&#x27;testRefreshExistingRelatedObject
+
+	&quot;Test the use of the refresh message to refresh an existing related object&quot;
+
+	| john1 john2 |
+
+	john1 := SimplePerson storedInstances detect: [ :each | each fullName = &#x27;&#x27;John Smith&#x27;&#x27;].
+	&quot;The address of john1 must be loaded before the second session changes it (see testRefreshExistingObjects).&quot;
+	john1 address postcode.
+
+	john2 := (SimplePerson storedInstancesIn: reStore2) detect: [ :each | each fullName = john1 fullName].
+	reStore2 evaluateAsTransaction: [john2 address postcode: &#x27;&#x27;JS1 1JS&#x27;&#x27;].
+
+	self assert: (john1 address postcode ~= &#x27;&#x27;JS1 1JS&#x27;&#x27;).
+
+	self refreshDelay.
+	john1 refresh.
+
+	self assert: (john2 address postcode = &#x27;&#x27;JS1 1JS&#x27;&#x27;).&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

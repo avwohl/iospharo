@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Packages: TSF-Scheduler, TSF-FileRotator, TSF-Logger, TSF-NexIO (georghagn, rows 51, 62, 66, 135) - Pharo test defects</title><meta name="description" content="Packages: TSF-Scheduler, TSF-FileRotator, TSF-Logger, TSF-NexIO (georghagn, rows 51, 62, 66, 135): Open: the package does not load">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Packages: TSF-Scheduler, TSF-FileRotator, TSF-Logger, TSF-NexIO (georghagn, rows 51, 62, 66, 135)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: the package does not load</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>-</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>The four repositories do not exist as public repositories.  Measured on
+2026-11-17:
+<ul>
+<li><code>git ls-remote https://github.com/georghagn/&lt;name&gt;.git</code> answers
+&quot;Repository not found&quot; for each of the four names.</li>
+<li><code>https://api.github.com/users/georghagn/repos</code> answers an empty list:
+the account has no public repository.</li>
+<li>A search of GitHub for a repository with one of the four names
+(<code>search/repositories?q=&lt;name&gt;+in:name</code>) finds no copy and no fork.</li>
+</ul>
+</li>
+<li>GitHub asks for a name and a password for a repository that does not
+exist, and Iceberg opened a dialog in the headless image.  The package run
+now uses the non-interactive credentials provider of Iceberg, so the load
+stops with an error (state <code>LOAD-FAIL</code>).</li>
+<li>These four rows cannot run on any machine: there is no source to load.
+They are the only rows that the run leaves out, and the reason is the
+measurement above.  If the owner of the repositories makes them public
+again, the rows run with no change.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 51&quot;
+Metacello new baseline: &#x27;TsfScheduler&#x27;; repository: &#x27;github://georghagn/TSF-Scheduler:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><pre class="code">&quot;row 62&quot;
+Metacello new baseline: &#x27;TsfFileRotator&#x27;; repository: &#x27;github://georghagn/TSF-FileRotator:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><pre class="code">&quot;row 66&quot;
+Metacello new baseline: &#x27;TsfLogger&#x27;; repository: &#x27;github://georghagn/TSF-Logger:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><pre class="code">&quot;row 135&quot;
+Metacello new baseline: &#x27;TsfNexIO&#x27;; repository: &#x27;github://georghagn/TSF-NexIO:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>51</td><td><code>georghagn-tsf-scheduler</code></td><td>LOAD-FAIL rc=1</td><td>-</td><td>-</td></tr><tr><td>62</td><td><code>georghagn-tsf-filerotator</code></td><td>LOAD-FAIL rc=1</td><td>-</td><td>-</td></tr><tr><td>66</td><td><code>georghagn-tsf-logger</code></td><td>LOAD-FAIL rc=1</td><td>-</td><td>-</td></tr><tr><td>135</td><td><code>georghagn-tsf-nexio</code></td><td>LOAD-FAIL rc=1</td><td>-</td><td>-</td></tr></table><h2>Fix</h2><p>No fixes file; the record above says what changed.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

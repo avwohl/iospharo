@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cly-wrapper-queries - Pharo test defects</title><meta name="description" content="Cly-wrapper-queries: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cly-wrapper-queries</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>14</dd><dt>Fix</dt><dd>image fix 20-Cly-wrapper-queries.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Cly-wrapper-queries.st</code></li>
+<li>Methods: <code>ClyWrapQueryTest&gt;&gt;testHasCompositeScopeFromSubqueries</code>, <code>ClyWrapQueryTest&gt;&gt;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code>, <code>ClyWrapQueryTest&gt;&gt;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code>, <code>ClyWrapQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope</code>, <code>ClyWrapQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code>, <code>ClyWrapQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope</code>, <code>ClyWrapQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></li>
+</ul>
+<p>All 14 tests are inherited from ClyWrapQueryTest, which inherits composite-query tests from ClyCompositeQueryTest. Those inherited tests build a query with two subqueries. ClyWrapperQuery&gt;&gt;subqueries: refuses that by design ('Wrapper query should include single subquery'), so ClyWrapQueryTest marked 7 selectors expectedFailure and called super. The failure was therefore the intended behaviour, not a defect in either VM. The fix overrides the 7 selectors in ClyWrapQueryTest with the real contract and removes the marks. The 6 multi-subquery tests keep their original setup and assert that the wrapper refuses it with the 'single subquery' error and keeps its subqueries unchanged. testHasCompositeScopeFromSubqueries asserts that the wrapper scope is not a ClyCompositeScope and equals the scope of its single subquery. No VM difference was found: both VMs give identical results.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testHasCompositeScopeFromSubqueries</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Inherited composite expectation does not apply to a single-subquery wrapper; the test was marked expectedFailure instead of testing the wrapper contract</td>
+</tr>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Two-subquery setup is refused by ClyWrapperQuery&gt;&gt;subqueries:; the test now asserts the refusal</td>
+</tr>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testHasCompositeScopeFromSubqueries</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same as the Async variant (inherited from ClyWrapQueryTest)</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only test methods were changed, so no non-test code needs a covering class. Run on both VMs, same class, base image vs fixed image: ClyAsyncQueryTest passes went 33 to 40 on ours and 33 to 40 on Cog. ClyFilterQueryTest went 34 to 41 on both. ClyUnionQueryTest (a sibling subclass of ClyCompositeQueryTest) stayed at 52 on both. ClyCompositeQueryTest and ClyQueryTest are abstract and ran 0 tests. The two repaired classes each ran 3 times on both VMs with the same result, and no non-PASS lines were seen apart from the DONE marker.</p>
+<p>Upstream note: Pharo, package Calypso-NavigationModel-Tests: ClyWrapQueryTest overrides 7 composite-query tests as expectedFailure and calls super, so they always fail by design (ClyWrapperQuery&gt;&gt;subqueries: accepts exactly one subquery). Replace the marks with tests of the real contract: the wrapper refuses several subqueries with an error naming 'single subquery', and its scope equals the scope of its single subquery. Not opened as an upstream PR; the owner reviews any PR first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testHasCompositeScopeFromSubqueries</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyAsyncQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testHasCompositeScopeFromSubqueries</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyFilterQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ClyAsyncQueryTest selector: #testHasCompositeScopeFromSubqueries) run) printString.
+((ClyAsyncQueryTest selector: #testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects) run) printString.
+((ClyAsyncQueryTest selector: #testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject) run) printString.
+((ClyAsyncQueryTest selector: #testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope) run) printString.
+((ClyAsyncQueryTest selector: #testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject) run) printString.
+((ClyAsyncQueryTest selector: #testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope) run) printString.
+((ClyAsyncQueryTest selector: #testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects) run) printString.
+((ClyFilterQueryTest selector: #testHasCompositeScopeFromSubqueries) run) printString.
+((ClyFilterQueryTest selector: #testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects) run) printString.
+((ClyFilterQueryTest selector: #testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject) run) printString.
+((ClyFilterQueryTest selector: #testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope) run) printString.
+((ClyFilterQueryTest selector: #testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject) run) printString.
+((ClyFilterQueryTest selector: #testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope) run) printString.
+((ClyFilterQueryTest selector: #testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>ClyWrapQueryTest&gt;&gt;testHasCompositeScopeFromSubqueries before the fix (Pharo 14 build 791)</summary><pre class="code">testHasCompositeScopeFromSubqueries
+	&lt;expectedFailure&gt;
+	&quot;Async query must be created on single subquery.
+	And in that case scope will be same as scope of this subquery&quot;
+	super testHasCompositeScopeFromSubqueries</pre></details><details><summary>ClyWrapQueryTest&gt;&gt;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects before the fix (Pharo 14 build 791)</summary><pre class="code">testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects
+	&lt;expectedFailure&gt;
+	&quot;Async query forbid creation on several subqueries.
+	It shoud always wrap single query&quot;
+	super testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</pre></details><details><summary>ClyWrapQueryTest&gt;&gt;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject before the fix (Pharo 14 build 791)</summary><pre class="code">testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject
+	&lt;expectedFailure&gt;
+	&quot;Async query forbid creation on several subqueries.
+	It shoud always wrap single query&quot;
+	super testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</pre></details><details><summary>ClyWrapQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope before the fix (Pharo 14 build 791)</summary><pre class="code">testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope
+	&lt;expectedFailure&gt;
+	&quot;Async query forbid creation on several subqueries.
+	It shoud always wrap single query&quot;
+	super testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope</pre></details><details><summary>ClyWrapQueryTest&gt;&gt;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject before the fix (Pharo 14 build 791)</summary><pre class="code">testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject
+	&lt;expectedFailure&gt;
+	&quot;Async query forbid creation on several subqueries.
+	It shoud always wrap single query&quot;
+	super testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject</pre></details><details><summary>ClyWrapQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope before the fix (Pharo 14 build 791)</summary><pre class="code">testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope
+	&lt;expectedFailure&gt;
+	&quot;Async query forbid creation on several subqueries.
+	It shoud always wrap single query&quot;
+	super testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope</pre></details><details><summary>ClyWrapQueryTest&gt;&gt;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects before the fix (Pharo 14 build 791)</summary><pre class="code">testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects
+	&lt;expectedFailure&gt;
+	&quot;Async query forbid creation on several subqueries.
+	It shoud always wrap single query&quot;
+	super testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Cly-wrapper-queries.st (<a href="../files/image-fixes/20-Cly-wrapper-queries.st">download</a>)</summary><pre class="code">fix value: #ClyWrapQueryTest value: #testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects
+	&quot;A wrapper query wraps exactly one subquery (ClyWrapperQuery&gt;&gt;subqueries:), so the
+	multi-subquery setup of the inherited composite test must be refused.&quot;
+	| subqueriesBefore |
+	subqueriesBefore := query subqueries.
+	self
+		should: [ query subqueries: {
+		self subqueryFromScopeOf: self class.
+		self subqueryFromScopeOf: self class superclass.
+	} ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;single subquery&#x27;&#x27;
+		description: &#x27;&#x27;A wrapper query must refuse several subqueries&#x27;&#x27;.
+	self assert: query subqueries equals: subqueriesBefore&#x27;.
+fix value: #ClyWrapQueryTest value: #testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject
+	&quot;A wrapper query wraps exactly one subquery (ClyWrapperQuery&gt;&gt;subqueries:), so the
+	multi-subquery setup of the inherited composite test must be refused.&quot;
+	| subqueriesBefore |
+	subqueriesBefore := query subqueries.
+	self
+		should: [ query subqueries: {
+		self subqueryFromScope: ClyExampleScope of: self class.
+		self subqueryFromScope: ClyExample2Scope of: self class.
+	} ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;single subquery&#x27;&#x27;
+		description: &#x27;&#x27;A wrapper query must refuse several subqueries&#x27;&#x27;.
+	self assert: query subqueries equals: subqueriesBefore&#x27;.
+fix value: #ClyWrapQueryTest value: #testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope
+	&quot;A wrapper query wraps exactly one subquery (ClyWrapperQuery&gt;&gt;subqueries:), so the
+	multi-subquery setup of the inherited composite test must be refused.&quot;
+	| subqueriesBefore |
+	subqueriesBefore := query subqueries.
+	self
+		should: [ query subqueries: {
+		self subqueryFromScope: ClyExampleScope empty.
+		self subqueryFromScope: ClyExample2Scope empty.
+	} ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;single subquery&#x27;&#x27;
+		description: &#x27;&#x27;A wrapper query must refuse several subqueries&#x27;&#x27;.
+	self assert: query subqueries equals: subqueriesBefore&#x27;.
+fix value: #ClyWrapQueryTest value: #testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject
+	&quot;A wrapper query wraps exactly one subquery (ClyWrapperQuery&gt;&gt;subqueries:), so the
+	multi-subquery setup of the inherited composite test must be refused.&quot;
+	| subqueriesBefore |
+	subqueriesBefore := query subqueries.
+	self
+		should: [ query subqueries: {
+		self subqueryFromScope: ClyExampleScope of: self class.
+		self subqueryFromScope: ClyExample2Scope of: self class.
+	} ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;single subquery&#x27;&#x27;
+		description: &#x27;&#x27;A wrapper query must refuse several subqueries&#x27;&#x27;.
+	self assert: query subqueries equals: subqueriesBefore&#x27;.
+fix value: #ClyWrapQueryTest value: #testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope
+	&quot;A wrapper query wraps exactly one subquery (ClyWrapperQuery&gt;&gt;subqueries:), so the
+	multi-subquery setup of the inherited composite test must be refused.&quot;
+	| subqueriesBefore |
+	subqueriesBefore := query subqueries.
+	self
+		should: [ query subqueries: {
+		self subqueryFromScope: ClyExampleScope empty.
+		self subqueryFromScope: ClyExample2Scope empty.
+	} ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;single subquery&#x27;&#x27;
+		description: &#x27;&#x27;A wrapper query must refuse several subqueries&#x27;&#x27;.
+	self assert: query subqueries equals: subqueriesBefore&#x27;.
+fix value: #ClyWrapQueryTest value: #testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects
+	&quot;A wrapper query wraps exactly one subquery (ClyWrapperQuery&gt;&gt;subqueries:), so the
+	multi-subquery setup of the inherited composite test must be refused.&quot;
+	| subqueriesBefore |
+	subqueriesBefore := query subqueries.
+	self
+		should: [ query subqueries: {
+		self subqueryFromScopeOf: self class.
+		self subqueryFromScopeOf: self class superclass.
+	} ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;single subquery&#x27;&#x27;
+		description: &#x27;&#x27;A wrapper query must refuse several subqueries&#x27;&#x27;.
+	self assert: query subqueries equals: subqueriesBefore&#x27;.
+fix value: #ClyWrapQueryTest value: #testHasCompositeScopeFromSubqueries value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testHasCompositeScopeFromSubqueries
+	&quot;A wrapper query wraps exactly one subquery, so its scope is the scope of that subquery,
+	not a ClyCompositeScope (ClyWrapperQuery&gt;&gt;subqueries: refuses several subqueries).&quot;
+	| scope subscope |
+	scope := query scope.
+	subscope := query subqueries anyOne scope.
+	self deny: scope class equals: ClyCompositeScope.
+	self assert: scope equals: subscope&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

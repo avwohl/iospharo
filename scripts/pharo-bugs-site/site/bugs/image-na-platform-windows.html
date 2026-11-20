@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NA-platform-windows - Pharo test defects</title><meta name="description" content="NA-platform-windows: Partly fixed: 3 fixed, 16 not applicable (2 not proven)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>NA-platform-windows</h1><dl class="meta"><dt>State</dt><dd><span class="st st-part">Partly fixed: 3 fixed, 16 not applicable (2 not proven)</span></dd><dt>Defect in</dt><dd>the test (3 tests); the other 16 are for Windows or x86_64 only</dd><dt>Tests</dt><dd>19</dd><dt>Fix</dt><dd>image fix 20-NA-platform-windows.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><p class="note">Open: the two tests <code>testCallingFunctionWithW64CallingConvention</code> (<code>TFFunctionCallTest</code> and <code>TFUFFIDifferentCallingConventionFunctionCallTest</code>) run only on an x86_64 VM on macOS.  The proof is only the architecture name on arm64; a run on an x86_64 VM under Rosetta is not done.</p><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-NA-platform-windows.st</code></li>
+<li>Methods: <code>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableLongerThanBufferShouldReturnValue</code>, <code>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableShouldReturnValue</code>, <code>Win32EnvironmentTest&gt;&gt;testNonExistingEnvironmentVariableShouldGenerateException</code></li>
+</ul>
+<p>Of 19 tests, 3 (Win32EnvironmentTest) were skipping on macOS for no good reason; the skip is removed and they now pass on both VMs. The other 16 test Windows-only or x86_64-only behaviour and are proven not applicable on this machine. No VM defect was found.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableLongerThanBufferShouldReturnValue</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Skipped on non-Windows although it only checks the platform-independent OSEnvironment contract, which works on macOS. The isWindows skip is removed and the assertions are unchanged.</td>
+</tr>
+<tr>
+<td><code>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableShouldReturnValue</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Same as above. The skip is removed and the assertion is unchanged.</td>
+</tr>
+<tr>
+<td><code>Win32EnvironmentTest&gt;&gt;testNonExistingEnvironmentVariableShouldGenerateException</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Same as above. The skip is removed and the assertion is unchanged.</td>
+</tr>
+<tr>
+<td><code>Win32WideStringTest&gt;&gt;testCharactersAreEncodedInUnicode16Bits</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Win32WideString (FFI-Kernel) converts through the Windows API MultiByteToWideChar and WideCharToMultiByte, called via WinPlatform. On this machine asWin32WideString fails with MessageNotUnderstood MacOSXPlatform&gt;&gt;#multiByteToWideCharacterCodepage:flags:input:inputLen:output:outputLen:. Measured on both VMs with evalfile.sh (&lt;work directory&gt;). OSPlatform current isWindows is false.</td>
+</tr>
+<tr>
+<td><code>Win32WideStringTest&gt;&gt;testConvertingInBothDirectionsGaveSameString</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above: Windows-API-only code under test.</td>
+</tr>
+<tr>
+<td><code>Win32WideStringTest&gt;&gt;testHandleIsAByteArray</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above.</td>
+</tr>
+<tr>
+<td><code>Win32WideStringTest&gt;&gt;testUnderlayingByteArrayEndsInTwoZeros</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above.</td>
+</tr>
+<tr>
+<td><code>Win32WideStringTest&gt;&gt;testUnderlayingByteArrayIsMultipleOf2</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above.</td>
+</tr>
+<tr>
+<td><code>KMCombinationTest&gt;&gt;testWindowsAndUnixMetaShouldBeCtrl</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>The test is skipped when OSPlatform current isMacOS. On macOS $n meta prints 'Meta + N' and $n ctrl prints 'Ctrl + N', and $n meta = $n ctrl is false on both VMs, so the assertion cannot hold here by design. The macOS counterpart KMCombinationTest&gt;&gt;testMacMetaShouldBeCmd passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFBasicTypeSizeTest&gt;&gt;testSizeSignedLongWindows</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Asserts long is 4 bytes, which is the Windows LLP64 size. On this machine TFBasicType slong byteSize is 8 on both VMs. The Unix counterpart testSizeSignedLongUnix (long equals Smalltalk wordSize) passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFBasicTypeSizeTest&gt;&gt;testSizeUnsignedLongWindows</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above (ulong is 8 bytes here). Counterpart testSizeUnsignedLongUnix passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFBasicTypeTest&gt;&gt;testSignedLongWindows</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above. Counterpart testSignedLongUnix passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFBasicTypeTest&gt;&gt;testUnsignedLongWindows</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above. Counterpart testUnsignedLongUnix passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFUFFIBasicTypeSizeTest&gt;&gt;testSizeSignedLongWindows</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above (the test inherits TFBasicTypeSizeTest). Counterpart testSizeSignedLongUnix passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFUFFIBasicTypeSizeTest&gt;&gt;testSizeUnsignedLongWindows</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same as above. Counterpart testSizeUnsignedLongUnix passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFFunctionCallTest&gt;&gt;testCallingFunctionWithW64CallingConvention</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>The test runs only when isMacOS and Smalltalk vm architectureName = 'x86_64', and uses the ABI DARWIN_X86_64_WIN64. This machine is arm64 (architectureName is 'aarch64' on our VM, 'arm64' on Cog). That ABI exists only in libffi for x86_64 Darwin. I did not try an x86_64 VM under Rosetta, so the test is not proven to pass there.</td>
+</tr>
+<tr>
+<td><code>TFUFFIDifferentCallingConventionFunctionCallTest&gt;&gt;testCallingFunctionWithW64CallingConvention</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same condition as above (x86_64 only).</td>
+</tr>
+<tr>
+<td><code>WinPlatformTest&gt;&gt;testGetTempPathFromTMP</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Tests WinPlatform&gt;&gt;getTempPath, which calls the kernel32 function GetTempPathW. On this machine OSPlatform current is MacOSXPlatform, which does not understand #getTempPath, and WinPlatform new getTempPath fails. The code under test cannot run on macOS.</td>
+</tr>
+<tr>
+<td><code>WindowsResolverTest&gt;&gt;testResolveTempPathFromTMP</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>WindowsResolver&gt;&gt;temp calls OSPlatform current getTempPath (GetTempPathW). Measured: WindowsResolver new temp gives MessageNotUnderstood MacOSXPlatform&gt;&gt;#getTempPath on both VMs.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: OSEnvironmentTest (the only code these tests touch, no non-test method changed): 8 PASS on both our VM and Cog, with the fix image. It was also 8 PASS on the base images before the fix. TFBasicTypeSizeTest, TFBasicTypeTest, TFUFFIBasicTypeSizeTest and KMCombinationTest were run on the base images only (no change there). Only the Unix/macOS counterpart tests were checked as PASS; the remaining tests in those classes were not listed.</p>
+<p>Open points: None blocking. Two items I did not run: (1) the W64 calling-convention tests under an x86_64 VM on Rosetta (proven not applicable only by the condition value on arm64). (2) The Win32WideString and WinPlatform/WindowsResolver tests could only be run on Windows. I did not stub the Windows API into the tests, since that would weaken them. The p1.st output for 'WinPlatform new getTempPath' showed a MessageNotUnderstood about multiByteToWideCharacterCodepage:, which looks like the wrong selector for that call; I did not investigate it.</p>
+<p>Upstream note: Pharo, System-OSEnvironments-Tests: Win32EnvironmentTest only skips on non-Windows, but its three tests check platform-independent OSEnvironment behaviour (at:put:, a value of 1500 characters, NotFound for an absent name). Remove the OSPlatform current isWindows skip so the tests run on Unix and macOS. The assertions are unchanged. Not submitted; needs owner review first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableLongerThanBufferShouldReturnValue</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableShouldReturnValue</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>Win32EnvironmentTest&gt;&gt;testNonExistingEnvironmentVariableShouldGenerateException</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>KMCombinationTest&gt;&gt;testWindowsAndUnixMetaShouldBeCtrl</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>TFBasicTypeSizeTest&gt;&gt;testSizeSignedLongWindows</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFBasicTypeSizeTest&gt;&gt;testSizeUnsignedLongWindows</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFBasicTypeTest&gt;&gt;testSignedLongWindows</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFBasicTypeTest&gt;&gt;testUnsignedLongWindows</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFFunctionCallTest&gt;&gt;testCallingFunctionWithW64CallingConvention</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFUFFIBasicTypeSizeTest&gt;&gt;testSizeSignedLongWindows</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFUFFIBasicTypeSizeTest&gt;&gt;testSizeUnsignedLongWindows</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>TFUFFIDifferentCallingConventionFunctionCallTest&gt;&gt;testCallingFunctionWithW64CallingConvention</code></td><td>SKIP</td><td>not applicable</td><td>SKIP 2x</td><td>SKIP 2x</td><td>-</td></tr><tr><td><code>Win32WideStringTest&gt;&gt;testCharactersAreEncodedInUnicode16Bits</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>Win32WideStringTest&gt;&gt;testConvertingInBothDirectionsGaveSameString</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>Win32WideStringTest&gt;&gt;testHandleIsAByteArray</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>Win32WideStringTest&gt;&gt;testUnderlayingByteArrayEndsInTwoZeros</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>Win32WideStringTest&gt;&gt;testUnderlayingByteArrayIsMultipleOf2</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>WinPlatformTest&gt;&gt;testGetTempPathFromTMP</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>WindowsResolverTest&gt;&gt;testResolveTempPathFromTMP</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image on macOS arm64: they skip (the fixtures and the platform tests skip by design).</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((KMCombinationTest selector: #testWindowsAndUnixMetaShouldBeCtrl) run) printString.
+((TFBasicTypeSizeTest selector: #testSizeSignedLongWindows) run) printString.
+((TFBasicTypeSizeTest selector: #testSizeUnsignedLongWindows) run) printString.
+((TFBasicTypeTest selector: #testSignedLongWindows) run) printString.
+((TFBasicTypeTest selector: #testUnsignedLongWindows) run) printString.
+((TFFunctionCallTest selector: #testCallingFunctionWithW64CallingConvention) run) printString.
+((TFUFFIBasicTypeSizeTest selector: #testSizeSignedLongWindows) run) printString.
+((TFUFFIBasicTypeSizeTest selector: #testSizeUnsignedLongWindows) run) printString.
+((TFUFFIDifferentCallingConventionFunctionCallTest selector: #testCallingFunctionWithW64CallingConvention) run) printString.
+((Win32EnvironmentTest selector: #testExistingEnvironmentVariableLongerThanBufferShouldReturnValue) run) printString.
+((Win32EnvironmentTest selector: #testExistingEnvironmentVariableShouldReturnValue) run) printString.
+((Win32EnvironmentTest selector: #testNonExistingEnvironmentVariableShouldGenerateException) run) printString.
+((Win32WideStringTest selector: #testCharactersAreEncodedInUnicode16Bits) run) printString.
+((Win32WideStringTest selector: #testConvertingInBothDirectionsGaveSameString) run) printString.
+((Win32WideStringTest selector: #testHandleIsAByteArray) run) printString.
+((Win32WideStringTest selector: #testUnderlayingByteArrayEndsInTwoZeros) run) printString.
+((Win32WideStringTest selector: #testUnderlayingByteArrayIsMultipleOf2) run) printString.
+((WinPlatformTest selector: #testGetTempPathFromTMP) run) printString.
+((WindowsResolverTest selector: #testResolveTempPathFromTMP) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>KMCombinationTest&gt;&gt;testWindowsAndUnixMetaShouldBeCtrl before the fix (Pharo 14 build 791)</summary><pre class="code">testWindowsAndUnixMetaShouldBeCtrl
+	OSPlatform current isMacOS ifTrue: [ ^ self skip ].
+	self assert: $n meta equals: $n ctrl.
+	self assert: $n ctrl equals: $n meta.
+	self assert: $n meta shift equals: $n ctrl shift.
+	self assert: $n ctrl shift equals: $n meta shift</pre></details><details><summary>TFBasicTypeSizeTest&gt;&gt;testSizeSignedLongWindows before the fix (Pharo 14 build 791)</summary><pre class="code">testSizeSignedLongWindows
+
+	OSPlatform current isWindows ifFalse: [
+		&quot;Check #testSizeSignedLongUnix&quot;
+		^ self skip ].
+	self assertType: &#x27;long&#x27; equals: 4</pre></details><details><summary>TFBasicTypeSizeTest&gt;&gt;testSizeUnsignedLongWindows before the fix (Pharo 14 build 791)</summary><pre class="code">testSizeUnsignedLongWindows
+
+	OSPlatform current isWindows ifFalse: [
+		&quot;Check #testSizeUnsignedLongUnix&quot;
+		^ self skip ].
+	self assertType: &#x27;ulong&#x27; equals: 4</pre></details><details><summary>TFBasicTypeTest&gt;&gt;testSignedLongWindows before the fix (Pharo 14 build 791)</summary><pre class="code">testSignedLongWindows
+
+	OSPlatform current isWindows ifFalse: [
+		&quot;Check #testSignedLongUnix&quot;
+		^ self skip ].
+	self assert: TFBasicType slong byteSize equals: 4</pre></details><details><summary>TFBasicTypeTest&gt;&gt;testUnsignedLongWindows before the fix (Pharo 14 build 791)</summary><pre class="code">testUnsignedLongWindows
+
+	OSPlatform current isWindows ifFalse: [
+		&quot;Check #testUnsignedLongUnix&quot;
+		^ self skip ].
+	self assert: TFBasicType ulong byteSize equals: 4</pre></details><details><summary>TFFunctionCallTest&gt;&gt;testCallingFunctionWithW64CallingConvention before the fix (Pharo 14 build 791)</summary><pre class="code">testCallingFunctionWithW64CallingConvention
+
+	| fun returnValue |
+
+	&quot;This test is only valid in OSX and X86_64, as calling conventions constants are heavily dependant on the OS &amp; Architecture&quot;
+	(OSPlatform current isMacOS and: [ Smalltalk vm architectureName = &#x27;x86_64&#x27;])
+		ifFalse: [ self skip ].
+
+	fun := TFExternalFunction
+		name: &#x27;w64Convention&#x27;
+		moduleName: self libraryPath
+		definition: (TFFunctionDefinition
+			parameterTypes: {TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint. TFBasicType sint}
+			returnType: TFBasicType sint
+			abi: DARWIN_X86_64_WIN64).
+
+	returnValue := runner invokeFunction: fun withArguments: (1 to: 10) asArray.
+
+	self assert: returnValue equals: 55</pre></details><details><summary>TFUFFIDifferentCallingConventionFunctionCallTest&gt;&gt;testCallingFunctionWithW64CallingConvention before the fix (Pharo 14 build 791)</summary><pre class="code">testCallingFunctionWithW64CallingConvention
+
+	| result |
+
+	&quot;This test is only valid in OSX and X86_64, as calling conventions constants are heavily dependant on the OS &amp; Architecture&quot;
+	(OSPlatform current isMacOS and: [ Smalltalk vm architectureName = &#x27;x86_64&#x27;])
+		ifFalse: [ self skip ].
+
+	result := self
+			calloutWithManyArguments: 1
+			and: 2
+			and: 3
+			and: 4
+			and: 5
+			and: 6
+			and: 7
+			and: 8
+			and: 9
+			and: 10.
+
+	self assert: result equals: 55</pre></details><details><summary>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableLongerThanBufferShouldReturnValue before the fix (Pharo 14 build 791)</summary><pre class="code">testExistingEnvironmentVariableLongerThanBufferShouldReturnValue
+
+	| value aExpectedValue |
+
+	OSPlatform current isWindows
+		ifFalse: [ ^self skip ].
+
+	aExpectedValue := String loremIpsum: 1500.
+
+	OSEnvironment current at: &#x27;ExistingNonEmpty&#x27; put: aExpectedValue.
+
+	value := OSEnvironment current at: &#x27;ExistingNonEmpty&#x27;.
+
+	self assert: value equals: aExpectedValue</pre></details><details><summary>Win32EnvironmentTest&gt;&gt;testExistingEnvironmentVariableShouldReturnValue before the fix (Pharo 14 build 791)</summary><pre class="code">testExistingEnvironmentVariableShouldReturnValue
+
+	| value |
+
+	OSPlatform current isWindows
+		ifFalse: [ ^self skip ].
+
+	OSEnvironment current at: &#x27;ExistingNonEmpty&#x27; put: &#x27;IamAValue&#x27;.
+
+	value := OSEnvironment current at: &#x27;ExistingNonEmpty&#x27;.
+
+	self assert: value equals: &#x27;IamAValue&#x27;</pre></details><details><summary>Win32EnvironmentTest&gt;&gt;testNonExistingEnvironmentVariableShouldGenerateException before the fix (Pharo 14 build 791)</summary><pre class="code">testNonExistingEnvironmentVariableShouldGenerateException
+
+	OSPlatform current isWindows
+		ifFalse: [ ^self skip ].
+
+	self should: [ OSEnvironment current at: &#x27;NonExistingVariable&#x27; ] raise: NotFound</pre></details><details><summary>Win32WideStringTest&gt;&gt;testCharactersAreEncodedInUnicode16Bits before the fix (Pharo 14 build 791)</summary><pre class="code">testCharactersAreEncodedInUnicode16Bits
+
+	| bytes index |
+
+	self isWindows
+		ifFalse: [ ^self skip ].
+
+	bytes := self exampleString asWin32WideString getHandle.
+	index := 1.
+
+	self exampleString do: [ :aCharacter |
+		self assert: (bytes at: index) equals: (aCharacter codePoint bitAnd: 255).
+		self assert: (bytes at: index+1) equals: (aCharacter codePoint &gt;&gt; 8).
+		index := index + 2.
+	]</pre></details><details><summary>Win32WideStringTest&gt;&gt;testConvertingInBothDirectionsGaveSameString before the fix (Pharo 14 build 791)</summary><pre class="code">testConvertingInBothDirectionsGaveSameString
+
+	self isWindows
+		ifFalse: [ ^self skip ].
+
+	self assert: self exampleString asWin32WideString asString equals: self exampleString</pre></details><details><summary>Win32WideStringTest&gt;&gt;testHandleIsAByteArray before the fix (Pharo 14 build 791)</summary><pre class="code">testHandleIsAByteArray
+
+	self isWindows
+		ifFalse: [ ^self skip ].
+
+	self assert: (self exampleString asWin32WideString getHandle isKindOf: ByteArray)</pre></details><details><summary>Win32WideStringTest&gt;&gt;testUnderlayingByteArrayEndsInTwoZeros before the fix (Pharo 14 build 791)</summary><pre class="code">testUnderlayingByteArrayEndsInTwoZeros
+
+	self isWindows
+		ifFalse: [ ^self skip ].
+
+	self assert: (self exampleString asWin32WideString getHandle last:2) equals: #[00 00]</pre></details><details><summary>Win32WideStringTest&gt;&gt;testUnderlayingByteArrayIsMultipleOf2 before the fix (Pharo 14 build 791)</summary><pre class="code">testUnderlayingByteArrayIsMultipleOf2
+
+	self isWindows
+		ifFalse: [ ^self skip ].
+
+	self assert: (self exampleString asWin32WideString getHandle size) % 2 equals: 0</pre></details><details><summary>WinPlatformTest&gt;&gt;testGetTempPathFromTMP before the fix (Pharo 14 build 791)</summary><pre class="code">testGetTempPathFromTMP
+
+	| value |
+	OSPlatform current isWindows ifFalse: [ ^ self skip ].
+
+	value := OSEnvironment current at: &#x27;TMP&#x27; ifAbsent: [ nil ].
+	[
+	| actual expected |
+	expected := &#x27;X:\Temp\&#x27;.
+	OSEnvironment current at: &#x27;TMP&#x27; put: expected.
+	actual := OSPlatform current getTempPath.
+	self assert: actual equals: expected ] ensure: [
+		value
+			ifNil: [ OSEnvironment current removeKey: &#x27;TMP&#x27; ]
+			ifNotNil: [ OSEnvironment current at: &#x27;TMP&#x27; put: value ] ]</pre></details><details><summary>WindowsResolverTest&gt;&gt;testResolveTempPathFromTMP before the fix (Pharo 14 build 791)</summary><pre class="code">testResolveTempPathFromTMP
+
+	| expected |
+	OSPlatform current isWindows ifFalse: [ ^ self skip ].
+
+	expected := &#x27;X:\Temp&#x27;.
+
+	OSEnvironment current setEnv: &#x27;TMP&#x27; value: expected during: [
+		| actual |
+		actual := WindowsResolver new temp.
+		self assert: actual fullName equals: expected ]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-NA-platform-windows.st (<a href="../files/image-fixes/20-NA-platform-windows.st">download</a>)</summary><pre class="code">&quot;Win32EnvironmentTest: the three tests check the platform independent OSEnvironment contract (at:put:, at: with a value longer than 1000 characters, NotFound for an absent name).  Their only Windows part was the skip; the code under test (OSEnvironment current) works on macOS and Linux, so the tests run everywhere.&quot;
+fix value: #Win32EnvironmentTest value: #testExistingEnvironmentVariableLongerThanBufferShouldReturnValue value: [ :s | s includesSubstring: &#x27;isWindows&#x27; ] value: &#x27;testExistingEnvironmentVariableLongerThanBufferShouldReturnValue
+
+	| value aExpectedValue |
+
+	aExpectedValue := String loremIpsum: 1500.
+
+	OSEnvironment current at: &#x27;&#x27;ExistingNonEmpty&#x27;&#x27; put: aExpectedValue.
+
+	value := OSEnvironment current at: &#x27;&#x27;ExistingNonEmpty&#x27;&#x27;.
+
+	self assert: value equals: aExpectedValue&#x27;.
+fix value: #Win32EnvironmentTest value: #testExistingEnvironmentVariableShouldReturnValue value: [ :s | s includesSubstring: &#x27;isWindows&#x27; ] value: &#x27;testExistingEnvironmentVariableShouldReturnValue
+
+	| value |
+
+	OSEnvironment current at: &#x27;&#x27;ExistingNonEmpty&#x27;&#x27; put: &#x27;&#x27;IamAValue&#x27;&#x27;.
+
+	value := OSEnvironment current at: &#x27;&#x27;ExistingNonEmpty&#x27;&#x27;.
+
+	self assert: value equals: &#x27;&#x27;IamAValue&#x27;&#x27;&#x27;.
+fix value: #Win32EnvironmentTest value: #testNonExistingEnvironmentVariableShouldGenerateException value: [ :s | s includesSubstring: &#x27;isWindows&#x27; ] value: &#x27;testNonExistingEnvironmentVariableShouldGenerateException
+
+	self should: [ OSEnvironment current at: &#x27;&#x27;NonExistingVariable&#x27;&#x27; ] raise: NotFound&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,1175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: anthropic-sdk-pharo (punt-labs/anthropic-sdk-pharo, row 75) - Pharo test defects</title><meta name="description" content="Package: anthropic-sdk-pharo (punt-labs/anthropic-sdk-pharo, row 75): Open: 1 test, a decision of the owner (the tests use a stand-in server in the fixes file)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: anthropic-sdk-pharo (punt-labs/anthropic-sdk-pharo, row 75)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: 1 test, a decision of the owner (the tests use a stand-in server in the fixes file)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>punt-labs-anthropic-sdk-pharo.st</dd><dt>Upstream repository</dt><dd>punt-labs/anthropic-sdk-pharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 932 tests, 883 pass, 1 failure, 43 errors, 3 skips, 2
+timeouts on the two VMs.</li>
+<li>Cause: 46 tests of 16 integration test classes call the real service
+<code>api.anthropic.com</code>.  <code>ClaudeSDKExampleSupport class&gt;&gt;resolveClient</code> reads
+a key from the environment or the keychain, and the tests send real
+requests to the service.  Without a valid key the service refuses each
+request.  The two timeouts are the same answer on the streaming socket:
+the client waits for a line end that does not come.</li>
+<li>Repair here: <code>fixes/punt-labs-anthropic-sdk-pharo.st</code> adds the class
+<code>ClaudeAnthropicDouble</code>: a <code>ZnServer</code> on <code>127.0.0.1</code> that accepts one fixed
+test key and answers the requests of the tests (models, messages, token
+counts, streaming, files, skills).  <code>resolveClient</code> answers a client for
+that server.  Three tests that opened a TLS socket to the real host take a
+plain socket to the server.  No assertion has a change, no real key is
+read, and no request leaves the machine.</li>
+<li>Limit: the tests now check the client code of the package against a
+server in the image.  The server does not run a model, and it is not a
+check against the real service.</li>
+<li>2 skips were tests of <code>isAvailable</code> that could not fail.  They now assert
+that the answer agrees with a search of <code>PATH</code> for the tool.</li>
+<li>Not repaired, and the owner must decide: <code>PharoKeyringIntegrationTest</code>
+skips on macOS because its guard asks <code>isUnix</code>.  With the right guard the
+test writes a secret into the login keychain of the user and removes the
+secret in <code>tearDown</code>.  We do not write into a keychain without the word of
+the owner.</li>
+<li>Result: 932 tests, 931 pass and 1 skip (the keychain test) on the two
+VMs.  The run had the environment with no key.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 75&quot;
+Metacello new baseline: &#x27;ClaudeSDK&#x27;; repository: &#x27;github://punt-labs/anthropic-sdk-pharo:main/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>75</td><td><code>punt-labs-anthropic-sdk-pharo</code></td><td>ok</td><td>tests=932 P=931 F=0 E=0 S=1 T=0 X=0</td><td>tests=932 P=931 F=0 E=0 S=1 T=0 X=0</td></tr></table><h3>Tests that do not pass</h3><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>PharoKeyringIntegrationTest&gt;&gt;testLookupProvisionedSecret</code></td><td>SKIP</td><td>SKIP</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): punt-labs-anthropic-sdk-pharo.st (<a href="../files/packages/fixes/punt-labs-anthropic-sdk-pharo.st">download</a>)</summary><pre class="code">&quot;punt-labs/anthropic-sdk-pharo: causes and repairs.
+
+1. The integration tests (protocol tests-integration, 17 test classes) call
+   the real service api.anthropic.com.  Each test gets its client from
+   ClaudeSDKExampleSupport class&gt;&gt;resolveClient, which reads
+   ANTHROPIC_PHARO_API_KEY or ANTHROPIC_API_KEY (or the OS keyring).  With a key that
+   the service does not accept, the real service answered
+   &#x27;invalid x-api-key&#x27; (HTTP 401) for each test, so the tests failed with
+   ClaudeAuthError.  A test must not send a request out of the machine and must
+   not use a real key.  The class ClaudeAnthropicDouble answers the requests
+   inside the image: a ZnServer on 127.0.0.1 and an ephemeral port.  It accepts
+   one fixed test key, and it implements the endpoints that the tests call
+   (models, messages with and without stream, count_tokens, files, skills).
+   resolveClient now answers a client for the double.  The assertions of the
+   tests are not changed.
+
+2. Three tests (testRealStreamingConnection, testRealStreamingEvents,
+   testRealStreamingClose) open a TLS ClaudeStreamingSocket to the host
+   api.anthropic.com themselves, and ClaudeClient&gt;&gt;openStreamingSocket: opens
+   a TLS socket for a base URL that starts with https://.  The double speaks
+   plain HTTP.  ClaudePlainStreamingSocket is the same socket without TLS.
+   ClaudeClient&gt;&gt;openStreamingSocket: uses it for the URL of the double (the
+   buffered path for other http URLs is unchanged).  The three tests take the
+   socket from ClaudeAnthropicDouble class&gt;&gt;newStreamingSocket.
+
+3. testErrorInvalidKey and testRealStreamingErrorHandling build a client with
+   the key sk-invalid and the default base URL, so the request goes to the
+   real service.  They now use a client for the double with the key
+   sk-invalid, and the double answers 401 for any key but its test key.
+
+4. PharoKeyringIntegrationTest&gt;&gt;setUp skips on macOS: it asks
+   OSPlatform current isUnix, which is false for MacOSPlatform (the class
+   inherits from AbstractUnixPlatform and only UnixPlatform answers true), while
+   the skip text and PharoKeyring&gt;&gt;detectBackend both name macOS.  NOT repaired
+   here: with the right guard the test stores a secret in the login keychain
+   of the user (security add-generic-password) and removes it in tearDown.
+   The owner of the machine must permit that first.  The test stays a skip.
+
+5. LinuxSecretToolBackendTest&gt;&gt;testIsAvailable and
+   PassToolBackendTest&gt;&gt;testIsAvailable skipped when the tool is absent and
+   asserted &#x27;isAvailable&#x27; (true) only when the tool is present, so on a machine
+   without the tool the test checked nothing.  The repair compares isAvailable
+   with an independent search of the PATH directories: the test passes on a
+   machine with the tool (true = true) and on a machine without the tool
+   (false = false).
+
+6. Corrected by the second reader: the double answers a streamed message with
+   Transfer-Encoding chunked (as the real service does), so the chunk reader of
+   ClaudeStreamingSocket runs; the double refuses an image or a document block with
+   no usable source (a PDF whose data is not a PDF, a url that is not https); and
+   resolveClient signals a TestFailure when the double does not start, because 15
+   integration test classes turn any Error of resolveClient into a skip.&quot;
+
+(Smalltalk globals includesKey: #ClaudeAnthropicDouble) ifFalse: [
+	(Object &lt;&lt; #ClaudeAnthropicDouble
+		sharedVariables: { #DoubleServer. #DoubleFiles. #DoubleSkills. #DoubleSeen. #DoubleCounter };
+		package: &#x27;Claude-Messaging-Double&#x27;;
+		yourself) install ].
+
+(Smalltalk globals includesKey: #ClaudePlainStreamingSocket) ifFalse: [
+	(ClaudeStreamingSocket &lt;&lt; #ClaudePlainStreamingSocket
+		package: &#x27;Claude-Messaging-Double&#x27;;
+		yourself) install ].
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;testKey&#x27; value: &#x27;accessing&#x27; value:
+&#x27;testKey
+	&quot;The one API key that the double accepts. It is not a real key.&quot;
+	^ &#x27;&#x27;sk-ant-api03-local-double-key&#x27;&#x27;&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;ensureServer&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;ensureServer
+	&quot;Start the double when it does not run.&quot;
+	(DoubleServer notNil and: [ DoubleServer isRunning ]) ifTrue: [ ^ self ].
+	self startServer&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;startServer&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;startServer
+	&quot;Listen on 127.0.0.1 and an ephemeral port. The state (files, skills, seen
+	 requests) starts empty.&quot;
+	DoubleServer ifNotNil: [ DoubleServer stop ].
+	DoubleFiles := OrderedCollection new.
+	DoubleSkills := OrderedCollection new.
+	DoubleSeen := Set new.
+	DoubleCounter := 0.
+	DoubleServer := ZnServer on: 0.
+	DoubleServer bindingAddress: #[127 0 0 1].
+	DoubleServer delegate: (ZnValueDelegate with: [ :request | self handle: request ]).
+	DoubleServer start.
+	1 to: 40 do: [ :each |
+		DoubleServer isRunning ifFalse: [ (Delay forMilliseconds: 50) wait ] ].
+	DoubleServer isRunning ifFalse: [ self error: &#x27;&#x27;The local double of the Anthropic API did not start&#x27;&#x27; ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;baseUrl&#x27; value: &#x27;accessing&#x27; value:
+&#x27;baseUrl
+	self ensureServer.
+	^ &#x27;&#x27;http://127.0.0.1:&#x27;&#x27;, DoubleServer port printString&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;isDoubleUrl:&#x27; value: &#x27;testing&#x27; value:
+&#x27;isDoubleUrl: aUrlString
+	&quot;True when aUrlString is the base URL of the running double.&quot;
+	^ DoubleServer notNil and: [
+		DoubleServer isRunning and: [
+			aUrlString = (&#x27;&#x27;http://127.0.0.1:&#x27;&#x27;, DoubleServer port printString) ] ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;clientWithKey:&#x27; value: &#x27;instance creation&#x27; value:
+&#x27;clientWithKey: anApiKey
+	&quot;A ClaudeClient that talks to the double.&quot;
+	^ ClaudeClient apiKey: anApiKey baseUrl: self baseUrl timeout: 60&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;clientForTests&#x27; value: &#x27;instance creation&#x27; value:
+&#x27;clientForTests
+	&quot;A ClaudeClient with the test key. ClaudeSDKExampleSupport class&gt;&gt;resolveClient answers this.&quot;
+	^ self clientWithKey: self testKey&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;newStreamingSocket&#x27; value: &#x27;instance creation&#x27; value:
+&#x27;newStreamingSocket
+	&quot;A plain (no TLS) streaming socket for the double. The caller sends connect.&quot;
+	| socket |
+	self ensureServer.
+	socket := ClaudePlainStreamingSocket host: &#x27;&#x27;127.0.0.1&#x27;&#x27;.
+	socket port: DoubleServer port.
+	socket timeout: 30.
+	^ socket&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;nextCounter&#x27; value: &#x27;private&#x27; value:
+&#x27;nextCounter
+	DoubleCounter := DoubleCounter + 1.
+	^ DoubleCounter&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;nextRequestId&#x27; value: &#x27;private&#x27; value:
+&#x27;nextRequestId
+	^ &#x27;&#x27;req_double_&#x27;&#x27;, self nextCounter printString&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;jsonOk:&#x27; value: &#x27;http&#x27; value:
+&#x27;jsonOk: aDictionary
+	| response |
+	response := ZnResponse ok: (ZnEntity json: (STONJSON toString: aDictionary)).
+	response headers at: &#x27;&#x27;request-id&#x27;&#x27; put: self nextRequestId.
+	^ response&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;errorStatus:type:message:&#x27; value: &#x27;http&#x27; value:
+&#x27;errorStatus: aCode type: aType message: aMessage
+	&quot;The error body of the Anthropic API: type, error (type, message), request_id.&quot;
+	| id response |
+	id := self nextRequestId.
+	response := ZnResponse statusCode: aCode.
+	response entity: (ZnEntity json: (STONJSON toString: (Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;error&#x27;&#x27;;
+		at: &#x27;&#x27;error&#x27;&#x27; put: (Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: aType;
+			at: &#x27;&#x27;message&#x27;&#x27; put: aMessage;
+			yourself);
+		at: &#x27;&#x27;request_id&#x27;&#x27; put: id;
+		yourself))).
+	response headers at: &#x27;&#x27;request-id&#x27;&#x27; put: id.
+	^ response&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;invalid:&#x27; value: &#x27;http&#x27; value:
+&#x27;invalid: aMessage
+	^ self errorStatus: 400 type: &#x27;&#x27;invalid_request_error&#x27;&#x27; message: aMessage&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;notFound:&#x27; value: &#x27;http&#x27; value:
+&#x27;notFound: aRequest
+	^ self
+		errorStatus: 404
+		type: &#x27;&#x27;not_found_error&#x27;&#x27;
+		message: &#x27;&#x27;Not found: &#x27;&#x27;, aRequest method asString, &#x27;&#x27; &#x27;&#x27;, aRequest uri pathPrintString&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;handle:&#x27; value: &#x27;http&#x27; value:
+&#x27;handle: aRequest
+	&quot;The delegate of the ZnServer. A failure of the double itself answers 400
+	 with the text of the failure, so that the failing test shows the cause.&quot;
+	| response |
+	response := [ self route: aRequest ]
+		on: Error
+		do: [ :error |
+			self invalid: &#x27;&#x27;The local double could not process the request: &#x27;&#x27;, error messageText asString ].
+	response setConnectionClose.
+	^ response&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;route:&#x27; value: &#x27;http&#x27; value:
+&#x27;route: aRequest
+	| segments |
+	(aRequest headers at: &#x27;&#x27;x-api-key&#x27;&#x27; ifAbsent: [ nil ]) = self testKey
+		ifFalse: [ ^ self errorStatus: 401 type: &#x27;&#x27;authentication_error&#x27;&#x27; message: &#x27;&#x27;invalid x-api-key&#x27;&#x27; ].
+	segments := aRequest uri pathSegments asArray.
+	(segments size &gt;= 2 and: [ segments first = &#x27;&#x27;v1&#x27;&#x27; ]) ifFalse: [ ^ self notFound: aRequest ].
+	segments second = &#x27;&#x27;models&#x27;&#x27; ifTrue: [ ^ self routeModels: segments request: aRequest ].
+	segments second = &#x27;&#x27;messages&#x27;&#x27; ifTrue: [ ^ self routeMessages: segments request: aRequest ].
+	segments second = &#x27;&#x27;files&#x27;&#x27; ifTrue: [ ^ self routeFiles: segments request: aRequest ].
+	segments second = &#x27;&#x27;skills&#x27;&#x27; ifTrue: [ ^ self routeSkills: segments request: aRequest ].
+	^ self notFound: aRequest&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;modelIds&#x27; value: &#x27;models&#x27; value:
+&#x27;modelIds
+	^ { ClaudeModel opus55. ClaudeModel sonnet55 }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;modelInfoFor:&#x27; value: &#x27;models&#x27; value:
+&#x27;modelInfoFor: aModelId
+	^ Dictionary new
+		at: &#x27;&#x27;id&#x27;&#x27; put: aModelId;
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;model&#x27;&#x27;;
+		at: &#x27;&#x27;display_name&#x27;&#x27; put: (aModelId = ClaudeModel opus55
+			ifTrue: [ &#x27;&#x27;Claude Opus 5.5&#x27;&#x27; ]
+			ifFalse: [ &#x27;&#x27;Claude Sonnet 5.5&#x27;&#x27; ]);
+		at: &#x27;&#x27;created_at&#x27;&#x27; put: &#x27;&#x27;2026-01-01T00:00:00Z&#x27;&#x27;;
+		at: &#x27;&#x27;max_input_tokens&#x27;&#x27; put: 200000;
+		at: &#x27;&#x27;max_tokens&#x27;&#x27; put: 64000;
+		yourself&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;routeModels:request:&#x27; value: &#x27;models&#x27; value:
+&#x27;routeModels: segments request: aRequest
+	aRequest method asString = &#x27;&#x27;GET&#x27;&#x27;
+		ifFalse: [ ^ self errorStatus: 405 type: &#x27;&#x27;invalid_request_error&#x27;&#x27; message: &#x27;&#x27;Method not allowed&#x27;&#x27; ].
+	segments size = 2 ifTrue: [
+		^ self jsonOk: (Dictionary new
+			at: &#x27;&#x27;data&#x27;&#x27; put: (self modelIds collect: [ :each | self modelInfoFor: each ]) asArray;
+			at: &#x27;&#x27;has_more&#x27;&#x27; put: false;
+			at: &#x27;&#x27;first_id&#x27;&#x27; put: self modelIds first;
+			at: &#x27;&#x27;last_id&#x27;&#x27; put: self modelIds last;
+			yourself) ].
+	segments size = 3 ifTrue: [
+		^ (self modelIds includes: segments third)
+			ifTrue: [ self jsonOk: (self modelInfoFor: segments third) ]
+			ifFalse: [ self errorStatus: 404 type: &#x27;&#x27;not_found_error&#x27;&#x27; message: &#x27;&#x27;model: &#x27;&#x27;, segments third ] ].
+	^ self notFound: aRequest&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;routeMessages:request:&#x27; value: &#x27;messages&#x27; value:
+&#x27;routeMessages: segments request: aRequest
+	| body isCount invalid message |
+	aRequest method asString = &#x27;&#x27;POST&#x27;&#x27;
+		ifFalse: [ ^ self errorStatus: 405 type: &#x27;&#x27;invalid_request_error&#x27;&#x27; message: &#x27;&#x27;Method not allowed&#x27;&#x27; ].
+	isCount := segments size = 3 and: [ segments third = &#x27;&#x27;count_tokens&#x27;&#x27; ].
+	(segments size = 2 or: [ isCount ]) ifFalse: [ ^ self notFound: aRequest ].
+	body := [ STONJSON fromString: aRequest entity contents ]
+		on: Error
+		do: [ :error | ^ self invalid: &#x27;&#x27;Invalid JSON&#x27;&#x27; ].
+	body isDictionary ifFalse: [ ^ self invalid: &#x27;&#x27;The body must be a JSON object&#x27;&#x27; ].
+	invalid := self checkBody: body request: aRequest isCount: isCount.
+	invalid ifNotNil: [ ^ invalid ].
+	isCount ifTrue: [
+		^ self jsonOk: (Dictionary new
+			at: &#x27;&#x27;input_tokens&#x27;&#x27; put: (self inputTokensOf: body);
+			yourself) ].
+	message := self messageFor: body.
+	^ (body at: &#x27;&#x27;stream&#x27;&#x27; ifAbsent: [ false ]) == true
+		ifTrue: [ self streamResponseFor: message ]
+		ifFalse: [ self jsonOk: message ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;checkBody:request:isCount:&#x27; value: &#x27;messages&#x27; value:
+&#x27;checkBody: aBody request: aRequest isCount: isCount
+	&quot;Answer nil when the body is valid, else the error response.&quot;
+	| betas |
+	(aBody includesKey: &#x27;&#x27;model&#x27;&#x27;) ifFalse: [ ^ self invalid: &#x27;&#x27;model: Field required&#x27;&#x27; ].
+	(aBody includesKey: &#x27;&#x27;messages&#x27;&#x27;) ifFalse: [ ^ self invalid: &#x27;&#x27;messages: Field required&#x27;&#x27; ].
+	((aBody at: &#x27;&#x27;messages&#x27;&#x27;) isCollection and: [ (aBody at: &#x27;&#x27;messages&#x27;&#x27;) isNotEmpty ])
+		ifFalse: [ ^ self invalid: &#x27;&#x27;messages: at least one message is required&#x27;&#x27; ].
+	isCount
+		ifTrue: [
+			(aBody includesKey: &#x27;&#x27;max_tokens&#x27;&#x27;)
+				ifTrue: [ ^ self invalid: &#x27;&#x27;max_tokens: Extra inputs are not permitted&#x27;&#x27; ] ]
+		ifFalse: [
+			(aBody includesKey: &#x27;&#x27;max_tokens&#x27;&#x27;)
+				ifFalse: [ ^ self invalid: &#x27;&#x27;max_tokens: Field required&#x27;&#x27; ] ].
+	(self modelIds includes: (aBody at: &#x27;&#x27;model&#x27;&#x27;))
+		ifFalse: [ ^ self errorStatus: 404 type: &#x27;&#x27;not_found_error&#x27;&#x27; message: &#x27;&#x27;model: &#x27;&#x27;, (aBody at: &#x27;&#x27;model&#x27;&#x27;) printString ].
+	(aBody includesKey: &#x27;&#x27;service_tier&#x27;&#x27;) ifTrue: [
+		(#(&#x27;&#x27;auto&#x27;&#x27; &#x27;&#x27;standard_only&#x27;&#x27;) includes: (aBody at: &#x27;&#x27;service_tier&#x27;&#x27;))
+			ifFalse: [ ^ self invalid: &#x27;&#x27;service_tier: Input should be auto or standard_only&#x27;&#x27; ] ].
+	(aBody includesKey: &#x27;&#x27;metadata&#x27;&#x27;) ifTrue: [
+		((aBody at: &#x27;&#x27;metadata&#x27;&#x27;) isDictionary
+			and: [ (aBody at: &#x27;&#x27;metadata&#x27;&#x27;) keys allSatisfy: [ :each | each = &#x27;&#x27;user_id&#x27;&#x27; ] ])
+			ifFalse: [ ^ self invalid: &#x27;&#x27;metadata: only user_id is permitted&#x27;&#x27; ] ].
+	(aBody includesKey: &#x27;&#x27;mcp_servers&#x27;&#x27;) ifTrue: [
+		betas := aRequest headers at: &#x27;&#x27;anthropic-beta&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+		(betas includesSubstring: &#x27;&#x27;mcp-client&#x27;&#x27;)
+			ifFalse: [ ^ self invalid: &#x27;&#x27;mcp_servers: the mcp-client beta header is required&#x27;&#x27; ].
+		(aBody at: &#x27;&#x27;mcp_servers&#x27;&#x27;) do: [ :server |
+			((server includesKey: &#x27;&#x27;name&#x27;&#x27;)
+				and: [ (server includesKey: &#x27;&#x27;url&#x27;&#x27;) and: [ (server at: &#x27;&#x27;url&#x27;&#x27;) beginsWith: &#x27;&#x27;https://&#x27;&#x27; ] ])
+				ifFalse: [ ^ self invalid: &#x27;&#x27;mcp_servers: each server needs a name and an https url&#x27;&#x27; ] ] ].
+	^ self checkMediaIn: aBody&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;checkMediaIn:&#x27; value: &#x27;messages&#x27; value:
+&#x27;checkMediaIn: aBody
+	&quot;Answer nil when each image and document block has a usable source, else the error response.
+	 The real service refuses a PDF whose data is not a PDF and an image with no image media type,
+	 so the 1500 tokens that inputTokensOf: adds for a block are not paid for an empty block.&quot;
+	(self contentBlocksIn: aBody) do: [ :block |
+		| type source sourceType data media |
+		type := block at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ nil ].
+		(#(&#x27;&#x27;image&#x27;&#x27; &#x27;&#x27;document&#x27;&#x27;) includes: type) ifTrue: [
+			source := block at: &#x27;&#x27;source&#x27;&#x27; ifAbsent: [ nil ].
+			source isDictionary
+				ifFalse: [ ^ self invalid: &#x27;&#x27;messages: a &#x27;&#x27;, type, &#x27;&#x27; block needs a source&#x27;&#x27; ].
+			sourceType := source at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ nil ].
+			sourceType = &#x27;&#x27;url&#x27;&#x27; ifTrue: [
+				((source at: &#x27;&#x27;url&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) beginsWith: &#x27;&#x27;https://&#x27;&#x27;)
+					ifFalse: [ ^ self invalid: &#x27;&#x27;messages: a url source needs an https url&#x27;&#x27; ] ].
+			sourceType = &#x27;&#x27;base64&#x27;&#x27; ifTrue: [
+				data := source at: &#x27;&#x27;data&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+				media := source at: &#x27;&#x27;media_type&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+				(data isString and: [ data size &gt;= 8 ])
+					ifFalse: [ ^ self invalid: &#x27;&#x27;messages: the base64 data is empty&#x27;&#x27; ].
+				(type = &#x27;&#x27;image&#x27;&#x27; and: [ (media beginsWith: &#x27;&#x27;image/&#x27;&#x27;) not ])
+					ifTrue: [ ^ self invalid: &#x27;&#x27;messages: an image needs an image/* media_type&#x27;&#x27; ].
+				(media = &#x27;&#x27;application/pdf&#x27;&#x27; and: [ ((data first: 8) base64Decoded asString beginsWith: &#x27;&#x27;%PDF&#x27;&#x27;) not ])
+					ifTrue: [ ^ self invalid: &#x27;&#x27;messages: the data is not a PDF&#x27;&#x27; ] ] ] ].
+	^ nil&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;userTextOf:&#x27; value: &#x27;messages&#x27; value:
+&#x27;userTextOf: aMessage
+	&quot;The text of the text blocks of one message (a String or a list of blocks).&quot;
+	| content |
+	content := aMessage at: &#x27;&#x27;content&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+	content isString ifTrue: [ ^ content ].
+	^ String streamContents: [ :stream |
+		content do: [ :block |
+			(block at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ nil ]) = &#x27;&#x27;text&#x27;&#x27;
+				ifTrue: [ stream nextPutAll: (block at: &#x27;&#x27;text&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]); space ] ] ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;lastUserTextOf:&#x27; value: &#x27;messages&#x27; value:
+&#x27;lastUserTextOf: aBody
+	^ self userTextOf: (aBody at: &#x27;&#x27;messages&#x27;&#x27;) last&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;systemTextOf:&#x27; value: &#x27;messages&#x27; value:
+&#x27;systemTextOf: aBody
+	| system |
+	system := aBody at: &#x27;&#x27;system&#x27;&#x27; ifAbsent: [ ^ &#x27;&#x27;&#x27;&#x27; ].
+	system isString ifTrue: [ ^ system ].
+	^ String streamContents: [ :stream |
+		system do: [ :block |
+			stream nextPutAll: (block at: &#x27;&#x27;text&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]); space ] ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;contentBlocksIn:&#x27; value: &#x27;messages&#x27; value:
+&#x27;contentBlocksIn: aBody
+	&quot;All content blocks (dictionaries) of all messages of the request.&quot;
+	| blocks |
+	blocks := OrderedCollection new.
+	(aBody at: &#x27;&#x27;messages&#x27;&#x27;) do: [ :message |
+		| content |
+		content := message at: &#x27;&#x27;content&#x27;&#x27; ifAbsent: [ nil ].
+		(content notNil and: [ content isString not ]) ifTrue: [
+			content do: [ :block | block isDictionary ifTrue: [ blocks add: block ] ] ] ].
+	^ blocks&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;toolTypesIn:&#x27; value: &#x27;messages&#x27; value:
+&#x27;toolTypesIn: aBody
+	&quot;The type of each tool of the request. A client tool has no type or the type custom.&quot;
+	^ ((aBody at: &#x27;&#x27;tools&#x27;&#x27; ifAbsent: [ #() ]) collect: [ :each | each at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ &#x27;&#x27;custom&#x27;&#x27; ] ]) asArray&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;inputTokensOf:&#x27; value: &#x27;messages&#x27; value:
+&#x27;inputTokensOf: aBody
+	&quot;An estimate: one token for 4 characters, and 1500 tokens for each image or document block.&quot;
+	| characters media |
+	characters := (STONJSON toString: (aBody at: &#x27;&#x27;messages&#x27;&#x27;)) size + (self systemTextOf: aBody) size.
+	media := (self contentBlocksIn: aBody) count: [ :each |
+		#(&#x27;&#x27;image&#x27;&#x27; &#x27;&#x27;document&#x27;&#x27;) includes: (each at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ nil ]) ].
+	^ characters // 4 + (media * 1500) + 1&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;cachedTokensIn:&#x27; value: &#x27;messages&#x27; value:
+&#x27;cachedTokensIn: aBody
+	&quot;The tokens of the blocks with cache_control. A block under 1024 tokens is not cached.&quot;
+	| blocks system tokens |
+	blocks := OrderedCollection new.
+	system := aBody at: &#x27;&#x27;system&#x27;&#x27; ifAbsent: [ nil ].
+	(system notNil and: [ system isString not ]) ifTrue: [ blocks addAll: system ].
+	blocks addAll: (self contentBlocksIn: aBody).
+	tokens := (blocks select: [ :each | each isDictionary and: [ each includesKey: &#x27;&#x27;cache_control&#x27;&#x27; ] ])
+		inject: 0
+		into: [ :sum :each | sum + ((each at: &#x27;&#x27;text&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) size // 4) ].
+	^ tokens &gt;= 1024 ifTrue: [ tokens ] ifFalse: [ 0 ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;usageFor:content:&#x27; value: &#x27;messages&#x27; value:
+&#x27;usageFor: aBody content: aContent
+	&quot;The first request with a cached block creates the cache entry, the next request with
+	 the same body reads the entry.&quot;
+	| inputTokens cached created read key |
+	inputTokens := self inputTokensOf: aBody.
+	cached := self cachedTokensIn: aBody.
+	created := 0.
+	read := 0.
+	cached &gt; 0 ifTrue: [
+		key := STONJSON toString: aBody.
+		(DoubleSeen includes: key)
+			ifTrue: [ read := cached ]
+			ifFalse: [
+				DoubleSeen add: key.
+				created := cached ] ].
+	^ Dictionary new
+		at: &#x27;&#x27;input_tokens&#x27;&#x27; put: ((inputTokens - cached) max: 1);
+		at: &#x27;&#x27;output_tokens&#x27;&#x27; put: (aContent
+			inject: 1
+			into: [ :sum :block | sum + ((block at: &#x27;&#x27;text&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) size // 4) ]);
+		at: &#x27;&#x27;cache_creation_input_tokens&#x27;&#x27; put: created;
+		at: &#x27;&#x27;cache_read_input_tokens&#x27;&#x27; put: read;
+		at: &#x27;&#x27;service_tier&#x27;&#x27; put: &#x27;&#x27;standard&#x27;&#x27;;
+		yourself&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;messageFor:&#x27; value: &#x27;messages&#x27; value:
+&#x27;messageFor: aBody
+	| content stop |
+	content := self contentFor: aBody.
+	stop := (content anySatisfy: [ :each | (each at: &#x27;&#x27;type&#x27;&#x27;) = &#x27;&#x27;tool_use&#x27;&#x27; ])
+		ifTrue: [ &#x27;&#x27;tool_use&#x27;&#x27; ]
+		ifFalse: [ &#x27;&#x27;end_turn&#x27;&#x27; ].
+	^ Dictionary new
+		at: &#x27;&#x27;id&#x27;&#x27; put: &#x27;&#x27;msg_double_&#x27;&#x27;, self nextCounter printString;
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;message&#x27;&#x27;;
+		at: &#x27;&#x27;role&#x27;&#x27; put: &#x27;&#x27;assistant&#x27;&#x27;;
+		at: &#x27;&#x27;model&#x27;&#x27; put: (aBody at: &#x27;&#x27;model&#x27;&#x27;);
+		at: &#x27;&#x27;content&#x27;&#x27; put: content;
+		at: &#x27;&#x27;stop_reason&#x27;&#x27; put: stop;
+		at: &#x27;&#x27;stop_sequence&#x27;&#x27; put: nil;
+		at: &#x27;&#x27;usage&#x27;&#x27; put: (self usageFor: aBody content: content);
+		yourself&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;contentFor:&#x27; value: &#x27;messages&#x27; value:
+&#x27;contentFor: aBody
+	&quot;The content blocks of the answer. The double looks at the shape of the request (an MCP
+	 server, a server tool, thinking, a document with citations, an output schema, a system
+	 prompt with a marker) and answers a block list of the same shape as the real service.&quot;
+	| types thinking schema |
+	(aBody includesKey: &#x27;&#x27;mcp_servers&#x27;&#x27;) ifTrue: [ ^ self mcpContentFor: aBody ].
+	types := self toolTypesIn: aBody.
+	(types anySatisfy: [ :each | each beginsWith: &#x27;&#x27;code_execution&#x27;&#x27; ])
+		ifTrue: [ ^ self codeExecutionContent ].
+	(types anySatisfy: [ :each | each beginsWith: &#x27;&#x27;web_fetch&#x27;&#x27; ])
+		ifTrue: [ ^ self webFetchContentFor: aBody ].
+	(types anySatisfy: [ :each | each beginsWith: &#x27;&#x27;web_search&#x27;&#x27; ])
+		ifTrue: [ ^ self webSearchContentFor: aBody ].
+	types do: [ :each |
+		(each beginsWith: &#x27;&#x27;tool_search_tool&#x27;&#x27;) ifTrue: [ ^ self toolSearchContentType: each ] ].
+	(types anySatisfy: [ :each | each beginsWith: &#x27;&#x27;bash_&#x27;&#x27; ])
+		ifTrue: [ ^ self clientToolContentNamed: &#x27;&#x27;bash&#x27;&#x27; input: (Dictionary new at: &#x27;&#x27;command&#x27;&#x27; put: &#x27;&#x27;echo hello world&#x27;&#x27;; yourself) ].
+	(types anySatisfy: [ :each | each beginsWith: &#x27;&#x27;memory_&#x27;&#x27; ])
+		ifTrue: [ ^ self clientToolContentNamed: &#x27;&#x27;memory&#x27;&#x27; input: (Dictionary new
+			at: &#x27;&#x27;command&#x27;&#x27; put: &#x27;&#x27;create&#x27;&#x27;;
+			at: &#x27;&#x27;path&#x27;&#x27; put: &#x27;&#x27;/memories/favorite_color.txt&#x27;&#x27;;
+			at: &#x27;&#x27;file_text&#x27;&#x27; put: &#x27;&#x27;blue&#x27;&#x27;;
+			yourself) ].
+	(types anySatisfy: [ :each | each beginsWith: &#x27;&#x27;text_editor_&#x27;&#x27; ])
+		ifTrue: [ ^ self clientToolContentNamed: &#x27;&#x27;str_replace_based_edit_tool&#x27;&#x27; input: (Dictionary new
+			at: &#x27;&#x27;command&#x27;&#x27; put: &#x27;&#x27;create&#x27;&#x27;;
+			at: &#x27;&#x27;path&#x27;&#x27; put: &#x27;&#x27;/tmp/test.txt&#x27;&#x27;;
+			at: &#x27;&#x27;file_text&#x27;&#x27; put: &#x27;&#x27;hello world&#x27;&#x27;;
+			yourself) ].
+	thinking := aBody at: &#x27;&#x27;thinking&#x27;&#x27; ifAbsent: [ nil ].
+	(thinking notNil and: [ (thinking at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ &#x27;&#x27;disabled&#x27;&#x27; ]) ~= &#x27;&#x27;disabled&#x27;&#x27; ])
+		ifTrue: [ ^ self thinkingContent ].
+	(self hasCitationDocumentIn: aBody) ifTrue: [ ^ self citationContentFor: aBody ].
+	schema := self schemaOf: aBody.
+	schema ifNotNil: [ ^ { self textBlock: (self jsonTextFor: schema) } ].
+	^ { self textBlock: (self plainReplyFor: aBody) }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;textBlock:&#x27; value: &#x27;content&#x27; value:
+&#x27;textBlock: aString
+	^ Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;text&#x27;&#x27;;
+		at: &#x27;&#x27;text&#x27;&#x27; put: aString;
+		yourself&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;clientToolContentNamed:input:&#x27; value: &#x27;content&#x27; value:
+&#x27;clientToolContentNamed: aName input: anInput
+	&quot;A tool of the client (bash, memory, text editor): the answer is a tool_use block.&quot;
+	^ {
+		self textBlock: &#x27;&#x27;I will use the tool.&#x27;&#x27;.
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;tool_use&#x27;&#x27;;
+			at: &#x27;&#x27;id&#x27;&#x27; put: &#x27;&#x27;toolu_double_&#x27;&#x27;, self nextCounter printString;
+			at: &#x27;&#x27;name&#x27;&#x27; put: aName;
+			at: &#x27;&#x27;input&#x27;&#x27; put: anInput;
+			yourself) }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;serverToolUseNamed:input:&#x27; value: &#x27;content&#x27; value:
+&#x27;serverToolUseNamed: aName input: anInput
+	^ Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;server_tool_use&#x27;&#x27;;
+		at: &#x27;&#x27;id&#x27;&#x27; put: &#x27;&#x27;srvtoolu_double_&#x27;&#x27;, self nextCounter printString;
+		at: &#x27;&#x27;name&#x27;&#x27; put: aName;
+		at: &#x27;&#x27;input&#x27;&#x27; put: anInput;
+		yourself&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;codeExecutionContent&#x27; value: &#x27;content&#x27; value:
+&#x27;codeExecutionContent
+	| use |
+	use := self serverToolUseNamed: &#x27;&#x27;bash_code_execution&#x27;&#x27; input: (Dictionary new
+		at: &#x27;&#x27;command&#x27;&#x27; put: &#x27;&#x27;python3 hello.py&#x27;&#x27;;
+		yourself).
+	^ {
+		use.
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;bash_code_execution_tool_result&#x27;&#x27;;
+			at: &#x27;&#x27;tool_use_id&#x27;&#x27; put: (use at: &#x27;&#x27;id&#x27;&#x27;);
+			at: &#x27;&#x27;content&#x27;&#x27; put: (Dictionary new
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;bash_code_execution_result&#x27;&#x27;;
+				at: &#x27;&#x27;stdout&#x27;&#x27; put: &#x27;&#x27;hello world&#x27;&#x27;;
+				at: &#x27;&#x27;stderr&#x27;&#x27; put: &#x27;&#x27;&#x27;&#x27;;
+				at: &#x27;&#x27;return_code&#x27;&#x27; put: 0;
+				at: &#x27;&#x27;content&#x27;&#x27; put: #();
+				yourself);
+			yourself).
+		self textBlock: &#x27;&#x27;The script printed hello world.&#x27;&#x27; }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;webFetchContentFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;webFetchContentFor: aBody
+	| url use |
+	url := (self lastUserTextOf: aBody) substrings
+		detect: [ :each | each beginsWith: &#x27;&#x27;http&#x27;&#x27; ]
+		ifNone: [ &#x27;&#x27;https://example.invalid/&#x27;&#x27; ].
+	use := self serverToolUseNamed: &#x27;&#x27;web_fetch&#x27;&#x27; input: (Dictionary new at: &#x27;&#x27;url&#x27;&#x27; put: url; yourself).
+	^ {
+		use.
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;web_fetch_tool_result&#x27;&#x27;;
+			at: &#x27;&#x27;tool_use_id&#x27;&#x27; put: (use at: &#x27;&#x27;id&#x27;&#x27;);
+			at: &#x27;&#x27;content&#x27;&#x27; put: (Dictionary new
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;web_fetch_result&#x27;&#x27;;
+				at: &#x27;&#x27;url&#x27;&#x27; put: url;
+				at: &#x27;&#x27;retrieved_at&#x27;&#x27; put: DateAndTime now asUTC printString;
+				at: &#x27;&#x27;content&#x27;&#x27; put: (Dictionary new
+					at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;document&#x27;&#x27;;
+					at: &#x27;&#x27;title&#x27;&#x27; put: &#x27;&#x27;Local page&#x27;&#x27;;
+					at: &#x27;&#x27;source&#x27;&#x27; put: (Dictionary new
+						at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;text&#x27;&#x27;;
+						at: &#x27;&#x27;media_type&#x27;&#x27; put: &#x27;&#x27;text/plain&#x27;&#x27;;
+						at: &#x27;&#x27;data&#x27;&#x27; put: &#x27;&#x27;The page text of the local double.&#x27;&#x27;;
+						yourself);
+					yourself);
+				yourself);
+			yourself).
+		self textBlock: &#x27;&#x27;The page holds one short text.&#x27;&#x27; }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;webSearchContentFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;webSearchContentFor: aBody
+	| text use |
+	text := self lastUserTextOf: aBody.
+	use := self serverToolUseNamed: &#x27;&#x27;web_search&#x27;&#x27; input: (Dictionary new
+		at: &#x27;&#x27;query&#x27;&#x27; put: (text copyFrom: 1 to: (60 min: text size));
+		yourself).
+	^ {
+		use.
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;web_search_tool_result&#x27;&#x27;;
+			at: &#x27;&#x27;tool_use_id&#x27;&#x27; put: (use at: &#x27;&#x27;id&#x27;&#x27;);
+			at: &#x27;&#x27;content&#x27;&#x27; put: { Dictionary new
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;web_search_result&#x27;&#x27;;
+				at: &#x27;&#x27;url&#x27;&#x27; put: &#x27;&#x27;https://example.invalid/news&#x27;&#x27;;
+				at: &#x27;&#x27;title&#x27;&#x27; put: &#x27;&#x27;A result of the local double&#x27;&#x27;;
+				at: &#x27;&#x27;encrypted_content&#x27;&#x27; put: &#x27;&#x27;ZW5jcnlwdGVk&#x27;&#x27;;
+				at: &#x27;&#x27;page_age&#x27;&#x27; put: nil;
+				yourself };
+			yourself).
+		self textBlock: &#x27;&#x27;One result was found.&#x27;&#x27; }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;toolSearchContentType:&#x27; value: &#x27;content&#x27; value:
+&#x27;toolSearchContentType: aToolType
+	&quot;The name of the tool is the type without the date suffix (for example _20251119).&quot;
+	| use |
+	use := self
+		serverToolUseNamed: (aToolType allButLast: 9)
+		input: (Dictionary new at: &#x27;&#x27;query&#x27;&#x27; put: &#x27;&#x27;weather&#x27;&#x27;; yourself).
+	^ {
+		use.
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;tool_search_tool_result&#x27;&#x27;;
+			at: &#x27;&#x27;tool_use_id&#x27;&#x27; put: (use at: &#x27;&#x27;id&#x27;&#x27;);
+			at: &#x27;&#x27;content&#x27;&#x27; put: (Dictionary new
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;tool_search_tool_search_result&#x27;&#x27;;
+				at: &#x27;&#x27;tool_references&#x27;&#x27; put: { Dictionary new
+					at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;tool_reference&#x27;&#x27;;
+					at: &#x27;&#x27;tool_name&#x27;&#x27; put: &#x27;&#x27;get_weather&#x27;&#x27;;
+					yourself };
+				yourself);
+			yourself).
+		self textBlock: &#x27;&#x27;The tool get_weather matches.&#x27;&#x27; }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;mcpContentFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;mcpContentFor: aBody
+	| server id |
+	server := (aBody at: &#x27;&#x27;mcp_servers&#x27;&#x27;) first.
+	id := &#x27;&#x27;mcptoolu_double_&#x27;&#x27;, self nextCounter printString.
+	^ {
+		self textBlock: &#x27;&#x27;I will ask the server.&#x27;&#x27;.
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;mcp_tool_use&#x27;&#x27;;
+			at: &#x27;&#x27;id&#x27;&#x27; put: id;
+			at: &#x27;&#x27;name&#x27;&#x27; put: &#x27;&#x27;ask_question&#x27;&#x27;;
+			at: &#x27;&#x27;server_name&#x27;&#x27; put: (server at: &#x27;&#x27;name&#x27;&#x27;);
+			at: &#x27;&#x27;input&#x27;&#x27; put: (Dictionary new
+				at: &#x27;&#x27;question&#x27;&#x27; put: &#x27;&#x27;What is this repository?&#x27;&#x27;;
+				yourself);
+			yourself).
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;mcp_tool_result&#x27;&#x27;;
+			at: &#x27;&#x27;tool_use_id&#x27;&#x27; put: id;
+			at: &#x27;&#x27;is_error&#x27;&#x27; put: false;
+			at: &#x27;&#x27;content&#x27;&#x27; put: { self textBlock: &#x27;&#x27;A Python SDK for the Model Context Protocol.&#x27;&#x27; };
+			yourself).
+		self textBlock: &#x27;&#x27;It is a Python SDK for the Model Context Protocol.&#x27;&#x27; }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;thinkingContent&#x27; value: &#x27;content&#x27; value:
+&#x27;thinkingContent
+	^ {
+		(Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;thinking&#x27;&#x27;;
+			at: &#x27;&#x27;thinking&#x27;&#x27; put: &#x27;&#x27;The user asks for the Monty Hall problem. I count the cases.&#x27;&#x27;;
+			at: &#x27;&#x27;signature&#x27;&#x27; put: &#x27;&#x27;RG91YmxlU2lnbmF0dXJl&#x27;&#x27;;
+			yourself).
+		self textBlock: &#x27;&#x27;Switching doors wins with probability 2/3.&#x27;&#x27; }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;hasCitationDocumentIn:&#x27; value: &#x27;content&#x27; value:
+&#x27;hasCitationDocumentIn: aBody
+	^ (self contentBlocksIn: aBody) anySatisfy: [ :each |
+		(each at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ nil ]) = &#x27;&#x27;document&#x27;&#x27;
+			and: [ | citations |
+				citations := each at: &#x27;&#x27;citations&#x27;&#x27; ifAbsent: [ nil ].
+				citations notNil and: [ (citations at: &#x27;&#x27;enabled&#x27;&#x27; ifAbsent: [ false ]) == true ] ] ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;citationContentFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;citationContentFor: aBody
+	&quot;One text block with one char_location citation into the first document.&quot;
+	| document text start cited |
+	document := (self contentBlocksIn: aBody) detect: [ :each | (each at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ nil ]) = &#x27;&#x27;document&#x27;&#x27; ].
+	text := (document at: &#x27;&#x27;source&#x27;&#x27; ifAbsent: [ Dictionary new ]) at: &#x27;&#x27;data&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+	text isString ifFalse: [ text := &#x27;&#x27;&#x27;&#x27; ].
+	start := text indexOfSubCollection: &#x27;&#x27;The preferred recovery path&#x27;&#x27; startingAt: 1.
+	start = 0 ifTrue: [ start := 1 ].
+	cited := ((text copyFrom: start to: text size) copyUpTo: $.), &#x27;&#x27;.&#x27;&#x27;.
+	^ { (Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;text&#x27;&#x27;;
+		at: &#x27;&#x27;text&#x27;&#x27; put: &#x27;&#x27;The document says to rebuild the image from clean source.&#x27;&#x27;;
+		at: &#x27;&#x27;citations&#x27;&#x27; put: { Dictionary new
+			at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;char_location&#x27;&#x27;;
+			at: &#x27;&#x27;cited_text&#x27;&#x27; put: cited;
+			at: &#x27;&#x27;document_index&#x27;&#x27; put: 0;
+			at: &#x27;&#x27;document_title&#x27;&#x27; put: (document at: &#x27;&#x27;title&#x27;&#x27; ifAbsent: [ nil ]);
+			at: &#x27;&#x27;start_char_index&#x27;&#x27; put: start - 1;
+			at: &#x27;&#x27;end_char_index&#x27;&#x27; put: start - 1 + cited size;
+			yourself };
+		yourself) }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;schemaOf:&#x27; value: &#x27;content&#x27; value:
+&#x27;schemaOf: aBody
+	&quot;The JSON schema of output_config.format, or nil.&quot;
+	| config format |
+	config := aBody at: &#x27;&#x27;output_config&#x27;&#x27; ifAbsent: [ ^ nil ].
+	format := config at: &#x27;&#x27;format&#x27;&#x27; ifAbsent: [ ^ nil ].
+	^ format at: &#x27;&#x27;schema&#x27;&#x27; ifAbsent: [ nil ]&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;jsonTextFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;jsonTextFor: aSchema
+	&quot;A JSON text with a sample value of the right type for each property of the schema.&quot;
+	| result |
+	result := Dictionary new.
+	(aSchema at: &#x27;&#x27;properties&#x27;&#x27; ifAbsent: [ Dictionary new ]) keysAndValuesDo: [ :name :property |
+		result at: name put: (self sampleValueFor: property) ].
+	^ STONJSON toString: result&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;sampleValueFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;sampleValueFor: aPropertySchema
+	| type |
+	type := aPropertySchema at: &#x27;&#x27;type&#x27;&#x27; ifAbsent: [ &#x27;&#x27;string&#x27;&#x27; ].
+	type = &#x27;&#x27;string&#x27;&#x27; ifTrue: [ ^ &#x27;&#x27;sample&#x27;&#x27; ].
+	type = &#x27;&#x27;integer&#x27;&#x27; ifTrue: [ ^ 42 ].
+	type = &#x27;&#x27;number&#x27;&#x27; ifTrue: [ ^ 1.5 ].
+	type = &#x27;&#x27;boolean&#x27;&#x27; ifTrue: [ ^ true ].
+	type = &#x27;&#x27;array&#x27;&#x27; ifTrue: [ ^ #() ].
+	type = &#x27;&#x27;object&#x27;&#x27; ifTrue: [ ^ Dictionary new ].
+	^ nil&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;plainReplyFor:&#x27; value: &#x27;content&#x27; value:
+&#x27;plainReplyFor: aBody
+	&quot;When the system prompt asks for a marker (MKR-...), the answer ends with the marker.&quot;
+	| system index marker text |
+	system := self systemTextOf: aBody.
+	index := system indexOfSubCollection: &#x27;&#x27;MKR-&#x27;&#x27; startingAt: 1.
+	index &gt; 0 ifTrue: [
+		marker := (system copyFrom: index to: system size) copyUpTo: Character space.
+		(marker endsWith: &#x27;&#x27;.&#x27;&#x27;) ifTrue: [ marker := marker allButLast ].
+		^ &#x27;&#x27;The answer is 4. &#x27;&#x27;, marker ].
+	text := self lastUserTextOf: aBody.
+	index := text indexOfSubCollection: &#x27;&#x27;Reply with exactly: &#x27;&#x27; startingAt: 1.
+	index &gt; 0 ifTrue: [ ^ (text copyFrom: index + &#x27;&#x27;Reply with exactly: &#x27;&#x27; size to: text size) trimBoth ].
+	^ &#x27;&#x27;Hello from the local double.&#x27;&#x27;&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;streamResponseFor:&#x27; value: &#x27;messages&#x27; value:
+&#x27;streamResponseFor: aMessage
+	&quot;The server-sent events of the message: message_start, one block start, the text in two
+	 deltas and one block stop for each content block, message_delta and message_stop.&quot;
+	| events start body response |
+	events := OrderedCollection new.
+	start := aMessage copy.
+	start at: &#x27;&#x27;content&#x27;&#x27; put: #().
+	start at: &#x27;&#x27;stop_reason&#x27;&#x27; put: nil.
+	start at: &#x27;&#x27;usage&#x27;&#x27; put: ((aMessage at: &#x27;&#x27;usage&#x27;&#x27;) copy at: &#x27;&#x27;output_tokens&#x27;&#x27; put: 0; yourself).
+	events add: { &#x27;&#x27;message_start&#x27;&#x27;. (Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;message_start&#x27;&#x27;;
+		at: &#x27;&#x27;message&#x27;&#x27; put: start;
+		yourself) }.
+	events add: { &#x27;&#x27;ping&#x27;&#x27;. (Dictionary new at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;ping&#x27;&#x27;; yourself) }.
+	(aMessage at: &#x27;&#x27;content&#x27;&#x27;) doWithIndex: [ :block :position |
+		self addEventsOfBlock: block index: position - 1 to: events ].
+	events add: { &#x27;&#x27;message_delta&#x27;&#x27;. (Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;message_delta&#x27;&#x27;;
+		at: &#x27;&#x27;delta&#x27;&#x27; put: (Dictionary new
+			at: &#x27;&#x27;stop_reason&#x27;&#x27; put: (aMessage at: &#x27;&#x27;stop_reason&#x27;&#x27;);
+			at: &#x27;&#x27;stop_sequence&#x27;&#x27; put: nil;
+			yourself);
+		at: &#x27;&#x27;usage&#x27;&#x27; put: (Dictionary new
+			at: &#x27;&#x27;output_tokens&#x27;&#x27; put: ((aMessage at: &#x27;&#x27;usage&#x27;&#x27;) at: &#x27;&#x27;output_tokens&#x27;&#x27;);
+			yourself);
+		yourself) }.
+	events add: { &#x27;&#x27;message_stop&#x27;&#x27;. (Dictionary new at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;message_stop&#x27;&#x27;; yourself) }.
+	body := String streamContents: [ :stream |
+		events do: [ :event |
+			stream
+				nextPutAll: &#x27;&#x27;event: &#x27;&#x27;;
+				nextPutAll: event first;
+				nextPut: Character lf;
+				nextPutAll: &#x27;&#x27;data: &#x27;&#x27;;
+				nextPutAll: (STONJSON toString: event second);
+				nextPut: Character lf;
+				nextPut: Character lf ] ].
+	response := ZnResponse ok: (ZnEntity
+		with: body
+		type: (ZnMimeType main: &#x27;&#x27;text&#x27;&#x27; sub: &#x27;&#x27;event-stream&#x27;&#x27;)).
+	response headers at: &#x27;&#x27;request-id&#x27;&#x27; put: self nextRequestId.
+	&quot;The real service streams with Transfer-Encoding chunked: the chunk reader of
+	 ClaudeStreamingSocket (enableChunked, readNextChunk) runs against the double too.&quot;
+	response setTransferEncodingChunked.
+	^ response&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;addEventsOfBlock:index:to:&#x27; value: &#x27;messages&#x27; value:
+&#x27;addEventsOfBlock: aBlock index: anIndex to: events
+	&quot;A text block is streamed as an empty block and two text deltas, any other block whole.&quot;
+	| text half startBlock |
+	(aBlock at: &#x27;&#x27;type&#x27;&#x27;) = &#x27;&#x27;text&#x27;&#x27;
+		ifFalse: [
+			events add: { &#x27;&#x27;content_block_start&#x27;&#x27;. (Dictionary new
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;content_block_start&#x27;&#x27;;
+				at: &#x27;&#x27;index&#x27;&#x27; put: anIndex;
+				at: &#x27;&#x27;content_block&#x27;&#x27; put: aBlock;
+				yourself) } ]
+		ifTrue: [
+			text := aBlock at: &#x27;&#x27;text&#x27;&#x27;.
+			half := text size // 2.
+			startBlock := aBlock copy.
+			startBlock at: &#x27;&#x27;text&#x27;&#x27; put: &#x27;&#x27;&#x27;&#x27;.
+			events add: { &#x27;&#x27;content_block_start&#x27;&#x27;. (Dictionary new
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;content_block_start&#x27;&#x27;;
+				at: &#x27;&#x27;index&#x27;&#x27; put: anIndex;
+				at: &#x27;&#x27;content_block&#x27;&#x27; put: startBlock;
+				yourself) }.
+			{ text copyFrom: 1 to: half. text copyFrom: half + 1 to: text size } do: [ :piece |
+				events add: { &#x27;&#x27;content_block_delta&#x27;&#x27;. (Dictionary new
+					at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;content_block_delta&#x27;&#x27;;
+					at: &#x27;&#x27;index&#x27;&#x27; put: anIndex;
+					at: &#x27;&#x27;delta&#x27;&#x27; put: (Dictionary new
+						at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;text_delta&#x27;&#x27;;
+						at: &#x27;&#x27;text&#x27;&#x27; put: piece;
+						yourself);
+					yourself) } ] ].
+	events add: { &#x27;&#x27;content_block_stop&#x27;&#x27;. (Dictionary new
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;content_block_stop&#x27;&#x27;;
+		at: &#x27;&#x27;index&#x27;&#x27; put: anIndex;
+		yourself) }&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;routeFiles:request:&#x27; value: &#x27;files&#x27; value:
+&#x27;routeFiles: segments request: aRequest
+	| method meta |
+	((aRequest headers at: &#x27;&#x27;anthropic-beta&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) includesSubstring: &#x27;&#x27;files-api&#x27;&#x27;)
+		ifFalse: [ ^ self invalid: &#x27;&#x27;The Files API needs the files-api beta header&#x27;&#x27; ].
+	method := aRequest method asString.
+	segments size = 2 ifTrue: [
+		method = &#x27;&#x27;POST&#x27;&#x27; ifTrue: [ ^ self uploadFile: aRequest ].
+		method = &#x27;&#x27;GET&#x27;&#x27; ifTrue: [ ^ self listFiles: aRequest ] ].
+	segments size &gt;= 3 ifFalse: [ ^ self notFound: aRequest ].
+	meta := DoubleFiles detect: [ :each | (each at: &#x27;&#x27;id&#x27;&#x27;) = segments third ] ifNone: [ nil ].
+	meta ifNil: [ ^ self errorStatus: 404 type: &#x27;&#x27;not_found_error&#x27;&#x27; message: &#x27;&#x27;File not found: &#x27;&#x27;, segments third ].
+	segments size = 3 ifTrue: [
+		method = &#x27;&#x27;GET&#x27;&#x27; ifTrue: [ ^ self jsonOk: meta ].
+		method = &#x27;&#x27;DELETE&#x27;&#x27; ifTrue: [
+			DoubleFiles remove: meta.
+			^ self jsonOk: (Dictionary new
+				at: &#x27;&#x27;id&#x27;&#x27; put: segments third;
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;file_deleted&#x27;&#x27;;
+				yourself) ] ].
+	(segments size = 4 and: [ segments fourth = &#x27;&#x27;content&#x27;&#x27; and: [ method = &#x27;&#x27;GET&#x27;&#x27; ] ])
+		ifTrue: [ ^ self invalid: &#x27;&#x27;The file is not downloadable: only files that a tool created can be downloaded&#x27;&#x27; ].
+	^ self notFound: aRequest&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;uploadFile:&#x27; value: &#x27;files&#x27; value:
+&#x27;uploadFile: aRequest
+	&quot;The part named file of the multipart body. The double keeps the metadata only.&quot;
+	| entity part type meta |
+	entity := aRequest entity.
+	(entity isKindOf: ZnMultiPartFormDataEntity)
+		ifFalse: [ ^ self invalid: &#x27;&#x27;file: a multipart/form-data body is required&#x27;&#x27; ].
+	part := entity partNamed: &#x27;&#x27;file&#x27;&#x27; ifNone: [ nil ].
+	part ifNil: [ ^ self invalid: &#x27;&#x27;file: Field required&#x27;&#x27; ].
+	type := part contentType.
+	meta := Dictionary new
+		at: &#x27;&#x27;id&#x27;&#x27; put: &#x27;&#x27;file_double_&#x27;&#x27;, self nextCounter printString;
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;file&#x27;&#x27;;
+		at: &#x27;&#x27;filename&#x27;&#x27; put: part fileName;
+		at: &#x27;&#x27;mime_type&#x27;&#x27; put: (type
+			ifNil: [ &#x27;&#x27;application/octet-stream&#x27;&#x27; ]
+			ifNotNil: [ type main, &#x27;&#x27;/&#x27;&#x27;, type sub ]);
+		at: &#x27;&#x27;size_bytes&#x27;&#x27; put: (part contentLength ifNil: [ 0 ]);
+		at: &#x27;&#x27;created_at&#x27;&#x27; put: DateAndTime now asUTC printString;
+		at: &#x27;&#x27;downloadable&#x27;&#x27; put: false;
+		yourself.
+	DoubleFiles add: meta.
+	^ self jsonOk: meta&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;listFiles:&#x27; value: &#x27;files&#x27; value:
+&#x27;listFiles: aRequest
+	| limit page |
+	limit := (aRequest uri queryAt: &#x27;&#x27;limit&#x27;&#x27; ifAbsent: [ nil ])
+		ifNil: [ 20 ]
+		ifNotNil: [ :text | text asInteger ifNil: [ 20 ] ].
+	page := DoubleFiles asArray first: (limit min: DoubleFiles size).
+	^ self jsonOk: (Dictionary new
+		at: &#x27;&#x27;data&#x27;&#x27; put: page;
+		at: &#x27;&#x27;has_more&#x27;&#x27; put: DoubleFiles size &gt; limit;
+		at: &#x27;&#x27;first_id&#x27;&#x27; put: (page ifEmpty: [ nil ] ifNotEmpty: [ page first at: &#x27;&#x27;id&#x27;&#x27; ]);
+		at: &#x27;&#x27;last_id&#x27;&#x27; put: (page ifEmpty: [ nil ] ifNotEmpty: [ page last at: &#x27;&#x27;id&#x27;&#x27; ]);
+		yourself)&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;routeSkills:request:&#x27; value: &#x27;skills&#x27; value:
+&#x27;routeSkills: segments request: aRequest
+	| method skill version versions |
+	((aRequest headers at: &#x27;&#x27;anthropic-beta&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) includesSubstring: &#x27;&#x27;skills-&#x27;&#x27;)
+		ifFalse: [ ^ self invalid: &#x27;&#x27;The Skills API needs the skills beta header&#x27;&#x27; ].
+	method := aRequest method asString.
+	segments size = 2 ifTrue: [
+		method = &#x27;&#x27;POST&#x27;&#x27; ifTrue: [ ^ self createSkill: aRequest ].
+		method = &#x27;&#x27;GET&#x27;&#x27; ifTrue: [
+			^ self jsonOk: (Dictionary new
+				at: &#x27;&#x27;data&#x27;&#x27; put: (DoubleSkills collect: [ :each | each at: &#x27;&#x27;skill&#x27;&#x27; ]) asArray;
+				at: &#x27;&#x27;next_page&#x27;&#x27; put: nil;
+				yourself) ] ].
+	segments size &gt;= 3 ifFalse: [ ^ self notFound: aRequest ].
+	skill := DoubleSkills
+		detect: [ :each | ((each at: &#x27;&#x27;skill&#x27;&#x27;) at: &#x27;&#x27;id&#x27;&#x27;) = segments third ]
+		ifNone: [ nil ].
+	skill ifNil: [ ^ self errorStatus: 404 type: &#x27;&#x27;not_found_error&#x27;&#x27; message: &#x27;&#x27;Skill not found: &#x27;&#x27;, segments third ].
+	versions := skill at: &#x27;&#x27;versions&#x27;&#x27;.
+	segments size = 3 ifTrue: [
+		method = &#x27;&#x27;GET&#x27;&#x27; ifTrue: [ ^ self jsonOk: (skill at: &#x27;&#x27;skill&#x27;&#x27;) ].
+		method = &#x27;&#x27;DELETE&#x27;&#x27; ifTrue: [ ^ self deleteSkill: skill ] ].
+	(segments size = 4 and: [ segments fourth = &#x27;&#x27;versions&#x27;&#x27; ]) ifTrue: [
+		method = &#x27;&#x27;GET&#x27;&#x27; ifTrue: [
+			^ self jsonOk: (Dictionary new
+				at: &#x27;&#x27;data&#x27;&#x27; put: versions asArray;
+				at: &#x27;&#x27;has_more&#x27;&#x27; put: false;
+				at: &#x27;&#x27;next_page&#x27;&#x27; put: nil;
+				yourself) ].
+		method = &#x27;&#x27;POST&#x27;&#x27; ifTrue: [ ^ self addVersionTo: skill request: aRequest ] ].
+	(segments size = 5 and: [ segments fourth = &#x27;&#x27;versions&#x27;&#x27; ]) ifTrue: [
+		version := versions detect: [ :each | (each at: &#x27;&#x27;version&#x27;&#x27;) = segments fifth ] ifNone: [ nil ].
+		version ifNil: [ ^ self errorStatus: 404 type: &#x27;&#x27;not_found_error&#x27;&#x27; message: &#x27;&#x27;Skill version not found: &#x27;&#x27;, segments fifth ].
+		method = &#x27;&#x27;GET&#x27;&#x27; ifTrue: [ ^ self jsonOk: version ].
+		method = &#x27;&#x27;DELETE&#x27;&#x27; ifTrue: [
+			versions remove: version.
+			^ self jsonOk: (Dictionary new
+				at: &#x27;&#x27;id&#x27;&#x27; put: segments fifth;
+				at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;skill_version_deleted&#x27;&#x27;;
+				yourself) ] ].
+	^ self notFound: aRequest&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;versionFrom:skillId:&#x27; value: &#x27;skills&#x27; value:
+&#x27;versionFrom: anEntity skillId: aSkillId
+	&quot;The version record of a multipart upload, or the error response. The upload needs
+	 files[] parts and a SKILL.md with a name in its frontmatter; the directory of the
+	 files must carry the same name.&quot;
+	| files manifest content name description directory versionId |
+	(anEntity isKindOf: ZnMultiPartFormDataEntity)
+		ifFalse: [ ^ self invalid: &#x27;&#x27;files: a multipart/form-data body is required&#x27;&#x27; ].
+	files := anEntity parts select: [ :part | part fieldName = &#x27;&#x27;files[]&#x27;&#x27; ].
+	files isEmpty ifTrue: [ ^ self invalid: &#x27;&#x27;files: Field required&#x27;&#x27; ].
+	manifest := files
+		detect: [ :part | part fileName notNil and: [ part fileName = &#x27;&#x27;SKILL.md&#x27;&#x27; or: [ part fileName endsWith: &#x27;&#x27;/SKILL.md&#x27;&#x27; ] ] ]
+		ifNone: [ nil ].
+	manifest ifNil: [ ^ self invalid: &#x27;&#x27;SKILL.md is required at the top of the skill directory&#x27;&#x27; ].
+	content := manifest entity contents.
+	content isString ifFalse: [ content := content utf8Decoded ].
+	name := nil.
+	description := &#x27;&#x27;&#x27;&#x27;.
+	content lines do: [ :line |
+		(line beginsWith: &#x27;&#x27;name:&#x27;&#x27;) ifTrue: [ name := (line allButFirst: 5) trimBoth ].
+		(line beginsWith: &#x27;&#x27;description:&#x27;&#x27;) ifTrue: [ description := (line allButFirst: 12) trimBoth ] ].
+	name ifNil: [ ^ self invalid: &#x27;&#x27;SKILL.md needs a name in its frontmatter&#x27;&#x27; ].
+	directory := (files first fileName includes: $/)
+		ifTrue: [ files first fileName copyUpTo: $/ ]
+		ifFalse: [ name ].
+	directory = name
+		ifFalse: [ ^ self invalid: &#x27;&#x27;The name in SKILL.md does not match the directory name: &#x27;&#x27;, name, &#x27;&#x27; and &#x27;&#x27;, directory ].
+	versionId := (1759178010641129 + self nextCounter) printString.
+	^ Dictionary new
+		at: &#x27;&#x27;id&#x27;&#x27; put: versionId;
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;skill_version&#x27;&#x27;;
+		at: &#x27;&#x27;version&#x27;&#x27; put: versionId;
+		at: &#x27;&#x27;skill_id&#x27;&#x27; put: aSkillId;
+		at: &#x27;&#x27;name&#x27;&#x27; put: name;
+		at: &#x27;&#x27;description&#x27;&#x27; put: description;
+		at: &#x27;&#x27;directory&#x27;&#x27; put: directory;
+		at: &#x27;&#x27;created_at&#x27;&#x27; put: DateAndTime now asUTC printString;
+		yourself&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;createSkill:&#x27; value: &#x27;skills&#x27; value:
+&#x27;createSkill: aRequest
+	&quot;A second skill with the same display_title is refused, as the real service does.&quot;
+	| entity title id version skill now |
+	entity := aRequest entity.
+	(entity isKindOf: ZnMultiPartFormDataEntity)
+		ifFalse: [ ^ self invalid: &#x27;&#x27;files: a multipart/form-data body is required&#x27;&#x27; ].
+	title := (entity partNamed: &#x27;&#x27;display_title&#x27;&#x27; ifNone: [ nil ])
+		ifNotNil: [ :part | part fieldValueString ].
+	(title notNil and: [ DoubleSkills anySatisfy: [ :each | ((each at: &#x27;&#x27;skill&#x27;&#x27;) at: &#x27;&#x27;display_title&#x27;&#x27;) = title ] ])
+		ifTrue: [ ^ self invalid: &#x27;&#x27;Skill cannot reuse an existing display_title: &#x27;&#x27;, title ].
+	id := &#x27;&#x27;skill_double_&#x27;&#x27;, self nextCounter printString.
+	version := self versionFrom: entity skillId: id.
+	version isDictionary ifFalse: [ ^ version ].
+	now := DateAndTime now asUTC printString.
+	skill := Dictionary new
+		at: &#x27;&#x27;id&#x27;&#x27; put: id;
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;skill&#x27;&#x27;;
+		at: &#x27;&#x27;display_title&#x27;&#x27; put: (title ifNil: [ version at: &#x27;&#x27;name&#x27;&#x27; ]);
+		at: &#x27;&#x27;latest_version&#x27;&#x27; put: (version at: &#x27;&#x27;version&#x27;&#x27;);
+		at: &#x27;&#x27;source&#x27;&#x27; put: &#x27;&#x27;custom&#x27;&#x27;;
+		at: &#x27;&#x27;created_at&#x27;&#x27; put: now;
+		at: &#x27;&#x27;updated_at&#x27;&#x27; put: now;
+		yourself.
+	DoubleSkills add: (Dictionary new
+		at: &#x27;&#x27;skill&#x27;&#x27; put: skill;
+		at: &#x27;&#x27;versions&#x27;&#x27; put: (OrderedCollection with: version);
+		yourself).
+	^ self jsonOk: skill&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;addVersionTo:request:&#x27; value: &#x27;skills&#x27; value:
+&#x27;addVersionTo: aSkillRecord request: aRequest
+	| skill version |
+	skill := aSkillRecord at: &#x27;&#x27;skill&#x27;&#x27;.
+	version := self versionFrom: aRequest entity skillId: (skill at: &#x27;&#x27;id&#x27;&#x27;).
+	version isDictionary ifFalse: [ ^ version ].
+	(aSkillRecord at: &#x27;&#x27;versions&#x27;&#x27;) add: version.
+	skill at: &#x27;&#x27;latest_version&#x27;&#x27; put: (version at: &#x27;&#x27;version&#x27;&#x27;).
+	^ self jsonOk: version&#x27;.
+add value: #&#x27;ClaudeAnthropicDouble class&#x27; value: #&#x27;deleteSkill:&#x27; value: &#x27;skills&#x27; value:
+&#x27;deleteSkill: aSkillRecord
+	&quot;The real service refuses to delete a skill that still has versions.&quot;
+	(aSkillRecord at: &#x27;&#x27;versions&#x27;&#x27;) isEmpty
+		ifFalse: [ ^ self invalid: &#x27;&#x27;Cannot delete a skill with versions. Delete all versions first.&#x27;&#x27; ].
+	DoubleSkills remove: aSkillRecord.
+	^ self jsonOk: (Dictionary new
+		at: &#x27;&#x27;id&#x27;&#x27; put: ((aSkillRecord at: &#x27;&#x27;skill&#x27;&#x27;) at: &#x27;&#x27;id&#x27;&#x27;);
+		at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;skill_deleted&#x27;&#x27;;
+		yourself)&#x27;.
+add value: #&#x27;ClaudePlainStreamingSocket&#x27; value: #&#x27;connect&#x27; value: &#x27;connection&#x27; value:
+&#x27;connect
+	&quot;Open a plain TCP connection (no TLS). The streaming socket of the superclass opens TLS.&quot;
+	socket := Socket newTCP.
+	socket connectTo: (NetNameResolver addressForName: host) port: port.
+	stream := ZnNetworkingUtils socketStreamOn: socket.
+	stream timeout: timeout&#x27;.
+add value: #&#x27;ClaudeClient&#x27; value: #&#x27;openPlainStreamingSocket:&#x27; value: &#x27;streaming&#x27; value:
+&#x27;openPlainStreamingSocket: aClaudeMessageRequest
+	&quot;The steps of openTLSStreamingSocket: over a plain socket, for the base URL of the local
+	 double of the Anthropic API.&quot;
+	| sock statusCode headers |
+	sock := ClaudeAnthropicDouble newStreamingSocket.
+	sock timeout: streamingTimeout.
+	statusCode := 0.
+	headers := Dictionary new.
+	[[
+		sock connect.
+		sock sendPost: &#x27;&#x27;/v1/messages&#x27;&#x27;
+			headers: (self streamingHeadersFor: aClaudeMessageRequest)
+			body: (STONJSON toString: aClaudeMessageRequest asJson).
+		statusCode := sock readStatusLine.
+		headers := sock readHeaders ]
+		on: ConnectionTimedOut
+		do: [ :e | self signalTimeoutClosing: sock message: e messageText ] ]
+		on: NetworkError
+		do: [ :e | self signalNetworkErrorClosing: sock message: e class name , &#x27;&#x27;: &#x27;&#x27; , e messageText ].
+	statusCode &gt;= 400
+		ifTrue: [ self handleStreamingError: statusCode headers: headers socket: sock ].
+	sock requestId: (headers at: &#x27;&#x27;request-id&#x27;&#x27; ifAbsent: [ nil ]).
+	^ sock&#x27;.
+
+&quot;ClaudeSDKExampleSupport class&gt;&gt;resolveClient: the client of the double, not a key from the
+ environment or the keyring (the old method is replaced; the key slots stay in keySlots).&quot;
+fix value: #&#x27;ClaudeSDKExampleSupport class&#x27; value: #resolveClient
+	value: [ :source | source includesSubstring: &#x27;keySlots&#x27; ]
+	value:
+&#x27;resolveClient
+	&quot;Answer a client for the in-image double of the Messages API (ClaudeAnthropicDouble),
+	 with the key that the double accepts. No key of the environment or of the keyring is
+	 read, and no request leaves the machine. Fifteen of the integration test classes turn
+	 any Error of resolveClient into a skip, so a double that does not start signals a
+	 TestFailure (an Exception, not an Error): the test fails and does not skip.&quot;
+	^ [ ClaudeAnthropicDouble clientForTests ]
+		on: Error
+		do: [ :error |
+			TestFailure signal: &#x27;&#x27;The local double of the Anthropic API did not start: &#x27;&#x27;, error messageText asString ]&#x27;.
+
+fix value: #ClaudeClient value: #openStreamingSocket:
+	value: [ :source | (source includesSubstring: &#x27;ClaudeAnthropicDouble&#x27;) not ]
+	value:
+&#x27;openStreamingSocket: aClaudeMessageRequest
+	&quot;Open a streaming connection. Uses a real TLS socket for HTTPS (incremental SSE), a plain
+	 socket for the base URL of the local double, or a buffered ZnClient for any other HTTP
+	 URL (test/mock servers). All return objects compatible with ClaudeSSEDecoder (atEnd/nextLine).&quot;
+	aClaudeMessageRequest stream: true.
+	(baseUrl beginsWith: &#x27;&#x27;https://&#x27;&#x27;)
+		ifTrue: [ ^ self openTLSStreamingSocket: aClaudeMessageRequest ].
+	(ClaudeAnthropicDouble isDoubleUrl: baseUrl)
+		ifTrue: [ ^ self openPlainStreamingSocket: aClaudeMessageRequest ].
+	^ self openBufferedStreamingSocket: aClaudeMessageRequest&#x27;.
+
+fix value: #ClaudeIntegrationTest value: #testRealStreamingClose
+	value: [ :source | source includesSubstring: &#x27;ClaudeStreamingSocket host:&#x27; ]
+	value:
+&#x27;testRealStreamingClose
+	&quot;Verify socket closes cleanly after streaming completes.&quot;
+	| sock decoder |
+	sock := ClaudeAnthropicDouble newStreamingSocket.
+	sock connect.
+	sock sendPost: &#x27;&#x27;/v1/messages&#x27;&#x27;
+		headers: (OrderedDictionary newFromPairs: {
+			&#x27;&#x27;x-api-key&#x27;&#x27;. client apiKey.
+			&#x27;&#x27;anthropic-version&#x27;&#x27;. &#x27;&#x27;2023-06-01&#x27;&#x27;.
+			&#x27;&#x27;content-type&#x27;&#x27;. &#x27;&#x27;application/json&#x27;&#x27;.
+			&#x27;&#x27;accept&#x27;&#x27;. &#x27;&#x27;text/event-stream&#x27;&#x27; })
+		body: (STONJSON toString: {
+			&#x27;&#x27;model&#x27;&#x27; -&gt; ClaudeModel default.
+			&#x27;&#x27;max_tokens&#x27;&#x27; -&gt; 20.
+			&#x27;&#x27;stream&#x27;&#x27; -&gt; true.
+			&#x27;&#x27;messages&#x27;&#x27; -&gt; { { &#x27;&#x27;role&#x27;&#x27; -&gt; &#x27;&#x27;user&#x27;&#x27;. &#x27;&#x27;content&#x27;&#x27; -&gt; &#x27;&#x27;Hi&#x27;&#x27; } asDictionary }
+		} asDictionary).
+	sock readStatusLine.
+	sock readHeaders.
+	decoder := ClaudeSSEDecoder onStream: sock.
+	[ decoder hasNext ] whileTrue: [ decoder nextEvent ].
+	ClaudeTestLog log: &#x27;&#x27;&lt;&lt; stream drained; closing socket&#x27;&#x27;.
+	sock close.
+	self deny: sock isConnected&#x27;.
+
+fix value: #ClaudeIntegrationTest value: #testRealStreamingConnection
+	value: [ :source | source includesSubstring: &#x27;ClaudeStreamingSocket host:&#x27; ]
+	value:
+&#x27;testRealStreamingConnection
+	&quot;Verify the TLS streaming socket connects, sends a request, and gets status 200.&quot;
+	| sock statusCode headers decoder |
+	sock := ClaudeAnthropicDouble newStreamingSocket.
+	sock connect.
+	self assert: sock isConnected.
+	sock sendPost: &#x27;&#x27;/v1/messages&#x27;&#x27;
+		headers: (OrderedDictionary newFromPairs: {
+			&#x27;&#x27;x-api-key&#x27;&#x27;. client apiKey.
+			&#x27;&#x27;anthropic-version&#x27;&#x27;. &#x27;&#x27;2023-06-01&#x27;&#x27;.
+			&#x27;&#x27;content-type&#x27;&#x27;. &#x27;&#x27;application/json&#x27;&#x27;.
+			&#x27;&#x27;accept&#x27;&#x27;. &#x27;&#x27;text/event-stream&#x27;&#x27; })
+		body: (STONJSON toString: {
+			&#x27;&#x27;model&#x27;&#x27; -&gt; ClaudeModel default.
+			&#x27;&#x27;max_tokens&#x27;&#x27; -&gt; 20.
+			&#x27;&#x27;stream&#x27;&#x27; -&gt; true.
+			&#x27;&#x27;messages&#x27;&#x27; -&gt; { { &#x27;&#x27;role&#x27;&#x27; -&gt; &#x27;&#x27;user&#x27;&#x27;. &#x27;&#x27;content&#x27;&#x27; -&gt; &#x27;&#x27;Hi&#x27;&#x27; } asDictionary }
+		} asDictionary).
+	statusCode := sock readStatusLine.
+	headers := sock readHeaders.
+	ClaudeTestLog log: &#x27;&#x27;&lt;&lt; streaming connect status=&#x27;&#x27; , statusCode printString.
+	self assert: statusCode equals: 200.
+	self assert: ((headers at: &#x27;&#x27;content-type&#x27;&#x27;) beginsWith: &#x27;&#x27;text/event-stream&#x27;&#x27;).
+	&quot;Drain the response to allow clean close&quot;
+	decoder := ClaudeSSEDecoder onStream: sock.
+	[ decoder hasNext ] whileTrue: [ decoder nextEvent ].
+	sock close&#x27;.
+
+fix value: #ClaudeIntegrationTest value: #testRealStreamingEvents
+	value: [ :source | source includesSubstring: &#x27;ClaudeStreamingSocket host:&#x27; ]
+	value:
+&#x27;testRealStreamingEvents
+	&quot;Send a message via real TLS streaming socket, verify SSE events arrive and accumulate correctly.&quot;
+	| sock decoder message events |
+	sock := ClaudeAnthropicDouble newStreamingSocket.
+	sock connect.
+	sock sendPost: &#x27;&#x27;/v1/messages&#x27;&#x27;
+		headers: (OrderedDictionary newFromPairs: {
+			&#x27;&#x27;x-api-key&#x27;&#x27;. client apiKey.
+			&#x27;&#x27;anthropic-version&#x27;&#x27;. &#x27;&#x27;2023-06-01&#x27;&#x27;.
+			&#x27;&#x27;content-type&#x27;&#x27;. &#x27;&#x27;application/json&#x27;&#x27;.
+			&#x27;&#x27;accept&#x27;&#x27;. &#x27;&#x27;text/event-stream&#x27;&#x27; })
+		body: (STONJSON toString: {
+			&#x27;&#x27;model&#x27;&#x27; -&gt; ClaudeModel default.
+			&#x27;&#x27;max_tokens&#x27;&#x27; -&gt; 50.
+			&#x27;&#x27;stream&#x27;&#x27; -&gt; true.
+			&#x27;&#x27;messages&#x27;&#x27; -&gt; { { &#x27;&#x27;role&#x27;&#x27; -&gt; &#x27;&#x27;user&#x27;&#x27;. &#x27;&#x27;content&#x27;&#x27; -&gt; &#x27;&#x27;Say hi in 3 words&#x27;&#x27; } asDictionary }
+		} asDictionary).
+	sock readStatusLine.
+	sock readHeaders.
+	decoder := ClaudeSSEDecoder onStream: sock.
+	message := ClaudeMessage new.
+	events := OrderedCollection new.
+	[ decoder hasNext ] whileTrue: [
+		| event |
+		event := decoder nextEvent.
+		events add: (event at: &#x27;&#x27;event&#x27;&#x27;).
+		message accumulate: event ].
+	sock close.
+	ClaudeTestLog log: &#x27;&#x27;&lt;&lt; real streaming: &#x27;&#x27; , events size printString , &#x27;&#x27; events, &#x27;&#x27; , message textContent size printString , &#x27;&#x27; chars&#x27;&#x27;.
+	self deny: message textContent isEmpty.
+	self assert: message stopReason equals: #end_turn.
+	self assert: (events includes: &#x27;&#x27;message_start&#x27;&#x27;).
+	self assert: (events includes: &#x27;&#x27;content_block_delta&#x27;&#x27;).
+	self assert: (events includes: &#x27;&#x27;message_stop&#x27;&#x27;).
+	Transcript
+		nextPutAll: &#x27;&#x27;&lt;&lt; Real streaming: &#x27;&#x27;;
+		nextPutAll: events size printString;
+		nextPutAll: &#x27;&#x27; events, text: &#x27;&#x27;;
+		nextPutAll: message textContent;
+		cr&#x27;.
+
+fix value: #ClaudeIntegrationTest value: #testErrorInvalidKey
+	value: [ :source | source includesSubstring: &#x27;ClaudeClient apiKey:&#x27; ]
+	value:
+&#x27;testErrorInvalidKey
+	&quot;Model choice is immaterial - the 401 fires before model lookup. Use the default helper.&quot;
+	| badClient params |
+	badClient := ClaudeAnthropicDouble clientWithKey: &#x27;&#x27;sk-invalid&#x27;&#x27;.
+	params := self newParams: &#x27;&#x27;Hello&#x27;&#x27; maxTokens: 50.
+	ClaudeTestLog log: &#x27;&#x27;&gt;&gt; testErrorInvalidKey: expecting 401...&#x27;&#x27;.
+	self
+		should: [ badClient sendMessage: params ]
+		raise: ClaudeAuthError
+		withExceptionDo: [ :e |
+			ClaudeTestLog log: &#x27;&#x27;&lt;&lt; Caught: &#x27;&#x27; , e class name , &#x27;&#x27; (&#x27;&#x27; , e statusCode printString , &#x27;&#x27;)&#x27;&#x27;.
+			self assert: e statusCode equals: 401 ]&#x27;.
+
+fix value: #ClaudeIntegrationTest value: #testRealStreamingErrorHandling
+	value: [ :source | source includesSubstring: &#x27;ClaudeClient apiKey:&#x27; ]
+	value:
+&#x27;testRealStreamingErrorHandling
+	&quot;Verify TLS streaming raises ClaudeApiError for invalid API key. Expect ClaudeAuthError (401) or ClaudeTimeoutError if the network is slow.&quot;
+	| badClient params |
+	badClient := ClaudeAnthropicDouble clientWithKey: &#x27;&#x27;sk-invalid&#x27;&#x27;.
+	badClient streamingTimeout: 30.
+	params := ClaudeMessageRequest new.
+	params model: ClaudeModel default.
+	params maxTokens: 50.
+	params addUserMessage: &#x27;&#x27;Hello&#x27;&#x27;.
+	ClaudeTestLog log: &#x27;&#x27;&gt;&gt; streaming with invalid key, expecting ClaudeApiError&#x27;&#x27;.
+	self
+		should: [ badClient streamMessage: params do: [ :e | ] ]
+		raise: ClaudeApiError&#x27;.
+
+&quot;PharoKeyring-Tests: the tests of isAvailable.&quot;
+add value: #LinuxSecretToolBackendTest value: #&#x27;isToolOnPath:&#x27; value: &#x27;private&#x27; value:
+&#x27;isToolOnPath: aToolName
+	&quot;True when a directory of PATH holds a file with the name aToolName. This search does not
+	 use which(1), so the test compares isAvailable with a second source.&quot;
+	| path |
+	path := Smalltalk os environment at: &#x27;&#x27;PATH&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+	^ (path substrings: &#x27;&#x27;:&#x27;&#x27;) anySatisfy: [ :directory |
+		(directory asFileReference / aToolName) isFile ]&#x27;.
+
+fix value: #LinuxSecretToolBackendTest value: #testIsAvailable
+	value: [ :source | source includesSubstring: &#x27;skip:&#x27; ]
+	value:
+&#x27;testIsAvailable
+	&quot;isAvailable answers true exactly when the tool secret-tool is a file in a PATH directory.
+	 The test never skips: on a machine without the tool, it checks the answer false.&quot;
+	self assert: backend isAvailable equals: (self isToolOnPath: &#x27;&#x27;secret-tool&#x27;&#x27;)&#x27;.
+
+add value: #PassToolBackendTest value: #&#x27;isToolOnPath:&#x27; value: &#x27;private&#x27; value:
+&#x27;isToolOnPath: aToolName
+	&quot;True when a directory of PATH holds a file with the name aToolName. This search does not
+	 use which(1), so the test compares isAvailable with a second source.&quot;
+	| path |
+	path := Smalltalk os environment at: &#x27;&#x27;PATH&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ].
+	^ (path substrings: &#x27;&#x27;:&#x27;&#x27;) anySatisfy: [ :directory |
+		(directory asFileReference / aToolName) isFile ]&#x27;.
+
+fix value: #PassToolBackendTest value: #testIsAvailable
+	value: [ :source | source includesSubstring: &#x27;skip:&#x27; ]
+	value:
+&#x27;testIsAvailable
+	&quot;isAvailable answers true exactly when the tool pass is a file in a PATH directory.
+	 The test never skips: on a machine without the tool, it checks the answer false.&quot;
+	self assert: backend isAvailable equals: (self isToolOnPath: &#x27;&#x27;pass&#x27;&#x27;)&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

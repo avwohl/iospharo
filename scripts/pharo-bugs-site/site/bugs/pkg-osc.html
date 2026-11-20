@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: OSC (Ducasse/OSC, row 43) - Pharo test defects</title><meta name="description" content="Package: OSC (Ducasse/OSC, row 43): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: OSC (Ducasse/OSC, row 43)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>ducasse-osc.st</dd><dt>Upstream repository</dt><dd>Ducasse/OSC</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 17 tests, 16 pass, 1 fail on the two VMs.</li>
+<li><code>OSCParserTest&gt;&gt;testParseTimestamp</code> compares the time tag of a bundle with
+a second read of the clock, so the fraction bytes differ in each run.  The
+test also compares an Array with a ByteArray.  The test now checks that
+the time tag is between the time before and the time after the call.</li>
+<li>Found in the same code, with no failing test:
+<code>DateAndTime&gt;&gt;addLatency:</code> of the package adds to the nanoseconds with no
+carry.  In the last 50 milliseconds of a second the fraction is too large
+for its 4 bytes.  The fixes file makes the method add a Duration.</li>
+<li>Result: 17 of 17 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 43&quot;
+Metacello new baseline: &#x27;OSC&#x27;; repository: &#x27;github://Ducasse/OSC:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>43</td><td><code>ducasse-osc</code></td><td>ok</td><td>tests=17 P=17 F=0 E=0 S=0 T=0 X=0</td><td>tests=17 P=17 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): ducasse-osc.st (<a href="../files/packages/fixes/ducasse-osc.st">download</a>)</summary><pre class="code">&quot;Ducasse/OSC: OSCParserTest&gt;&gt;testParseTimestamp compared the 8 time-tag bytes
+of a bundle with the bytes of a second DateAndTime now, taken later.  The two
+clock reads differ by microseconds, so the fraction bytes differ on every
+machine and every VM.  The test also compared an Array (Interval&gt;&gt;collect:)
+with a ByteArray, and Array = ByteArray is false in Pharo.  The test can never
+pass.  The repair reads the time tag back as seconds and fraction and checks
+that the tag is between (before + 50 ms) and (after + 50 ms).
+
+DateAndTime&gt;&gt;addLatency: set nanos without carry.  Within 50 ms of a second
+boundary nanos exceeds 10^9 and asNTPTimeStamp makes a fraction that does not
+fit 4 bytes (about 5 percent of runs of any bundle print).  The repair adds a
+Duration, which carries.&quot;
+
+fix value: #OSCParserTest value: #testParseTimestamp
+	value: [ :source | source includesSubstring: &#x27;asNTPTimeStampWithLatency&#x27; ]
+	value:
+&#x27;testParseTimestamp
+	| bundle byteStream bytes before after seconds fraction tagNanos lowNanos highNanos epochShift latency |
+	latency := 50000000.
+	epochShift := 2208988800 * 1000000000.
+	bundle := OSCBundle new.
+	byteStream := ByteArray new writeStream.
+	before := DateAndTime now.
+	bundle print: { OSCMessage for: { &#x27;&#x27;/test&#x27;&#x27;. 99 } } onOSCStream: byteStream.
+	after := DateAndTime now.
+	bytes := byteStream contents.
+	&quot;bytes 1 to 8 are #bundle plus NUL, bytes 9 to 16 are the NTP time tag&quot;
+	seconds := (bytes copyFrom: 9 to: 12) asInteger.
+	fraction := (bytes copyFrom: 13 to: 16) asInteger.
+	tagNanos := seconds * 1000000000 + (fraction * 1000000000 // (2 raisedTo: 32)).
+	lowNanos := (before - DateAndTime unixEpoch) asNanoSeconds + epochShift + latency.
+	highNanos := (after - DateAndTime unixEpoch) asNanoSeconds + epochShift + latency.
+	&quot;the fraction is truncated to 2^-32 s: allow 1 microsecond&quot;
+	self assert: tagNanos &gt;= (lowNanos - 1000).
+	self assert: tagNanos &lt;= (highNanos + 1000)&#x27;.
+
+fix value: #DateAndTime value: #addLatency:
+	value: [ :source | source includesSubstring: &#x27;basicNew&#x27; ]
+	value:
+&#x27;addLatency: aLatencyInNanoSeconds
+	&quot;add nanoseconds to the current time; the sum carries into the seconds&quot;
+
+	^ self + (Duration nanoSeconds: aLatencyInNanoSeconds)&#x27;.
+
+fix value: #DateAndTime value: #asNTPTimeStampWithLatency
+	value: [ :source | source includesSubstring: &#x27;latency :=&#x27; ]
+	value:
+&#x27;asNTPTimeStampWithLatency
+	&quot; convert DateAndTime to NTPTimestamp for OSC bundles and adds 50 milliseconds of latency, to schedule messages ahead of time in SuperCollider&quot;
+
+	^ (self addLatency: 50000000) asNTPTimeStamp&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

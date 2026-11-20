@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Playground: StPlaygroundPageTest&gt;&gt;testContents fails at times - Pharo test defects</title><meta name="description" content="Playground: StPlaygroundPageTest&gt;&gt;testContents fails at times: Open: no fix">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Playground: StPlaygroundPageTest&gt;&gt;testContents fails at times</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: no fix</span></dd><dt>Defect in</dt><dd>the Pharo image or the test (not proven)</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>none</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools</dd></dl><h2>Summary</h2><p>Failed in earlier sweeps of Pharo 14; the records call it timing-dependent.  It passes in the 6 saved sweeps of 2026-11-17.  No fix exists.  The rule of the project counts a test that fails at times as a test that fails.</p><h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((StPlaygroundPageTest selector: #testContents) run) printString.</pre><details><summary>StPlaygroundPageTest&gt;&gt;testContents</summary><pre class="code">testContents
+	| page waitMock |
+	
+	self skipOnPharoCITestingEnvironment.
+	
+	page := self newPage.
+	waitMock := StPlaygroundPageTestMockedWaitable new.
+	page timeToWait: waitMock.
+	page contents: &#x27;test&#x27;.
+	self assert: page contents isEmpty.
+	page contents: &#x27;test 2&#x27;.
+	self assert: page contents isEmpty.
+	waitMock resume.
+	self assert: page contents equals: &#x27;test 2&#x27;</pre></details><h2>Fix</h2><p>None yet.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

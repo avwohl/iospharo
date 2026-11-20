@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: SmaCC (j-brant/SmaCC, row 106) - Pharo test defects</title><meta name="description" content="Package: SmaCC (j-brant/SmaCC, row 106): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: SmaCC (j-brant/SmaCC, row 106)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>j-brant-smacc.st</dd><dt>Upstream repository</dt><dd>j-brant/SmaCC</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 565 tests, 540 pass, 25 errors on the two VMs.</li>
+<li>Causes, all in the code generator of SmaCC and its tests, which are for
+an older Pharo:
+<ul>
+<li>12 errors: <code>SmaCCIncrementalParser class&gt;&gt;incrementalParserFrom:</code> makes
+a subclass with no class-side slot, and then compiles a class-side
+method that uses the variable.</li>
+<li>5 errors: the generator gives a Symbol to <code>OCMessageNode&gt;&gt;selector:</code>,
+which wants a selector node in Pharo 14.</li>
+<li>6 errors: tests make classes with
+<code>subclass:instanceVariableNames:classVariableNames:category:</code>.</li>
+<li>2 errors: <code>asClass</code> on a name.</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/j-brant-smacc.st</code>.</li>
+<li>Result: 565 of 565 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 106&quot;
+Metacello new baseline: &#x27;SmaCC&#x27;; repository: &#x27;github://j-brant/SmaCC:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>106</td><td><code>j-brant-smacc</code></td><td>ok</td><td>tests=565 P=565 F=0 E=0 S=0 T=0 X=0</td><td>tests=565 P=565 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): j-brant-smacc.st (<a href="../files/packages/fixes/j-brant-smacc.st">download</a>)</summary><pre class="code">&quot;j-brant/SmaCC: the code generator and the tests of SmaCC use Pharo APIs that
+Pharo 14 no longer has.  25 tests of SmaCCEndToEndTest end in an error, for
+four causes.
+
+1. SmaCCIncrementalParser class&gt;&gt;incrementalParserFrom: makes an anonymous
+   subclass of the parser and copies the instance side and the class side
+   methods into the subclass.  The class side method parserClasses reads the
+   class-side instance variable parserClasses.  The anonymous subclass got the
+   instance slots only, so the compile of that class side method fails with
+   &#x27;Undeclared variable named parserClasses&#x27; (12 tests).  The repair adds the
+   class slots of SmaCCIncrementalParser class to the builder.
+
+2. SmaCCSmalltalkCodeGenerator&gt;&gt;splitIfTrueBranchFrom:usingName:into: and
+   splitSequenceFrom:usingName:into: build a message node with a Symbol as
+   selector.  OCMessageNode&gt;&gt;selector: of Pharo 14 wants an OCSelectorNode and
+   sends #parent: to it (5 tests).  The two rewrite rules of the generator
+   (addImplementationSpecificRewritesTo:, commonIfTrueCodeRewriter) build the
+   same node in a pattern string, so they get the same repair.
+
+3. SmaCCEndToEndTest uses &#x27;Superclass subclass: #Name instanceVariableNames:
+   classVariableNames: category:&#x27; as a message.  Pharo 14 handles that old
+   form only when the compiler reads a class definition, not as a message
+   (5 tests).  The repair adds a helper selector to Class that builds the
+   class with the fluid builder, and the six test methods send the helper.
+
+4. Symbol&gt;&gt;asClass does not exist in Pharo 14 (2 tests; a third use in the
+   generator method defaultPackageName).  The tests use the lookupType:
+   method of the test class.  defaultPackageName answers the name of the
+   package of loose classes, #_UnpackagedPackage, as the old RPackage did.&quot;
+
+add value: #Class value: #&#x27;smaccSubclass:instanceVariableNames:classVariableNames:category:&#x27; value: &#x27;*SmaCC_Tests&#x27; value:
+&#x27;smaccSubclass: aName instanceVariableNames: aString classVariableNames: aClassVars category: aPackageName
+	&quot;The old class creation message that the tests of SmaCC send, built on the fluid class builder of Pharo 14.&quot;
+	| builder |
+	builder := self &lt;&lt; aName.
+	builder slots: aString asSlotCollection asArray.
+	aClassVars isEmpty ifFalse: [ builder sharedVariablesFromString: aClassVars ].
+	builder package: aPackageName.
+	^ builder install&#x27;.
+
+fix value: #&#x27;SmaCCIncrementalParser class&#x27; value: #incrementalParserFrom:
+	value: [ :source | (source includesSubstring: &#x27;classSlots:&#x27;) not ]
+	value:
+&#x27;incrementalParserFrom: aGLRParserClass
+	^ self parserClasses
+		at: aGLRParserClass
+		ifAbsentPut: [ | class |
+			class := Smalltalk anonymousClassInstaller
+					make: [ :builder | 
+						builder
+							installingEnvironment: aGLRParserClass environment;
+							superclass: aGLRParserClass;
+							layoutClass: aGLRParserClass classLayout class;
+							slots: (self instVarNames collect: [ :each | InstanceVariableSlot named: each ]);
+							classSlots: (self class instVarNames collect: [ :each | InstanceVariableSlot named: each ]) ].
+			self selectors do: [ :each | class compile: (self sourceCodeAt: each) ].
+			self class selectors
+				do: [ :each | class class compile: (self class sourceCodeAt: each) ].
+			class ]&#x27;.
+
+fix value: #SmaCCSmalltalkCodeGenerator value: #defaultPackageName
+	value: [ :source | source includesSubstring: &#x27;asClass&#x27; ]
+	value:
+&#x27;defaultPackageName
+	&quot;Pharo 12 and later have no Package class&gt;&gt;defaultPackageName. The package of loose classes is _UnpackagedPackage.&quot;
+	^ #&#x27;&#x27;_UnpackagedPackage&#x27;&#x27;&#x27;.
+
+&quot;The next entries change a few words of a method; the new source is the old source with those words replaced.&quot;
+{
+	{ &#x27;SmaCCSmalltalkCodeGenerator&#x27;. #splitIfTrueBranchFrom:usingName:into:.
+		{ &#x27;selector: aSelector.&#x27; -&gt; &#x27;selector: (OCSelectorNode value: aSelector).&#x27; } }.
+	{ &#x27;SmaCCSmalltalkCodeGenerator&#x27;. #splitSequenceFrom:usingName:into:.
+		{ &#x27;selector: aSelector)).&#x27; -&gt; &#x27;selector: (OCSelectorNode value: aSelector))).&#x27; } }.
+	{ &#x27;SmaCCSmalltalkCodeGenerator&#x27;. #addImplementationSpecificRewritesTo:.
+		{ &#x27;selector: #ifTrue: arguments:&#x27; -&gt; &#x27;selector: (OCSelectorNode value: #ifTrue:) arguments:&#x27; } }.
+	{ &#x27;SmaCCSmalltalkCodeGenerator&#x27;. #commonIfTrueCodeRewriter.
+		{ &#x27;selector: #ifTrue: arguments:&#x27; -&gt; &#x27;selector: (OCSelectorNode value: #ifTrue:) arguments:&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testCompileIntoNewPackage.
+		{ &#x27;#Test123Parser asClass&#x27; -&gt; &#x27;(self lookupType: #Test123Parser)&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testRemoveVariablesFromNodes.
+		{ &#x27;#FooIfNode asClass&#x27; -&gt; &#x27;(self lookupType: #FooIfNode)&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testExistingVariables. { &#x27;subclass: #&#x27; -&gt; &#x27;smaccSubclass: #&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testGLRHierarchy. { &#x27;subclass: #&#x27; -&gt; &#x27;smaccSubclass: #&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testHierarchy. { &#x27;subclass: #&#x27; -&gt; &#x27;smaccSubclass: #&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testMoveFromGLRHierarchy. { &#x27;subclass: #&#x27; -&gt; &#x27;smaccSubclass: #&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testMoveToGLRHierarchy. { &#x27;subclass: #&#x27; -&gt; &#x27;smaccSubclass: #&#x27; } }.
+	{ &#x27;SmaCCEndToEndTest&#x27;. #testPriority. { &#x27;subclass: #&#x27; -&gt; &#x27;smaccSubclass: #&#x27; } }
+} do: [ :spec | | cls sel pairs source newSource |
+	cls := resolve value: spec first.
+	sel := spec second.
+	pairs := spec third.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, spec first, &#x27;&gt;&gt;&#x27;, sel, &#x27; (absent)&#x27;; lf; flush ]
+		ifTrue: [
+			source := (cls &gt;&gt; sel) sourceCode.
+			(source includesSubstring: pairs first key)
+				ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, spec first, &#x27;&gt;&gt;&#x27;, sel, &#x27; (defect not present)&#x27;; lf; flush ]
+				ifTrue: [
+					newSource := source.
+					pairs do: [ :pair | newSource := newSource copyReplaceAll: pair key with: pair value ].
+					cls compile: newSource classified: (cls &gt;&gt; sel) protocolName.
+					Stdio stdout nextPutAll: &#x27;FIXED &#x27;, spec first, &#x27;&gt;&gt;&#x27;, sel; lf; flush ] ] ].
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

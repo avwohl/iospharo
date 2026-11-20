@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Geosphere (akgrant43/Geosphere, row 67) - Pharo test defects</title><meta name="description" content="Package: Geosphere (akgrant43/Geosphere, row 67): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Geosphere (akgrant43/Geosphere, row 67)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>akgrant43-geosphere.st</dd><dt>Upstream repository</dt><dd>akgrant43/Geosphere</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 11 tests, 6 pass, 5 failures on the two VMs.</li>
+<li>Causes, all in the tests of the package:
+<ul>
+<li>4 tests compare Floats with <code>assert:closeTo:</code>.  The expected values have
+4 or 5 decimal places, and Pharo 14 compares with a precision of
+1.49e-8.  The repair gives each comparison its precision (0.0001 for
+degrees, 0.01 for metres).</li>
+<li>1 test expects the text <code>0.0</code> for the seconds.  The code prints 2
+decimal places (<code>0.00</code>).</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/akgrant43-geosphere.st</code> (5 test methods).</li>
+<li>Result: 11 of 11 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 67&quot;
+Metacello new baseline: &#x27;GeoSphere&#x27;; repository: &#x27;github://akgrant43/GeoSphere:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>67</td><td><code>akgrant43-geosphere</code></td><td>ok</td><td>tests=11 P=11 F=0 E=0 S=0 T=0 X=0</td><td>tests=11 P=11 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): akgrant43-geosphere.st (<a href="../files/packages/fixes/akgrant43-geosphere.st">download</a>)</summary><pre class="code">&quot;akgrant43/GeoSphere: 5 tests fail the same way on Cog and on our VM.  No VM defect.
+
+Group 1 (testDestinationBearingDistance, testDestinationBearingDistance2,
+testHaversineDistanceTo, testDMSRoundTrip): the tests write the expected value
+with 4 or 5 decimals (53.1884, 102.08, -38.28697) and compare with
+&#x27;assert: x closeTo: y&#x27;.  The package was written for a Pharo where closeTo:
+had an absolute margin of 0.0001.  In Pharo 14 TestAsserter&gt;&gt;assert:closeTo:
+uses Float defaultComparisonPrecision, which is 1.49e-8.  The computed value
+53.1884337736 differs from 53.1884 by 3.4e-5, so the test fails.  The package
+code is right.  The repair gives each comparison the margin that the digits of
+the expected value allow: 0.0001 for degrees written with 4 or 5 decimals,
+0.01 for metres written with 2 decimals.
+
+Group 2 (testDmsOnFromLabels): the test expects &#x27;50° 30′ 0.0″&#x27;.  The method
+GSCoordinates class&gt;&gt;dms:labels:to: prints the seconds with
+printShowingDecimalPlaces: 2, which in Pharo 14 gives &#x27;0.00&#x27;
+(Kernel-Tests NumberTest checks that 2 places are always printed).  The test
+text is old.  The repair changes the expected text to &#x27;0.00&#x27;.&quot;
+
+fix value: #GSCoordinatesTest value: #testDestinationBearingDistance
+	value: [ :source | (source includesSubstring: &#x27;precision:&#x27;) not ]
+	value:
+&#x27;testDestinationBearingDistance
+	| c1 c2 |
+
+	c1 := GSParser parseCoordinates: &#x27;&#x27;53 deg 19&#x27;&#x27;&#x27;&#x27; 14&quot; N, 1 deg 43&#x27;&#x27;&#x27;&#x27; 47&quot; W&#x27;&#x27;.
+	c2 := c1 destinationBearing: (GSParser parseDmsAngle: &#x27;&#x27;96 deg 1&#x27;&#x27;&#x27;&#x27; 18&quot;&#x27;&#x27;) distance: 124800.
+	self assert: c2 latitude closeTo: 53.1884 precision: 0.0001.
+	self assert: c2 longitude closeTo: 0.1312 precision: 0.0001.
+	^ c2&#x27;.
+
+fix value: #GSCoordinatesTest value: #testDestinationBearingDistance2
+	value: [ :source | (source includesSubstring: &#x27;precision:&#x27;) not ]
+	value:
+&#x27;testDestinationBearingDistance2
+	| c1 c2 |
+
+	c1 := GSParser parseCoordinates: &#x27;&#x27;53 deg 19&#x27;&#x27;&#x27;&#x27; 14&quot; N, 1 deg 43&#x27;&#x27;&#x27;&#x27; 47&quot; W&#x27;&#x27;.
+	c2 := c1 destinationBearing: (GSParser parseDmsAngle: &#x27;&#x27;196 deg 0&#x27;&#x27;&#x27;&#x27; 0&quot;&#x27;&#x27;) distance: 124800.
+	self assert: c2 latitude closeTo: 52.2418 precision: 0.0001.
+	self assert: c2 longitude closeTo: -2.2344 precision: 0.0001.
+	^ c2&#x27;.
+
+fix value: #GSCoordinatesTest value: #testHaversineDistanceTo
+	value: [ :source | (source includesSubstring: &#x27;precision:&#x27;) not ]
+	value:
+&#x27;testHaversineDistanceTo
+
+	self
+		assert: ((13.80351 @ 50.35158) asGSCoordinates haversineDistanceTo: 
+			(13.8044 @ 50.3523))
+		closeTo: 102.08
+		precision: 0.01.
+
+	self
+		assert: ((144.61437 @ -38.27304) asGSCoordinates haversineDistanceTo: 
+			(144.62024 @ -38.2759))
+		closeTo: 603.75
+		precision: 0.01&#x27;.
+
+fix value: #GSParserTest value: #testDMSRoundTrip
+	value: [ :source | (source includesSubstring: &#x27;precision:&#x27;) not ]
+	value:
+&#x27;testDMSRoundTrip
+	&quot;Check that we can parse the generated string format&quot;
+
+	| latitude longitude coordinates |
+
+	latitude := -38.28697.
+	longitude := 144.61025.
+	coordinates := GSParser parseCoordinates: 
+			(longitude @ latitude) asGSCoordinates asDegreesMinutesSeconds.
+	self
+		assert: coordinates latitude
+		closeTo: latitude
+		precision: 0.0001.
+
+	self
+		assert: coordinates longitude
+		closeTo: longitude
+		precision: 0.0001&#x27;.
+
+fix value: #GSCoordinatesTest value: #testDmsOnFromLabels
+	value: [ :source | source includesSubstring: &#x27;0.0&#x27; , (String with: (Character value: 16r2033)) , &#x27;&#x27;&#x27;&#x27; ]
+	value:
+&#x27;testDmsOnFromLabels
+
+	| dms |
+
+	dms := String streamContents: [ :stream |
+		GSCoordinates dms: 50.5 labels: #(&#x27;&#x27;° &#x27;&#x27; &#x27;&#x27;′ &#x27;&#x27; &#x27;&#x27;″&#x27;&#x27;) to: stream ].
+	self assert: dms equals: &#x27;&#x27;50° 30′ 0.00″&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

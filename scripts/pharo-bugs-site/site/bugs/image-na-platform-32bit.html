@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NA-platform-32bit - Pharo test defects</title><meta name="description" content="NA-platform-32bit: Not applicable">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>NA-platform-32bit</h1><dl class="meta"><dt>State</dt><dd><span class="st st-na">Not applicable</span></dd><dt>Defect in</dt><dd>none: tests for a 32-bit VM</dd><dt>Tests</dt><dd>5</dd><dt>Fix</dt><dd>none</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+</ul>
+<p>All five tests start with a guard that skips unless Smalltalk vm wordSize = 4. They exist only for a 32-bit VM. This machine runs a 64-bit VM, and no 32-bit VM can run on macOS 27 arm64. The guard is correct and the tests cannot check anything here. I made no fix and wrote no fix file.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IntegerTest&gt;&gt;testCreationFromBytes1</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Guard is Smalltalk vm wordSize = 4 ifFalse: [^self skip]. Measured with evalfile.sh on both VMs: wordSize=8, SmallInteger maxVal=1152921504606846975 (2^60-1). The test asserts that SmallInteger maxVal printStringHex has size 8 (a 32-bit value), so it cannot hold on a 64-bit VM. There is no 64-bit sibling of this test in IntegerTest; its only selectors with FromBytes are the three 32-bit ones.</td>
+</tr>
+<tr>
+<td><code>IntegerTest&gt;&gt;testCreationFromBytes2</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same guard (wordSize = 4), same measured value wordSize=8 on both VMs. The test builds the 8-hex-digit string of SmallInteger maxVal + 1 and asserts the result is not a SmallInteger. That is a 32-bit property: on 64-bit, 2^60 is a LargePositiveInteger with a 16-digit hex string.</td>
+</tr>
+<tr>
+<td><code>IntegerTest&gt;&gt;testCreationFromBytes3</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same guard (wordSize = 4), same measured value wordSize=8 on both VMs. The test asserts an 8-hex-digit string for SmallInteger maxVal - 1, which only holds on 32-bit.</td>
+</tr>
+<tr>
+<td><code>FFIExternalStructurePlatformTest&gt;&gt;testStructureHasCorrectOffsets32bits</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Guard is self is32bit ifFalse: [^self skip], and is32bit is Smalltalk vm is32bit, i.e. wordSize = 4. Measured on both VMs: is32bit=false, is64bit=true. This test is one of a pair. Its 64-bit sibling testStructureHasCorrectOffsets64bits runs the same check with expected OFFSET_POINTER 9 and PASSES on both VMs.</td>
+</tr>
+<tr>
+<td><code>FFIExternalStructurePlatformTest&gt;&gt;testStructureHasCorrectSize32bits</code></td>
+<td>none-not-applicable</td>
+<td>not applicable</td>
+<td>Same is32bit guard, is32bit=false on both VMs. Its 64-bit sibling testStructureHasCorrectSize64bits expects size 16 and PASSES on both VMs.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: No fix was made, so there is nothing to regress. I ran FFIExternalStructurePlatformTest on our VM and on Cog: both give 2 PASS (the 64-bit siblings) and 2 SKIP (the 32-bit tests). I did not run IntegerTest.</p>
+<p>Open points: None. A 32-bit VM cannot run on macOS 27 arm64, so these five tests will always skip here.</p>
+<p>Upstream note: No upstream change proposed. One observation, not tested and not part of this cluster: Integer class&gt;&gt;byte1:byte2:byte3:byte4: hard-codes the 32-bit SmallInteger range (byte4 &lt; 16r40). On a 64-bit image, a byte4 of 16r40 or more gives a 4-byte LargePositiveInteger below 2^60, which is not normalised to a SmallInteger. I did not run any code to confirm this.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>FFIExternalStructurePlatformTest&gt;&gt;testStructureHasCorrectOffsets32bits</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>FFIExternalStructurePlatformTest&gt;&gt;testStructureHasCorrectSize32bits</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>IntegerTest&gt;&gt;testCreationFromBytes1</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>IntegerTest&gt;&gt;testCreationFromBytes2</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr><tr><td><code>IntegerTest&gt;&gt;testCreationFromBytes3</code></td><td>SKIP</td><td>not applicable</td><td>SKIP</td><td>SKIP</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image on macOS arm64: they skip (the fixtures and the platform tests skip by design).</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((FFIExternalStructurePlatformTest selector: #testStructureHasCorrectOffsets32bits) run) printString.
+((FFIExternalStructurePlatformTest selector: #testStructureHasCorrectSize32bits) run) printString.
+((IntegerTest selector: #testCreationFromBytes1) run) printString.
+((IntegerTest selector: #testCreationFromBytes2) run) printString.
+((IntegerTest selector: #testCreationFromBytes3) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>FFIExternalStructurePlatformTest&gt;&gt;testStructureHasCorrectOffsets32bits before the fix (Pharo 14 build 791)</summary><pre class="code">testStructureHasCorrectOffsets32bits
+	self is32bit ifFalse: [ ^ self skip ].
+
+	FFITestStructureByPlatform compiledSpec. &quot;Ensure fields are initialized&quot;
+	self assert: (FFITestStructureByPlatform readClassVariableNamed: #OFFSET_LONG) equals: 1.
+	self assert: (FFITestStructureByPlatform readClassVariableNamed: #OFFSET_POINTER) equals: 5</pre></details><details><summary>FFIExternalStructurePlatformTest&gt;&gt;testStructureHasCorrectSize32bits before the fix (Pharo 14 build 791)</summary><pre class="code">testStructureHasCorrectSize32bits
+	self is32bit ifFalse: [ ^ self skip ].
+
+	self
+		assert: (FFIExternalType sizeOf: FFITestStructureByPlatform)
+		equals: 8</pre></details><details><summary>IntegerTest&gt;&gt;testCreationFromBytes1 before the fix (Pharo 14 build 791)</summary><pre class="code">testCreationFromBytes1
+	&quot;It is illegal for a LargeInteger to be less than SmallInteger maxVal. Here we test that Integer&gt;&gt;byte!byte2:byte3:byte4:
+	 reconstructs SmallInteger maxVal as an instance of SmallInteger.&quot;
+
+	| maxSmallInt hexString byte1 byte2 byte3 byte4 builtInteger |
+	Smalltalk vm wordSize = 4 ifFalse: [ ^ self skip ].
+	maxSmallInt := SmallInteger maxVal.
+	hexString := maxSmallInt printStringHex.
+	self assert: hexString size equals: 8.
+	byte4 := Number readFrom: (hexString copyFrom: 1 to: 2) base: 16.
+	byte3 := Number readFrom: (hexString copyFrom: 3 to: 4) base: 16.
+	byte2 := Number readFrom: (hexString copyFrom: 5 to: 6) base: 16.
+	byte1 := Number readFrom: (hexString copyFrom: 7 to: 8) base: 16.
+	builtInteger := Integer byte1: byte1 byte2: byte2 byte3: byte3 byte4: byte4.
+	self assert: builtInteger equals: maxSmallInt.
+	self assert: builtInteger class equals: SmallInteger</pre></details><details><summary>IntegerTest&gt;&gt;testCreationFromBytes2 before the fix (Pharo 14 build 791)</summary><pre class="code">testCreationFromBytes2
+	&quot;It is illegal for a LargeInteger to be less than SmallInteger maxVal. Here we test that Integer&gt;&gt;byte!byte2:byte3:byte4:
+	 reconstructs (SmallInteger maxVal + 1) as an instance of LargePositiveInteger.&quot;
+
+	| maxSmallInt hexString byte1 byte2 byte3 byte4 builtInteger |
+	Smalltalk vm wordSize = 4 ifFalse: [ ^ self skip ].
+	maxSmallInt := SmallInteger maxVal.
+	hexString := (maxSmallInt + 1) printStringHex.
+	self assert: hexString size equals: 8.
+	byte4 := Number readFrom: (hexString copyFrom: 1 to: 2) base: 16.
+	byte3 := Number readFrom: (hexString copyFrom: 3 to: 4) base: 16.
+	byte2 := Number readFrom: (hexString copyFrom: 5 to: 6) base: 16.
+	byte1 := Number readFrom: (hexString copyFrom: 7 to: 8) base: 16.
+	builtInteger := Integer
+		byte1: byte1
+		byte2: byte2
+		byte3: byte3
+		byte4: byte4.
+	self assert: builtInteger equals: maxSmallInt + 1.
+	self deny: builtInteger class equals: SmallInteger</pre></details><details><summary>IntegerTest&gt;&gt;testCreationFromBytes3 before the fix (Pharo 14 build 791)</summary><pre class="code">testCreationFromBytes3
+	&quot;It is illegal for a LargeInteger to be less than SmallInteger maxVal. Here we test that Integer&gt;&gt;byte!byte2:byte3:byte4:
+	 reconstructs (SmallInteger maxVal - 1) as an instance of SmallInteger.&quot;
+
+	| maxSmallInt hexString byte1 byte2 byte3 byte4 builtInteger |
+	Smalltalk vm wordSize = 4 ifFalse: [ ^ self skip ].
+	maxSmallInt := SmallInteger maxVal.
+	hexString := (maxSmallInt - 1) printStringHex.
+	self assert: hexString size equals: 8.
+	byte4 := Number readFrom: (hexString copyFrom: 1 to: 2) base: 16.
+	byte3 := Number readFrom: (hexString copyFrom: 3 to: 4) base: 16.
+	byte2 := Number readFrom: (hexString copyFrom: 5 to: 6) base: 16.
+	byte1 := Number readFrom: (hexString copyFrom: 7 to: 8) base: 16.
+	builtInteger := Integer byte1: byte1 byte2: byte2 byte3: byte3 byte4: byte4.
+	self assert: builtInteger equals: (maxSmallInt - 1).
+	self assert: builtInteger class equals: SmallInteger</pre></details><h2>Fix</h2><p>No fix: the tests cannot apply on this machine (proof in the record above).</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

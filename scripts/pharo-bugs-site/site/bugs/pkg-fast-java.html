@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: FAST-Java (moosetechnology/FAST-JAVA, row 76) - Pharo test defects</title><meta name="description" content="Package: FAST-Java (moosetechnology/FAST-JAVA, row 76): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: FAST-Java (moosetechnology/FAST-JAVA, row 76)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>moosetechnology-fast-java.st</dd><dt>Upstream repository</dt><dd>moosetechnology/FAST-JAVA</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 914 tests, 902 pass, 1 failure, 8 errors, 3 skips on the two
+VMs.</li>
+<li>Causes:
+<ul>
+<li>9 tests: the dependency FAST (branch <code>v3</code>) sends <code>#children</code>,
+<code>#childrenSelectors</code> and <code>#parentSelectors</code>.  Famix renamed these methods
+(<code>#containedEntities</code>, <code>#containedEntitySelectors</code>,
+<code>#containerSelectors</code>).  The old names are only in the package
+<code>Famix-Deprecated</code>, and the baseline of FAST-Java does not load that
+package.</li>
+<li>2 skips: <code>JavaSmaCCParamsMethodTest&gt;&gt;testBlockScope</code> and <code>testScope</code>
+start with <code>self skip</code>, and their code was a comment that calls
+<code>#fastScope</code>, a method that does not exist.  The scope code is now in
+<code>FASTJavaLocalResolverVisitor</code>.</li>
+<li>1 skip: <code>JavaSmaCCReturnAttributeAccessTest&gt;&gt;testReturnExpressionType</code>
+(skipped in 2023 &quot;to let CI pass&quot;) expects <code>FASTJavaQualifiedName</code> for
+<code>a.b</code> in a method.  The importer makes a <code>FASTJavaClassProperty</code> there,
+and two other tests of the package assert that.</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/moosetechnology-fast-java.st</code>.  6 methods of FAST use
+the new names.  The 3 tests have a body for the code as it is.</li>
+<li>Result: 914 of 914 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 76&quot;
+Metacello new baseline: &#x27;FASTJava&#x27;; repository: &#x27;github://moosetechnology/FAST-JAVA:v4/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;all&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>76</td><td><code>moosetechnology-fast-java</code></td><td>ok</td><td>tests=914 P=914 F=0 E=0 S=0 T=0 X=0</td><td>tests=914 P=914 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): moosetechnology-fast-java.st (<a href="../files/packages/fixes/moosetechnology-fast-java.st">download</a>)</summary><pre class="code">&quot;moosetechnology/FAST-JAVA.
+
+Group 1 (9 tests: 8 errors and 1 failure; 6 methods of FAST).  FAST (v3) sends #children to its
+entities in FASTCoreVisitor&gt;&gt;visitFASTTEntity:.  Famix removed #children from
+the entities in October 2025 (replacement: #containedEntities), and only the
+package Famix-Deprecated still has a #children that forwards to
+#containedEntities.  The baseline of FAST-Java loads the Famix groups Core and
+Basic, and these groups do not have Famix-Deprecated.  Each visit of an entity
+that FASTJavaVisitor does not visit with a method of its own (FASTJavaEmptyDim
+Expression, FASTJavaVarDeclStatement, FASTJavaExpressionStatement,
+FASTJavaAnnotation, and others) ends in &#x27;FASTxxx does not understand #children&#x27;.
+The repair sends #containedEntities, the name that the current Famix has, in
+the 5 FAST methods that still send the old names (#children, #childrenSelectors,
+#parentSelectors).  The first method is the one that the tests need; the other
+four have the same defect and no test in this package runs them.
+
+Group 2 (JavaSmaCCParamsMethodTest&gt;&gt;testBlockScope and &gt;&gt;testScope).  The two
+tests call &#x27;self skip&#x27; at their start, and the code that was to follow is a
+comment that uses #fastScope, a method that no longer exists (the scope work
+moved to FASTJavaLocalResolverVisitor).  The repair makes the two tests check
+the same facts with the resolver: the parameters a, b and c of the method are
+the declarations of their uses in the body, and the body block declares no
+variable of its own (x is bound to a non-local declaration).
+
+Group 3 (JavaSmaCCReturnAttributeAccessTest&gt;&gt;testReturnExpressionType).  The test
+calls &#x27;self skip&#x27; since 2023 and expects FASTJavaQualifiedName for the expression
+&#x27;a.b&#x27; of &#x27;return a.b&#x27;.  The importer (visitQualifiedName:) makes a
+FASTJavaClassProperty (type a, fieldName b) for a qualified name inside a method
+and a FASTJavaQualifiedName only outside a type declaration.  Tests of other
+classes assert the same (JavaSmaCCForEachTest&gt;&gt;testForEachListType,
+JavaSmaCCCClassPropertyTest).  The expectation of the test was wrong.  The
+repair expects FASTJavaClassProperty and the field name &#x27;b&#x27;.&quot;
+
+fix value: #FASTCoreVisitor value: #visitFASTTEntity:
+	value: [ :source | source includesSubstring: &#x27;children&#x27; ]
+	value:
+&#x27;visitFASTTEntity: aFASTTEntity
+	^ aFASTTEntity containedEntities do: [ :child | child accept: self ]&#x27;.
+
+fix value: #FASTTEntity value: #orderedChildren
+	value: [ :source | source includesSubstring: &#x27;self children&#x27; ]
+	value:
+&#x27;orderedChildren
+	^ self containedEntities asOrderedCollection sort: #startPos ascending&#x27;.
+
+fix value: #FASTTEntity value: #removeAllPotentialChildrenNode
+	value: [ :source | source includesSubstring: &#x27;childrenSelectors&#x27; ]
+	value:
+&#x27;removeAllPotentialChildrenNode
+	^ self containedEntitySelectors do: [ :selector | self perform: selector , &#x27;&#x27;:&#x27;&#x27; withArguments: { nil } ]&#x27;.
+
+fix value: #FASTTEntity value: #removeAllPotentialParentNode
+	value: [ :source | source includesSubstring: &#x27;parentSelectors&#x27; ]
+	value:
+&#x27;removeAllPotentialParentNode
+	^ self containerSelectors do: [ :selector | self perform: selector , &#x27;&#x27;:&#x27;&#x27; withArguments: { nil } ]&#x27;.
+
+fix value: #FASTTEntity value: #currentParentSelector
+	value: [ :source | source includesSubstring: &#x27;parentSelectors&#x27; ]
+	value:
+&#x27;currentParentSelector
+	self containerSelectors do: [ :accessor | (self perform: accessor) ifNotNil: [ :r | ^ accessor ] ].
+	^ nil&#x27;.
+
+fix value: #FASTTWithComments value: #numberOfComments
+	value: [ :source | source includesSubstring: &#x27;self children&#x27; ]
+	value:
+&#x27;numberOfComments
+	&lt;FMProperty: #numberOfComments type: #Number&gt;
+	&lt;derived&gt;
+	&lt;FMComment: &#x27;&#x27;The number of comments in a class&#x27;&#x27;&gt;
+	^ self
+		lookUpPropertyNamed: #numberOfComments
+		computedAs: [ self comments size
+				+
+					(self containedEntities asArray
+						inject: 0
+						into: [ :sum :el | el numberOfComments + sum ]) ]&#x27;.
+
+fix value: #JavaSmaCCParamsMethodTest value: #testBlockScope
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testBlockScope
+	&quot;the body block declares no variable of its own: the use of x is bound to a non-local declaration&quot;
+
+	| use |
+	FASTJavaLocalResolverVisitor new on: fastMethod.
+	use := (fastModel allWithType: FASTJavaVariableExpression) asOrderedCollection
+		detect: [ :each | each name = &#x27;&#x27;x&#x27;&#x27; ].
+	self assert: use localDeclaration isNonLocalDeclaration&#x27;.
+
+fix value: #JavaSmaCCParamsMethodTest value: #testScope
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testScope
+	&quot;the parameters a, b and c are declared in the scope of the method: each use in the body is bound to its parameter&quot;
+
+	| parameterVariables uses |
+	FASTJavaLocalResolverVisitor new on: fastMethod.
+	parameterVariables := fastMethod parameters collect: #variable.
+	uses := (fastModel allWithType: FASTJavaVariableExpression) asOrderedCollection
+		reject: [ :each | parameterVariables includes: each ].
+	#(&#x27;&#x27;a&#x27;&#x27; &#x27;&#x27;b&#x27;&#x27; &#x27;&#x27;c&#x27;&#x27;) do: [ :name |
+		| use |
+		use := uses detect: [ :each | each name = name ].
+		self deny: use localDeclaration isNonLocalDeclaration.
+		self assert: use localDeclaration variable name equals: name.
+		self
+			assert: use localDeclaration
+			equals: (fastMethod parameters detect: [ :each | each variable name = name ]) ]&#x27;.
+
+fix value: #JavaSmaCCReturnAttributeAccessTest value: #testReturnExpressionType
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testReturnExpressionType
+	| expression |
+	expression := (fastModel allWithType: FASTJavaReturnStatement) anyOne expression.
+	self assert: expression class equals: FASTJavaClassProperty.
+	self assert: expression fieldName equals: &#x27;&#x27;b&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: PharoCodex (StefanKrecher/PharoCodex, row 132) - Pharo test defects</title><meta name="description" content="Package: PharoCodex (StefanKrecher/PharoCodex, row 132): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: PharoCodex (StefanKrecher/PharoCodex, row 132)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>StefanKrecher/PharoCodex</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 16 tests, 11 pass, 5 errors on the two VMs
+(<code>UndeclaredVariableRead</code> of <code>NeoJSONWriter</code> and <code>NeoJSONReader</code>; one
+&quot;only integers should be used as indices&quot; that comes from the same cause).</li>
+<li>Cause: the baseline of the package does not name NeoJSON.</li>
+<li>Repair: the manifest row loads NeoJSON first.  For the owner of the
+package: the baseline must name NeoJSON.</li>
+<li>The tests use no network service and no key: the transports of the tests
+are stand-ins in memory.</li>
+<li>Result: 16 of 16 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 132&quot;
+Metacello new baseline: &#x27;NeoJSON&#x27;; repository: &#x27;github://svenvc/NeoJSON/repository&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;OpenAICodex&#x27;; repository: &#x27;github://StefanKrecher/PharoCodex:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>132</td><td><code>stefankrecher-pharocodex</code></td><td>ok</td><td>tests=16 P=16 F=0 E=0 S=0 T=0 X=0</td><td>tests=16 P=16 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><p>No fixes file; the record above says what changed.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

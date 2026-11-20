@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Taskit-andthen-order - Pharo test defects</title><meta name="description" content="Taskit-andthen-order: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Taskit-andthen-order</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 35-taskit-andthen-order.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/35-taskit-andthen-order.st</code></li>
+<li>Methods: <code>TKTFuture&gt;&gt;andThen:</code>, <code>deploySuccess:</code>, <code>deployFailure:</code>,
+<code>onSuccessDo:</code>, <code>onFailureDo:</code>, <code>initialize</code>, new <code>criticalLock</code>; two new
+instance variables of <code>TKTFuture</code>; a new class
+<code>TKTFutureStateWithRegistrationHook</code> in <code>TaskIt-Tests</code>; three new tests of
+<code>TKTFutureTest</code></li>
+</ul>
+<p>Two defects of <code>TKTFuture</code>.</p>
+<ol>
+<li>The class comment says that the blocks of <code>andThen:</code> run one after the
+other, and shows a cascade of <code>andThen:</code> sends to one future.
+<code>andThen:</code> registers each block with <code>onSuccessDo:</code>, and
+<code>deploySuccess:</code> schedules one task for each callback on the common
+runner, a pool of workers.  The blocks run in parallel.
+<code>testFutureAndThenExecutesInOrder</code> failed one time in about eleven
+sweeps (&quot;Got #(2 3 1) instead of #(1 2 3)&quot;).</li>
+<li><code>onSuccessDo:</code> tests the state of the future and then registers the
+callback.  <code>deploySuccess:</code> installs the result and then walks the
+callbacks.  The two are not atomic.  A deployment by another process
+between the test and the registration leaves the callback with no task.</li>
+</ol>
+<p>The repair of 1 chains the blocks of one future, and so it registers
+callbacks from worker processes.  It needs the repair of 2: one mutex for
+the registration and for the installation of the result.  The callback
+tasks are scheduled outside of the mutex.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Before, stock Cog and our VM</th>
+<th>After, stock Cog, patched Cog and our VM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>testFutureAndThenExecutesInOrderWithSlowFirstCallback</code> (new: the first block waits 100 ms)</td>
+<td>fails 5 of 5 runs</td>
+<td>passes 20 of 20 runs</td>
+</tr>
+<tr>
+<td><code>testCallbackRegisteredWhileAnotherProcessDeploysIsScheduled</code> (new: a state object deploys from another process at the registration)</td>
+<td>fails 5 of 5 runs</td>
+<td>passes 20 of 20 runs</td>
+</tr>
+<tr>
+<td><code>testFutureAndThenRunsLaterBlocksWhenABlockEndsItsProcess</code> (new: the first block ends its process)</td>
+<td>passes (no chain before the repair)</td>
+<td>passes 20 of 20 runs; the chain with no <code>ensure:</code> gives an error</td>
+</tr>
+<tr>
+<td><code>testFutureAndThenExecutesInOrder</code> (the test of the image)</td>
+<td>passes 1000 of 1000 runs in a loop; failed one time in a sweep</td>
+<td>passes; 3000 cascades give the right order</td>
+</tr>
+</tbody>
+</table>
+<p>Full sweeps with entries 1 to 35: our VM (<code>sweep14-new13</code>) and the patched
+Cog (<code>sweepcogp14-new10</code>) each have 39465 tests, 39377 pass, 0 failures and
+0 errors.</p>
+<p>For the owner of TaskIt: <code>valueSemaphore</code> gives one signal, so of two
+processes that wait for one future only one is woken.  The entry does not
+change that.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>TKTFutureTest&gt;&gt;testFutureAndThenExecutesInOrder</code></td><td></td><td>see text</td><td>PASS</td><td>PASS</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  </p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((TKTFutureTest selector: #testFutureAndThenExecutesInOrder) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>TKTFutureTest&gt;&gt;testFutureAndThenExecutesInOrder before the fix (Pharo 14 build 791)</summary><pre class="code">testFutureAndThenExecutesInOrder
+
+	| future collection |
+	future := TKTFuture new.
+	collection := OrderedCollection new.
+
+	future
+		andThen: [ :v | collection add: v + 1 ];
+		andThen: [ :v | collection add: v + 2 ];
+		andThen: [ :v | collection add: v + 3 ].
+
+	future deploySuccess: 0.
+	50 milliSecond wait.
+
+	self assert: collection asArray equals: #( 1 2 3)</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>35-taskit-andthen-order.st (<a href="../files/image-fixes/35-taskit-andthen-order.st">download</a>)</summary><pre class="code">&quot;TaskIt: the andThen: callbacks of one future run in any order, and a callback can be lost (2026-11-17).
+
+Part 1: the order of andThen:.  The class comment of TKTFuture says: &#x27;All
+futures chained using the andThen: combinator are guaranteed to be executed
+sequentially (in contrast to normal callbacks)&#x27;, and the example of the
+comment is a cascade (andThen: ...; andThen: ...).
+TKTFutureTest&gt;&gt;testFutureAndThenExecutesInOrder does the same: a cascade of
+three andThen: sends to ONE future, then deploySuccess:, and it asserts
+#(1 2 3).  TKTFuture&gt;&gt;andThen: registers its block as a normal callback
+(onSuccessDo:) of the receiver, so in a cascade all three blocks are callbacks
+of the same future.  deploySuccess: schedules one task for each callback on
+the runner of the future, and the common runner is a pool with several
+workers: the three blocks run in parallel and the order depends on the
+workers.  The test failed once in a full sweep (patched Cog, 2026-11-17: &#x27;Got
+#(2 3 1) instead of #(1 2 3)&#x27;) and passed in about ten sweeps before.  A loop
+that runs the test body 1000 times does not show the race on either VM
+(1000 of 1000 give #(1 2 3), stock Cog and our VM), so the test below forces
+the order.
+
+Repair (T2): a future remembers the future that its last andThen: answered
+(instance variable andThenTail).  The next andThen: of the same future runs
+its block only when that earlier future has its value, that is, after the
+block of the earlier andThen: ended.  A chain (a andThen: ...) andThen: ...
+is unchanged: each future there has one andThen: only.  The future of a block
+gets its value in an ensure:, so a block that ends by something that is not
+an Error (a Halt, the end of its process) does not stop the later blocks (the
+pristine code runs the later blocks in that case).
+
+Part 2: callback registration and deployment are not atomic.  onSuccessDo:
+reads &#x27;result&#x27; (TKTFutureNotFinished) and then the state adds the block to
+resultCallbacks; deploySuccess: installs the result and then walks
+resultCallbacks.  A deploy by another process between the read and the add
+leaves the callback unscheduled for ever.  The pristine cascade registers all
+callbacks in the process of the caller, before the deploy, so the window is
+not used there; the chaining of Part 1 registers &#x27;previous onSuccessDo:&#x27; in a
+worker while another worker can deploy &#x27;previous&#x27;, so Part 1 needs Part 2.
+Repair: instance variable lock (a Mutex; made in initialize, and on demand by
+criticalLock for a future that is older than the entry).  deploySuccess: and
+deployFailure: install the result and copy the callbacks inside the critical
+section, and schedule the tasks and signal valueSemaphore outside of it (a
+TKTLocalProcessTaskRunner runs a task in the calling process).  onSuccessDo:
+and onFailureDo: read the state inside the section; a not-finished state
+registers inside the section, a finished state is asked after the section
+(it does not change after that).  Other users of result, resultCallbacks and
+exceptionCallbacks: installResult: is called only by the two deploy methods
+(now inside the section, and its error for a second deploy leaves the section
+through the critical: unwinding); isFinished, isSuccess, isFailure,
+printOn:, synchronizeTimeout: and waitForCompletion: do one read of result and
+no write, and a finished state is final; addSuccessCallback: and
+addFailureCallback: are called by the not-finished state only, from
+onSuccessDo:/onFailureDo: (inside the section); the combinators use only
+onSuccessDo:, onFailureDo:, deploySuccess: and deployFailure:.  Not changed:
+valueSemaphore gives one signal for one waiter, so two processes in
+waitForCompletion: on one future are not both woken (a defect that is not in
+the scope of this entry).
+
+Tests (3 new methods of TKTFutureTest), measured with this entry
+(scripts/vmrun.sh prep, then test --repeat; &#x27;before&#x27; = an image with the
+three tests and none of the repairs, 5 runs; &#x27;after&#x27; = 20 runs):
+  testFutureAndThenExecutesInOrderWithSlowFirstCallback (the first block waits
+      100 ms): before FAIL 5 of 5 on stock Cog and on our VM (&#x27;Got #(2 3)
+      instead of #(1 2 3)&#x27;; a loop that waits for all three adds saw #(2 3 1)
+      in 20 of 20 runs on each VM); after PASS 20 of 20 on stock Cog, patched
+      Cog and our VM.
+  testCallbackRegisteredWhileAnotherProcessDeploysIsScheduled (the state of
+      the future is a TKTFutureStateWithRegistrationHook, a new subclass of
+      TKTFutureNotFinished in TaskIt-Tests, that forks a deploy and waits
+      200 ms for the end of the fork before it registers; the first form of
+      the test made an anonymous subclass in the test, and the numbers are of
+      that form):
+      before FAIL 5 of 5 on each VM (&#x27;Denial failed&#x27;: the callback is never
+      scheduled, so it does not run within 2 s); after PASS 20 of 20 on each VM.
+  testFutureAndThenRunsLaterBlocksWhenABlockEndsItsProcess (the first block
+      terminates its process; the runner of the future makes a process for
+      each task): PASS 5 of 5 before (the pristine code does not chain) and
+      PASS 20 of 20 after on each VM.  With the chaining and no ensure: the
+      test gives an error (TKTTimeoutException) on both VMs.
+  Stress of the entry: 3000 cascades of three short blocks, waiting for
+  the last future: 3000 of 3000 give #(1 2 3) and 0 futures stay unfinished,
+  on stock Cog and on our VM.
+  The final form of the entry (with the class
+  TKTFutureStateWithRegistrationHook): TKTFutureTest as one suite, 3 runs
+  on each VM: 52 of 52 pass on stock Cog and on our VM.  Full sweeps with
+  entries 1 to 35 (2026-11-17): our VM (sweep14-new13) and the patched Cog
+  (sweepcogp14-new10) each have 39465 tests, 39377 pass, 0 failures, 0
+  errors, and the same 88 tests that do not pass as the sweeps before.
+
+Why the state class is a class of TaskIt-Tests and not an anonymous class
+made in the test: the first form compiled the two methods in the test.  The
+compile makes a system announcement.  In a run of the whole class as one
+suite from an eval, the block of EpMonitor&gt;&gt;subscribeToSystemAnnouncer then
+sent shouldLogWithEpicea to nil (the test environment answered no test case),
+and the test had an error on stock Cog and on our VM.  The runners of the
+sweeps set the test case of the environment and did not show it.  The cause
+is not found.  The tests of entry 33, which compile into an anonymous class,
+pass in the same kind of suite run.&quot;
+
+
+#( &#x27;andThenTail&#x27; &#x27;lock&#x27; ) do: [ :each |
+	(TKTFuture hasInstVarNamed: each) ifFalse: [ TKTFuture addInstVarNamed: each ] ].
+
+(Smalltalk globals includesKey: #TKTFutureStateWithRegistrationHook) ifFalse: [
+	(TKTFutureNotFinished &lt;&lt; #TKTFutureStateWithRegistrationHook
+		slots: { #hook };
+		tag: &#x27;Futures&#x27;;
+		package: &#x27;TaskIt-Tests&#x27;;
+		yourself) install.
+	(Smalltalk globals at: #TKTFutureStateWithRegistrationHook) comment:
+		&#x27;A not-finished state of a future for a test: before it registers a success callback it runs a block with the future.  The test uses the block to deploy the result from another process at exactly that point.&#x27; ].
+
+add value: #TKTFutureStateWithRegistrationHook value: #hook: value: &#x27;accessing&#x27;
+	value:
+&#x27;hook: aBlock
+	hook := aBlock&#x27;.
+
+add value: #TKTFutureStateWithRegistrationHook value: #onSuccessDo:inFuture: value: &#x27;callbacks&#x27;
+	value:
+&#x27;onSuccessDo: aBlock inFuture: aFuture
+	hook value: aFuture.
+	^ super onSuccessDo: aBlock inFuture: aFuture&#x27;.
+
+add value: #TKTFuture value: #criticalLock value: &#x27;private&#x27;
+	value:
+&#x27;criticalLock
+	&quot;The mutex that makes the registration of a callback and the deployment of the result atomic.  A future that was made before this method existed has no mutex: the first reader makes the mutex, at the highest priority, so two processes cannot make two.&quot;
+
+	lock ifNil: [ [ lock ifNil: [ lock := Mutex new ] ] valueUnpreemptively ].
+	^ lock&#x27;.
+
+fix value: #TKTFuture value: #initialize value: [ :s | (s includesSubstring: &#x27;Mutex&#x27;) not ]
+	value:
+&#x27;initialize
+
+	super initialize.
+	result := TKTFutureNotFinished new.
+	runner := TKTConfiguration runner.
+
+	valueSemaphore := Semaphore new.
+	lock := Mutex new.
+
+	exceptionCallbacks := OrderedCollection new.
+	resultCallbacks := OrderedCollection new&#x27;.
+
+fix value: #TKTFuture value: #deploySuccess: value: [ :s | (s includesSubstring: &#x27;criticalLock&#x27;) not ]
+	value:
+&#x27;deploySuccess: aValue
+	&quot;The result and the list of callbacks are taken in one step.  The callback tasks are scheduled outside of the critical section: a runner can run a task in the calling process.&quot;
+
+	| callbacks |
+	self criticalLock critical: [
+		self installResult: (TKTFutureSuccess new value: aValue).
+		callbacks := resultCallbacks copy ].
+	callbacks
+		do: [ :each | self scheduleCallbackTask: [ each value: aValue ] ].
+	valueSemaphore signal&#x27;.
+
+fix value: #TKTFuture value: #deployFailure: value: [ :s | (s includesSubstring: &#x27;criticalLock&#x27;) not ]
+	value:
+&#x27;deployFailure: aValue
+	&quot;See deploySuccess:.&quot;
+
+	| callbacks |
+	self criticalLock critical: [
+		self installResult: (TKTFutureFailure new value: aValue).
+		callbacks := exceptionCallbacks copy ].
+	callbacks
+		do: [ :each | self scheduleCallbackTask: [ each value: aValue ] ].
+	valueSemaphore signal&#x27;.
+
+fix value: #TKTFuture value: #onSuccessDo: value: [ :s | (s includesSubstring: &#x27;criticalLock&#x27;) not ]
+	value:
+&#x27;onSuccessDo: aCallback
+	&quot;When the result is not finished, the callback is registered in the critical section of the deployment, so the deployment cannot walk the callbacks between the test and the registration.  When the result is finished, the finished state schedules the callback (the state does not change after that).&quot;
+
+	| state |
+	self criticalLock critical: [
+		state := result.
+		state isFinished ifFalse: [
+			state onSuccessDo: aCallback inFuture: self.
+			^ self ] ].
+	state onSuccessDo: aCallback inFuture: self&#x27;.
+
+fix value: #TKTFuture value: #onFailureDo: value: [ :s | (s includesSubstring: &#x27;criticalLock&#x27;) not ]
+	value:
+&#x27;onFailureDo: aBlockClosure
+	&quot;See onSuccessDo:.&quot;
+
+	| state |
+	self criticalLock critical: [
+		state := result.
+		state isFinished ifFalse: [
+			state onFailureDo: aBlockClosure inFuture: self.
+			^ self ] ].
+	state onFailureDo: aBlockClosure inFuture: self&#x27;.
+
+fix value: #TKTFuture value: #andThen: value: [ :s | (s includesSubstring: &#x27;andThenTail&#x27;) not ]
+	value:
+&#x27;andThen: aBlockClosure
+	&quot;The blocks of several andThen: sends to one future run one after the other, in the order of the sends.  The tail is the future that the last andThen: of the receiver answered: it has its value when the block of that andThen: ended.  The future of a block gets its value in an ensure:, so a block that ends by something that is not an Error (a Halt, the end of its process) does not stop the later blocks.&quot;
+
+	| future previous |
+	future := TKTFuture new.
+	previous := andThenTail.
+	andThenTail := future.
+	self onSuccessDo: [ :got | | run |
+		run := [
+			[ [ aBlockClosure value: got ]
+				on: Error do: [ :e | &quot;Nothing?&quot; ] ]
+				ensure: [ future isFinished ifFalse: [ future deploySuccess: got ] ] ].
+		previous
+			ifNil: [ run value ]
+			ifNotNil: [ previous onSuccessDo: [ :ignored | run value ] ] ].
+	self onFailureDo: [ :error | future deployFailure: error freeze ].
+	^ future&#x27;.
+
+add value: #TKTFutureTest value: #testFutureAndThenExecutesInOrderWithSlowFirstCallback value: &#x27;tests - combinators&#x27;
+	value:
+&#x27;testFutureAndThenExecutesInOrderWithSlowFirstCallback
+
+	| future collection last |
+	future := TKTFuture new.
+	collection := OrderedCollection new.
+
+	last := future
+		andThen: [ :v | 100 milliSecond wait. collection add: v + 1 ];
+		andThen: [ :v | collection add: v + 2 ];
+		andThen: [ :v | collection add: v + 3 ].
+
+	future deploySuccess: 0.
+	last waitForCompletion: 5 seconds.
+
+	self assert: collection asArray equals: #( 1 2 3 )&#x27;.
+
+add value: #TKTFutureTest value: #testFutureAndThenRunsLaterBlocksWhenABlockEndsItsProcess value: &#x27;tests - combinators&#x27;
+	value:
+&#x27;testFutureAndThenRunsLaterBlocksWhenABlockEndsItsProcess
+	&quot;The first block ends the process that runs the block (not an Error: the handler of andThen: does not catch the end).  The runner of the future makes a new process for each task, so no worker of the common pool ends.&quot;
+
+	| future collection last |
+	future := TKTFuture new.
+	future runner: TKTNewProcessTaskRunner new.
+	collection := OrderedCollection new.
+
+	last := future
+		andThen: [ :v | Processor activeProcess terminate. collection add: v + 1 ];
+		andThen: [ :v | collection add: v + 2 ];
+		andThen: [ :v | collection add: v + 3 ].
+
+	future deploySuccess: 0.
+	last waitForCompletion: 5 seconds.
+
+	self assert: collection asArray equals: #( 2 3 )&#x27;.
+
+add value: #TKTFutureTest value: #testCallbackRegisteredWhileAnotherProcessDeploysIsScheduled value: &#x27;tests - callbacks&#x27;
+	value:
+&#x27;testCallbackRegisteredWhileAnotherProcessDeploysIsScheduled
+	&quot;Forces the interleaving: the state of the future is a not-finished state that, when it gets the callback, starts a process that deploys the result, waits 200 ms for the end of that process, and then registers the callback.  Without a critical section the deployment ends at once and walks the callbacks before the registration: the callback is never scheduled.  With the critical section the deployment waits for the registration.&quot;
+
+	| future forkDone ran ranSignal |
+	forkDone := Semaphore new.
+	ranSignal := Semaphore new.
+	future := TKTFuture new.
+	future instVarNamed: &#x27;&#x27;result&#x27;&#x27; put: (TKTFutureStateWithRegistrationHook new hook: [ :aFuture |
+		[ aFuture deploySuccess: 1. forkDone signal ] fork.
+		forkDone waitTimeoutMilliseconds: 200 ]; yourself).
+
+	future onSuccessDo: [ :v | ran := v. ranSignal signal ].
+
+	self deny: (ranSignal waitTimeoutMilliseconds: 2000).
+	self assert: ran equals: 1&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

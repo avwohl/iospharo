@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: OSSubprocess (pharo-contributions/OSSubprocess, row 115) - Pharo test defects</title><meta name="description" content="Package: OSSubprocess (pharo-contributions/OSSubprocess, row 115): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: OSSubprocess (pharo-contributions/OSSubprocess, row 115)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-contributions-ossubprocess.st</dd><dt>Upstream repository</dt><dd>pharo-contributions/OSSubprocess</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 126 tests, 98 pass, 2 failures, 26 errors on the two VMs.</li>
+<li>Causes, all API changes of Pharo 14 (the row loads the branch <code>master</code>):
+<ul>
+<li>18 errors and 2 failures: the old file stream classes of the package
+send <code>SessionManager default currentSession isReadOnlyAccessMode</code>.
+<code>WorkingSession</code> of Pharo 14 has no such method.</li>
+<li>4 errors: a test helper sends <code>UUIDGenerator next</code>.</li>
+<li>4 tests send <code>Smalltalk image changesName</code>.</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/pharo-contributions-ossubprocess.st</code> adds
+<code>WorkingSession&gt;&gt;isReadOnlyAccessMode</code> (it answers false), and the tests
+use <code>UUID new</code> and <code>FileLocator changes</code>.</li>
+<li>Result: 126 of 126 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 115&quot;
+Metacello new baseline: &#x27;OSSubprocess&#x27;; repository: &#x27;github://pharo-contributions/OSSubprocess:master/repository&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>115</td><td><code>pharo-contributions-ossubprocess</code></td><td>ok</td><td>tests=126 P=126 F=0 E=0 S=0 T=0 X=0</td><td>tests=126 P=126 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-contributions-ossubprocess.st (<a href="../files/packages/fixes/pharo-contributions-ossubprocess.st">download</a>)</summary><pre class="code">&quot;pharo-contributions/OSSubprocess (master): causes of the 26 errors, one entry group each.
+
+1. OldFileStream class&gt;&gt;forceNewFileNamed: (and OldStandardFileStream, OldMultiByteFileStream)
+ of the package send SessionManager default currentSession isReadOnlyAccessMode.
+ Pharo 14 WorkingSession has no such method (the read-only session mode was removed),
+ so each file-based subprocess that redirects a stream (temp file for stdout, stderr or
+ stdin) raises MessageNotUnderstood: 18 tests, and the two testStopWaiting tests of the
+ file-based class, where the error happens in the forked process (TestFailedByForkedProcess).
+ The entry adds WorkingSession&gt;&gt;isReadOnlyAccessMode answering false: a Pharo 14 image
+ session is never read-only.
+
+2. OSSUnixSubprocessTest&gt;&gt;withNonAsciiDirectoryDo: sends UUIDGenerator next.
+ Pharo 14 UUIDGenerator has no class-side next; the supported API is UUID new.
+ 4 tests (two methods, two test classes).  The entry uses UUID new asString.
+
+3. testSigTerm and testSigTermInsideLoop send Smalltalk image changesName.
+ Pharo 14 SmalltalkImage has no changesName (PharoFilesOpener&gt;&gt;changesName answers only
+ the base name).  The error is inside the forked block for testSigTerm
+ (TestFailedByForkedProcess) and in the test body for testSigTermInsideLoop.  The entry
+ uses FileLocator changes fullName, the full path of the changes file, so tail -f finds
+ the file whatever the working directory is.
+
+Each entry has a guard that is true only for the old text, so a second file-in changes nothing.&quot;
+
+add value: #WorkingSession value: #isReadOnlyAccessMode value: &#x27;testing&#x27;
+	value:
+&#x27;isReadOnlyAccessMode
+	&quot;The package OSSubprocess (OldFileStream) asks the session whether files may be written.
+	A Pharo 14 session is never read-only.&quot;
+
+	^ false&#x27;.
+
+fix value: #OSSUnixSubprocessTest value: #withNonAsciiDirectoryDo:
+	value: [ :source | source includesSubstring: &#x27;UUIDGenerator next asString&#x27; ]
+	value: ((Smalltalk globals at: #OSSUnixSubprocessTest ifAbsent: [ nil ])
+		ifNil: [ &#x27;&#x27; ]
+		ifNotNil: [ :cls | (cls includesSelector: #withNonAsciiDirectoryDo:)
+			ifTrue: [ (cls &gt;&gt; #withNonAsciiDirectoryDo:) sourceCode copyReplaceAll: &#x27;UUIDGenerator next asString&#x27; with: &#x27;UUID new asString&#x27; ]
+			ifFalse: [ &#x27;&#x27; ] ]).
+fix value: #OSSUnixSubprocessTest value: #testSigTerm
+	value: [ :source | source includesSubstring: &#x27;Smalltalk image changesName&#x27; ]
+	value: ((Smalltalk globals at: #OSSUnixSubprocessTest ifAbsent: [ nil ])
+		ifNil: [ &#x27;&#x27; ]
+		ifNotNil: [ :cls | (cls includesSelector: #testSigTerm)
+			ifTrue: [ (cls &gt;&gt; #testSigTerm) sourceCode copyReplaceAll: &#x27;Smalltalk image changesName&#x27; with: &#x27;FileLocator changes fullName&#x27; ]
+			ifFalse: [ &#x27;&#x27; ] ]).
+fix value: #OSSUnixSubprocessTest value: #testSigTermInsideLoop
+	value: [ :source | source includesSubstring: &#x27;Smalltalk image changesName&#x27; ]
+	value: ((Smalltalk globals at: #OSSUnixSubprocessTest ifAbsent: [ nil ])
+		ifNil: [ &#x27;&#x27; ]
+		ifNotNil: [ :cls | (cls includesSelector: #testSigTermInsideLoop)
+			ifTrue: [ (cls &gt;&gt; #testSigTermInsideLoop) sourceCode copyReplaceAll: &#x27;Smalltalk image changesName&#x27; with: &#x27;FileLocator changes fullName&#x27; ]
+			ifFalse: [ &#x27;&#x27; ] ]).
+fix value: #OSSFileBasedUnixSubprocessTest value: #testSigTerm
+	value: [ :source | source includesSubstring: &#x27;Smalltalk image changesName&#x27; ]
+	value: ((Smalltalk globals at: #OSSFileBasedUnixSubprocessTest ifAbsent: [ nil ])
+		ifNil: [ &#x27;&#x27; ]
+		ifNotNil: [ :cls | (cls includesSelector: #testSigTerm)
+			ifTrue: [ (cls &gt;&gt; #testSigTerm) sourceCode copyReplaceAll: &#x27;Smalltalk image changesName&#x27; with: &#x27;FileLocator changes fullName&#x27; ]
+			ifFalse: [ &#x27;&#x27; ] ]).
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

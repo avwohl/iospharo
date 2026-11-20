@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Comix2 (Ducasse/Comix2, row 40) - Pharo test defects</title><meta name="description" content="Package: Comix2 (Ducasse/Comix2, row 40): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Comix2 (Ducasse/Comix2, row 40)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>ducasse-comix2.st</dd><dt>Upstream repository</dt><dd>Ducasse/Comix2</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 113 tests, 110 pass, 2 fail, 1 skip on the two VMs.</li>
+<li><code>CXXMLItemSaverLoaderTest&gt;&gt;testVisitorXML</code>: the expected string has the
+date 24 January 2026, and <code>CXVisitor</code> writes the date of the day.  The
+expected string also had LF line ends, and the visitor writes CR.  The
+test now makes the expected string with the date of the day and
+<code>String cr</code>.</li>
+<li><code>CXXMLItemSaverLoaderTest&gt;&gt;testXMLImporter</code> (&quot;Got 0 instead of 2&quot;):
+<code>CXXMLImporter&gt;&gt;import:</code> makes each item and does not add it to the
+collection that it answers.  The method now adds each item.</li>
+<li><code>CBXMLImporterTest&gt;&gt;testImportRealCollection</code> (skip): the test reads the
+file <code>BD.362.xml</code> from the image directory.  The file is the collection of
+the author and is not in the repository (<code>git ls-files</code> and the history
+have no such name).  The test now writes a file of 50 series with 20
+albums each in the same format and imports that file.</li>
+<li>Result: 113 of 113 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 40&quot;
+Metacello new baseline: &#x27;Comix&#x27;; repository: &#x27;github://Ducasse/Comix2:master/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>40</td><td><code>ducasse-comix2</code></td><td>ok</td><td>tests=113 P=113 F=0 E=0 S=0 T=0 X=0</td><td>tests=113 P=113 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): ducasse-comix2.st (<a href="../files/packages/fixes/ducasse-comix2.st">download</a>)</summary><pre class="code">&quot;Comix2 (Ducasse/Comix2, master): three tests that do not pass on stock Cog
+and on our VM.  The causes are in the package, not in a VM.  See
+docs/upstream/package-repairs.md for the evidence.
+
+1. CXXMLItemSaverLoaderTest&gt;&gt;testVisitorXML has the date of the day on which
+   the author wrote the test (&#x27;24 January 2026&#x27;) in the expected string.
+   CXVisitor&gt;&gt;visitBase: writes Date today.  The expected string now uses
+   Date today asString, as the code under test does.
+
+2. CXXMLImporter&gt;&gt;import: makes a collection, never adds an item to the
+   collection, and answers the empty collection.  The test
+   CXXMLItemSaverLoaderTest&gt;&gt;testXMLImporter expects 2 items.  The repair
+   is in the class (the defect), not in the test.
+
+3. CBXMLImporterTest&gt;&gt;testImportRealCollection needs the file BD.362.xml
+   (the private collection of the author, 3352 albums) in the image directory.
+   The file is not in the repository and never was.  The test now writes a
+   generated file in the historical format to a memory file system and imports
+   the file by importFile:, so the test runs on each machine.&quot;
+
+fix value: #CXXMLItemSaverLoaderTest value: #testVisitorXML
+	value: [ :source | (source includesSubstring: &#x27;String cr&#x27;) not ]
+	value:
+&#x27;testVisitorXML
+
+	| vis base today cr |
+	vis := CXVisitor new. 
+	base := CXBase new.
+	base addSerie: CXItem nic serie. 
+	today := Date today asString.
+	cr := String cr.
+	base accept: vis. 
+	self 
+		assert: vis contents
+		equals: &#x27;&#x27;&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#x27;&#x27;, cr,
+			&#x27;&#x27;&lt;Base date=&quot;&#x27;&#x27;, today, &#x27;&#x27;&quot; entriesNumber=&quot;2&quot; note=&quot;nil&quot;&gt;&#x27;&#x27;, cr,
+			&#x27;&#x27;&lt;bd authors=&quot;Larcenet&quot; editor=&quot;Dargaud&quot; entryCreationDate=&quot;25 March 2006&quot; entryNumber=&quot;1&quot; number=&quot;1&quot; original=&quot;true&quot; serie=&quot;Serie  Nic oumouk&quot; serieComplete=&quot;false&quot; sortedAs=&quot;1&quot; title=&quot;Total souk pour nic oumouk&quot; year=&quot;2005&quot;/&gt;&#x27;&#x27;, cr,
+			&#x27;&#x27;&lt;bd authors=&quot;Larcenet&quot; editor=&quot;Dargaud&quot; entryCreationDate=&quot;25 March 2007&quot; entryNumber=&quot;1809&quot; number=&quot;2&quot; original=&quot;true&quot; serie=&quot;Serie  Nic oumouk&quot; serieComplete=&quot;false&quot; sortedAs=&quot;2&quot; title=&quot;La france a peur&quot; year=&quot;2007&quot;/&gt;&lt;/Base&gt;&#x27;&#x27;
+&#x27;.
+
+fix value: #CXXMLImporter value: #import:
+	value: [ :source | (source includesSubstring: &#x27;col add:&#x27;) not ]
+	value:
+&#x27;import: aString
+	&quot;self new importFileName: &#x27;&#x27;BD.322.xml&#x27;&#x27;&quot;
+
+	| p col |
+	col := OrderedCollection new.
+	p := XMLDOMParser on: aString.
+	p parseDocument elements first elements do: [ :each |
+			col add: (self importFromXMLEntry: each) ].
+	^ col
+&#x27;.
+
+fix value: #CBXMLImporterTest value: #testImportRealCollection
+	value: [ :source | source includesSubstring: &#x27;BD.362.xml&#x27; ]
+	value:
+&#x27;testImportRealCollection
+	&quot;The collection of the author (3352 albums) is not in the repository.
+	The test writes a file in the historical BD.xxx.xml format with generated data
+	to a memory file system, and imports the file with importFile:.&quot;
+
+	| file xml seriesCount albumsPerSeries |
+	seriesCount := 50.
+	albumsPerSeries := 20.
+	xml := String streamContents: [ :s |
+		s nextPutAll: &#x27;&#x27;&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#x27;&#x27;; cr.
+		s nextPutAll: &#x27;&#x27;&lt;Base date=&quot;31 October 2010&quot; entriesNumber=&quot;&#x27;&#x27;; print: seriesCount * albumsPerSeries; nextPutAll: &#x27;&#x27;&quot; note=&quot;nil&quot;&gt;&#x27;&#x27;; cr.
+		1 to: seriesCount do: [ :series |
+			1 to: albumsPerSeries do: [ :number |
+				s
+					nextPutAll: &#x27;&#x27;&lt;bd serieComplete=&quot;false&quot; editor=&quot;Publisher &#x27;&#x27;;
+					print: series \\ 7;
+					nextPutAll: &#x27;&#x27;&quot; entryCreationDate=&quot;5 May 2006&quot; entryNumber=&quot;&#x27;&#x27;;
+					print: (series - 1) * albumsPerSeries + number;
+					nextPutAll: &#x27;&#x27;&quot; authors=&quot;Author&#x27;&#x27;;
+					print: series;
+					nextPutAll: &#x27;&#x27; Writer&#x27;&#x27;;
+					print: series;
+					nextPutAll: &#x27;&#x27;&quot; title=&quot;Title &#x27;&#x27;;
+					print: number;
+					nextPutAll: &#x27;&#x27;&quot; serie=&quot;Series &#x27;&#x27;;
+					print: series;
+					nextPutAll: &#x27;&#x27;&quot; original=&quot;true&quot; number=&quot;&#x27;&#x27;;
+					print: number;
+					nextPutAll: &#x27;&#x27;&quot; year=&quot;&#x27;&#x27;;
+					print: 1950 + number;
+					nextPutAll: &#x27;&#x27;&quot; /&gt;&#x27;&#x27;; cr ] ].
+		s nextPutAll: &#x27;&#x27;&lt;/Base&gt;&#x27;&#x27; ].
+	file := FileSystem memory root / &#x27;&#x27;BD.generated.xml&#x27;&#x27;.
+	file writeStreamEncoded: &#x27;&#x27;utf-8&#x27;&#x27; do: [ :stream | stream nextPutAll: xml ].
+	importer importFile: file.
+	self assert: library owned size equals: seriesCount * albumsPerSeries.
+	self assert: library allSeries size equals: seriesCount.
+	self assert: (library owned albums allSatisfy: [ :each | each series albums includes: each ])
+&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

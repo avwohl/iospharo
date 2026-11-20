@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: MicroUML (olekscode/MicroUML, row 110) - Pharo test defects</title><meta name="description" content="Package: MicroUML (olekscode/MicroUML, row 110): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: MicroUML (olekscode/MicroUML, row 110)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>olekscode-microuml.st</dd><dt>Upstream repository</dt><dd>olekscode/MicroUML</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 83 tests, 78 pass, 1 failure, 4 errors on the two VMs
+(<code>Error: Package names should be uppercase</code>).</li>
+<li>Cause: the <code>setUp</code> of <code>MicroUMLCodeGeneratorTest</code> makes classes in a
+package with the name <code>__MicroUML__Dummy-Package__</code>.
+<code>PackageOrganizer&gt;&gt;addPackage:</code> of Pharo 14 refuses a name that does not
+start with an upper-case letter.  The class is in the system before the
+error comes, so a later test found classes of an earlier test (the
+failure).</li>
+<li>Repair here: <code>fixes/olekscode-microuml.st</code> uses the name
+<code>Z_MicroUML__Dummy-Package__</code>.</li>
+<li>Result: 83 of 83 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 110&quot;
+Metacello new baseline: &#x27;MicroUML&#x27;; repository: &#x27;github://olekscode/MicroUML:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27; &#x27;MicroUML-Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>110</td><td><code>olekscode-microuml</code></td><td>ok</td><td>tests=83 P=83 F=0 E=0 S=0 T=0 X=0</td><td>tests=83 P=83 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): olekscode-microuml.st (<a href="../files/packages/fixes/olekscode-microuml.st">download</a>)</summary><pre class="code">&quot;olekscode/MicroUML: MicroUMLCodeGeneratorTest&gt;&gt;setUp named the dummy package
+&#x27;__MicroUML__Dummy-Package__&#x27;.  Pharo 14 PackageOrganizer&gt;&gt;addPackage: refuses a
+package name whose first character is not an uppercase letter (&#x27;Package names
+should be uppercase&#x27;), and &#x27;_&#x27; is not uppercase.  The four tests that make the
+package (testGenerateClassInPackageNamed, testGenerateClassSideVariables,
+testGenerateClassesInPackageNamed, testGenerateInstanceVariables) failed with
+that error.  The repair starts the name with an uppercase letter and keeps the
+rest, so the name stays unlikely to exist already.
+
+testIsReadyToGenerateClass failed with &#x27;Denial failed&#x27; as a consequence: the
+failed tests had already made classes such as Object__ and Animal__ in
+Smalltalk globals, and tearDown only removes the package, which did not exist.
+The classes stayed, so isReadyToGenerateClass: answered true for Animal__ where
+the test denies it.  With a valid package name, tearDown removes the package
+together with the classes, and the test starts from a clean system.  No entry
+is needed for that test.&quot;
+
+fix value: #MicroUMLCodeGeneratorTest value: #setUp
+	value: [ :source | source includesSubstring: &#x27;&#x27;&#x27;__MicroUML__Dummy-Package__&#x27;&#x27;&#x27; ]
+	value:
+&#x27;setUp
+
+	super setUp.
+	
+	uml := self exampleUML.
+	generator := MicroUMLCodeGenerator forDiagram: uml diagram.
+	
+	&quot;We add __ to decrease the chance that a package with this names already exists.  Pharo 14 requires that a package name starts with an uppercase letter.&quot;
+	packageName := &#x27;&#x27;Z_MicroUML__Dummy-Package__&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: Code-generation VM for macOS arm64 - Pharo test defects</title><meta name="description" content="Cog: Code-generation VM for macOS arm64: Patch ready, needs the owner (version pin)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: Code-generation VM for macOS arm64</h1><dl class="meta"><dt>State</dt><dd><span class="st st-part">Patch ready, needs the owner (version pin)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>cog-vmmaker-bootstrap-vm-darwin-arm64.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>Defect: <code>cmake/vmmaker.cmake</code> downloads the stock VM 10.3.2 to generate the
+C sources.  On macOS 27 that VM stops at startup with &quot;Could not allocate
+codeZone in the expected place (0x320000000)&quot;, and the build stops at the
+<code>vmmaker</code> step.</li>
+<li>Change: download the release <code>v10.3.12+0.4b0622446</code> for macOS arm64.  The
+change has the URL and the SHA256 of that archive, in the form that the
+file uses for all platforms.</li>
+<li>Test (2026-11-17): a build of the branch with no <code>GENERATE_PHARO_VM</code>
+completes, and the VM that the build makes answers <code>42 factorial</code>.</li>
+<li>Not checked: the other platforms keep their old VM, and no check was made
+that those start on current systems.</li>
+</ul>
+<p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/vmmaker-bootstrap-vm-darwin-arm64</code>.  State: tested, not committed: the change is a version pin, and the owner must approve a pin.  Not sent upstream.</p><details open><summary>cog-vmmaker-bootstrap-vm-darwin-arm64.patch (<a href="../files/cog/cog-vmmaker-bootstrap-vm-darwin-arm64.patch">download</a>)</summary><pre class="code">diff --git a/cmake/vmmaker.cmake b/cmake/vmmaker.cmake
+index 9c94deb03..6570d8c09 100644
+--- a/cmake/vmmaker.cmake
++++ b/cmake/vmmaker.cmake
+@@ -88,8 +88,8 @@ if(GENERATE_SOURCES)
+         elseif(CMAKE_SYSTEM_NAME STREQUAL &quot;Darwin&quot; AND (${CMAKE_SYSTEM_PROCESSOR} MATCHES &quot;arm64&quot;))
+             message(&quot;Defining arm64 OSX VM to download for code generation&quot;)
+             set(VMMAKER_VM       ${VMMAKER_DIR}/vm/Contents/MacOS/Pharo)
+-            set(VM_URL https://files.pharo.org/vm/pharo-spur64-headless/Darwin-arm64/PharoVM-10.3.2-b8793dd2-Darwin-arm64-bin.zip)
+-            set(VM_URL_HASH      SHA256=157837d765435597bdf05f1054aabe5287e59ca6360b7827c8750a5f7fcef7e3)
++            set(VM_URL https://files.pharo.org/vm/pharo-spur64-headless/Darwin-arm64/PharoVM-v10.3.12%2B0.4b0622446-Darwin-arm64-bin.zip)
++            set(VM_URL_HASH      SHA256=76c8c25d14cbf58cf4cbec3900dfdf3ecf0f955742f4b07afa744c07cb86b79a)
+         elseif(CMAKE_SYSTEM_NAME STREQUAL &quot;Darwin&quot;)
+             message(&quot;Defining OSX VM to download for code generation&quot;)
+             set(VMMAKER_VM       ${VMMAKER_DIR}/vm/Contents/MacOS/Pharo)
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

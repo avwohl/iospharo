@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fuel-cleanblock - Pharo test defects</title><meta name="description" content="Fuel-cleanblock: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Fuel-cleanblock</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>9</dd><dt>Fix</dt><dd>image fix 20-Fuel-cleanblock.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Fuel-cleanblock.st</code></li>
+<li>Methods: <code>FLFullHeaderSerializationTest&gt;&gt;testPostMaterializationActions</code>, <code>FLFullHeaderSerializationTest&gt;&gt;testPreMaterializationActions</code>, <code>FLHeaderSerializationTest&gt;&gt;testPostMaterializationActions</code>, <code>FLHeaderSerializationTest&gt;&gt;testPreMaterializationActions</code>, <code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollection</code>, <code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableChanges</code>, <code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableReference</code>, <code>FLUserGuidesTest&gt;&gt;testDemo</code>, <code>FLGlobalEnvironmentTest&gt;&gt;testCompiledMethodChanged</code></li>
+</ul>
+<p>All 9 tests are repaired and pass on both VMs. Eight of them start with <code>Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ]</code>. That guard is left over from the time when clean blocks were not fully supported. With the guard removed, the eight pass on both VMs with no other change. The ninth, FLGlobalEnvironmentTest&gt;&gt;testCompiledMethodChanged, failed once the skip was removed, on both VMs. The cause is in the test. With clean blocks on, <code>m ^ 42</code> and <code>m ^ [ 42 yourself ]</code> compile to the same bytecodes (#[32 92], push literal then return top) because the clean block is a literal, so FLGlobalCompiledMethodCluster compares equal bytecodesHash and correctly raises nothing. The fix keeps the check (differing bytecodes must raise FLMethodChanged) and changes method B to <code>m ^ [ 42 yourself ] value</code>, whose bytecodes differ. The sibling tests testCompiledMethodChangedConstant and testCompiledMethodChangedNonClean still pass. Fuel's bytecodesHash excludes literals, so <code>^ 42</code> against <code>^ 43</code> is not detected; that is a design limit of Fuel, not touched here.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLFullHeaderSerializationTest&gt;&gt;testPostMaterializationActions</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLFullHeaderSerializationTest&gt;&gt;testPreMaterializationActions</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLHeaderSerializationTest&gt;&gt;testPostMaterializationActions</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLHeaderSerializationTest&gt;&gt;testPreMaterializationActions</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollection</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableChanges</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableReference</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLUserGuidesTest&gt;&gt;testDemo</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete optionCleanBlockClosure skip guard in the test</td>
+</tr>
+<tr>
+<td><code>FLGlobalEnvironmentTest&gt;&gt;testCompiledMethodChanged</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Skip guard obsolete, and the premise is wrong with clean blocks: '^ 42' and '^ [ 42 yourself ]' compile to the same bytecodes (#[32 92]), so no FLMethodChanged is raised. Method B changed to '^ [ 42 yourself ] value', which has different bytecodes.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only test methods are changed. The five owning classes (FLFullHeaderSerializationTest, FLGlobalEnvironmentTest, FLHeaderSerializationTest, FLSortedCollectionSerializationTest, FLUserGuidesTest) were run in full, once each way, on both VMs. Base image: 27 of 36 pass on our VM and on Cog. Fixed image: 36 of 36 pass on our VM and on Cog. The 9 repaired tests were run 3 times on each VM and all passed. Our VM was run with its default configuration (the tools' &quot;ours&quot; mode); the ours-nojit mode was not run.</p>
+<p>Upstream note: Title: Fuel tests: remove obsolete optionCleanBlockClosure skips. Project: pharo (Fuel-Core-Tests). Eight Fuel tests skip themselves when optionCleanBlockClosure is on. They pass without the skip, so the skip line can be removed. FLGlobalEnvironmentTest&gt;&gt;testCompiledMethodChanged also needs a new fixture. With clean blocks, 'm ^ 42' and 'm ^ [ 42 yourself ]' have identical bytecodes, so the test now compiles 'm ^ [ 42 yourself ] value' in the second class. The test still checks that FLMethodChanged is raised when the bytecodes differ. I measured this only on Pharo 14 build 791. This is a proposal for human review and is not submitted.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>FLFullHeaderSerializationTest&gt;&gt;testPostMaterializationActions</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFullHeaderSerializationTest&gt;&gt;testPreMaterializationActions</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLGlobalEnvironmentTest&gt;&gt;testCompiledMethodChanged</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLHeaderSerializationTest&gt;&gt;testPostMaterializationActions</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLHeaderSerializationTest&gt;&gt;testPreMaterializationActions</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollection</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableChanges</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableReference</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLUserGuidesTest&gt;&gt;testDemo</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((FLFullHeaderSerializationTest selector: #testPostMaterializationActions) run) printString.
+((FLFullHeaderSerializationTest selector: #testPreMaterializationActions) run) printString.
+((FLGlobalEnvironmentTest selector: #testCompiledMethodChanged) run) printString.
+((FLHeaderSerializationTest selector: #testPostMaterializationActions) run) printString.
+((FLHeaderSerializationTest selector: #testPreMaterializationActions) run) printString.
+((FLSortedCollectionSerializationTest selector: #testSortedCollection) run) printString.
+((FLSortedCollectionSerializationTest selector: #testSortedCollectionWithClassVariableChanges) run) printString.
+((FLSortedCollectionSerializationTest selector: #testSortedCollectionWithClassVariableReference) run) printString.
+((FLUserGuidesTest selector: #testDemo) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>FLFullHeaderSerializationTest&gt;&gt;testPostMaterializationActions before the fix (Pharo 14 build 791)</summary><pre class="code">testPostMaterializationActions
+
+	| aClass |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	aClass := self classFactory make: [ :aBuilder | aBuilder sharedVariables: #(TestClassVariable TestClassVariable2) ].
+	self classFactory
+		silentlyCompile: &#x27;postLoadMethod TestClassVariable := 1&#x27; in: aClass class;
+		silentlyCompile: &#x27;postLoadMethod2 TestClassVariable := 2&#x27; in: aClass class;
+		silentlyCompile: &#x27;classVariable ^ TestClassVariable &#x27; in: aClass class.
+
+	aClass perform: #postLoadMethod.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self serializer
+		at: #className putAdditionalObject: aClass name;
+		fullySerializeBehavior: aClass;
+		addPostMaterializationAction: [ :materializedObjects :environment |
+			(environment at: (materializedObjects additionalObjectAt: #className)) perform: #postLoadMethod2 ].
+	self serialize: aClass.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self materialized.
+	self assert: (aClass perform: #classVariable) equals: 2</pre></details><details><summary>FLFullHeaderSerializationTest&gt;&gt;testPreMaterializationActions before the fix (Pharo 14 build 791)</summary><pre class="code">testPreMaterializationActions
+
+	| aClass |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	aClass := self classFactory make: [ :aBuilder | aBuilder sharedVariables: #(TestClassVariable TestClassVariable2) ].
+	self classFactory
+		silentlyCompile: &#x27;postLoadMethod TestClassVariable := 1&#x27; in: aClass class;
+		silentlyCompile: &#x27;postLoadMethod2 TestClassVariable := 2&#x27; in: aClass class;
+		silentlyCompile: &#x27;classVariable ^TestClassVariable&#x27; in: aClass class.
+
+	aClass perform: #postLoadMethod.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self serializer
+		at: #className putAdditionalObject: aClass name;
+		addPreMaterializationAction: [ :header :environment | (environment at: (header additionalObjectAt: #className)) perform: #postLoadMethod2 ].
+	self serialize: aClass.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self materialized.
+	self assert: (aClass perform: #classVariable) equals: 2</pre></details><details><summary>FLGlobalEnvironmentTest&gt;&gt;testCompiledMethodChanged before the fix (Pharo 14 build 791)</summary><pre class="code">testCompiledMethodChanged
+	&quot;A compiled methods should be serialized as global by default.
+	On materialization, it must be found in the global environment, and the bytecodes hash must be the same.
+	Else, raise a proper error.&quot;
+	
+	| classA classB |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	classA := self classFactory silentlyNewClass.
+	self classFactory
+		silentlyCompile:  &#x27;m  ^ 42&#x27;
+		in: classA.
+	classB := self classFactory silentlyNewClass.
+	self classFactory
+		silentlyCompile: &#x27;m  ^ [ 42 yourself ]&#x27;
+		in: classB.
+
+	self materializer environment: (Dictionary new
+		at: classA name put: classB;
+		yourself).
+
+	self serialize: classA &gt;&gt; #m.
+
+	self
+		should: [ self materialized ]
+		raise: FLMethodChanged 
+		description: &#x27;Serialized and materialized methods should have the same bytecodes.&#x27;</pre></details><details><summary>FLHeaderSerializationTest&gt;&gt;testPostMaterializationActions before the fix (Pharo 14 build 791)</summary><pre class="code">testPostMaterializationActions
+
+	| aClass |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	aClass := self classFactory make: [ :aBuilder | aBuilder sharedVariables: #(TestClassVariable TestClassVariable2) ].
+	self classFactory
+		silentlyCompile: &#x27;postLoadMethod TestClassVariable := 1&#x27; in: aClass class;
+		silentlyCompile: &#x27;postLoadMethod2 TestClassVariable := 2&#x27; in: aClass class;
+		silentlyCompile: &#x27;classVariable ^ TestClassVariable &#x27; in: aClass class.
+
+	aClass perform: #postLoadMethod.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self serializer
+		at: #class putAdditionalObject: aClass;
+		addPostMaterializationAction: [ :header | &quot;Can&#x27;t use `self environmentOfTest` or `aClass name` here because the closure
+			must be clean.&quot;
+			(header additionalObjectAt: #class) perform: #postLoadMethod2 ].
+	self serialize: aClass.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self materialized.
+	self assert: (aClass perform: #classVariable) equals: 2</pre></details><details><summary>FLHeaderSerializationTest&gt;&gt;testPreMaterializationActions before the fix (Pharo 14 build 791)</summary><pre class="code">testPreMaterializationActions
+
+	| aClass |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	aClass := self classFactory make: [ :aBuilder | aBuilder sharedVariables: #(TestClassVariable TestClassVariable2) ].
+	self classFactory
+		silentlyCompile: &#x27;postLoadMethod TestClassVariable := 1&#x27; in: aClass class;
+		silentlyCompile: &#x27;postLoadMethod2 TestClassVariable := 2&#x27; in: aClass class;
+		silentlyCompile: &#x27;classVariable ^TestClassVariable&#x27; in: aClass class.
+
+	aClass perform: #postLoadMethod.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self serializer
+		at: #class putAdditionalObject: aClass;
+		addPreMaterializationAction: [ :header | &quot;Can&#x27;t use `self environmentOfTest` or `aClass name` here because the closure
+			must be clean.&quot;
+			(header additionalObjectAt: #class) perform: #postLoadMethod2 ].
+	self serialize: aClass.
+	self assert: (aClass perform: #classVariable) equals: 1.
+	self materialized.
+	self assert: (aClass perform: #classVariable) equals: 2</pre></details><details><summary>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollection before the fix (Pharo 14 build 791)</summary><pre class="code">testSortedCollection
+	&quot;Tests that a SortedCollection works fine after materialization. 
+	Note: Equality can not be used to assert, since its behavior is this:
+	| x y |
+	x := SortedCollection sortBlock: [:a :b | a &gt;= b ].
+	y := SortedCollection sortBlock: [:a :b | a &gt;= b ].
+	self assert: x ~= y&quot;
+
+	| aSortBlock aSortedCollection materialized |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	aSortBlock := [ :a :b | a &gt;= b ].
+	aSortedCollection := SortedCollection sortBlock: aSortBlock.
+
+	materialized := self resultOfSerializeAndMaterialize: aSortedCollection.
+	self assert: aSortedCollection sortBlock ~~ materialized sortBlock.
+
+	materialized addAll: #(2 1 3).
+	aSortedCollection addAll: #(2 1 3).
+	self assert: aSortedCollection asArray equals: materialized asArray</pre></details><details><summary>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableChanges before the fix (Pharo 14 build 791)</summary><pre class="code">testSortedCollectionWithClassVariableChanges
+	&quot;Tests serialization of a SortedCollection whose sortBlock has a reference to a class variable and its value is changed. See also FLBlockClosureSerializationTest &gt;&gt; testBlockClosureWithClassVariableChanges  and FLCompiledMethodSerializationTest &gt;&gt; testMethodChangingClassVariable&quot;
+
+	| aSortedCollection materialized compiledBlock index literalHolder |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	ClassVariableForTesting := false.
+	
+	aSortedCollection := self class sortedCollectionForTestingWithClassVariable.
+	materialized := self resultOfSerializeAndMaterialize: aSortedCollection.
+	&quot;the class variable ClassVariableForTesting should be false&quot;
+	
+	compiledBlock := materialized sortBlock.
+	
+	literalHolder := compiledBlock isFullBlock 
+		ifTrue: [ compiledBlock method ] 
+		ifFalse: [ materialized sortBlock outerContext method ].
+	index := literalHolder literals indexOf: (self class bindingOf: #ClassVariableForTesting).
+	
+	self deny: (literalHolder literalAt: index) value.
+	ClassVariableForTesting := true.
+	&quot;the class variable ClassVariableForTesting should be true&quot;
+	self assert: (literalHolder literalAt: index) value</pre></details><details><summary>FLSortedCollectionSerializationTest&gt;&gt;testSortedCollectionWithClassVariableReference before the fix (Pharo 14 build 791)</summary><pre class="code">testSortedCollectionWithClassVariableReference
+	&quot;Tests serialization of a SortedCollection whose sortBlock has a reference to the outer context. 
+	Note: Equality can not be used to assert, since its behavior is this:
+	| x y |
+	x := SortedCollection sortBlock: [:a :b | a &gt;= b ].
+	y := SortedCollection sortBlock: [:a :b | a &gt;= b ].
+	self assert: x ~= y&quot;
+
+	| aSortedCollection materialized |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	ClassVariableForTesting := false.
+
+	aSortedCollection := self class sortedCollectionForTestingWithClassVariable.
+	materialized := self resultOfSerializeAndMaterialize: aSortedCollection.
+	ClassVariableForTesting := true.
+	materialized addAll: #(2 3 1).
+	aSortedCollection addAll: #(2 3 1).
+
+	aSortedCollection sortBlock assertWellMaterializedInto: materialized sortBlock in: self.
+	self assert: aSortedCollection asArray equals: materialized asArray</pre></details><details><summary>FLUserGuidesTest&gt;&gt;testDemo before the fix (Pharo 14 build 791)</summary><pre class="code">testDemo
+	| sourceArray loadedArray |
+	Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].
+
+	sourceArray := Array
+		with: &#x27;a string&#x27;
+		with: Smalltalk
+		with: [
+			Smalltalk vm.
+			&#x27;a string&#x27; ].
+	&quot;Store to the file&quot;
+	FLSerializer new
+		filePath: &#x27;example.FL&#x27;;
+		object: sourceArray;
+		serialize.
+	&quot;Load from the file&quot;
+	loadedArray := FLMaterializer new
+		filePath: &#x27;example.FL&#x27;;
+		materializeRoot.
+	&quot;The arrays are not the same&quot;
+	self assert: sourceArray ~~ loadedArray.
+	&quot;The strings are not the same&quot;
+	self assert: sourceArray first ~~ loadedArray first.
+	self assert: sourceArray first equals: loadedArray first.
+	&quot;The global instance Smalltalk is the same&quot;
+	self assert: sourceArray second identicalTo: loadedArray second.
+	&quot;Evaluating the loaded block prints a string&quot;
+	self assert: loadedArray third value equals: &#x27;a string&#x27;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Fuel-cleanblock.st (<a href="../files/image-fixes/20-Fuel-cleanblock.st">download</a>)</summary><pre class="code">Smalltalk at: #FLCBSkip put: &#x27;Smalltalk compiler compilationContext optionCleanBlockClosure ifTrue: [ ^ self skip ].&#x27;.
+{ {#FLFullHeaderSerializationTest. #testPostMaterializationActions}.
+  {#FLFullHeaderSerializationTest. #testPreMaterializationActions}.
+  {#FLHeaderSerializationTest. #testPostMaterializationActions}.
+  {#FLHeaderSerializationTest. #testPreMaterializationActions}.
+  {#FLSortedCollectionSerializationTest. #testSortedCollection}.
+  {#FLSortedCollectionSerializationTest. #testSortedCollectionWithClassVariableChanges}.
+  {#FLSortedCollectionSerializationTest. #testSortedCollectionWithClassVariableReference}.
+  {#FLUserGuidesTest. #testDemo} } do: [ :p |
+	fix value: p first value: p second
+		value: [ :s | s includesSubstring: (Smalltalk at: #FLCBSkip) ]
+		value: (((Smalltalk at: p first) &gt;&gt; p second) sourceCode copyReplaceAll: (Smalltalk at: #FLCBSkip) with: (String empty)) ].
+
+&quot;With optionCleanBlockClosure the method &#x27;m ^ [ 42 yourself ]&#x27; compiles to the same
+ bytecodes as &#x27;m ^ 42&#x27; (push literal, return top): the clean block is a literal.  The
+ test must compare a method without a closure against a method with a different
+ bytecode sequence; sending #value to the block makes the bytecodes differ.&quot;
+fix value: #FLGlobalEnvironmentTest value: #testCompiledMethodChanged
+	value: [ :s | s includesSubstring: &#x27;optionCleanBlockClosure ifTrue: [ ^ self skip ]&#x27; ]
+	value: &#x27;testCompiledMethodChanged
+	&quot;A compiled methods should be serialized as global by default.
+	On materialization, it must be found in the global environment, and the bytecodes hash must be the same.
+	Else, raise a proper error.&quot;
+	
+	| classA classB |
+	classA := self classFactory silentlyNewClass.
+	self classFactory
+		silentlyCompile:  &#x27;&#x27;m  ^ 42&#x27;&#x27;
+		in: classA.
+	classB := self classFactory silentlyNewClass.
+	self classFactory
+		silentlyCompile: &#x27;&#x27;m  ^ [ 42 yourself ] value&#x27;&#x27;
+		in: classB.
+
+	self materializer environment: (Dictionary new
+		at: classA name put: classB;
+		yourself).
+
+	self serialize: classA &gt;&gt; #m.
+
+	self
+		should: [ self materialized ]
+		raise: FLMethodChanged 
+		description: &#x27;&#x27;Serialized and materialized methods should have the same bytecodes.&#x27;&#x27;&#x27; .
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

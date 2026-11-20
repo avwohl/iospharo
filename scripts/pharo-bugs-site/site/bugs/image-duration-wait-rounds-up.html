@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duration-wait-rounds-up - Pharo test defects</title><meta name="description" content="Duration-wait-rounds-up: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Duration-wait-rounds-up</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 32-duration-wait-rounds-up.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/32-duration-wait-rounds-up.st</code></li>
+<li>Methods: <code>Duration&gt;&gt;asDelay</code>, new test
+<code>DurationTest&gt;&gt;testAsDelayDoesNotRoundDown</code></li>
+</ul>
+<p><code>Duration&gt;&gt;asDelay</code> makes a Delay for <code>self asMilliSeconds</code> milliseconds.
+<code>asMilliSeconds</code> rounds down, so a wait for 99.98 milliseconds is a Delay of
+99 milliseconds, and <code>Duration&gt;&gt;wait</code> can end before the Duration has
+passed.</p>
+<p>The stock VM hides the defect: it ends each Delay 1 to 6 milliseconds late
+on the test machine.  Our VM ends a Delay 0.1 to 0.4 milliseconds late.
+<code>scripts/cogdiff/delay_accuracy.st</code> gives, for the shortest of 40 waits of
+<code>(Duration nanoSeconds: 99980000) wait</code>, minus the Duration:</p>
+<table>
+<thead>
+<tr>
+<th>VM</th>
+<th>Shortest wait minus the Duration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>our VM</td>
+<td>-921 microseconds</td>
+</tr>
+<tr>
+<td>stock Cog</td>
+<td>+4629 microseconds</td>
+</tr>
+</tbody>
+</table>
+<p>The repair rounds up: a part of a millisecond counts as one more
+millisecond.  A negative Duration gives the same Delay as before.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DurationTest&gt;&gt;testAsDelayDoesNotRoundDown</code> (new)</td>
+<td>image code</td>
+<td>repaired</td>
+<td>The Delay of a Duration was shorter than the Duration.</td>
+</tr>
+<tr>
+<td><code>TkThreadTest&gt;&gt;testPeriodFixedDuration</code> (package PharoMisc, Tasks)</td>
+<td>image code</td>
+<td>repaired</td>
+<td>Waits that are 1 millisecond short gave a task a fourth run in 300 milliseconds.</td>
+</tr>
+</tbody>
+</table>
+<p>The new test fails on the two VMs before the repair.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>DurationTest&gt;&gt;testAsDelayDoesNotRoundDown</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr><tr><td><code>TkThreadTest&gt;&gt;testPeriodFixedDuration</code></td><td></td><td>repaired</td><td>not run</td><td>not run</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  These classes are not in the Pharo image but in a package (see the record): TkThreadTest.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((DurationTest selector: #testAsDelayDoesNotRoundDown) run) printString.
+((TkThreadTest selector: #testPeriodFixedDuration) run) printString.</pre><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>32-duration-wait-rounds-up.st (<a href="../files/image-fixes/32-duration-wait-rounds-up.st">download</a>)</summary><pre class="code">&quot;System-Time: a wait for a Duration can end before the Duration has passed
+(2026-11-17).  Found by the package run: PharoMisc, Tasks,
+TkThreadTest&gt;&gt;testPeriodFixedDuration, which failed on our VM only.
+
+Duration&gt;&gt;asDelay makes a Delay for &#x27;self asMilliSeconds&#x27; milliseconds, and
+asMilliSeconds rounds down.  A wait for 99.98 milliseconds is a Delay of 99
+milliseconds.  Duration&gt;&gt;wait uses asDelay.
+
+Measured with scripts/cogdiff/delay_accuracy.st, 40 waits of
+&#x27;(Duration nanoSeconds: 99980000) wait&#x27;, shortest wait minus the Duration:
+  our VM      -921 microseconds (the wait ends before its time)
+  stock Cog   +4629 microseconds
+The stock VM ends each Delay 1 to 6 milliseconds late on this machine, and
+that hides the defect.  Our VM ends a Delay 0.1 to 0.4 milliseconds late.
+
+The Tasks package waits &#x27;dueTime - now&#x27; for each period.  With waits that
+are 1 millisecond short, a task that repeats each 100 milliseconds for 300
+milliseconds gets a fourth run before the 300 milliseconds end.
+
+The repair rounds up: a part of a millisecond counts as one more
+millisecond.  A negative Duration gives the same Delay as before (an error
+in Delay&gt;&gt;setDelay:forSemaphore:).  The new test fails on the two VMs before
+the repair.&quot;
+
+fix value: #Duration value: #asDelay
+	value: [ :source | source includesSubstring: &#x27;Delay forMilliseconds: self asMilliSeconds&#x27; ]
+	value:
+&#x27;asDelay
+	&quot;A wait must not end before the receiver has passed.  A Delay counts milliseconds, so a part of a millisecond counts as one more millisecond.  (asMilliSeconds rounds down: a wait for 99.98 milliseconds ended after 99 milliseconds.)&quot;
+
+	| nanoseconds |
+	nanoseconds := self asNanoSeconds.
+	^ Delay forMilliseconds: (nanoseconds negative
+			   ifTrue: [ nanoseconds // 1000000 ]
+			   ifFalse: [ nanoseconds + 999999 // 1000000 ])&#x27;.
+
+add value: #DurationTest value: #testAsDelayDoesNotRoundDown value: &#x27;tests&#x27;
+	value:
+&#x27;testAsDelayDoesNotRoundDown
+	&quot;The Delay of a Duration must not be shorter than the Duration.&quot;
+
+	self assert: (Duration nanoSeconds: 99980000) asDelay millisecondDelayDuration equals: 100.
+	self assert: (Duration nanoSeconds: 100000000) asDelay millisecondDelayDuration equals: 100.
+	self assert: (Duration nanoSeconds: 100000001) asDelay millisecondDelayDuration equals: 101.
+	self assert: (Duration nanoSeconds: 1) asDelay millisecondDelayDuration equals: 1.
+	self assert: Duration zero asDelay millisecondDelayDuration equals: 0&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WriteBarrierTest - Pharo test defects</title><meta name="description" content="WriteBarrierTest: Fixed in the image; stock Cog needs the Cog change (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>WriteBarrierTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-part">Fixed in the image; stock Cog needs the Cog change (not sent)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-WriteBarrierTest.st, 21-write-barrier-integer-stores.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><p class="note">The two tests pass on stock Cog only with the Cog change for the typed store primitives (see the Cog section).  Entry 21 adds two tests for the integer stores.</p><h2>Record</h2><ul>
+<li>Review: accepted (round 2).</li>
+<li>Entries: <code>scripts/image-fixes/20-WriteBarrierTest.st</code></li>
+<li>Methods: <code>TFFIBackend&gt;&gt;on:float64At:put:</code>, <code>TFFIBackend&gt;&gt;on:float32At:put:</code>, <code>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingDoubleAtPut</code>, <code>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingFloatAtPut</code></li>
+</ul>
+<p>Both tests were marked expectedFailure and compared a byte (guineaPig first) with a Float, so they could never pass. The test bodies are repaired to compare (doubleAt: 1) / (floatAt: 1) with the stored value, and the expectedFailure pragma is removed. On our VM, prims 628/629 fail with PrimErrNoModification on a read-only receiver, and the image fallback TFFIBackend&gt;&gt;on:float64At:put: / on:float32At:put: now signals modificationForbiddenFor:index:value: (it only did primitiveFailed before). That makes both tests pass on our VM. Stock Cog v12.0.6 still fails both tests: its primitiveStoreFloat32IntoBytes / primitiveStoreFloat64IntoBytes never test for an immutable receiver, so the primitive writes into the read-only ByteArray and no ModificationForbidden is signalled. That is a Cog defect, which I cannot repair without editing VM sources; I give the exact proposal in vmChange for the owner to review. I did not hide the difference in the image. I did not re-run the test suites in this round; the pass counts quoted come from the earlier validated round, and this round I only re-read sources and ran small probes.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingDoubleAtPut</code></td>
+<td>cog-vm</td>
+<td>our VM only</td>
+<td>Cog prim 629 (primitiveStoreFloat64IntoBytes) has no (objectMemory isObjImmutable: rcvr) check, so it writes into a read-only ByteArray; our VM fails the primitive with PrimErrNoModification and the image fallback (TFFIBackend&gt;&gt;on:float64At:put:, repaired) signals ModificationForbidden. The test itself also compared a byte with a Float and was marked expectedFailure.</td>
+</tr>
+<tr>
+<td><code>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingFloatAtPut</code></td>
+<td>cog-vm</td>
+<td>our VM only</td>
+<td>Cog prim 628 (primitiveStoreFloat32IntoBytes) has no (objectMemory isObjImmutable: rcvr) check, so it writes into a read-only ByteArray; our VM fails the primitive with PrimErrNoModification and the image fallback (TFFIBackend&gt;&gt;on:float32At:put:, repaired) signals ModificationForbidden. The test itself also compared a byte with a Float and was marked expectedFailure.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: From the earlier validated round (not re-run now): ByteArrayTest, TFBasicTypeMarshallingTest, TFBasicTypeTest, TFFunctionCallTest and TFStructTest gave identical results with base and fix image on both our VM and Cog (only the existing Windows-specific SKIPs); the other 29 WriteBarrierTest tests pass on both VMs; the fix image passed all 31 WriteBarrierTest tests 3 of 3 times on our VM. Cog: 29 pass, the 2 target tests fail.</p>
+<p>VM change: COG (owner review required before anything is filed; no PR made). File: pharo-vm/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st. Methods primitiveStoreFloat32IntoBytes (prim 628) and primitiveStoreFloat64IntoBytes (prim 629), and for consistency every other primitiveStore*IntoBytes (Boolean8, Char8/16/32, Int8/16/32/64, UInt8/16/32/64, Pointer). Defect: after the argument checks and before the write, the receiver is not tested for immutability, so a read-only ByteArray is overwritten. Proposal: after the (objectMemory isNonIntegerObject: index) / isFloatObject / argumentCount check and before 'bytes := objectMemory firstBytePointerOfDataObject: rcvr', insert (the same form that primitiveAtPut already uses at line ~2829 of that file):  (objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].  The image fallback then signals ModificationForbidden, as on our VM. Reproducer: g := ByteArray new: 8. g beReadOnlyObject. [g float64AtOffset: 0 put: 2.5. #wrote] on: ModificationForbidden do: [:e | #forbidden]. Cog: #wrote, g = #[0 0 0 0 0 0 4 64]. Ours: #forbidden, g all zero. OUR VM, related and not in this cluster (measured this round): the typed-write primitives 615-629 in src/vm/Primitives.cpp do check hdr-&gt;isImmutable() and fail, but the fallback chain ends in the named primitive primitiveFFIIntegerAtPut (Primitives.cpp:31931, registered Interpreter.cpp:25399), which has no immutability check; so on a read-only ByteArray g uint32AtOffset: 0 put: 7 and int32AtOffset:put: still WRITE on our VM (probe result #wrote, g = #[7 0 0 0 0 0 0 0]; the same output on Cog, where prim 620 has no check either). Proposal for our VM: in primitiveFFIIntegerAtPut, when the receiver argument is a heap object with isImmutable(), set primFailCode_ = PrimErrNoModification_ and fail; the image method TFFIBackend&gt;&gt;integerOfObject:at:put:size:signed: then needs a read-only branch like the float one. That is a separate defect from the two tests (no test of this cluster covers it) and I did not change it; the reviewer's remark that unsignedLongAt:put: and int32AtOffset:put: write silently is confirmed, but the cause is the FFI integer primitive and not prims 620/621 themselves.</p>
+<p>Open points: Both tests pass only on our VM. They cannot pass on stock Cog until Cog prims 628/629 get the immutability check (vmChange); I may not edit the Cog sources (pharo-project/pharo-vm) and the owner must review any Cog change first. Tests were not re-run this round. Our VM also still writes through primitiveFFIIntegerAtPut into read-only ByteArrays (separate defect, proposal in vmChange, not changed).</p>
+<p>Upstream note: Pharo (image), small: TFFIBackend&gt;&gt;on:float64At:put: and on:float32At:put: now signal ModificationForbidden (modificationForbiddenFor:index:value:) when the receiver is read-only and the primitive failed, instead of primitiveFailed; WriteBarrierTest&gt;&gt;testMutateByteArrayUsingDoubleAtPut / UsingFloatAtPut are repaired (they compared 'guineaPig first', a byte, with a Float) and lose their expectedFailure marks. These tests only pass once the VM primitives 628/629 fail on read-only receivers. Cog VM (separate, owner must review first, not filed): primitiveStoreFloat32IntoBytes and primitiveStoreFloat64IntoBytes (and the other primitiveStore*IntoBytes) should fail with PrimErrNoModification when (objectMemory isObjImmutable: rcvr).</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingDoubleAtPut</code></td><td>XFAIL</td><td>our VM only</td><td>PASS</td><td>PASS</td><td>FAIL</td></tr><tr><td><code>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingFloatAtPut</code></td><td>XFAIL</td><td>our VM only</td><td>PASS</td><td>PASS</td><td>FAIL</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((WriteBarrierTest selector: #testMutateByteArrayUsingDoubleAtPut) run) printString.
+((WriteBarrierTest selector: #testMutateByteArrayUsingFloatAtPut) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingDoubleAtPut before the fix (Pharo 14 build 791)</summary><pre class="code">testMutateByteArrayUsingDoubleAtPut
+	| guineaPig |
+	&lt;expectedFailure&gt;
+	guineaPig := ByteArray new: 8.
+	guineaPig beReadOnlyObject.
+
+	self
+		should: [ guineaPig doubleAt: 1 put: (2 raisedTo: 65) asFloat ]
+		raise: ModificationForbidden.
+
+	[ guineaPig doubleAt: 1 put: (2 raisedTo: 65) asFloat ]
+		on: ModificationForbidden
+		do: [:modification |
+			self assert: modification fieldIndex equals: 1.
+			modification object beWritableObject.
+			modification retryModification ].
+
+	self assert: guineaPig first equals: (2 raisedTo: 65) asFloat</pre></details><details><summary>WriteBarrierTest&gt;&gt;testMutateByteArrayUsingFloatAtPut before the fix (Pharo 14 build 791)</summary><pre class="code">testMutateByteArrayUsingFloatAtPut
+	&lt;expectedFailure&gt;
+	| guineaPig |
+	guineaPig := ByteArray new: 5.
+	guineaPig beReadOnlyObject.
+
+	self
+		should: [ guineaPig floatAt: 1 put: 1.0  ]
+		raise: ModificationForbidden.
+
+	[ guineaPig floatAt: 1 put: 1.0 ]
+		on: ModificationForbidden
+		do: [:modification |
+			self assert: modification fieldIndex equals: 1.
+			modification object beWritableObject.
+			modification retryModification ].
+
+	self assert: guineaPig first equals: 1.0</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-WriteBarrierTest.st (<a href="../files/image-fixes/20-WriteBarrierTest.st">download</a>)</summary><pre class="code">fix value: #TFFIBackend value: #&#x27;on:float64At:put:&#x27;
+	value: [ :src | src includesSubstring: &#x27;self isReadOnlyObject&#x27; ]
+	value: &#x27;on: anObject float64At: offset put: value
+
+	value isFloat ifFalse: [
+		^ anObject float64AtOffset: offset - 1 put: value asFloat ].
+
+	anObject isReadOnlyObject ifTrue: [
+		^ anObject
+			  modificationForbiddenFor: #doubleAt:put:
+			  index: offset
+			  value: value ].
+
+	^ self primitiveFailed&#x27;.
+fix value: #TFFIBackend value: #&#x27;on:float32At:put:&#x27;
+	value: [ :src | src includesSubstring: &#x27;self isReadOnlyObject&#x27; ]
+	value: &#x27;on: anObject float32At: offset put: value
+
+	value isFloat ifFalse: [
+		^ anObject float32AtOffset: offset - 1 put: value asFloat ].
+
+	anObject isReadOnlyObject ifTrue: [
+		^ anObject
+			  modificationForbiddenFor: #floatAt:put:
+			  index: offset
+			  value: value ].
+
+	^ self primitiveFailed&#x27;.
+fix value: #WriteBarrierTest value: #testMutateByteArrayUsingDoubleAtPut
+	value: [ :src | src includesSubstring: &#x27;expectedFailure&#x27; ]
+	value: &#x27;testMutateByteArrayUsingDoubleAtPut
+	| guineaPig |
+	guineaPig := ByteArray new: 8.
+	guineaPig beReadOnlyObject.
+
+	self
+		should: [ guineaPig doubleAt: 1 put: (2 raisedTo: 65) asFloat ]
+		raise: ModificationForbidden.
+
+	[ guineaPig doubleAt: 1 put: (2 raisedTo: 65) asFloat ]
+		on: ModificationForbidden
+		do: [:modification |
+			self assert: modification fieldIndex equals: 1.
+			modification object beWritableObject.
+			modification retryModification ].
+
+	self assert: (guineaPig doubleAt: 1) equals: (2 raisedTo: 65) asFloat&#x27;.
+fix value: #WriteBarrierTest value: #testMutateByteArrayUsingFloatAtPut
+	value: [ :src | src includesSubstring: &#x27;expectedFailure&#x27; ]
+	value: &#x27;testMutateByteArrayUsingFloatAtPut
+	| guineaPig |
+	guineaPig := ByteArray new: 5.
+	guineaPig beReadOnlyObject.
+
+	self
+		should: [ guineaPig floatAt: 1 put: 1.0  ]
+		raise: ModificationForbidden.
+
+	[ guineaPig floatAt: 1 put: 1.0 ]
+		on: ModificationForbidden
+		do: [:modification |
+			self assert: modification fieldIndex equals: 1.
+			modification object beWritableObject.
+			modification retryModification ].
+
+	self assert: (guineaPig floatAt: 1) equals: 1.0&#x27;.
+</pre></details><details open><summary>21-write-barrier-integer-stores.st (<a href="../files/image-fixes/21-write-barrier-integer-stores.st">download</a>)</summary><pre class="code">&quot;Write barrier for the typed integer stores into a ByteArray (2026-11-17).
+
+The typed store primitives 615-627 fail on a read-only ByteArray on our VM.
+The fallback of each accessor goes through ByteArray&gt;&gt;integerAt:put:size:signed:
+to the named primitive primitiveFFIIntegerAtPut.  That primitive wrote the
+bytes of the read-only object on our VM (fixed in the VM on 2026-11-17: the
+primitive now fails).  Stock Cog writes the bytes in the primitives 615-627
+themselves (docs/upstream has the Cog change).
+
+W1. With the two VM changes the fallback ended in PrimitiveFailed.  A store
+into a read-only object must signal ModificationForbidden, as at:put: does, so
+that a handler can make the object writable and retry.  The retry selector is
+the index-based accessor of the same size and sign.
+
+W2, W3. WriteBarrierTest has tests for at:put:, doubleAt:put: and floatAt:put:
+on a read-only ByteArray, and none for an integer store.  Two tests with the
+form of testMutateByteArrayUsingDoubleAtPut.&quot;
+
+fix value: #ByteArray value: #integerAt:put:size:signed:
+	value: [ :source | (source includesSubstring: &#x27;isReadOnlyObject&#x27;) not ]
+	value:
+&#x27;integerAt: byteOffset put: value size: nBytes signed: aBoolean
+
+	self isReadOnlyObject ifTrue: [
+		| selectors |
+		selectors := aBoolean
+			ifTrue: [ #( #signedByteAt:put: #signedShortAt:put: nil #signedLongAt:put: nil nil nil #signedLongLongAt:put: ) ]
+			ifFalse: [ #( #unsignedByteAt:put: #unsignedShortAt:put: nil #unsignedLongAt:put: nil nil nil #unsignedLongLongAt:put: ) ].
+		^ self
+			  modificationForbiddenFor: (selectors at: nBytes)
+			  index: byteOffset
+			  value: value ].
+
+	^ FFIBackend current
+		  integerOfObject: self
+		  at: byteOffset
+		  put: value
+		  size: nBytes
+		  signed: aBoolean&#x27;.
+
+add value: #WriteBarrierTest value: #testMutateByteArrayUsingUnsignedLongAtPut value: &#x27;tests - object&#x27;
+	value:
+&#x27;testMutateByteArrayUsingUnsignedLongAtPut
+	| guineaPig |
+	guineaPig := ByteArray new: 8.
+	guineaPig beReadOnlyObject.
+
+	self
+		should: [ guineaPig unsignedLongAt: 1 put: 16r01020304 ]
+		raise: ModificationForbidden.
+	self assert: guineaPig equals: (ByteArray new: 8).
+
+	[ guineaPig unsignedLongAt: 1 put: 16r01020304 ]
+		on: ModificationForbidden
+		do: [:modification |
+			self assert: modification fieldIndex equals: 1.
+			modification object beWritableObject.
+			modification retryModification ].
+
+	self assert: (guineaPig unsignedLongAt: 1) equals: 16r01020304&#x27;.
+
+add value: #WriteBarrierTest value: #testMutateByteArrayUsingSignedShortAtPut value: &#x27;tests - object&#x27;
+	value:
+&#x27;testMutateByteArrayUsingSignedShortAtPut
+	| guineaPig |
+	guineaPig := ByteArray new: 8.
+	guineaPig beReadOnlyObject.
+
+	self
+		should: [ guineaPig signedShortAt: 3 put: -2 ]
+		raise: ModificationForbidden.
+	self assert: guineaPig equals: (ByteArray new: 8).
+
+	[ guineaPig signedShortAt: 3 put: -2 ]
+		on: ModificationForbidden
+		do: [:modification |
+			self assert: modification fieldIndex equals: 3.
+			modification object beWritableObject.
+			modification retryModification ].
+
+	self assert: (guineaPig signedShortAt: 3) equals: -2&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

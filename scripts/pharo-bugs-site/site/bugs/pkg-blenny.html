@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Blenny (NathanFrund/blenny, row 118) - Pharo test defects</title><meta name="description" content="Package: Blenny (NathanFrund/blenny, row 118): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Blenny (NathanFrund/blenny, row 118)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>nathanfrund-blenny.st, nathanfrund-blenny.patch</dd><dt>Upstream repository</dt><dd>NathanFrund/blenny</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: <code>LOAD-FAIL</code> (an Array index error in the load).</li>
+<li>Causes:
+<ul>
+<li>The load brings Buoy in (through JSONWebToken and NeoJSON).  Buoy
+replaces <code>Symbol&gt;&gt;argumentCount</code> of Pharo 14, and the post-load step of
+Buoy then fails.  The row gets the locked Buoy with its patch
+(<code>locks/nathanfrund-blenny.txt</code>), as the ba-st rows.</li>
+<li>The baseline of Blenny has a bracket at the wrong place, so three of its
+groups are outside the platform block
+(<code>patches/nathanfrund-blenny.patch</code>).</li>
+<li>3 tests start with <code>self skip</code>, and the reasons in their comments do not
+hold.  They have a body now.  One of them uses a small object in the
+place of a WebSocket, which records the messages that it gets.</li>
+<li>2 tests subtract an Integer from a <code>DateAndTime</code>, which Pharo 14 does
+not do.  They subtract a Duration.</li>
+<li>Three defects of the package code that no test shows (a <code>join:</code> with
+the receiver and the argument in the wrong places, a parse of an
+argument with no <code>=</code>, the name of an environment variable).</li>
+</ul>
+</li>
+<li>Repair here: the lock, the patch and <code>fixes/nathanfrund-blenny.st</code>.</li>
+<li>Result: 35 of 35 pass on the two VMs.  No test of the row needs a
+PostgreSQL server.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 118&quot;
+Metacello new baseline: &#x27;Blenny&#x27;; repository: &#x27;github://NathanFrund/blenny:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>118</td><td><code>nathanfrund-blenny</code></td><td>ok</td><td>tests=35 P=35 F=0 E=0 S=0 T=0 X=0</td><td>tests=35 P=35 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): nathanfrund-blenny.st (<a href="../files/packages/fixes/nathanfrund-blenny.st">download</a>)</summary><pre class="code">&quot;NathanFrund/blenny: repairs for the tests of the package Blenny-Tests and for
+three small defects of the package code.  The load needs two more files
+(patches/nathanfrund-blenny.patch and locks/nathanfrund-blenny.txt); they are
+not entries of this file.
+
+1. BlennySimpleAuthTest&gt;&gt;testBlacklistCleanup had the body &#x27;self skip&#x27; with the
+   remark that the blacklist and #cleanupBlacklist are not public API.  Both
+   are public: BlennySimpleAuth&gt;&gt;cleanupBlacklist and the repository protocol
+   saveBlacklistEntry:expiration: exist.  The test now stores one expired and
+   one valid entry, runs the cleanup and checks that only the expired entry is
+   gone.
+
+2. BlennySimpleAuthTest&gt;&gt;testTokenExpiration had the body &#x27;self skip&#x27; with the
+   remark that the token needs a changed duration.  The test now signs two
+   tokens with the secret of the auth object (HS256, as createJwtForUser:
+   does): one with exp in the past, which validateToken: must reject, and one
+   with exp in the future, which validateToken: must accept.
+
+3. BlennyWebSocketBridgeTest&gt;&gt;testAddAndRemoveClient had the body &#x27;self skip&#x27;
+   because it needs a WebSocket.  The bridge only calls #sendMessage: and
+   #close on the stream that it gets, so the class BlennyFakeWebSocket (in
+   the package Blenny-Tests, not a TestCase) records the messages and the
+   close.  The test registers a client, sends HTML to all and to one user,
+   removes the client and checks the registry and the close.  The fake does
+   not check the Zinc WebSocket frames.
+
+4. BlennyTransportBridge&gt;&gt;registerUser:stream:intents: wrote
+   (aCollection asArray join: &#x27;,&#x27;), which uses the Array as the separator and
+   the string &#x27;,&#x27; as the list.  The log line printed an Array with one
+   comma instead of the intents.  The repair writes (&#x27;,&#x27; join: ...).
+
+5. BlennyArgConfigProvider&gt;&gt;parseArgs stopped with an error for an argument
+   that starts with -- and has no equals sign (copyFrom: 3 to: -1).  The
+   class comment says that only arguments with an equals sign count.
+
+7. (second reader) BlennyBlacklistCleanerTest&gt;&gt;testPerformCleanupRemovesExpiredEntries
+   computed DateAndTime now - (1 * 60 * 60).  Pharo 14 has no
+   Number&gt;&gt;subtractReceiverToDateAndTime: (only Duration, Timespan and
+   DateAndTime have it), so DateAndTime&gt;&gt;- with an Integer ends in
+   MessageNotUnderstood.  The test now subtracts a Duration.  The same form is
+   used in the new body of testBlacklistCleanup.
+
+6. BlennyEnvConfigProvider&gt;&gt;at: built the name BLENNY_SERVER.PORT for the key
+   server.port.  The class comment (and the shell) need BLENNY_SERVER_PORT.&quot;
+
+(Smalltalk globals includesKey: #BlennyFakeWebSocket) ifFalse: [
+	(Object &lt;&lt; #BlennyFakeWebSocket
+		slots: { #sent. #closed };
+		package: &#x27;Blenny-Tests&#x27;;
+		yourself) install ].
+
+add value: #BlennyFakeWebSocket value: #initialize value: &#x27;initialization&#x27; value:
+&#x27;initialize
+	super initialize.
+	sent := OrderedCollection new.
+	closed := false&#x27;.
+
+add value: #BlennyFakeWebSocket value: #sendMessage: value: &#x27;writing&#x27; value:
+&#x27;sendMessage: aMessage
+	sent add: aMessage&#x27;.
+
+add value: #BlennyFakeWebSocket value: #close value: &#x27;closing&#x27; value:
+&#x27;close
+	closed := true&#x27;.
+
+add value: #BlennyFakeWebSocket value: #sent value: &#x27;accessing&#x27; value:
+&#x27;sent
+	^ sent&#x27;.
+
+add value: #BlennyFakeWebSocket value: #isClosed value: &#x27;testing&#x27; value:
+&#x27;isClosed
+	^ closed&#x27;.
+
+fix value: #BlennySimpleAuthTest value: #testBlacklistCleanup
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testBlacklistCleanup
+	| expired valid |
+	expired := &#x27;&#x27;expired-jti&#x27;&#x27;.
+	valid := &#x27;&#x27;valid-jti&#x27;&#x27;.
+	auth repository
+		saveBlacklistEntry: expired expiration: DateAndTime now - (Duration seconds: 60 * 60);
+		saveBlacklistEntry: valid expiration: DateAndTime now + (Duration seconds: 60 * 60).
+	self assert: (auth repository exists: &#x27;&#x27;blacklist_&#x27;&#x27; , expired).
+	self assert: (auth repository exists: &#x27;&#x27;blacklist_&#x27;&#x27; , valid).
+
+	auth cleanupBlacklist.
+
+	self deny: (auth repository exists: &#x27;&#x27;blacklist_&#x27;&#x27; , expired).
+	self assert: (auth repository exists: &#x27;&#x27;blacklist_&#x27;&#x27; , valid).
+	self assert: (auth repository isBlacklisted: valid)&#x27;.
+
+fix value: #BlennyBlacklistCleanerTest value: #testPerformCleanupRemovesExpiredEntries
+	value: [ :source | source includesSubstring: &#x27;DateAndTime now - (1 * 60 * 60)&#x27; ]
+	value:
+&#x27;testPerformCleanupRemovesExpiredEntries
+	| repository cleaner expiredJti validJti expirationDate validExpiration |
+	repository := BlennyMemoryRepository new.
+	cleaner := BlennyBlacklistCleaner forRepository: repository.
+
+	expiredJti := &#x27;&#x27;expired-jti&#x27;&#x27;.
+	expirationDate := DateAndTime now - (Duration seconds: 60 * 60).
+	repository saveBlacklistEntry: expiredJti expiration: expirationDate.
+
+	validJti := &#x27;&#x27;valid-jti&#x27;&#x27;.
+	validExpiration := DateAndTime now + (Duration seconds: 60 * 60).
+	repository saveBlacklistEntry: validJti expiration: validExpiration.
+
+	cleaner performCleanup.
+
+	self deny: (repository isBlacklisted: expiredJti).
+	self assert: (repository isBlacklisted: validJti)&#x27;.
+
+fix value: #BlennySimpleAuthTest value: #testTokenExpiration
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testTokenExpiration
+	| makeToken |
+	makeToken := [ :expirationUnixTime | | claims |
+		claims := JWTClaimsSet new.
+		claims
+			sub: &#x27;&#x27;alice&#x27;&#x27;;
+			jti: UUID new asString;
+			exp: expirationUnixTime;
+			iat: DateAndTime now asUnixTime - 100.
+		(JsonWebSignature new
+			algorithmName: &#x27;&#x27;HS256&#x27;&#x27;;
+			payload: claims;
+			symmetricKey: auth jwtSecret;
+			yourself) compactSerialized ].
+
+	&quot;A token whose exp is in the past is rejected&quot;
+	self
+		assert: (auth validateToken: (makeToken value: DateAndTime now asUnixTime - 10))
+		equals: nil.
+	&quot;The same kind of token with exp in the future is accepted&quot;
+	self
+		assert: (auth validateToken: (makeToken value: DateAndTime now asUnixTime + 3600))
+		equals: &#x27;&#x27;alice&#x27;&#x27;&#x27;.
+
+fix value: #BlennyWebSocketBridgeTest value: #testAddAndRemoveClient
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testAddAndRemoveClient
+	| socket handle |
+	socket := BlennyFakeWebSocket new.
+	self deny: (bridge hasConnectionForUser: &#x27;&#x27;alice&#x27;&#x27;).
+
+	handle := bridge registerUser: &#x27;&#x27;alice&#x27;&#x27; stream: socket intents: #(all).
+	self assert: (bridge hasConnectionForUser: &#x27;&#x27;alice&#x27;&#x27;).
+	self assert: (bridge connectionsForUserId: &#x27;&#x27;alice&#x27;&#x27;) size equals: 1.
+
+	bridge broadcastHtml: &#x27;&#x27;&lt;b&gt;hi&lt;/b&gt;&#x27;&#x27;.
+	self assert: socket sent asArray equals: #(&#x27;&#x27;&lt;b&gt;hi&lt;/b&gt;&#x27;&#x27;).
+	bridge directHtml: &#x27;&#x27;&lt;i&gt;alice&lt;/i&gt;&#x27;&#x27; to: &#x27;&#x27;alice&#x27;&#x27;.
+	self assert: socket sent size equals: 2.
+	bridge directHtml: &#x27;&#x27;&lt;i&gt;bob&lt;/i&gt;&#x27;&#x27; to: &#x27;&#x27;bob&#x27;&#x27;.
+	self assert: socket sent size equals: 2.
+
+	handle finalize.
+	self deny: (bridge hasConnectionForUser: &#x27;&#x27;alice&#x27;&#x27;).
+	self assert: socket isClosed&#x27;.
+
+fix value: #BlennyTransportBridge value: #registerUser:stream:intents:
+	value: [ :source | source includesSubstring: &#x27;asArray join:&#x27; ]
+	value:
+&#x27;registerUser: aUserId stream: aStream intents: aCollection
+    | handle userDict |
+    handle := BlennyConnectionHandle new.
+    handle
+        userId: aUserId;
+        connectionId: UUID new asString;
+        stream: aStream;
+        intents: aCollection asSet;
+        connectionsByUserId: connectionsByUserId.
+    userDict := connectionsByUserId at: aUserId ifAbsentPut: [ Dictionary new ].
+    userDict at: handle connectionId put: handle.
+    StringSignal emit: (&#x27;&#x27;{1} CONNECTED ({2}): {3}&#x27;&#x27; format: {
+        transportName.
+        (&#x27;&#x27;,&#x27;&#x27; join: aCollection asArray).
+        aUserId }).
+    ^ handle&#x27;.
+
+fix value: #BlennyArgConfigProvider value: #parseArgs
+	value: [ :source | (source includesSubstring: &#x27;includes: $=&#x27;) not ]
+	value:
+&#x27;parseArgs
+    args := Dictionary new.
+    (Smalltalk commandLine arguments) do: [ :arg |
+        ((arg beginsWith: &#x27;&#x27;--&#x27;&#x27;) and: [ arg includes: $= ]) ifTrue: [
+            | key value |
+            key := (arg copyFrom: 3 to: (arg indexOf: $=) - 1).
+            value := (arg copyAfter: $=).
+            args at: key put: value ] ]&#x27;.
+
+fix value: #BlennyEnvConfigProvider value: #at:
+	value: [ :source | (source includesSubstring: &#x27;copyReplaceAll&#x27;) not ]
+	value:
+&#x27;at: aKey
+    | envKey |
+    envKey := &#x27;&#x27;BLENNY_&#x27;&#x27;, (aKey asUppercase copyReplaceAll: &#x27;&#x27;.&#x27;&#x27; with: &#x27;&#x27;_&#x27;&#x27;).
+    ^ OSEnvironment current at: envKey ifAbsent: [ nil ]&#x27;.
+</pre></details><details open><summary>Patch of the package source: nathanfrund-blenny.patch (<a href="../files/packages/patches/nathanfrund-blenny.patch">download</a>)</summary><pre class="code">diff --git a/src/BaselineOfBlenny/BaselineOfBlenny.class.st b/src/BaselineOfBlenny/BaselineOfBlenny.class.st
+index b732781..0f26b9d 100644
+--- a/src/BaselineOfBlenny/BaselineOfBlenny.class.st
++++ b/src/BaselineOfBlenny/BaselineOfBlenny.class.st
+@@ -19,7 +19,10 @@ BaselineOfBlenny &gt;&gt; baseline: spec [
+ 					loads: #(&#x27;Core&#x27; &#x27;WebSocket&#x27;)
+ 				];
+             baseline: &#x27;JSONWebToken&#x27;
+-            with: [ spec repository: &#x27;github://ba-st-dependencies/JSONWebToken:v3&#x27; ];
++            with: [
++					spec repository: &#x27;github://ba-st-dependencies/JSONWebToken:v3&#x27;;
++					loads: #(&#x27;Core&#x27;)
++				];
+             baseline: &#x27;Conduit&#x27;
+             with: [ spec repository: &#x27;github://NathanFrund/Conduit:main/src&#x27; ];
+             baseline: &#x27;P3&#x27; 
+@@ -70,7 +73,7 @@ BaselineOfBlenny &gt;&gt; baseline: spec [
+                    &#x27;Blenny-Modules&#x27; );
+             group: &#x27;Core&#x27;
+             with: #( &#x27;Blenny-Traits&#x27; &#x27;Blenny-Core&#x27; &#x27;Blenny-Config&#x27; &#x27;Blenny-Persistence&#x27; );
+-            group: &#x27;PostgreSQL&#x27; with: #( &#x27;Blenny-Persistence&#x27; ) ];
++            group: &#x27;PostgreSQL&#x27; with: #( &#x27;Blenny-Persistence&#x27; );
+ 				group: &#x27;Tests&#x27; with: #( &#x27;Blenny-Tests&#x27; );
+-				group: &#x27;Datastar&#x27; with: #( &#x27;Blenny-Datastar&#x27; ).
++				group: &#x27;Datastar&#x27; with: #( &#x27;Blenny-Datastar&#x27; ) ].
+ ]
+</pre></details><details open><summary>Version locks: nathanfrund-blenny.txt (<a href="../files/packages/locks/nathanfrund-blenny.txt">download</a>)</summary><pre class="code"># Buoy replaces Symbol&gt;&gt;argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
+Buoy ba-st-buoy
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

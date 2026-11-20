@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpEasy-skips - Pharo test defects</title><meta name="description" content="SpEasy-skips: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>SpEasy-skips</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>10</dd><dt>Fix</dt><dd>image fix 20-SpEasy-skips.st</dd><dt>Upstream repository</dt><dd>pharo-spec/Spec</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-SpEasy-skips.st</code></li>
+<li>Methods: <code>SpAbstractEasyListViewPresenter&gt;&gt;whenSortingBlockChangedDo: (added)</code>, <code>SpAbstractEasyTreeListViewPresenter&gt;&gt;pathIndexOf: (added)</code>, <code>SpAbstractEasyTreeListViewPresenter&gt;&gt;pathItemOf: (added)</code>, <code>SpEasyColumnViewPresenterTest&gt;&gt;testDisableActivationDuring (removed)</code>, <code>SpEasyColumnViewPresenterTest&gt;&gt;testSetSortingBlockBeforeItems (removed)</code>, <code>SpEasyColumnViewPresenterTest&gt;&gt;testSortingBlock (removed)</code>, <code>SpEasyListViewPresenterTest&gt;&gt;testDisableActivationDuring (removed)</code>, <code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testDisableActivationDuring (removed)</code>, <code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathIndexOf (removed)</code>, <code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathItemOf (removed)</code></li>
+</ul>
+<p>Ten Spec2 Easy presenter test methods were overridden with 'self skip', so the inherited generic tests never ran. For 7 of them the Easy presenters really lacked the API the generic tests call. SpAbstractEasyListViewPresenter had no whenSortingBlockChangedDo:, so the column-view sorting tests would have raised MessageNotUnderstood. SpAbstractEasyTreeListViewPresenter had no pathIndexOf: or pathItemOf:. The 3 testDisableActivationDuring overrides (Column, TreeColumn, List) passed as soon as the skip was removed. The fix adds the three delegating methods (to contentView, mirroring the protocol of SpAbstractListPresenter and SpAbstractTreePresenter) and removes the 'self skip' override from each test class that has one, so the inherited test runs unchanged. The 'does not make sense in a column view' comment is wrong: SpColumnViewPresenter inherits sortingBlock support and SpColumnViewPresenterTest already runs those tests. Removal is guarded: it only removes a method whose source contains 'self skip' and is under 200 characters. The tree-list class inherits its tests from the tree-column test class, so removing the skips there covers both.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SpEasyColumnViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Needless 'self skip' override; the inherited test passes unchanged.</td>
+</tr>
+<tr>
+<td><code>SpEasyColumnViewPresenterTest&gt;&gt;testSetSortingBlockBeforeItems</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpAbstractEasyListViewPresenter lacked whenSortingBlockChangedDo:; the override claimed the test makes no sense for a column view, which is wrong because SpColumnViewPresenterTest runs it.</td>
+</tr>
+<tr>
+<td><code>SpEasyColumnViewPresenterTest&gt;&gt;testSortingBlock</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Same as testSetSortingBlockBeforeItems: whenSortingBlockChangedDo: was missing on SpAbstractEasyListViewPresenter.</td>
+</tr>
+<tr>
+<td><code>SpEasyListViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Needless 'self skip' override ('no needed here since this is private'); the inherited test passes unchanged.</td>
+</tr>
+<tr>
+<td><code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Needless 'self skip' override; the inherited test passes unchanged.</td>
+</tr>
+<tr>
+<td><code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathIndexOf</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpAbstractEasyTreeListViewPresenter had no pathIndexOf:. Added as a delegate to contentView.</td>
+</tr>
+<tr>
+<td><code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathItemOf</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpAbstractEasyTreeListViewPresenter had no pathItemOf:. Added as a delegate to contentView.</td>
+</tr>
+<tr>
+<td><code>SpEasyTreeListViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Inherited the skip from SpEasyTreeColumnViewPresenterTest; removing it there fixes this class.</td>
+</tr>
+<tr>
+<td><code>SpEasyTreeListViewPresenterTest&gt;&gt;testPathIndexOf</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Inherited skip plus the missing pathIndexOf: on SpAbstractEasyTreeListViewPresenter.</td>
+</tr>
+<tr>
+<td><code>SpEasyTreeListViewPresenterTest&gt;&gt;testPathItemOf</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Inherited skip plus the missing pathItemOf: on SpAbstractEasyTreeListViewPresenter.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Whole classes run on our VM and on Cog, each with the base image and the fixed image. All four classes pass fully with the fix on both VMs. Each of the four has the same failure count (0) before and after, so no test that passed before now fails. Our VM (before/after): SpEasyColumnViewPresenterTest 23P+3S / 26P; SpEasyListViewPresenterTest 30P+1S / 31P; SpEasyTreeColumnViewPresenterTest 22P+3S / 25P; SpEasyTreeListViewPresenterTest 22P+3S / 25P. Cog gives identical counts. The three non-test methods are new (no existing method was replaced), and the test classes that use them are exactly these four. SpColumnViewPresenterTest and SpTreePresenterTest were not run, because no method they use was changed.</p>
+<p>Upstream note: Title: Spec2 Easy presenters: add whenSortingBlockChangedDo:, pathIndexOf:, pathItemOf:, and run the inherited tests. Description: SpAbstractEasyListViewPresenter lacked whenSortingBlockChangedDo: (SpEasyListViewPresenter only had its own copy), and SpAbstractEasyTreeListViewPresenter lacked pathIndexOf: and pathItemOf:, which SpAbstractTreePresenterTest exercises. Ten SpEasy*PresenterTest methods were overridden with 'self skip'. Add the delegating methods to contentView and delete the skip overrides so the shared tests run. Project: Spec2 (external, only in the image). A human must review this before any upstream submission.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>SpEasyColumnViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyColumnViewPresenterTest&gt;&gt;testSetSortingBlockBeforeItems</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyColumnViewPresenterTest&gt;&gt;testSortingBlock</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyListViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathIndexOf</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathItemOf</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyTreeListViewPresenterTest&gt;&gt;testDisableActivationDuring</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyTreeListViewPresenterTest&gt;&gt;testPathIndexOf</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpEasyTreeListViewPresenterTest&gt;&gt;testPathItemOf</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((SpEasyColumnViewPresenterTest selector: #testDisableActivationDuring) run) printString.
+((SpEasyColumnViewPresenterTest selector: #testSetSortingBlockBeforeItems) run) printString.
+((SpEasyColumnViewPresenterTest selector: #testSortingBlock) run) printString.
+((SpEasyListViewPresenterTest selector: #testDisableActivationDuring) run) printString.
+((SpEasyTreeColumnViewPresenterTest selector: #testDisableActivationDuring) run) printString.
+((SpEasyTreeColumnViewPresenterTest selector: #testPathIndexOf) run) printString.
+((SpEasyTreeColumnViewPresenterTest selector: #testPathItemOf) run) printString.
+((SpEasyTreeListViewPresenterTest selector: #testDisableActivationDuring) run) printString.
+((SpEasyTreeListViewPresenterTest selector: #testPathIndexOf) run) printString.
+((SpEasyTreeListViewPresenterTest selector: #testPathItemOf) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>SpEasyColumnViewPresenterTest&gt;&gt;testDisableActivationDuring before the fix (Pharo 14 build 791)</summary><pre class="code">testDisableActivationDuring 
+
+	self skip</pre></details><details><summary>SpEasyColumnViewPresenterTest&gt;&gt;testSetSortingBlockBeforeItems before the fix (Pharo 14 build 791)</summary><pre class="code">testSetSortingBlockBeforeItems
+
+	&quot;this does not has sense in a column (or table) view.&quot;
+	self skip</pre></details><details><summary>SpEasyColumnViewPresenterTest&gt;&gt;testSortingBlock before the fix (Pharo 14 build 791)</summary><pre class="code">testSortingBlock
+
+	&quot;this does not has sense in a column (or table) view.&quot;
+	self skip</pre></details><details><summary>SpEasyListViewPresenterTest&gt;&gt;testDisableActivationDuring before the fix (Pharo 14 build 791)</summary><pre class="code">testDisableActivationDuring 
+
+	&quot;no needed here since this is private&quot;
+	self skip</pre></details><details><summary>SpEasyTreeColumnViewPresenterTest&gt;&gt;testDisableActivationDuring before the fix (Pharo 14 build 791)</summary><pre class="code">testDisableActivationDuring 
+	
+	self skip</pre></details><details><summary>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathIndexOf before the fix (Pharo 14 build 791)</summary><pre class="code">testPathIndexOf
+
+	self skip</pre></details><details><summary>SpEasyTreeColumnViewPresenterTest&gt;&gt;testPathItemOf before the fix (Pharo 14 build 791)</summary><pre class="code">testPathItemOf
+
+	self skip</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-SpEasy-skips.st (<a href="../files/image-fixes/20-SpEasy-skips.st">download</a>)</summary><pre class="code">&quot;SpEasy-skips: the Easy presenters lacked the API that the shared Spec2 list and
+ tree tests call, so ten test methods were overridden with &#x27;self skip&#x27;.  Add the
+ delegating API, then remove each &#x27;self skip&#x27; override so the inherited test runs.&quot;
+add value: #SpAbstractEasyListViewPresenter value: #whenSortingBlockChangedDo: value: &#x27;api&#x27; value: &#x27;whenSortingBlockChangedDo: aBlock
+	&quot;Inform when the sorting block changed.  See SpAbstractListPresenter&gt;&gt;#whenSortingBlockChangedDo:&quot;
+
+	contentView whenSortingBlockChangedDo: aBlock&#x27;.
+add value: #SpAbstractEasyTreeListViewPresenter value: #pathIndexOf: value: &#x27;private&#x27; value: &#x27;pathIndexOf: anArrayOfElements
+
+	^ contentView pathIndexOf: anArrayOfElements&#x27;.
+add value: #SpAbstractEasyTreeListViewPresenter value: #pathItemOf: value: &#x27;private&#x27; value: &#x27;pathItemOf: aPath
+	&quot;answer an array of items following a path. 
+	 e.g. #(1 2 3) = { item1. item2. item3 }&quot;
+
+	^ contentView pathItemOf: aPath&#x27;.
+#( #(SpEasyColumnViewPresenterTest #(testDisableActivationDuring testSetSortingBlockBeforeItems testSortingBlock))
+  #(SpEasyListViewPresenterTest #(testDisableActivationDuring))
+  #(SpEasyTreeColumnViewPresenterTest #(testDisableActivationDuring testPathIndexOf testPathItemOf))
+  #(SpEasyTreeListViewPresenterTest #(testDisableActivationDuring testPathIndexOf testPathItemOf))) do: [ :p |
+	(Smalltalk globals at: p first ifAbsent: [ nil ]) ifNotNil: [ :c |
+		p last do: [ :s |
+			((c includesSelector: s) and: [ ((c &gt;&gt; s) sourceCode includesSubstring: &#x27;self skip&#x27;) and: [ (c &gt;&gt; s) sourceCode size &lt; 200 ] ]) ifTrue: [
+				c removeSelector: s.
+				Stdio stdout nextPutAll: &#x27;REMOVED &#x27;, c name, &#x27;&gt;&gt;&#x27;, s; lf; flush ] ] ] ].
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

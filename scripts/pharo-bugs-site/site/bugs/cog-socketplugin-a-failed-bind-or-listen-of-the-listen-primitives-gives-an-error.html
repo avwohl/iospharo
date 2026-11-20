@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: SocketPlugin: a failed bind or listen of the listen primitives gives an error - Pharo test defects</title><meta name="description" content="Cog: SocketPlugin: a failed bind or listen of the listen primitives gives an error: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: SocketPlugin: a failed bind or listen of the listen primitives gives an error</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>cog-socket-listen-bind-result.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>Defect: <code>sqSocketListenOnPortBacklogSizeInterface</code> does not test the
+result of <code>bind</code> and of <code>listen</code>.  <code>Socket&gt;&gt;setPort:</code> of a UDP socket uses
+that function.  On a port that another socket has, the image gets no
+error, the socket stays unbound, and it receives nothing on that port.</li>
+<li>Measurement (<code>scripts/cogdiff/socket_bind_in_use.st</code>, 2026-11-17): the
+stock VM answers &quot;no error&quot; for the second <code>setPort:</code> of one UDP port, and
+the second socket does not have the port.  Our VM signals
+<code>SocketError: Address already in use</code>.  For TCP the image uses
+<code>primitiveSocketBindToPort</code>, which tests the result, so the two VMs agree
+there.</li>
+<li>Found by: the package NetworkExtras of <code>bouraqadi/PharoMisc</code>.  Its tests
+make two multicast sockets on one port and passed on the stock VM only
+because the second bind failed with no error.</li>
+<li>Change: the function records the socket error and fails the primitive, as
+<code>sqSocketBindToPort</code> does.</li>
+<li>Test: with the change, the script gives <code>SocketError: Address already in use</code> for UDP on the patched Cog.</li>
+<li>Not tested: Windows and Linux.</li>
+</ul>
+<h2>Test</h2><p>A probe that prints the same lines on a correct VM.  Run it with <code>Pharo.image eval</code> or file it in:</p><details open><summary>socket_bind_in_use.st (<a href="../files/cogdiff/socket_bind_in_use.st">download</a>)</summary><pre class="code">&quot;socket_bind_in_use.st -- a second socket takes a port that a first socket
+ has, for UDP (setPort:) and for TCP (listenOn:backlogSize:).
+
+   scripts/vmrun.sh eval cog  scripts/cogdiff/socket_bind_in_use.st
+   scripts/vmrun.sh eval cogp scripts/cogdiff/socket_bind_in_use.st
+   scripts/vmrun.sh eval ours scripts/cogdiff/socket_bind_in_use.st
+
+ The system refuses the second bind (Address already in use).  The answer
+ shows if the image gets that error, and which port the second socket has.
+
+ Measured 2026-11-17 (Pharo 14 build 791):
+   stock Cog   UDP: no error, and the second socket does not have the port.
+               TCP: SocketError: Address already in use.
+   our VM      UDP and TCP: SocketError: Address already in use.
+ The stock VM does not test the result of bind in
+ sqSocketListenOnPortBacklogSizeInterface, which Socket&gt;&gt;setPort: uses.&quot;
+| out try first second port |
+out := WriteStream on: String new.
+try := [ :block |
+	[ block value ifNil: [ &#x27;no error&#x27; ] ]
+		on: Error
+		do: [ :e | e class name , &#x27;: &#x27; , (e messageText ifNil: [ &#x27;&#x27; ]) asString ] ].
+first := Socket newUDP.
+second := Socket newUDP.
+[ first setPort: 0.
+  port := first localPort.
+  out nextPutAll: &#x27;UDP: the first socket has a port: &#x27;; print: port &gt; 0; lf.
+  out nextPutAll: &#x27;UDP: second socket, setPort: of the same port -&gt; &#x27;;
+	nextPutAll: (try value: [ second setPort: port. nil ]); lf.
+  out nextPutAll: &#x27;UDP: the second socket has the port of the first: &#x27;;
+	nextPutAll: (try value: [ (second localPort = port) printString ]); lf ]
+	ensure: [ first closeAndDestroy. second closeAndDestroy ].
+first := Socket newTCP.
+second := Socket newTCP.
+[ first listenOn: 0 backlogSize: 4.
+  port := first localPort.
+  out nextPutAll: &#x27;TCP: the first socket has a port: &#x27;; print: port &gt; 0; lf.
+  out nextPutAll: &#x27;TCP: second socket, listenOn: of the same port -&gt; &#x27;;
+	nextPutAll: (try value: [ second listenOn: port backlogSize: 4. nil ]); lf.
+  out nextPutAll: &#x27;TCP: the second socket has the port of the first: &#x27;;
+	nextPutAll: (try value: [ (second localPort = port) printString ]); lf.
+  out nextPutAll: &#x27;TCP: the second socket waits for a connection: &#x27;;
+	nextPutAll: (try value: [ second isWaitingForConnection printString ]); lf ]
+	ensure: [ first closeAndDestroy. second closeAndDestroy ].
+out contents
+</pre></details><p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/socket-listen-bind-result</code>.  State: committed on the branch, tested.  Not sent upstream.</p><details open><summary>cog-socket-listen-bind-result.patch (<a href="../files/cog/cog-socket-listen-bind-result.patch">download</a>)</summary><pre class="code">From 6361258724d1bc67541399678594d66a8338d592 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 11:23:42 -0500
+Subject: [PATCH] SocketPlugin: report a failed bind or listen of the listen
+ primitives to the image
+
+sqSocketListenOnPortBacklogSizeInterface did not test the result of bind
+and of listen.  Socket&gt;&gt;setPort: of a UDP socket on a port that another
+socket has then gave no error, the socket stayed unbound, and it received
+nothing on that port.
+
+The function now records the socket error and fails the primitive, as
+sqSocketBindToPort does.  The image then signals SocketError with the text
+of the system (Address already in use).
+
+Co-Authored-By: Claude Fable 5.2 &lt;noreply@anthropic.com&gt;
+---
+ .../src/common/SocketPluginImpl.c             | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..15e93af7e 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -884,11 +884,26 @@ void sqSocketListenOnPortBacklogSizeInterface(SocketPtr s, sqInt port, sqInt bac
+   saddr.sin_family= AF_INET;
+   saddr.sin_port= htons((short)port);
+   saddr.sin_addr.s_addr= htonl(addr);
+-  bind(SOCKET(s), (struct sockaddr*) &amp;saddr, sizeof(saddr));
++  if (bind(SOCKET(s), (struct sockaddr*) &amp;saddr, sizeof(saddr)) &lt; 0)
++    {
++      /* The port is in use, or the address is not an address of this
++	 machine.  Without this test the socket stayed unbound and the
++	 image got no error: Socket&gt;&gt;setPort: of a UDP socket on a port
++	 that another socket has answered with no error, and the socket
++	 then received nothing on that port. */
++      PSP(s)-&gt;sockError= getLastSocketError();
++      success(false);
++      return;
++    }
+   if (TCPSocketType == s-&gt;socketType)
+     {
+       /* --- TCP --- */
+-      listen(SOCKET(s), backlogSize);
++      if (listen(SOCKET(s), backlogSize) &lt; 0)
++	{
++	  PSP(s)-&gt;sockError= getLastSocketError();
++	  success(false);
++	  return;
++	}
+       SOCKETSTATE(s)= WaitingForConnection;
+       aioEnable(SOCKET(s), PSP(s), 0);
+       aioHandle(SOCKET(s), acceptHandler, AIO_RX); /* R =&gt; accept() */
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

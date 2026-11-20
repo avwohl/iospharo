@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: PharoSmalltalkInteropServer (mumez/PharoSmalltalkInteropServer, row 137) - Pharo test defects</title><meta name="description" content="Package: PharoSmalltalkInteropServer (mumez/PharoSmalltalkInteropServer, row 137): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: PharoSmalltalkInteropServer (mumez/PharoSmalltalkInteropServer, row 137)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>mumez-pharosmalltalkinteropserver.st</dd><dt>Upstream repository</dt><dd>mumez/PharoSmalltalkInteropServer</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 44 tests.  Stock Cog passes 44.  Our VM passes 9, with 34
+errors (<code>ConnectionClosed: Connection aborted to 127.0.0.1:8086</code>) and 1
+failure (<code>testStatusStringWhenRunning</code>).</li>
+<li>No defect of our VM.  Probes on the two VMs show that the socket plugin,
+Zinc and Teapot work on our VM when the server runs.</li>
+<li>Cause of the difference, in the eval mode of our VM (the test run of each
+VM is an eval of the same runner file).  The image runs its deferred
+start actions in a list.  The first action is the command line handler.
+On stock Cog that action forks a process for the eval text, so the text
+runs after each other action.  Our VM gives the eval text to the image as
+a start script, and the image loads the script inside the first action.
+So on our VM the tests started before the other actions.
+<code>SisServer class&gt;&gt;startUp:</code> makes the server in such an action.  On our
+VM the first test that sends <code>SisServer current</code> started the server
+inside the test.  SUnit ends each process that a test started, so the
+server stopped at the end of that test, and each later request had no
+server.  The change of the eval mode is in work (see
+../WIP.md).</li>
+<li>Defects of the package that the difference showed.  They are there on
+each VM, when the first <code>SisServer current</code> is in a test or when one test
+runs alone:
+<ul>
+<li><code>SisTest</code> has no setUp, so the tests depend on a server that something
+else started.</li>
+<li><code>testStatusStringWhenRunning</code> passed on stock Cog only after an earlier
+test put a setting into the server.  <code>SisServer&gt;&gt;statusString</code> printed
+an empty list of settings as <code>#()</code> and a list with entries as <code>{...}</code>.</li>
+</ul>
+</li>
+<li>Repair (<code>fixes/mumez-pharosmalltalkinteropserver.st</code>):
+<ul>
+<li>a new <code>SisTest&gt;&gt;setUp</code> starts the server when it does not run.  The
+start is inside <code>DefaultExecutionEnvironment beActiveDuring:</code>, so the
+server processes do not belong to the test and SUnit does not end them.</li>
+<li><code>statusString</code> prints <code>{}</code> for no settings.  The text for a list with
+entries is the same as before.</li>
+</ul>
+</li>
+<li>Result: 44 of 44 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 137&quot;
+Metacello new baseline: &#x27;PharoSmalltalkInteropServer&#x27;; repository: &#x27;github://mumez/PharoSmalltalkInteropServer:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>137</td><td><code>mumez-pharosmalltalkinteropserver</code></td><td>ok</td><td>tests=44 P=44 F=0 E=0 S=0 T=0 X=0</td><td>tests=44 P=44 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): mumez-pharosmalltalkinteropserver.st (<a href="../files/packages/fixes/mumez-pharosmalltalkinteropserver.st">download</a>)</summary><pre class="code">&quot;mumez/PharoSmalltalkInteropServer: 35 tests error on our VM with &#x27;ConnectionClosed:
+Connection aborted to 127.0.0.1:8086&#x27; and testStatusStringWhenRunning fails.  Stock Cog
+passes all 44.  No VM defect: the socket plugin, Zinc and Teapot work on our VM when the
+server runs (measured).
+
+Cause.  The package starts its server (SisServer current) lazily and from the image
+startup: SisServer class&gt;&gt;startUp: adds a deferred startup action that creates the
+server.  The tests (SisTest) send HTTP requests to SisServer current and have no setUp.
+Our test runner runs the whole suite inside the startup handler of the image, before the
+deferred startup actions run, so the first test that calls SisServer current starts the
+server inside the test.  SUnit (ProcessMonitorTestService) terminates every process that
+a test forks, so the Zinc listener process dies at the end of that test.  SisServer current
+still answers the stopped server, so every later test gets a refused connection and
+testStatusStringWhenRunning sees isRunning=false.  Stock Cog runs the suite from a
+command line handler that runs after the deferred actions, so the server was started
+outside any test and no test terminates its process.  The same loss happens on any VM
+when the first call of SisServer current is made inside a test.
+
+Repair 1 (package test): SisTest&gt;&gt;setUp makes sure that the server runs, and starts it
+again when it does not run.  The server starts with DefaultExecutionEnvironment active,
+so SUnit does not count the Zinc processes as processes of the test and does not
+terminate them.  This matters for testRunClassTest and testRunPackageTest too: the
+server runs SUnit inside a request, and the cleanup of that nested run terminated the
+server processes of the outer test, which closed the connection of the request.  The
+assertions are unchanged.  When the server already runs (Cog) the setUp does nothing.
+
+Repair 2 (package code): testStatusStringWhenRunning only passed when an earlier test
+had put a setting into the server.  SisServer&gt;&gt;statusString printed the empty list of
+settings as &#x27;settings=#()&#x27;, because an empty Array prints in the literal form, and a
+list with entries as &#x27;settings={...}&#x27;.  The method now prints &#x27;{}&#x27; for no settings, so the
+text has one format in every state.  The text for a list with entries is the same as
+before, so testStatusStringWhenNotRunning and testPrintOn are unchanged.&quot;
+
+add value: #SisTest value: #setUp value: &#x27;running&#x27;
+	value:
+&#x27;setUp
+	super setUp.
+	DefaultExecutionEnvironment beActiveDuring: [
+		SisServer current isRunning ifFalse: [ SisServer restart ] ]&#x27;.
+
+fix value: #SisServer value: #statusString
+	value: [ :source | source includesSubstring: &#x27;associations printString&#x27; ]
+	value:
+&#x27;statusString
+	| associations |
+	associations := self settings settingsDict associations.
+	^ &#x27;&#x27;isRunning={1}, settings={2}&#x27;&#x27; format: {
+			  self isRunning printString.
+			  associations isEmpty
+				  ifTrue: [ &#x27;&#x27;{}&#x27;&#x27; ]
+				  ifFalse: [ associations printString ] }&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

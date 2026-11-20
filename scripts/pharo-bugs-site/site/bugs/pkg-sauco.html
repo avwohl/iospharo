@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Sauco (tinchodias/Sauco, row 36) - Pharo test defects</title><meta name="description" content="Package: Sauco (tinchodias/Sauco, row 36): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Sauco (tinchodias/Sauco, row 36)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>tinchodias/Sauco</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>Defect of our manifest: the row loaded the packages <code>Sauco-Core</code> and
+<code>Sauco-Tests</code> only.  <code>SaAdaptiveLabelsTest</code> (in <code>Sauco-Tests</code>) uses
+<code>SaReport&gt;&gt;asRSCanvas</code> of the package <code>Sauco-Roassal</code> (2 errors).</li>
+<li>Repair: the row loads the baseline with no package list.</li>
+<li>Result: 19 of 19 pass on the two VMs.</li>
+<li>For the owner of the package: in the baseline, <code>Sauco-Tests</code> requires
+<code>Sauco-Core</code> only.  The package needs <code>Sauco-Roassal</code> too.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 36&quot;
+Metacello new baseline: &#x27;Sauco&#x27;; repository: &#x27;github://tinchodias/Sauco:master/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>36</td><td><code>tinchodias-sauco</code></td><td>ok</td><td>tests=19 P=19 F=0 E=0 S=0 T=0 X=0</td><td>tests=19 P=19 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><p>No fixes file; the record above says what changed.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

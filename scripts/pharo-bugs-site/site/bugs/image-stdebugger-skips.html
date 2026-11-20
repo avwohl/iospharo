@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StDebugger-skips - Pharo test defects</title><meta name="description" content="StDebugger-skips: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>StDebugger-skips</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>9</dd><dt>Fix</dt><dd>image fix 20-StDebugger-skips.st</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-StDebugger-skips.st</code></li>
+<li>Methods: <code>StDebuggerContextPredicateTest&gt;&gt;testPrintDescription</code>, <code>StDebuggerContextPredicateTest&gt;&gt;testPrintPostMortemDescription</code>, <code>StDebuggerClientModelTest&gt;&gt;testComputeInitialTopContext</code>, <code>StDebuggerTest&gt;&gt;testGenerateAndProceed</code>, <code>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelection</code>, <code>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelectionAfterContextChange</code>, <code>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelection</code>, <code>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelectionAfterContextChange</code>, <code>StDebuggerTest&gt;&gt;testReturnEnteredValue</code></li>
+</ul>
+<p>All 9 StDebugger skips are now real passing tests on both VMs. No VM defect was found. Defects: 2 obsolete expectations ('0' in the StDebuggerContextPredicate printDescription tests); 1 skip with no remaining reason (testComputeInitialTopContext); testGenerateAndProceed (test harness re-ran the test: the debugger session wraps a context whose sender chain is the test's own chain, so resuming it re-executes the test; plus CR vs LF in expected sources and an obsolete 'see:' expectation; the test also never checked the recompiled method, now it does); 5 empty DBG_TEST placeholders (now real tests of StDebuggerInspector save/restoreRawInspectionSelectionForContext: and StDebugger&gt;&gt;returnEnteredValue). All repairs are in the tests only; no image code under test was changed. Side findings not fixed: (a) StDebuggerInspector&gt;&gt;restoreRawInspectionSelectionForContext: has 'path ifEmpty: [ self rawInspectionSelectionCache at: receiverClass ifAbsent: [ #() ] ]' whose result is discarded, so the receiver-class-only fallback never takes effect (probable upstream bug; not changed because it alters debugger behaviour); (b) selecting the outer-temp nodes 2-4 of the session fixture in the raw inspector fails with SubscriptOutOfBounds when the home method context of StTestDebuggerProvider&gt;&gt;sessionForDebuggerTests is widowed (sp=0), which happens on both VMs from the second call of that method in an image on Cog (first call keeps sp=3), so the new tests select only paths 1 and 5.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StDebuggerContextPredicateTest&gt;&gt;testPrintDescription</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Skipped and expected '0'; StDebuggerContextPredicate&gt;&gt;printDescription answers the post-mortem prefix plus 'context printString' (source read in the image). Expectation changed to context printString.</td>
+</tr>
+<tr>
+<td><code>StDebuggerContextPredicateTest&gt;&gt;testPrintPostMortemDescription</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Same obsolete '0'; printPostMortemDescriptionOn: writes '[Post-mortem] ' then printDescription adds context printString. Expectation changed accordingly.</td>
+</tr>
+<tr>
+<td><code>StDebuggerClientModelTest&gt;&gt;testComputeInitialTopContext</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Skipped with the remark that it makes production CI fail. With the skip removed and the body unchanged it passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>StDebuggerTest&gt;&gt;testGenerateAndProceed</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Resuming the DebugSession resumes the sender chain of the test itself in a new process, so the rest of the test runs a second time (measured: DNU #application: on StTestDebuggerProvider, then tearDown DNU). Debugger context is now created in a forked process. Also expected sources used LF while image method sources use CR, and the expected generated code was the obsolete 'see: ... equals: 111' instead of the 'assert: ... equals: 111' that StGenerateAssertEqualsCode&gt;&gt;generatedCodeFromDebugger: writes. The test now also asserts the recompiled method source, which it computed but never used.</td>
+</tr>
+<tr>
+<td><code>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelection</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Empty placeholder (self skip. self flag: #DBG_TEST). Now selects path #(1) in the raw inspector, calls saveRawInspectionSelectionForContext: and asserts both cache keys (class-&gt;selector and class) hold #(1).</td>
+</tr>
+<tr>
+<td><code>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelectionAfterContextChange</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Empty placeholder. Now steps once, selects path #(5), steps into another context and asserts the old context's selection was saved in the cache. Paths 2-4 avoided because they read temps of the returned (widowed) home context of the fixture method.</td>
+</tr>
+<tr>
+<td><code>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelection</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Empty placeholder. Now puts #(5) in the cache for the context's receiver class-&gt;selector, calls restoreRawInspectionSelectionForContext: and asserts the raw inspector selected path is #(5).</td>
+</tr>
+<tr>
+<td><code>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelectionAfterContextChange</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Empty placeholder. Now selects #(5) in the first context, steps into another context (selection no longer #(5)), selects the first stack item again and asserts #(5) is restored.</td>
+</tr>
+<tr>
+<td><code>StDebuggerTest&gt;&gt;testReturnEnteredValue</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Empty placeholder. StDebugger&gt;&gt;returnEnteredValue opens a modal request dialog, so the test gives the debugger an anonymous StPharoApplication subclass whose newRequest answers a stub request: first nil (user cancels: interruptedContext unchanged, the case the DBG_HowToTestNilIfUserCancels flag asks for), then '0' (the squared context is popped, interruptedContext is its sender and its top is 0).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only test methods were changed (no non-test method), so the covering classes are the owner classes plus all 20 StDebugger*/StGenerate*Test classes (StDebuggerAssertionContextTest, ClientModelAnnouncementTest, ClientModelTest, CommandTest, CommandTreeBuilderTest, ContextInteractionModelTest, ContextPredicateTest, ContextTest, ExceptionExtensionsTest, ExtensionMechanismTest, InspectorTest, MNUExtensionTest, RawObjectInspectorTest, ToolCommandTreeBuilderTest, TreeTablePresenterTest, StDebuggerTest, and the four *CommandTreeBuilderTest classes). Totals of PASS over these classes, without fix vs with fix: ours VM 284 -&gt; 294 (non-pass 10 -&gt; 0); Cog (arm64 pharo-vm via runtest.sh cog) 285 -&gt; 294 (non-pass 9 -&gt; 0; the 9 are the 9 skips, the old 10th on ours/9th... base Cog also had testUpdateExtensionSubscription fail once in an earlier run, not in this run). No test that passed before failed after. Repeat runs: the 6 StDebuggerTest tests ran together 4 times on each VM, all pass; the 3 other tests ran 3 times on each VM, all pass. Earlier intermediate runs with an earlier version of the tests (selecting paths 2/3) failed intermittently with SubscriptOutOfBounds on both VMs; that version is replaced.</p>
+<p>Upstream note: Pharo NewTools (StDebugger tests): un-skip the StDebugger tests. (1) StDebuggerContextPredicateTest: expect context printString (with the '[Post-mortem] ' prefix), not '0'. (2) StDebuggerClientModelTest&gt;&gt;testComputeInitialTopContext: remove skip, passes. (3) StDebuggerTest&gt;&gt;testGenerateAndProceed: create the generated-code debugger in its own process (resuming the session otherwise re-runs the test method), compare sources modulo line ends, expect 'assert: ... equals: 111' and assert the recompiled method. (4) Replace the five #DBG_TEST placeholders with tests of StDebuggerInspector&gt;&gt;save/restoreRawInspectionSelectionForContext: and StDebugger&gt;&gt;returnEnteredValue (using a stub application whose newRequest answers the expression). Possible upstream bug noticed, not changed here: StDebuggerInspector&gt;&gt;restoreRawInspectionSelectionForContext: discards the result of 'path ifEmpty: [ cache at: receiverClass ifAbsent: [ #() ] ]'. These changes need review by the owner before any PR.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>StDebuggerClientModelTest&gt;&gt;testComputeInitialTopContext</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerContextPredicateTest&gt;&gt;testPrintDescription</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerContextPredicateTest&gt;&gt;testPrintPostMortemDescription</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerTest&gt;&gt;testGenerateAndProceed</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelection</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelectionAfterContextChange</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerTest&gt;&gt;testReturnEnteredValue</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelection</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelectionAfterContextChange</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((StDebuggerClientModelTest selector: #testComputeInitialTopContext) run) printString.
+((StDebuggerContextPredicateTest selector: #testPrintDescription) run) printString.
+((StDebuggerContextPredicateTest selector: #testPrintPostMortemDescription) run) printString.
+((StDebuggerTest selector: #testGenerateAndProceed) run) printString.
+((StDebuggerTest selector: #testRestoreReceiverRawInspectionSelection) run) printString.
+((StDebuggerTest selector: #testRestoreReceiverRawInspectionSelectionAfterContextChange) run) printString.
+((StDebuggerTest selector: #testReturnEnteredValue) run) printString.
+((StDebuggerTest selector: #testSaveReceiverRawInspectionSelection) run) printString.
+((StDebuggerTest selector: #testSaveReceiverRawInspectionSelectionAfterContextChange) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>StDebuggerClientModelTest&gt;&gt;testComputeInitialTopContext before the fix (Pharo 14 build 791)</summary><pre class="code">testComputeInitialTopContext
+
+	| newSession dummyActionModel |
+	self flag:
+		&#x27;We suspect this test to make the production CI fail so we skip it for now&#x27;.
+	self skip.
+	dummyActionModel := StTestDebuggerProvider new
+		                    debuggerWithMissingSubclassResponsibilityContext
+		                    debuggerClientModel.
+	self changeSession: dummyActionModel session.
+	dummyActionModel clear.
+	self
+		assert: debugActionModel topContext
+		identicalTo: session exception signalContext.
+
+	dummyActionModel := StTestDebuggerProvider new
+		                    debuggerWithMissingSubclassResponsibilityContext
+		                    debuggerClientModel.
+	newSession := dummyActionModel session.
+	dummyActionModel clear.
+	newSession restart: newSession interruptedContext sender.
+	self changeSession: newSession.
+	self
+		assert: debugActionModel topContext
+		identicalTo: session interruptedContext</pre></details><details><summary>StDebuggerContextPredicateTest&gt;&gt;testPrintDescription before the fix (Pharo 14 build 791)</summary><pre class="code">testPrintDescription
+	self skip.
+	self assert: predicate printDescription equals: &#x27;0&#x27;</pre></details><details><summary>StDebuggerContextPredicateTest&gt;&gt;testPrintPostMortemDescription before the fix (Pharo 14 build 791)</summary><pre class="code">testPrintPostMortemDescription
+	self skip.
+	predicate postMortem: true.
+	self assert: predicate printDescription equals: &#x27;[Post-mortem] 0&#x27;</pre></details><details><summary>StDebuggerTest&gt;&gt;testGenerateAndProceed before the fix (Pharo 14 build 791)</summary><pre class="code">testGenerateAndProceed
+
+	| baseSourceCode expectedSourceCode adapter |
+	self skip:
+		&#x27;Does not work, I do not know why it looks like my test is executed several times with the same debugger&#x27;.
+	baseSourceCode := &#x27;methodThatGeneratesCode
+
+	| asserter |
+	asserter := TestAsserter new.
+	
+	asserter see: 42 + 66 + 3&#x27;.
+
+	expectedSourceCode := &#x27;methodThatGeneratesCode
+
+	| asserter |
+	asserter := TestAsserter new.
+	
+	asserter see: 42 + 66 + 3 equals: 111&#x27;.
+
+	debugger := StTestDebuggerProvider new
+		            debuggerWithGeneratingCodeContext
+		            application: self debuggerClass currentApplication;
+		            initialize;
+		            yourself.
+	&quot;just things necessary to use debugger&#x27;s code presenter, which we need in this test&quot;
+	adapter := SpMorphicCodeAdapter new.
+	adapter adapt: debugger code.
+	debugger code adapter: adapter.
+	debugger code adapter buildWidget.
+
+	self assert: debugger canGenerateAndProceed.
+	self assert: debugger exception isGeneratingCode.
+	self
+		assert: debugger interruptedContext sender sourceCode
+		equals: baseSourceCode.
+
+	oldMethodToSourceDictionary
+		at: debugger interruptedContext sender method
+		put: baseSourceCode.
+
+	debugger saveGeneratedCodeAndProceed
+	&quot;self assert: debugger interruptedContext isNil&quot;</pre></details><details><summary>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelection before the fix (Pharo 14 build 791)</summary><pre class="code">testRestoreReceiverRawInspectionSelection
+	self skip.
+	self flag: #DBG_TEST</pre></details><details><summary>StDebuggerTest&gt;&gt;testRestoreReceiverRawInspectionSelectionAfterContextChange before the fix (Pharo 14 build 791)</summary><pre class="code">testRestoreReceiverRawInspectionSelectionAfterContextChange
+
+	self skip.
+	self flag: #DBG_TEST</pre></details><details><summary>StDebuggerTest&gt;&gt;testReturnEnteredValue before the fix (Pharo 14 build 791)</summary><pre class="code">testReturnEnteredValue
+	self skip.
+	self flag: #DBG_TEST</pre></details><details><summary>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelection before the fix (Pharo 14 build 791)</summary><pre class="code">testSaveReceiverRawInspectionSelection
+
+	self skip.
+	self flag: #DBG_TEST</pre></details><details><summary>StDebuggerTest&gt;&gt;testSaveReceiverRawInspectionSelectionAfterContextChange before the fix (Pharo 14 build 791)</summary><pre class="code">testSaveReceiverRawInspectionSelectionAfterContextChange
+
+	self skip.
+	self flag: #DBG_TEST</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-StDebugger-skips.st (<a href="../files/image-fixes/20-StDebugger-skips.st">download</a>)</summary><pre class="code">&quot;StDebuggerContextPredicateTest&gt;&gt;testPrintDescription and testPrintPostMortemDescription
+skipped themselves and expected &#x27;0&#x27;.  StDebuggerContextPredicate&gt;&gt;printDescription
+answers the post-mortem prefix (from printPostMortemDescriptionOn:) followed by
+&#x27;context printString&#x27;.  The &#x27;0&#x27; is a leftover from an older printDescription that
+printed a number.  The tests now expect what printDescription is written to answer.&quot;
+fix value: #StDebuggerContextPredicateTest value: #testPrintDescription
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testPrintDescription
+
+	self assert: predicate printDescription equals: context printString&#x27;.
+
+
+fix value: #StDebuggerContextPredicateTest value: #testPrintPostMortemDescription
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testPrintPostMortemDescription
+
+	predicate postMortem: true.
+	self
+		assert: predicate printDescription
+		equals: &#x27;&#x27;[Post-mortem] &#x27;&#x27; , context printString&#x27;.
+
+&quot;StDebuggerClientModelTest&gt;&gt;testComputeInitialTopContext was skipped with the remark
+that it makes the production CI fail.  It passes on both VMs; skip removed.&quot;
+fix value: #StDebuggerClientModelTest value: #testComputeInitialTopContext
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testComputeInitialTopContext
+
+	| newSession dummyActionModel |
+	dummyActionModel := StTestDebuggerProvider new
+		                    debuggerWithMissingSubclassResponsibilityContext
+		                    debuggerClientModel.
+	self changeSession: dummyActionModel session.
+	dummyActionModel clear.
+	self
+		assert: debugActionModel topContext
+		identicalTo: session exception signalContext.
+
+	dummyActionModel := StTestDebuggerProvider new
+		                    debuggerWithMissingSubclassResponsibilityContext
+		                    debuggerClientModel.
+	newSession := dummyActionModel session.
+	dummyActionModel clear.
+	newSession restart: newSession interruptedContext sender.
+	self changeSession: newSession.
+	self
+		assert: debugActionModel topContext
+		identicalTo: session interruptedContext&#x27;.
+
+&quot;StDebuggerTest&gt;&gt;testGenerateAndProceed was skipped: &#x27;it looks like my test is
+executed several times with the same debugger&#x27;.  That is what happens: the
+debugger session wraps the context that signalled StGenerateCode, and the
+sender chain of that context is the chain of the test itself.  Proceeding the
+session resumes the chain in a new process, which runs the rest of the test
+method again (measured: the second run fails with &#x27;StTestDebuggerProvider does
+not understand #application:&#x27; and tearDown fails on the replaced debugger).
+The test now creates the context in a process of its own.  Two more repairs:
+the method source of the image has CR line ends and the expected sources in the
+test had LF, and the expected generated code is the assert:equals: send that
+StGenerateAssertEqualsCode&gt;&gt;generatedCodeFromDebugger: writes in place of see:
+(the old expectation &#x27;see: ... equals: 111&#x27; was never produced).  The test
+also asserted nothing after proceeding although it computed
+expectedSourceCode; it now checks the recompiled method.&quot;
+fix value: #StDebuggerTest value: #testGenerateAndProceed
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGenerateAndProceed
+
+	| baseSourceCode expectedSourceCode adapter provider created createdSignal normalized |
+	&quot;The image keeps method sources with CR line ends; compare without that difference.&quot;
+	normalized := [ :text | text withLineEndings: String cr ].
+	baseSourceCode := &#x27;&#x27;methodThatGeneratesCode
+
+	| asserter |
+	asserter := TestAsserter new.
+	
+	asserter see: 42 + 66 + 3&#x27;&#x27;.
+
+	expectedSourceCode := &#x27;&#x27;methodThatGeneratesCode
+
+	| asserter |
+	asserter := TestAsserter new.
+	
+	asserter assert: 42 + 66 + 3 equals: 111&#x27;&#x27;.
+
+	&quot;The debugger session wraps the context that signalled StGenerateCode.  Its
+	sender chain must not be the chain of this test: proceeding the session
+	resumes that chain in a new process, which would run the rest of this test
+	method a second time (this is why the test used to be skipped).  So the
+	context is created in a process of its own, and this method keeps the
+	debugger in its own variable, which the resumed chain cannot reach.&quot;
+	provider := StTestDebuggerProvider new.
+	createdSignal := Semaphore new.
+	[ created := provider debuggerWithGeneratingCodeContext.
+	createdSignal signal ] forkAt: Processor userSchedulingPriority.
+	(createdSignal wait: 10 seconds) ifTrue: [ self fail: &#x27;&#x27;debugger was not created&#x27;&#x27; ].
+	debugger := created.
+	debugger
+		application: self debuggerClass currentApplication;
+		initialize.
+	&quot;just things necessary to use debugger&#x27;&#x27;s code presenter, which we need in this test&quot;
+	adapter := SpMorphicCodeAdapter new.
+	adapter adapt: debugger code.
+	debugger code adapter: adapter.
+	debugger code adapter buildWidget.
+
+	self assert: debugger canGenerateAndProceed.
+	self assert: debugger exception isGeneratingCode.
+	self
+		assert: (normalized value: debugger interruptedContext sender sourceCode)
+		equals: (normalized value: baseSourceCode).
+
+	oldMethodToSourceDictionary
+		at: debugger interruptedContext sender method
+		put: baseSourceCode.
+
+	debugger saveGeneratedCodeAndProceed.
+	&quot;StGenerateAssertEqualsCode&gt;&gt;generatedCodeFromDebugger: replaces the see: send
+	by assert:...equals: with the value that was seen.&quot;
+	self
+		assert: (normalized value: (StTestDebuggerProvider &gt;&gt; #methodThatGeneratesCode) sourceCode)
+		equals: (normalized value: expectedSourceCode)&#x27;.
+
+&quot;The five StDebuggerTest tests below were empty placeholders (self skip. self flag:
+#DBG_TEST).  They now test StDebuggerInspector&gt;&gt;saveRawInspectionSelectionForContext:
+and restoreRawInspectionSelectionForContext:, which no other test covers.&quot;
+fix value: #StDebuggerTest value: #testSaveReceiverRawInspectionSelection
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testSaveReceiverRawInspectionSelection
+
+	| context |
+	&quot;Paths 1 (self) and 5 (the temporary i of the block) can be read in the context of
+	the session; the nodes 2 to 4 are temporaries of the method that created the
+	session, which has returned, and a returned context cannot be read.&quot;
+	dbg := self debuggerOn: session.
+	context := dbg currentContext.
+
+	dbg inspector getRawInspectorPresenterOrNil selectPath: #( 1 ).
+	dbg inspector saveRawInspectionSelectionForContext: context.
+
+	self
+		assert: (dbg inspector rawInspectionSelectionCache
+				 at: context receiver class -&gt; context selector)
+		equals: #( 1 ).
+	self
+		assert:
+		(dbg inspector rawInspectionSelectionCache at: context receiver class)
+		equals: #( 1 )&#x27;.
+
+
+fix value: #StDebuggerTest value: #testSaveReceiverRawInspectionSelectionAfterContextChange
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testSaveReceiverRawInspectionSelectionAfterContextChange
+
+	| context |
+	dbg := self debuggerOn: session.
+	dbg stepInto. &quot;Still in the same context, the raw inspector is updated&quot;
+	context := dbg currentContext.
+
+	dbg inspector getRawInspectorPresenterOrNil selectPath: #( 5 ).
+	dbg stepInto. &quot;We enter another context: the selection of the old one is saved&quot;
+
+	self deny: dbg currentContext identicalTo: context.
+	self
+		assert: (dbg inspector rawInspectionSelectionCache
+				 at: context receiver class -&gt; context selector)
+		equals: #( 5 )&#x27;.
+
+
+fix value: #StDebuggerTest value: #testRestoreReceiverRawInspectionSelection
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testRestoreReceiverRawInspectionSelection
+
+	| context |
+	dbg := self debuggerOn: session.
+	context := dbg currentContext.
+	self assert: dbg inspector getRawInspectorSelectedPath equals: #(  ).
+
+	dbg inspector rawInspectionSelectionCache
+		at: context receiver class -&gt; context selector
+		put: #( 5 ).
+	dbg inspector restoreRawInspectionSelectionForContext: context.
+
+	self assert: dbg inspector getRawInspectorSelectedPath equals: #( 5 )&#x27;.
+
+
+fix value: #StDebuggerTest value: #testRestoreReceiverRawInspectionSelectionAfterContextChange
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testRestoreReceiverRawInspectionSelectionAfterContextChange
+
+	| firstContext |
+	dbg := self debuggerOn: session.
+	dbg stepInto. &quot;Still in the same context, the raw inspector is updated&quot;
+	firstContext := dbg currentContext.
+	dbg inspector getRawInspectorPresenterOrNil selectPath: #( 5 ).
+
+	dbg stepInto. &quot;We enter another context&quot;
+	self deny: dbg currentContext identicalTo: firstContext.
+	self deny: dbg inspector getRawInspectorSelectedPath equals: #( 5 ).
+
+	&quot;Back to the first context: its selection is restored&quot;
+	dbg stackTable selectItem: dbg stackTable items last.
+	self assert: dbg currentContext identicalTo: firstContext.
+	self assert: dbg inspector getRawInspectorSelectedPath equals: #( 5 )&#x27;.
+
+&quot;StDebuggerTest&gt;&gt;testReturnEnteredValue: StDebugger&gt;&gt;returnEnteredValue asks the user for an
+expression with a modal request dialog.  The test gives the debugger an
+application whose request answers the expression &#x27;0&#x27; and, in a second run,
+nil (the user cancelled), the case that the flag DBG_HowToTestNilIfUserCancels
+in returnEnteredValue asks for.&quot;
+fix value: #StDebuggerTest value: #testReturnEnteredValue
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testReturnEnteredValue
+
+	| requestClass applicationClass application context sender |
+	requestClass := Object newAnonymousSubclass.
+	requestClass addInstVarNamed: &#x27;&#x27;answer&#x27;&#x27;.
+	requestClass compile: &#x27;&#x27;answer: anObject answer := anObject&#x27;&#x27;.
+	requestClass compile: &#x27;&#x27;title: aString ^ self&#x27;&#x27;.
+	requestClass compile: &#x27;&#x27;openModal ^ answer&#x27;&#x27;.
+	applicationClass := StPharoApplication newAnonymousSubclass.
+	applicationClass addInstVarNamed: &#x27;&#x27;request&#x27;&#x27;.
+	applicationClass compile: &#x27;&#x27;request: anObject request := anObject&#x27;&#x27;.
+	applicationClass compile: &#x27;&#x27;newRequest ^ request&#x27;&#x27;.
+	application := applicationClass new.
+
+	dbg := self debugger
+		       session: session;
+		       application: application;
+		       initialize;
+		       yourself.
+	dbg stepInto; stepInto. &quot;We enter the squared method&quot;
+	context := dbg interruptedContext.
+	sender := context sender. &quot;a returned context has no sender any more&quot;
+
+	&quot;The user cancels the request: nothing is returned&quot;
+	application request: (requestClass new answer: nil; yourself).
+	dbg returnEnteredValue.
+	self assert: dbg interruptedContext identicalTo: context.
+
+	&quot;The user enters an expression: its value is returned to the sender&quot;
+	application request: (requestClass new answer: &#x27;&#x27;0&#x27;&#x27;; yourself).
+	dbg returnEnteredValue.
+	self assert: dbg interruptedContext identicalTo: sender.
+	self assert: dbg interruptedContext top equals: 0&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

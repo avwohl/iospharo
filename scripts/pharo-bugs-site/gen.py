@@ -4,21 +4,25 @@ index of the defects behind the tests that did not pass on our VM and on Cog,
 and one page per defect.  The site is for the Pharo group: it leaves out the
 defects of our VM (docs/nonpassing-tests.md, part D, keeps them).
 
-Inputs: the records of this repository, the saved results in
-~/pharo-work-save/2026-11-17, checks-2026-11-18.json (the checks of
+The published site is the folder site/ (in git).  Inputs: the records of
+this repository, the run data in docs/results/2026-11-17/ (copies of the
+saved results of 2026-11-17), docs/results/pharo-ci-counts-2026-11-20.txt
+(the counts of the Pharo CI in the first section), the Pharo 14 sources file
+of the image (Pharo14.0-64bit-42a90c7.sources, 46 MB, from the image download
+get.pharo.org/64/140; SAVE below names where it is), checks-2026-11-18.json (the checks of
 2026-11-18: the state of each test before the repairs and the state of each
 package row), and trees/ (the file lists of the external projects of
 BaselineOfPharo at their versions).  No VM runs.
 
     python3 scripts/pharo-bugs-site/gen.py
-    rsync -az --delete -e 'ssh -p 24' scripts/pharo-bugs-site/out/ wohl@awohl.com:www/pharo_bugs1/
+    rsync -az --delete -e 'ssh -p 24' scripts/pharo-bugs-site/site/ wohl@awohl.com:www/pharo_bugs1/
 """
 import collections, glob, html, json, os, re, shutil, subprocess, sys
 from markdown_it import MarkdownIt
 
 SCR = os.path.dirname(os.path.abspath(__file__))
 REPO = '/Users/wohl/src/iospharo'
-OUT = SCR + '/out'
+OUT = SCR + '/site'
 SAVE = os.path.expanduser('~/pharo-work-save/2026-11-17')
 P14SRC = SAVE + '/images/Pharo14.0-64bit-42a90c7.sources'
 DATE = '2026-11-20'
@@ -597,7 +601,7 @@ manifest = [l.rstrip('\n').split('\t') for l in open(REPO + '/scripts/pkg-jit-te
 label_of = {i + 1: r[0] for i, r in enumerate(manifest)}
 row_of = {v: k for k, v in label_of.items()}
 summary = {}
-for l in open(SAVE + '/pkgs1/summary.tsv'):
+for l in open(REPO + '/docs/results/2026-11-17/pkgs1-summary.tsv'):
     f = l.rstrip('\n').split('\t')
     summary[f[0]] = f
 wfrows = {r['row']: r for r in WF['pkg']['rows']}

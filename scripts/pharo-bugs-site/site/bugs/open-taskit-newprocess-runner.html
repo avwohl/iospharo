@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TaskIt: a new-process task runner test fails at random - Pharo test defects</title><meta name="description" content="TaskIt: a new-process task runner test fails at random: Open: draft fix, not validated">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>TaskIt: a new-process task runner test fails at random</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: draft fix, not validated</span></dd><dt>Defect in</dt><dd>the Pharo image or the test (not proven)</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>draft only</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Summary</h2><p><code>TKTNewProcessTaskRunnerTest&gt;&gt;testNewProcessTaskRunnerRunsInNewProcessEveryTime</code> failed 1 time in the sweep <code>sweep14-new14</code> of our VM ("Got 9 instead of 10").  It passed in the 5 other saved sweeps of 2026-11-17 (3 of our VM, 2 of the patched Cog).  The source of the test says that it fails at random on the CI of Pharo.  The cause is not proven.</p><h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((TKTNewProcessTaskRunnerTest selector: #testNewProcessTaskRunnerRunsInNewProcessEveryTime) run) printString.</pre><pre class="code">testNewProcessTaskRunnerRunsInNewProcessEveryTime
+
+	| runner hashes futures hashesSet |
+	self skipOnPharoCITestingEnvironment.
+	&quot;this fails randomly on the CI&quot;
+
+	runner := TKTNewProcessTaskRunner new.
+	hashes := AtomicSharedQueue new.
+
+	futures := (1 to: 10) collect: [ :i | (runner future: [ Processor activeProcess identityHash ]) onSuccessDo: [ :v | hashes nextPut: v ] ].
+
+	futures do: [ :each | each waitForCompletion: 2 seconds ].
+
+	hashesSet := Set new.
+	[ hashes isEmpty ] whileFalse: [ hashesSet add: hashes next ].
+	self assert: hashesSet size equals: 10</pre><h2>Fix</h2><p>None yet.  A draft of a test change exists in the iospharo working tree.  The draft is not validated, and its cause is a hypothesis, so it is not published here.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

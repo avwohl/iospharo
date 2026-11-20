@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Iris (koendehondt/iris-for-pharo, row 96) - Pharo test defects</title><meta name="description" content="Package: Iris (koendehondt/iris-for-pharo, row 96): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Iris (koendehondt/iris-for-pharo, row 96)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>koendehondt/iris-for-pharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 131 tests, 128 pass, 2 failures, 1 error on the two VMs.</li>
+<li>Cause: the 3 tests are in <code>IrisExampleTest</code>, a class with one test that
+passes, two that fail and one that signals an error.  The class is data:
+<code>IrisMCPRunTestsToolTest</code> runs it and asserts the text of the report
+(&quot;1 passed, 2 failed, 1 errored&quot; and the three messages).  The package run
+listed the class as a test class.</li>
+<li>Repair here: <code>fixtures/koendehondt-iris-for-pharo.txt</code> names the class as
+a fixture.  Its 4 tests leave the list.</li>
+<li>Result: 127 of 127 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 96&quot;
+Metacello new baseline: &#x27;Iris&#x27;; repository: &#x27;github://koendehondt/iris-for-pharo:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>96</td><td><code>koendehondt-iris-for-pharo</code></td><td>ok</td><td>tests=127 P=127 F=0 E=0 S=0 T=0 X=0</td><td>tests=127 P=127 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixtures: koendehondt-iris-for-pharo.txt (<a href="../files/packages/fixtures/koendehondt-iris-for-pharo.txt">download</a>)</summary><pre class="code"># IrisExampleTest: data for IrisMCPRunTestsToolTest (testRunsTestClass, testRunsPackage, testRunsSingleErrorTest, testRunsSingleFailingTest, testRunsSinglePassingTest). Its testError, testFailWithDescription and testFailWithoutDescription fail on purpose; IrisMCPRunTestsToolTest runs them through IrisMCPRunTestsTool and compares the text with &quot;1 passed, 2 failed, 1 errored&quot;. Its testPass is a trivial assert: true.
+IrisExampleTest
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

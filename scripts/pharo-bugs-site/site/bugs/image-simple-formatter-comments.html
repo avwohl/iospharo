@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simple-formatter-comments - Pharo test defects</title><meta name="description" content="Simple-formatter-comments: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Simple-formatter-comments</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 28-simple-formatter-comments.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: a read-only proposal by one agent and a check by a second agent,
+then a run on our VM.</li>
+<li>Entries: <code>scripts/image-fixes/28-simple-formatter-comments.st</code></li>
+<li>Methods: <code>OCSimpleFormatter&gt;&gt;basicFormatCommentFor:</code>, <code>format:</code>,
+<code>formatStatementCommentsFor:</code>, <code>formatCommentsFor:</code>, <code>formatBlock:</code>,
+<code>formatArray:</code>, <code>privateFormatMethodPatternMonoLineFor:</code>, new
+<code>hoistedCommentsFor:</code> and <code>collectHoistedCommentsOf:into:</code>; new
+<code>OCCodeSnippet&gt;&gt;simpleFormattedCode</code> and
+<code>OCCodeSnippet class&gt;&gt;simpleFormattedCodes</code>;
+<code>OCParseCodeSnippetTest&gt;&gt;testSimpleFormattedCode</code>;
+<code>OCCodeSnippet class&gt;&gt;badComments</code></li>
+</ul>
+<p><code>OCParseCodeSnippetTest&gt;&gt;testSimpleFormattedCode</code> skipped for the 23 snippets
+of the group <code>badComments</code> (&quot;The simple one is too much broken&quot;).
+<code>OCSimpleFormatter</code> dropped each comment that was not at a statement of a
+sequence, at a temporary, at a block argument or at a method.  The entry
+makes the formatter print each comment of the AST one time.  A comment in an
+expression goes behind the statement, in source order.  The test compared
+with the expected text of the other formatter, which drops and moves
+comments, so a snippet now can have its own expected text for the simple
+formatter.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OCParseCodeSnippetTest&gt;&gt;testSimpleFormattedCode</code> (23 snippets)</td>
+<td>image-code and test</td>
+<td>repaired</td>
+<td>The simple formatter dropped comments; the expected text was the text of another formatter.</td>
+</tr>
+</tbody>
+</table>
+<p>State on our VM: 1412 tests of <code>OCParseCodeSnippetTest</code>, all pass (before:
+23 skips).</p>
+<p>Upstream note: Title: OCSimpleFormatter drops comments.  Project: pharo
+(AST-Core, AST-Core-Tests).  Found on the way and not repaired: the parser
+loses the comments B, C and D of the source
+<code>1 &quot;A&quot; true &quot;B&quot; false &quot;C&quot; nil &quot;D&quot; self &quot;E&quot; super &quot;F&quot; thisContext &quot;G&quot;</code>.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>OCParseCodeSnippetTest&gt;&gt;testSimpleFormattedCode</code></td><td></td><td>repaired</td><td>PASS 353x</td><td>PASS 353x</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  </p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((OCParseCodeSnippetTest selector: #testSimpleFormattedCode) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>OCParseCodeSnippetTest&gt;&gt;testSimpleFormattedCode before the fix (Pharo 14 build 791)</summary><pre class="code">testSimpleFormattedCode
+
+	| ast fast east |
+	ast := snippet parse.
+	fast := (OCSimpleFormatter format: ast) reject: #isSeparator.
+	east := snippet formattedCode reject: #isSeparator.
+	self assert: fast  equals: east</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>28-simple-formatter-comments.st (<a href="../files/image-fixes/28-simple-formatter-comments.st">download</a>)</summary><pre class="code">&quot;28-simple-formatter-comments.st -- OCSimpleFormatter prints each comment of the AST one time; the test of the simple formatter has its own expected text (2026-11-17).
+
+Cause 1. OCSimpleFormatter printed a comment only on a statement of a sequence, on a temporary, on a block argument and on a method. It dropped the comments of a root expression (parseExpression answers the single statement, not the sequence), the own comments of a block and of a brace array, the comments of method pattern arguments, and the comments of the messages of a cascade. Cause 2. The test OCParseCodeSnippetTest&gt;&gt;testSimpleFormattedCode compared the simple formatter with formattedCode, which is the text of the Enlumineur formatter. Enlumineur drops or moves comments (see the remarks in OCCodeSnippet class&gt;&gt;badComments). Eight snippets passed only because both formatters lost the same comments. Cause 3. The group default of OCCodeSnippet class&gt;&gt;badComments skips the test (the simple one is too much broken), so the test never ran for the 23 snippets.
+
+F1. basicFormatCommentFor: writes a quote inside a comment with the quote doubled.
+F2. format: prints the comments of a root expression after the expression.
+F3. formatStatementCommentsFor: prints all comments of the statement subtree, sorted by position (hoistedCommentsFor:, collectHoistedCommentsOf:into:). A block, a brace array, a sequence and a method print their own comments themselves, so they stop the collection.
+F4. formatBlock:, formatArray:, formatCommentsFor: print the own comments of a block or a brace array after the opening bracket, sorted by position.
+F5. privateFormatMethodPatternMonoLineFor: prints the comments of each pattern argument.
+F6. OCCodeSnippet&gt;&gt;simpleFormattedCode and OCCodeSnippet class&gt;&gt;simpleFormattedCodes: the expected text of the simple formatter, formattedCode where the two formatters agree.
+F7. The test reads simpleFormattedCode. The skip of the group goes.&quot;
+
+fix value: #OCSimpleFormatter value: #basicFormatCommentFor:
+	value: [ :source | source includesSubstring: &#x27;nextPutAll: aComment contents;&#x27; ]
+	value:
+&#x27;basicFormatCommentFor: aComment
+
+	codeStream
+		nextPut: $&quot;;
+		nextPutAll: (aComment contents copyReplaceAll: &#x27;&#x27;&quot;&#x27;&#x27; with: &#x27;&#x27;&quot;&quot;&#x27;&#x27;);
+		nextPut: $&quot;&#x27;.
+
+fix value: #OCSimpleFormatter value: #format:
+	value: [ :source | (source includesSubstring: &#x27;formatStatementCommentsFor:&#x27;) not ]
+	value:
+&#x27;format: aParseTree
+
+	self visitNode: aParseTree.
+	(aParseTree isSequence or: [ aParseTree isMethod ]) ifFalse: [
+		self formatStatementCommentsFor: aParseTree ].
+	^ codeStream contents&#x27;.
+
+fix value: #OCSimpleFormatter value: #formatStatementCommentsFor:
+	value: [ :source | (source includesSubstring: &#x27;hoistedCommentsFor:&#x27;) not ]
+	value:
+&#x27;formatStatementCommentsFor: aStatementNode
+
+	(self hoistedCommentsFor: aStatementNode) do: [ :each |
+		self
+			newLine;
+			basicFormatCommentFor: each ]&#x27;.
+
+add value: #OCSimpleFormatter value: #hoistedCommentsFor: value: &#x27;private - formatting&#x27; value:
+&#x27;hoistedCommentsFor: aNode
+
+	| found |
+	found := OrderedCollection new.
+	self collectHoistedCommentsOf: aNode into: found.
+	^ found asSortedCollection: [ :a :b | a start &lt;= b start ]&#x27;.
+
+add value: #OCSimpleFormatter value: #collectHoistedCommentsOf:into: value: &#x27;private - formatting&#x27; value:
+&#x27;collectHoistedCommentsOf: aNode into: aCollection
+
+	&quot;A sequence, a method, a block and a brace array print their own comments: stop there. A message of a cascade shares the receiver with the other messages: a comment is added one time.&quot;
+	aNode ifNil: [ ^ self ].
+	(aNode isSequence or: [ aNode isMethod or: [ aNode isBlock or: [ aNode isDynamicArray ] ] ]) ifTrue: [ ^ self ].
+	aNode comments do: [ :each |
+		(aCollection anySatisfy: [ :seen | seen == each ]) ifFalse: [ aCollection add: each ] ].
+	aNode children ifNotNil: [ :kids |
+		kids do: [ :each | self collectHoistedCommentsOf: each into: aCollection ] ]&#x27;.
+
+fix value: #OCSimpleFormatter value: #formatCommentsFor:
+	value: [ :source | (source includesSubstring: &#x27;asSortedCollection&#x27;) not ]
+	value:
+&#x27;formatCommentsFor: aNode
+
+	(aNode comments asSortedCollection: [ :a :b | a start &lt;= b start ]) do: [ :each |
+		self
+			basicFormatCommentFor: each;
+			newLine ]&#x27;.
+
+fix value: #OCSimpleFormatter value: #formatBlock:
+	value: [ :source | (source includesSubstring: &#x27;formatCommentsFor: aBlockNode&#x27;) not ]
+	value:
+&#x27;formatBlock: aBlockNode
+
+	self
+		formatBlockArgumentsFor: aBlockNode;
+		space;
+		formatCommentsFor: aBlockNode;
+		visitNode: aBlockNode body;
+		space&#x27;.
+
+fix value: #OCSimpleFormatter value: #formatArray:
+	value: [ :source | (source includesSubstring: &#x27;formatCommentsFor: anArrayNode&#x27;) not ]
+	value:
+&#x27;formatArray: anArrayNode
+
+	self formatCommentsFor: anArrayNode.
+	anArrayNode statements
+		do: [ :each |
+			self visitNode: each.
+			self formatStatementCommentsFor: each ]
+		separatedBy: [
+			codeStream nextPutAll: &#x27;&#x27; . &#x27;&#x27;.
+			self newLine ]&#x27;.
+
+fix value: #OCSimpleFormatter value: #privateFormatMethodPatternMonoLineFor:
+	value: [ :source | (source includesSubstring: &#x27;formatStatementCommentsFor: arg&#x27;) not ]
+	value:
+&#x27;privateFormatMethodPatternMonoLineFor: aMethodNode
+
+	self
+		with: aMethodNode selectorParts
+		and: aMethodNode arguments
+		do: [ :key :arg |
+			codeStream nextPutAll: key.
+			self space.
+			self visitNode: arg.
+			self formatStatementCommentsFor: arg ]
+		separatedBy: [ self space ]&#x27;.
+
+&quot;The expected text of the simple formatter. The key is the snippet source without separators.&quot;
+add value: #&#x27;OCCodeSnippet class&#x27; value: #simpleFormattedCodes value: &#x27;accessing&#x27; value:
+&#x27;simpleFormattedCodes
+
+	&quot;Expected output of OCSimpleFormatter where it differs from formattedCode (the output of the Enlumineur formatter, which drops or moves comments). The key is the snippet source without separators. The simple formatter prints each comment one time, after the statement that holds it; a block and a brace array print their comments after the opening bracket.&quot;
+	^ Dictionary new
+		at: &#x27;&#x27;&quot;com&quot;1&quot;ment&quot;&#x27;&#x27; put: &#x27;&#x27;1 &quot;com&quot; &quot;ment&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;1&quot;b&quot;max:&quot;c&quot;2&quot;d&quot;+&quot;e&quot;3&quot;f&quot;abs&quot;g&quot;&#x27;&#x27; put: &#x27;&#x27;1 max: 2 + 3 abs &quot;a&quot; &quot;b&quot; &quot;c&quot; &quot;d&quot; &quot;e&quot; &quot;f&quot; &quot;g&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;(&quot;b&quot;(&quot;c&quot;1&quot;d&quot;)&quot;e&quot;)&quot;f&quot;&#x27;&#x27; put: &#x27;&#x27;1 &quot;a&quot; &quot;b&quot; &quot;c&quot; &quot;d&quot; &quot;e&quot; &quot;f&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;1&quot;b&quot;max:&quot;c&quot;2&quot;d&quot;;&quot;e&quot;min:&quot;f&quot;3&quot;g&quot;&#x27;&#x27; put: &#x27;&#x27;1 max: 2; min: 3 &quot;a&quot; &quot;b&quot; &quot;c&quot; &quot;d&quot; &quot;e&quot; &quot;f&quot; &quot;g&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;#(&quot;b&quot;1&quot;c&quot;two&quot;d&quot;(&quot;e&quot;3&quot;f&quot;)&quot;g&quot;)&quot;h&quot;&#x27;&#x27; put: &#x27;&#x27;#( 1 two #( 3 ) ) &quot;a&quot; &quot;b&quot; &quot;c&quot; &quot;d&quot; &quot;e&quot; &quot;f&quot; &quot;g&quot; &quot;h&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;#[&quot;b&quot;1&quot;c&quot;2&quot;d&quot;]&quot;e&quot;&#x27;&#x27; put: &#x27;&#x27;#[ 1 2 ] &quot;a&quot; &quot;b&quot; &quot;c&quot; &quot;d&quot; &quot;e&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;{&quot;b&quot;1&quot;c&quot;.&quot;d&quot;2&quot;e&quot;}&quot;f&quot;&#x27;&#x27; put: &#x27;&#x27;{ &quot;a&quot; &quot;b&quot; &quot;f&quot; 1 &quot;c&quot; &quot;d&quot; . 2 &quot;e&quot; }&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;^&quot;b&quot;5&quot;c&quot;&#x27;&#x27; put: &#x27;&#x27;^ 5 &quot;a&quot; &quot;b&quot; &quot;c&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;&quot;a&quot;foo:&quot;b&quot;x&quot;c&quot;bar:&quot;d&quot;y&quot;e&quot;^&quot;f&quot;x&quot;g&quot;&#x27;&#x27; put: &#x27;&#x27;foo: x &quot;a&quot; &quot;b&quot; &quot;c&quot; bar: y &quot;d&quot; &quot;e&quot; ^ x &quot;f&quot; &quot;g&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;1&quot;A&quot;true&quot;B&quot;false&quot;C&quot;nil&quot;D&quot;self&quot;E&quot;super&quot;F&quot;thisContext&quot;G&quot;&#x27;&#x27; put: &#x27;&#x27;1 true false nil self super thisContext &quot;A&quot; &quot;E&quot; &quot;F&quot; &quot;G&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;1-1&quot;A&quot;-1abs-1&quot;B&quot;-1max:-1&quot;C&quot;&#x27;&#x27; put: &#x27;&#x27;1 - 1 - 1 abs - 1 - 1 max: -1 &quot;A&quot; &quot;B&quot; &quot;C&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;#(aa:bb:&quot;A&quot;cc&quot;B&quot;#aa:bb:cc&quot;C&quot;#cc&quot;D&quot;++&quot;E&quot;#++&quot;F&quot;)&#x27;&#x27; put: &#x27;&#x27;#(aa:bb: cc #&#x27;&#x27;&#x27;&#x27;aa:bb:cc&#x27;&#x27;&#x27;&#x27; #cc #&#x27;&#x27;&#x27;&#x27;++&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;++&#x27;&#x27;&#x27;&#x27;) &quot;A&quot; &quot;B&quot; &quot;C&quot; &quot;D&quot; &quot;E&quot; &quot;F&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;#((&quot;A&quot;)&quot;B&quot;.&quot;C&quot;:&quot;D&quot;;&quot;E&quot;[&quot;F&quot;]&quot;G&quot;{&quot;H&quot;}&quot;I&quot;^&quot;J&quot;)&#x27;&#x27; put: &#x27;&#x27;#(#() #&#x27;&#x27;&#x27;&#x27;.&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;;&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;[&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;]&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;{&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;}&#x27;&#x27;&#x27;&#x27; #&#x27;&#x27;&#x27;&#x27;^&#x27;&#x27;&#x27;&#x27;) &quot;A&quot; &quot;B&quot; &quot;C&quot; &quot;D&quot; &quot;E&quot; &quot;F&quot; &quot;G&quot; &quot;H&quot; &quot;I&quot; &quot;J&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;#(#&quot;A&quot;##&quot;B&quot;)&#x27;&#x27; put: &#x27;&#x27;#(# ##) &quot;A&quot; &quot;B&quot;&#x27;&#x27;;
+		at: &#x27;&#x27;#(:=&quot;A&quot;aa:=&quot;B&quot;:==&quot;C&quot;cc:==&quot;D&quot;)&#x27;&#x27; put: &#x27;&#x27;#(#&#x27;&#x27;&#x27;&#x27;:=&#x27;&#x27;&#x27;&#x27; aa: #= #&#x27;&#x27;&#x27;&#x27;:=&#x27;&#x27;&#x27;&#x27; #= cc: #&#x27;&#x27;&#x27;&#x27;==&#x27;&#x27;&#x27;&#x27;) &quot;A&quot; &quot;B&quot; &quot;C&quot; &quot;D&quot;&#x27;&#x27;;
+		yourself&#x27;.
+
+add value: #OCCodeSnippet value: #simpleFormattedCode value: &#x27;accessing&#x27; value:
+&#x27;simpleFormattedCode
+
+	&quot;The expected output of OCSimpleFormatter: formattedCode, unless the two formatters differ.&quot;
+	^ self class simpleFormattedCodes
+		at: ((source ifNil: [ &#x27;&#x27;&#x27;&#x27; ]) reject: #isSeparator)
+		ifAbsent: [ self formattedCode ]&#x27;.
+
+fix value: #OCParseCodeSnippetTest value: #testSimpleFormattedCode
+	value: [ :source | source includesSubstring: &#x27;snippet formattedCode reject&#x27; ]
+	value: ((OCParseCodeSnippetTest &gt;&gt; #testSimpleFormattedCode) sourceCode
+		copyReplaceAll: &#x27;snippet formattedCode reject&#x27;
+		with: &#x27;snippet simpleFormattedCode reject&#x27;).
+
+fix value: #&#x27;OCCodeSnippet class&#x27; value: #badComments
+	value: [ :source | source includesSubstring: &#x27;skip: #testSimpleFormattedCode;&#x27; ]
+	value: (((OCCodeSnippet class &gt;&gt; #badComments) sourceCode
+		copyReplaceAll: &#x27;skip: #testSimpleFormattedCode;&#x27; with: &#x27;&#x27;)
+		copyReplaceAll: &#x27;&quot;The simple one is too much broken&quot;&#x27; with: &#x27;&#x27;).
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

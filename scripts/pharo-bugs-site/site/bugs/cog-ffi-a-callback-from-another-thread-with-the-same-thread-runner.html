@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: FFI: a callback from another thread with the same-thread runner - Pharo test defects</title><meta name="description" content="Cog: FFI: a callback from another thread with the same-thread runner: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: FFI: a callback from another thread with the same-thread runner</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>cog-same-thread-runner-callback-from-other-thread.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>Defect: <code>sameThreadCallbackEnter</code> calls <code>ptEnterInterpreterFromCallback</code>
+on the thread that made the callback.  When that thread is not the VM
+thread, two threads run the interpreter, and the VM stops with a
+segmentation fault.  The image has
+<code>TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread</code> set to skip for this
+runner, with that cause in a remark.</li>
+<li>Change, first commit: for a callback from another thread, the calling
+thread waits on a platform semaphore.  <code>callbackFrontend</code> already puts
+each invocation in the queue of pending callbacks, so the image runs the
+callback in the VM thread.  <code>sameThreadCallbackExit</code> gives the signal.
+The worker runner does the same for a thread that is not its own.</li>
+<li>Change, second commit, from a review of the first:
+<ul>
+<li>A lock for the callback stack of a runner.  <code>callbackFrontend</code> pushed
+with no lock from any thread, and <code>primitiveCallbackReturn</code> tested and
+popped in two steps.  The worker runner had the same exposure.</li>
+<li>The runner keeps the VM thread as a <code>pthread_t</code> from
+<code>primitiveGetSameThreadRunnerAddress</code>.  <code>ioVMThread</code> is set only in a
+build with <code>PHARO_VM_IN_WORKER_THREAD</code>, and on Windows its type cannot
+hold a <code>pthread_t</code>.</li>
+</ul>
+</li>
+<li>Test (2026-11-17, macOS 27, arm64, the stock app with the core library of
+the changed build): the 14 tests of <code>TFUFFICallbackTest</code> pass, 8 runs of
+8.  <code>testCallbacksInOtherThread</code> passes for the same-thread runner and
+for the worker runner.  On the stock VM the same-thread case stops the
+VM, so the test skips there.</li>
+<li>Not tested: Windows and Linux, and two threads that call back at the same
+time.</li>
+<li>The image side: <code>scripts/image-fixes/30-ffi-callback-from-other-thread.st</code>
+keeps the skip only for a VM without the change.  Our VM always ran such
+a callback in the VM thread.</li>
+</ul>
+<h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((TFUFFICallbackTest selector: #testCallbacksInOtherThread) run) printString.</pre><h2>Image side</h2><p>The tests that show the defect, with the image fix entries:</p><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>30-ffi-callback-from-other-thread.st (<a href="../files/image-fixes/30-ffi-callback-from-other-thread.st">download</a>)</summary><pre class="code">&quot;TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread skips for the same-thread FFI
+runner (2026-11-17).  The remark in the test says why: &#x27;Using same thread
+runner with callbacks from other threads produce a segmentation fault&#x27;.  Stock
+Cog v12 enters the interpreter from the thread that made the callback, while
+the VM thread runs.
+
+Our VM runs such a callback in the VM thread.  docs/upstream has the change
+for Cog (cog-same-thread-runner-callback-from-other-thread.patch).  The test
+cannot run on a stock Cog without that change: the VM stops.  So the skip
+stays for a VM that does not have the repair, and goes for a VM that has it.
+The test asks the VM: our VM is known by its version text, and a Cog build
+with the change is known by the environment variable
+PHARO_FFI_CALLBACK_FROM_OTHER_THREAD, which scripts/vmrun.sh sets for the VM
+name cogp.&quot;
+
+add value: #TFUFFICallbackTest value: #sameThreadRunnerTakesCallbackFromOtherThread value: &#x27;private&#x27;
+	value:
+&#x27;sameThreadRunnerTakesCallbackFromOtherThread
+	&quot;Stock Cog v12 enters the interpreter from the thread of the callback and stops with a segmentation fault.  A VM that runs such a callback in the VM thread says so: the iospharo VM by its version text, a Cog build with the repair by an environment variable.&quot;
+
+	^ (Smalltalk vm interpreterSourceVersion includesSubstring: &#x27;&#x27;iospharo&#x27;&#x27;)
+		or: [ (OSEnvironment current at: &#x27;&#x27;PHARO_FFI_CALLBACK_FROM_OTHER_THREAD&#x27;&#x27; ifAbsent: [ nil ]) notNil ]&#x27;.
+
+fix value: #TFUFFICallbackTest value: #testCallbacksInOtherThread
+	value: [ :source | source includesSubstring: &#x27;ffiLibrary = TFTestLibraryUsingSameThreadRunner ifTrue: [ ^ self skip ].&#x27; ]
+	value: ((TFUFFICallbackTest &gt;&gt; #testCallbacksInOtherThread) sourceCode
+		copyReplaceAll: &#x27;ffiLibrary = TFTestLibraryUsingSameThreadRunner ifTrue: [ ^ self skip ].&#x27;
+		with: &#x27;(ffiLibrary = TFTestLibraryUsingSameThreadRunner and: [ self sameThreadRunnerTakesCallbackFromOtherThread not ]) ifTrue: [ ^ self skip ].&#x27;).
+</pre></details><p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/same-thread-runner-callback-from-other-thread</code>.  State: committed on the branch (2 commits), tested.  Not sent upstream.</p><details open><summary>cog-same-thread-runner-callback-from-other-thread.patch (<a href="../files/cog/cog-same-thread-runner-callback-from-other-thread.patch">download</a>)</summary><pre class="code">From 3178db2ecf3421f70de8ed29c53c8cf2aa3d7ddb Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 10:06:00 -0500
+Subject: [PATCH 1/2] Same-thread FFI runner: a callback from another thread
+ waits for the VM thread
+
+A callback from a thread that is not the VM thread entered the interpreter
+from that thread (sameThreadCallbackEnter called
+ptEnterInterpreterFromCallback), while the VM thread ran.  The result was a
+segmentation fault (TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread, which
+skips for this runner for that cause).
+
+callbackFrontend puts each invocation in the queue of pending callbacks, so
+the image runs the callback in the VM thread.  For a callback from another
+thread the calling thread now waits on a platform semaphore until the image
+returns from the callback, as the worker runner does.  A callback from the
+VM thread works as before.
+---
+ src/ffi/sameThread/sameThread.c | 63 +++++++++++++++++++++++++++++----
+ 1 file changed, 56 insertions(+), 7 deletions(-)
+
+diff --git a/src/ffi/sameThread/sameThread.c b/src/ffi/sameThread/sameThread.c
+index b5a9f7185..f59ebb235 100644
+--- a/src/ffi/sameThread/sameThread.c
++++ b/src/ffi/sameThread/sameThread.c
+@@ -3,6 +3,8 @@
+ #include &quot;pThreadedFFI.h&quot;
+ #include &quot;vmCallback.h&quot;
+ #include &quot;pharovm/macros.h&quot;
++#include &quot;pharovm/semaphores/pharoSemaphore.h&quot;
++#include &quot;pharovm/semaphores/platformSemaphore.h&quot;
+ 
+ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation* callback);
+ void sameThreadCallbackExit(struct _Runner* runner, struct _CallbackInvocation* callback);
+@@ -28,13 +30,43 @@ Primitive(primitiveGetSameThreadRunnerAddress) {
+     primitiveEndReturn(externalAddress);
+ }
+ 
++/*
++ * A callback can come from a thread that is not the VM thread: a library can
++ * call a callback from a thread that the library made.  Such a thread must
++ * not enter the interpreter.  The interpreter runs in the VM thread only, and
++ * an entry from another thread, while the VM thread runs, corrupts the state
++ * of the interpreter (a segmentation fault in
++ * TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread).
++ *
++ * callbackFrontend puts each invocation in the queue of pending callbacks, so
++ * the image runs the callback in the VM thread.  For a callback from another
++ * thread, the calling thread waits on a platform semaphore until the image
++ * returns from the callback (sameThreadCallbackExit).  The worker runner does
++ * the same for a callback from a thread that is not its own thread.
++ */
++typedef struct {
++	/* Not NULL: the callback came from a thread that is not the VM thread. */
++	Semaphore *returned;
++	/* The callback came from the VM thread: the state for the long jump. */
++	VMCallbackContext vmcc;
++} SameThreadCallbackState;
++
+ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation* callback){
+ 
++	SameThreadCallbackState *state = (SameThreadCallbackState*)callback-&gt;payload;
+ 	VMCallbackContext *vmcc;
+ 
+-	vmcc = malloc(sizeof(VMCallbackContext));
++	if(state-&gt;returned != NULL){
++		/* The image can return from the callback before this thread comes
++		 * here: the semaphore then has the signal, and the wait ends at once. */
++		Semaphore *returned = state-&gt;returned;
++		returned-&gt;wait(returned);
++		returned-&gt;free(returned);
++		free(state);
++		return;
++	}
+ 
+-	callback-&gt;payload = vmcc;
++	vmcc = &amp;state-&gt;vmcc;
+ 
+ 	if ((!sigsetjmp(vmcc-&gt;trampoline, 0))) {
+ 		//Used to mark that is a fake callback!
+@@ -47,18 +79,35 @@ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation*
+ 		return;
+ 	}
+ 
+-	free(vmcc);
++	free(state);
+ 
+ }
+ 
+ void sameThreadCallbackExit(struct _Runner* runner, struct _CallbackInvocation* callback){
+ 
+-	VMCallbackContext *vmcc;
+-	vmcc = (VMCallbackContext*)callback-&gt;payload;
++	SameThreadCallbackState *state = (SameThreadCallbackState*)callback-&gt;payload;
+ 
+-	ptExitInterpreterToCallback(vmcc);
++	if(state-&gt;returned != NULL){
++		/* The thread that made the callback waits in sameThreadCallbackEnter,
++		 * and frees the state after the signal: no use of state after it. */
++		Semaphore *returned = state-&gt;returned;
++		returned-&gt;signal(returned);
++		return;
++	}
++
++	ptExitInterpreterToCallback(&amp;state-&gt;vmcc);
+ }
+ 
+ void sameThreadPrepareCallback(struct _Runner* runner, struct _CallbackInvocation* callback){
+-	// I do not do nothing
++
++	SameThreadCallbackState *state = malloc(sizeof(SameThreadCallbackState));
++
++	// threads should be compared using ioOSThreadsEqual(), since binary comparison == is not portable
++	if(ioOSThreadsEqual(ioCurrentOSThread(), getVMOSThread())){
++		state-&gt;returned = NULL;
++	}else{
++		state-&gt;returned = platform_semaphore_new(0);
++	}
++
++	callback-&gt;payload = state;
+ }
+-- 
+2.54.0 (Apple Git-157)
+
+
+From bf6fa0f2976f60a719d4581a478bfa3d2bc394bc Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 10:25:13 -0500
+Subject: [PATCH 2/2] FFI callbacks: a lock for the callback stack; the
+ same-thread runner keeps its own VM thread id
+
+Two defects of the change before this one, found by a review:
+
+- callbackFrontend pushed on the callback stack of the runner with no lock,
+  from any thread, and primitiveCallbackReturn tested and popped the stack
+  in two steps.  A push from another thread between the two steps lost an
+  invocation, and its callback then never returned.  The push and the put
+  in the queue of pending callbacks also were two steps, so two threads
+  could give the image an order that was not the order of the stack.  The
+  worker runner had the same exposure.  A lock now makes each pair one step.
+
+- The same-thread runner asked ioVMThread for the VM thread.  That variable
+  is set only in a build with PHARO_VM_IN_WORKER_THREAD, and on Windows its
+  type cannot hold a pthread_t.  The runner now keeps the thread of
+  primitiveGetSameThreadRunnerAddress and compares with pthread_equal, as
+  the worker runner does.
+---
+ include/pharovm/ffi/callbacks.h        |  4 ++++
+ src/ffi/callbacks/callbackPrimitives.c | 11 ++++++++---
+ src/ffi/callbacks/callbacks.c          | 23 +++++++++++++++++++++++
+ src/ffi/sameThread/sameThread.c        | 26 ++++++++++++++++++++++++--
+ 4 files changed, 59 insertions(+), 5 deletions(-)
+
+diff --git a/include/pharovm/ffi/callbacks.h b/include/pharovm/ffi/callbacks.h
+index 2b9da6b64..1b4287cee 100644
+--- a/include/pharovm/ffi/callbacks.h
++++ b/include/pharovm/ffi/callbacks.h
+@@ -49,4 +49,8 @@ CallbackInvocation *queue_next_pending_callback();
+ 
+ void initilizeCallbacks(int pharo_semaphore_index);
+ 
++// The lock of the callback stacks of the runners (callbacks.c)
++void callbackStackLockAcquire(void);
++void callbackStackLockRelease(void);
++
+ #endif
+diff --git a/src/ffi/callbacks/callbackPrimitives.c b/src/ffi/callbacks/callbackPrimitives.c
+index 08f703ff3..3ed74ffe7 100644
+--- a/src/ffi/callbacks/callbackPrimitives.c
++++ b/src/ffi/callbacks/callbackPrimitives.c
+@@ -209,16 +209,21 @@ PrimitiveWithDepth(primitiveCallbackReturn, 2) {
+ 
+     // If the returning callback is not the last callback that entered, we cannot return
+     // Otherwise this would produce a stack corruption (returning to an older callback erasing/overriding the stack of newer ones)
++    // The test and the pop are one step: a callback from another thread can push at any time (callbackFrontend)
++    callbackStackLockAcquire();
+     if (callbackInvocation != runner-&gt;callbackStack){
++    	callbackStackLockRelease();
+     	primitiveEndReturn(falseObject());
+         return;
+     }
+ 
++    // If the callback was the last one, we need to pop it from the callback stack
++    runner-&gt;callbackStack = callbackInvocation-&gt;previous;
++    callbackStackLockRelease();
++
+     //We have to do this here. Because the callbackExitFunction may not return
+     //If we are in the samethread runner it does not return, as it uses a sig_longjmp to return to the caller of the callback!
+     primitiveEndReturn(trueObject());
+-    
+-    // If the callback was the last one, we need to pop it from the callback stack
+-    runner-&gt;callbackStack = runner-&gt;callbackStack-&gt;previous;
++
+     runner-&gt;callbackExitFunction(runner, callbackInvocation);
+ }
+diff --git a/src/ffi/callbacks/callbacks.c b/src/ffi/callbacks/callbacks.c
+index d86667e58..ebfd6167f 100644
+--- a/src/ffi/callbacks/callbacks.c
++++ b/src/ffi/callbacks/callbacks.c
+@@ -3,11 +3,32 @@
+ 
+ TSQueue* callbackQueue = NULL;
+ 
++/*
++ * A callback can come from any thread (a worker runner, or a library that
++ * calls back from a thread of its own), and the VM thread pops the callback
++ * stack of a runner in primitiveCallbackReturn.  The lock makes the push and
++ * the put in the queue of pending callbacks one step, so the order of the
++ * stack is the order in which the image gets the invocations, and it makes
++ * the test and the pop of primitiveCallbackReturn one step.
++ * No thread waits for a callback while it has the lock.
++ */
++static Semaphore *callbackStackLock = NULL;
++
++void callbackStackLockAcquire(void){
++	callbackStackLock-&gt;wait(callbackStackLock);
++}
++
++void callbackStackLockRelease(void){
++	callbackStackLock-&gt;signal(callbackStackLock);
++}
++
+ void queue_add_pending_callback(CallbackInvocation *callback) {
+ 	threadsafe_queue_put(callbackQueue, callback);
+ }
+ 
+ void initilizeCallbacks(int pharo_semaphore_index){
++    if(callbackStackLock == NULL)
++        callbackStackLock = platform_semaphore_new(1);
+     callbackQueue = threadsafe_queue_new(pharo_semaphore_new(pharo_semaphore_index));
+ }
+ 
+@@ -21,12 +42,14 @@ static void callbackFrontend(ffi_cif *cif, void *ret, void* args[], void* cbPtr)
+     
+     // Push callback invocation into a callback stack
+     // This callback stack is used to validate that callbacks return in order
++    callbackStackLockAcquire();
+     invocation.previous = callback-&gt;runner-&gt;callbackStack;
+     callback-&gt;runner-&gt;callbackStack = &amp;invocation;
+     
+     callback-&gt;runner-&gt;callbackPrepareInvocation(callback-&gt;runner, &amp;invocation);
+ 
+     queue_add_pending_callback(&amp;invocation);
++    callbackStackLockRelease();
+ 	
+ 	// Manage callouts while waiting this callback to return
+ 	callback-&gt;runner-&gt;callbackEnterFunction(callback-&gt;runner, &amp;invocation);
+diff --git a/src/ffi/sameThread/sameThread.c b/src/ffi/sameThread/sameThread.c
+index f59ebb235..9c5b39797 100644
+--- a/src/ffi/sameThread/sameThread.c
++++ b/src/ffi/sameThread/sameThread.c
+@@ -6,6 +6,20 @@
+ #include &quot;pharovm/semaphores/pharoSemaphore.h&quot;
+ #include &quot;pharovm/semaphores/platformSemaphore.h&quot;
+ 
++#include &lt;pthread.h&gt;
++
++/*
++ * The VM thread, as the worker runner keeps its own thread: a pthread_t and
++ * pthread_equal.  ioVMThread is not usable here: it is set only in a build
++ * with PHARO_VM_IN_WORKER_THREAD, and on Windows its type (DWORD) cannot hold
++ * the value of pthread_self().
++ * primitiveGetSameThreadRunnerAddress sets the two variables.  A primitive
++ * runs in the VM thread, and no callback of this runner exists before the
++ * image has the address of the runner.
++ */
++static pthread_t sameThreadVMThread;
++static volatile int sameThreadVMThreadKnown = 0;
++
+ void sameThreadCallbackEnter(struct _Runner* runner, struct _CallbackInvocation* callback);
+ void sameThreadCallbackExit(struct _Runner* runner, struct _CallbackInvocation* callback);
+ void sameThreadPrepareCallback(struct _Runner* runner, struct _CallbackInvocation* callback);
+@@ -21,6 +35,9 @@ Primitive(primitiveGetSameThreadRunnerAddress) {
+ 
+ 	sqInt externalAddress;
+ 
++	sameThreadVMThread = pthread_self();
++	sameThreadVMThreadKnown = 1;
++
+ 	externalAddress = instantiateClassindexableSize(classExternalAddress(), sizeof(void*));
+     checkFailed();
+ 
+@@ -102,8 +119,13 @@ void sameThreadPrepareCallback(struct _Runner* runner, struct _CallbackInvocatio
+ 
+ 	SameThreadCallbackState *state = malloc(sizeof(SameThreadCallbackState));
+ 
+-	// threads should be compared using ioOSThreadsEqual(), since binary comparison == is not portable
+-	if(ioOSThreadsEqual(ioCurrentOSThread(), getVMOSThread())){
++	if(state == NULL){
++		logError(&quot;Same thread runner: no memory for the state of a callback&quot;);
++		abort();
++	}
++
++	// threads should be compared using pthread_equal(), since binary comparison == is not portable
++	if(!sameThreadVMThreadKnown || pthread_equal(sameThreadVMThread, pthread_self())){
+ 		state-&gt;returned = NULL;
+ 	}else{
+ 		state-&gt;returned = platform_semaphore_new(0);
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

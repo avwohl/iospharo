@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Sagan (ba-st/Sagan, row 100) - Pharo test defects</title><meta name="description" content="Package: Sagan (ba-st/Sagan, row 100): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Sagan (ba-st/Sagan, row 100)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>ba-st-sagan.st</dd><dt>Upstream repository</dt><dd>ba-st/Sagan</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 133 tests, 37 pass, 61 errors, 35 timeouts on the two VMs,
+and 14 tests with another result on each VM (an error on one VM and a
+timeout on the other).</li>
+<li>Causes:
+<ul>
+<li>The tests of the relational repositories choose a PostgreSQL server on
+<code>127.0.0.1:5432</code> when the environment variable <code>RDBMS</code> is absent.  The
+test machine has no server.  The login code tries again with waits, so
+a test ends with an error or with the time limit.  The CI of the
+repository runs the same tests with <code>RDBMS=SQLite3</code>.</li>
+<li>With SQLite: 68 errors &quot;database is locked&quot;.  The cause is in the
+dependency Pharo-SQLite3: <code>SQLite3PreparedStatement&gt;&gt;stringAt:</code> sends
+<code>SQLite3Library&gt;&gt;stringFrom:at:</code>, and only the packages <code>SQLite3-Pharo8</code>
+and <code>SQLite3-Pharo9</code> have that method.  The baseline of Pharo-SQLite3
+loads <code>SQLite3-Pharo9</code> for Pharo 9 to 13 and not for Pharo 14.  A read
+of a text column fails, the statement stays open and keeps a read lock
+on the file, and the <code>DROP TABLE</code> of the <code>tearDown</code> then gets &quot;database
+is locked&quot;, which hides the first error.</li>
+<li>The text bind of Pharo-SQLite3 has the defect of the ReStore row
+(<code>SQLITE_STATIC</code> for bytes that nothing holds).</li>
+</ul>
+</li>
+<li>Repair here (<code>fixes/ba-st-sagan.st</code>): SQLite3 is the login when <code>RDBMS</code> is
+absent; <code>SQLite3Library&gt;&gt;stringFrom:at:</code> with the body of
+<code>SQLite3-Pharo9</code>; the text bind with <code>SQLITE_TRANSIENT</code>.</li>
+<li>Limit: the tests run on SQLite, not on PostgreSQL.  They do not check the
+PostgreSQL driver.</li>
+<li>Result: 133 of 133 pass on the two VMs, in a run from a new load.  No test
+differs between the VMs.</li>
+<li>For the owners: the baseline of <code>pharo-rdbms/Pharo-SQLite3</code> must name
+Pharo 14.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 100&quot;
+Metacello new baseline: &#x27;Sagan&#x27;; repository: &#x27;github://ba-st/Sagan:release-candidate/source&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>100</td><td><code>ba-st-sagan</code></td><td>ok</td><td>tests=133 P=133 F=0 E=0 S=0 T=0 X=0</td><td>tests=133 P=133 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): ba-st-sagan.st (<a href="../files/packages/fixes/ba-st-sagan.st">download</a>)</summary><pre class="code">&quot;ba-st-sagan (ba-st/Sagan, Sagan-RDBMS-Tests): entries, round 2.
+
+1. The package has no text reader for SQLite on Pharo 14.  The text of a
+   result column is read with SQLite3PreparedStatement&gt;&gt;stringAt:, and that
+   method sends stringFrom:at: to SQLite3Library.  The dependency Pharo-SQLite3
+   defines stringFrom:at: only in the version packages SQLite3-Pharo8 and
+   SQLite3-Pharo9, and the baseline of the dependency loads SQLite3-Pharo9 for
+   Pharo 9 to 13 only.  On Pharo 14 no package defines stringFrom:at:, and
+   each read of a text column ends with MessageNotUnderstood.  The entry adds
+   the method with the body of SQLite3-Pharo9.  This is the first cause of the
+   errors of the RDBMS tests.  The other errors follow from it: the read stops
+   in the middle of a SELECT, the statement stays active, an active statement
+   keeps a read lock on the file test.db, and the DROP TABLE of the tearDown
+   fails with &#x27;SQLite3Busy: database is locked&#x27; and hides the first error.
+   The test that ran next found a table that the tearDown did not drop
+   (&#x27;table ... already exists&#x27;) or no table.
+
+2. The RDBMS tests use PostgreSQL.  The test class
+   SingleSessionRDMBSRepositoryTest chooses its database login when the class
+   initializes: the environment variable RDBMS names the database, and without
+   the variable the login is PostgreSQL on 127.0.0.1:5432 (user postgres,
+   password secret, database test, SSL).  The machine has no PostgreSQL, so the
+   login of each test fails with ConnectionClosed.  The package has a login for
+   SQLite3 in the same class (sqlite3Login), and the CI of the package runs the
+   same tests with RDBMS=SQLite3 (.github/workflows/SQLite3-Integration-Tests.yml).
+   The entries make SQLite3 the default login, which is what the CI does with
+   the variable.  A variable RDBMS that is set still wins.  The login is built
+   at each call, because the SQLite login names the directory of the running
+   image, and the image that runs the tests is a copy of the image that was
+   prepared.  The last statement runs the class initialization again, so that
+   the Glorp default driver of the saved image is SQLite3Driver (the test
+   RDBMSSessionProviderTest&gt;&gt;expectedFailingLoginMessage reads that driver
+   before it builds any login).
+
+3. The text binding of Pharo-SQLite3.  SQLite3Library&gt;&gt;with:at:putText: passes
+   the UTF-8 ByteArray to sqlite3_bind_text with the destructor argument 0
+   (SQLITE_STATIC).  SQLite then keeps the pointer and reads the bytes at
+   sqlite3_step, but nothing keeps the ByteArray alive after the bind call, and
+   a collection can move or reuse the memory before the step.  The repair
+   passes SQLITE_TRANSIENT (-1), so SQLite copies the bytes in the call; the
+   destructor argument is a 64-bit integer, so that -1 fills the register.&quot;
+
+add value: #SQLite3Library value: #stringFrom:at: value: &#x27;fetching&#x27; value:
+&#x27;stringFrom: aStatement at: aColumn
+
+	&quot;Defined by the version packages SQLite3-Pharo8 and SQLite3-Pharo9 of the dependency; the baseline of the dependency does not load one of them on Pharo 14.&quot;
+
+	^ self apiColumnText: aStatement atColumn: aColumn&#x27;.
+
+fix value: #&#x27;SingleSessionRDMBSRepositoryTest class&#x27; value: #defaultLogin
+	value: [ :source | source includesSubstring: &#x27;postgreSQLLogin&#x27; ]
+	value:
+&#x27;defaultLogin
+
+	&quot;SQLite3 in a file of the directory of the image, as the CI of the package does with RDBMS=SQLite3.  No PostgreSQL server runs on this machine.&quot;
+
+	&lt;ignoreForCoverage&gt;
+	^ self sqlite3Login&#x27;.
+
+fix value: #&#x27;SingleSessionRDMBSRepositoryTest class&#x27; value: #login
+	value: [ :source | source includesSubstring: &#x27;^ DefaultLogin&#x27; ]
+	value:
+&#x27;login
+
+	&quot;Built at each call: the SQLite login names the directory of the running image, and the running image is not the prepared image.&quot;
+
+	^ OSEnvironment current
+		at: &#x27;&#x27;RDBMS&#x27;&#x27;
+		ifPresent: [ :variable | self loginFor: variable ]
+		ifAbsent: [ self defaultLogin ]&#x27;.
+
+(Smalltalk globals includesKey: #SingleSessionRDMBSRepositoryTest)
+	ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP SingleSessionRDMBSRepositoryTest class&gt;&gt;initialize (class absent)&#x27;; lf; flush ]
+	ifTrue: [
+		(Smalltalk globals includesKey: #SQLite3Driver)
+			ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP SingleSessionRDMBSRepositoryTest class&gt;&gt;initialize (SQLite3Driver absent)&#x27;; lf; flush ]
+			ifTrue: [
+				(Smalltalk globals at: #SingleSessionRDMBSRepositoryTest) initialize.
+				Stdio stdout nextPutAll: &#x27;RAN SingleSessionRDMBSRepositoryTest class&gt;&gt;initialize (SQLite3 login)&#x27;; lf; flush ] ].
+
+fix value: #SQLite3Library value: #with:at:putText:
+	value: [ :source | source includesSubstring: &#x27;with: 0&#x27; ]
+	value:
+&#x27;with: aStatement at: aColumn putText: aString
+
+	| bytes |
+
+	bytes := self pharoStringToUTF8: aString.
+
+	&quot;SQLITE_TRANSIENT (-1): SQLite copies the bytes in this call.  With 0
+	(SQLITE_STATIC) SQLite reads the bytes at sqlite3_step, when the garbage
+	collector can have moved or reused the memory of the temporary ByteArray.&quot;
+	^ self
+		  apiBindText: aStatement
+		  atColumn: aColumn
+		  with: bytes
+		  with: bytes size
+		  with: -1&#x27;.
+
+fix value: #SQLite3Library value: #apiBindText:atColumn:with:with:with:
+	value: [ :source | source includesSubstring: &#x27;int anotherInteger&#x27; ]
+	value:
+&#x27;apiBindText: aStatement atColumn: aColumn with: aString with: anInteger with: anotherInteger
+	&quot;int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*))
+	The last argument is the destructor.  It is a pointer, so it is a 64-bit integer here (SQLITE_TRANSIENT is -1).&quot;
+
+	^ self ffiCall: #(int sqlite3_bind_text (sqlite3_stmt* aStatement, int aColumn, String aString, int anInteger, sqlite3_int64 anotherInteger))&#x27;.
+</pre></details><details open><summary>Version locks: ba-st-sagan.txt (<a href="../files/packages/locks/ba-st-sagan.txt">download</a>)</summary><pre class="code"># Buoy replaces Symbol&gt;&gt;argumentCount of Pharo 14, and the load stops (docs/upstream/package-repairs.md).
+Buoy ba-st-buoy
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

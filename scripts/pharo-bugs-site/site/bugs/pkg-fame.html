@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Fame (moosetechnology/Fame, row 16) - Pharo test defects</title><meta name="description" content="Package: Fame (moosetechnology/Fame, row 16): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Fame (moosetechnology/Fame, row 16)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>moosetechnology-fame.st</dd><dt>Upstream repository</dt><dd>moosetechnology/Fame</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 273 tests, 271 pass, 2 skip on the two VMs.  The two tests
+of <code>FMLazyRelationTest</code> start with <code>self skip</code> and the mark
+<code>#currentLimitation</code>.</li>
+<li>Result with <code>fixes/moosetechnology-fame.st</code>: 273 of 273 pass on the two
+VMs.</li>
+<li><code>testManyToOneWithlazyOne</code>: the fixture method <code>RPGLazyHero&gt;&gt;talismans:</code>
+assigns the slot (<code>talismans := anObject</code>).  <code>FMMany</code> then stores the
+Array and does not update the other side of the relation.  The method now
+sends <code>value:</code> to the slot, as <code>RPGLazyHero&gt;&gt;kills:</code> does.</li>
+<li><code>testOneToOneRelationReverse</code>: <code>FMLazyOne&gt;&gt;materializeFor:slot:</code> loads a
+value whose inverse slot has another object from a later write, and the
+old lazy value replaces that write.  The method now drops the loaded value
+in that case.  The owner of the package can prefer another design.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 16&quot;
+Metacello new baseline: &#x27;Fame&#x27;; repository: &#x27;github://moosetechnology/Fame:development/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>16</td><td><code>moosetechnology-fame</code></td><td>ok</td><td>tests=273 P=273 F=0 E=0 S=0 T=0 X=0</td><td>tests=273 P=273 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): moosetechnology-fame.st (<a href="../files/packages/fixes/moosetechnology-fame.st">download</a>)</summary><pre class="code">&quot;Fame (moosetechnology/Fame, development): the two skipped tests of
+FMLazyRelationTest.  Both carry &#x27;self flag: #currentLimitation. self skip.&#x27;
+Cause 1 (testManyToOneWithlazyOne): the test class RPGLazyHero&gt;&gt;talismans:
+assigns the slot directly (talismans := anObject).  FMMany&gt;&gt;updateOld:new:in:
+then writes the raw Array into the slot and never updates the opposite side.
+RPGLazyHero&gt;&gt;kills: uses &#x27;kills value: anObject&#x27; and works.
+Cause 2 (testOneToOneRelationReverse): FMLazyOne&gt;&gt;materializeFor:slot: loads a
+value whose inverse to-one slot already holds another object, and takes the
+stale lazy value over the explicit write.  A lazy value that conflicts with an
+explicit write on the other side must lose.&quot;
+
+fix value: #RPGLazyHero value: #talismans:
+	value: [ :source | (source includesSubstring: &#x27;talismans := anObject&#x27;) ]
+	value:
+&#x27;talismans: anObject
+	&quot;value when multimulti relation&quot;
+	talismans value: anObject&#x27;.
+
+fix value: #FMLazyOne value: #materializeFor:slot:
+	value: [ :source | (source includesSubstring: &#x27;isKindOf: FMLazyValue&#x27;) not ]
+	value:
+&#x27;materializeFor: anObject slot: aSlot
+
+	| holder value inverse current |
+	holder := FMLazyOneHolder new.
+
+	loader value: holder value: anObject.
+
+	value := holder value.
+
+	&quot;An explicit write on the other side of a to-one relation, made before this lazy value was read, wins: the loaded value already points to another object. The raw instance variable is read, so no lazy value of the other side is materialized.&quot;
+	(value notNil and: [ aSlot hasInverse ]) ifTrue: [
+		inverse := aSlot realInverseSlotFor: value.
+		inverse isToOne ifTrue: [
+			current := value instVarAt: inverse index.
+			(current notNil
+				and: [ (current isKindOf: FMLazyValue) not
+				and: [ current ~~ anObject ] ]) ifTrue: [ value := nil ] ] ].
+
+	aSlot writeMaterialized: value to: anObject.
+
+	value ifNotNil: [ aSlot addAssociationFrom: anObject to: value ].
+
+	^ value&#x27;.
+
+fix value: #FMLazyRelationTest value: #testManyToOneWithlazyOne
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testManyToOneWithlazyOne
+
+	| entity hero hero2 |
+	entity := RPGLazyTalisman new.
+	hero := RPGLazyHero new.
+	hero2 := RPGLazyHero new.
+
+	FMLazyValue
+		makeRelation: #owner
+		of: entity
+		lazyUsing: [ :rel :entit | rel value: hero ].
+	hero2 talismans: { entity }.
+	self assert: entity owner identicalTo: hero2.
+	self assert: hero talismans size equals: 0.
+	self assert: hero2 talismans anyOne identicalTo: entity&#x27;.
+
+fix value: #FMLazyRelationTest value: #testOneToOneRelationReverse
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testOneToOneRelationReverse
+
+	| weapon weapon2 hero |
+	weapon := RPGLazyUniqueWeapon new.
+	hero := RPGLazyHero new.
+	weapon2 := RPGLazyUniqueWeapon new.
+
+	FMLazyValue
+		makeRelation: #owner
+		of: weapon
+		lazyUsing: [ :rel :entit | rel value: hero ].
+
+	hero uniqueWeapon: weapon2.
+
+	self assert: hero uniqueWeapon identicalTo: weapon2.
+	self assert: weapon owner isNil&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

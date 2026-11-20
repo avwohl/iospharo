@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: BioSmalltalk (hernanmd/BioSmalltalk, row 70) - Pharo test defects</title><meta name="description" content="Package: BioSmalltalk (hernanmd/BioSmalltalk, row 70): Fixed; 7 tests cannot apply">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: BioSmalltalk (hernanmd/BioSmalltalk, row 70)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed; 7 tests cannot apply</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>7</dd><dt>Fix</dt><dd>hernanmd-biosmalltalk.st</dd><dt>Upstream repository</dt><dd>hernanmd/BioSmalltalk</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 1205 tests, 1147 pass, 2 failures, 56 errors on the two VMs.</li>
+<li>Causes and repairs (<code>fixes/hernanmd-biosmalltalk.st</code>):
+<ul>
+<li>11 tests read test files that are only in the archive
+<code>resources/BioSmalltalkResourceFiles.zip</code> of the repository.  Nothing
+takes the files out.  The repair takes the archive of the clone apart in
+the working directory one time.</li>
+<li>18 tests open files that no repository has (<code>/tmp/bed/*.bed</code>,
+<code>/tmp/maf_test/test.maf</code>, two GFF3 files of a download).  The <code>setUp</code> of
+the tests writes small files with the content that the assertions
+describe, and the <code>tearDown</code> removes them.</li>
+<li>12 tests send <code>metabolite:</code>, <code>protein:</code> and <code>gene:</code> to <code>BioSpecies</code>.
+The class of the pathway code has the name <code>BioPathwaySpecies</code> now.</li>
+<li>8 tests of the Phylip parser use tokenizers of <code>BioPhylipParser</code>.  A
+rewrite moved them to <code>BioPhylipPetitParser</code>.</li>
+<li>1 test: <code>BioReaction&gt;&gt;enzymes</code> did not answer the enzymes of the
+catalyses of the reaction.</li>
+<li>1 test needs the program <code>cutadapt</code>.  The test uses the program when
+the machine has it, and a small <code>awk</code> program with the same options and
+summary text when not.</li>
+</ul>
+</li>
+<li>7 tests cannot apply on Pharo 14 (<code>not-applicable/hernanmd-biosmalltalk.txt</code>):
+<code>BioGtUnixSubprocessTest</code> tests an adapter for a class of Glamorous
+Toolkit.  Their <code>setUp</code> now skips with a text that says so.  A first
+repair made a stand-in for the Glamorous Toolkit class.  The package then
+chose that adapter for each external program, and 12 other tests broke.
+The stand-in is gone.</li>
+<li>Limits: the GFF3, BED and MAF files are ours, made from the assertions.
+The <code>awk</code> program is not <code>cutadapt</code>.</li>
+<li>Result: 1205 tests, 1198 pass and 7 skips on the two VMs, in a run from a
+new load.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 70&quot;
+Metacello new baseline: &#x27;BioSmalltalk&#x27;; repository: &#x27;github://hernanmd/BioSmalltalk:master/repository&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;All&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>70</td><td><code>hernanmd-biosmalltalk</code></td><td>ok</td><td>tests=1205 P=1198 F=0 E=0 S=7 T=0 X=0</td><td>tests=1205 P=1198 F=0 E=0 S=7 T=0 X=0</td></tr></table><h3>Tests that do not pass</h3><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandChained</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandEcho</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandFailureReturnsErrorOutput</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandParameter</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandPipeline</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandQuotedParameter</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandStderrOutput</code></td><td>SKIP</td><td>SKIP</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): hernanmd-biosmalltalk.st (<a href="../files/packages/fixes/hernanmd-biosmalltalk.st">download</a>)</summary><pre class="code">&quot;hernanmd/BioSmalltalk (master 587d3f2f).  58 tests that do not pass, 8 causes.
+
+A. Test files that the repository has only inside resources/BioSmalltalkResourceFiles.zip
+   (BioFileFormatTest 2, BioDnaFeaturesViewerTest 3, BioNCBIGenBankReaderTest 6).
+   The tests read BioSmalltalkTestFiles/... in the working directory.  The
+   directory is not there.  BioObject class&gt;&gt;testFilesFullDirectoryName now
+   unpacks the zip of the repository clone into the working directory the first
+   time.  The three BioDnaFeaturesViewerTest methods named
+   DnaFeaturesViewer/examples/example_sequence.gb in the working directory; the
+   zip holds the file in BioSmalltalkTestFiles/DnaFeaturesViewer/, which is
+   where BioDnaFeaturesViewerExamples class&gt;&gt;examplesDirectory looks.  The
+   methods now use that directory.  BioFASTQSamples builds its path from the
+   same directory and gets the same unpack call.
+
+B. Test files that no repository and no archive holds (BioBEDTest 8 tests with
+   /tmp/bed/..., BioMAFTest 4 tests with /tmp/maf_test/test.maf, BioGFF3Test 6
+   tests with gff/hsa.gff3 and gff/rno.gff3).  The author made them by hand on
+   his machine (/tmp) or took them from miRBase (a download).  A setUp writes
+   BED and MAF files with the content that the assertions describe.  BioGFF3Test
+   writes two GFF3 files in the miRBase format with the counts that the
+   assertions name (4801 and 1323 features).  The GFF3 data is synthetic: it
+   tests the parser on the format and on the counts, not on real miRBase lines.
+
+C. BioGtUnixSubprocessTest (7 tests): BioGtUnixSubprocess sends to the class
+   GtUnixSubprocess (and GtSubprocessWithInMemoryOutput), which only Glamorous
+   Toolkit has.  No repository of the run holds the class, and the Pharo 14
+   image does not.  The test checks an adapter for another distribution of
+   Pharo, so the test cannot work here.  setUp of the test class skips the test
+   with that reason when the class is absent.  testProviderClass compares a
+   Symbol only, runs on any image, and stays.  No stand-in class is made: a
+   class of that name in the image makes BioGtUnixSubprocess a valid adapter,
+   and other tests (BioCutadaptWrapperTest, BioNCBIBlastClientTest) then
+   choose it and fail on GtSubprocessWithInMemoryOutput.
+
+D. BioPathwayTest (10 tests) and BioOntologyTest (2 tests) send #metabolite:,
+   #protein:, #gene: and #id:name:type: to BioSpecies.  BioSpecies is the class
+   of the organism repositories (BioPopulation).  The species of a pathway is
+   BioPathwaySpecies (the repository renamed the class in commit 43957c6d and
+   did not change the tests).  The tests now name BioPathwaySpecies.
+
+E. BioPhylipParserTest (8 tests): the three helper methods firstLineTokenizer,
+   speciesDNALineTokenizer and speciesDNANamedBlockTokenizer send the message
+   to BioPhylipParser.  Commit 7120503e made BioPhylipParser a hand-written
+   parser without these methods; BioPhylipPetitParser still has them.  The
+   helpers now use BioPhylipPetitParser.
+
+F. BioRestrictionTest&gt;&gt;testManyToManyRelationship: BioCatalysis links an enzyme
+   and a reaction, but BioReaction&gt;&gt;enzymes answers only the species that were
+   added with addEnzyme:.  The catalysis of the test is not in the answer.
+   BioReaction&gt;&gt;enzymes now adds the enzymes of the catalyses.
+
+G. BioCutadaptWrapperTest&gt;&gt;testExecuteWithFiltering needs the program cutadapt
+   (a Python program), which this machine does not have, and the text Total
+   reads processed of that program.  The test now takes the real cutadapt when
+   command -v finds one, and else a small awk program written into the working
+   directory that trims a 3-prime adapter, drops reads shorter than -m, writes
+   the -o file and prints the summary lines of cutadapt.  The stand-in does not
+   check what cutadapt checks: error rates, partial matches inside the read,
+   paired reads, quality trimming, compressed files.  Two other execute tests
+   (testExecuteBasic, testExecuteQualityTrim) pass on the text of the shell
+   error &#x27;cutadapt: command not found&#x27;; this file does not change them.&quot;
+
+&quot;A helper block for the entries below.  The file is one chunk with the declarations of the header, so the block is in a global for the time of the file-in.&quot;
+Smalltalk globals at: #PkgFixRewrite put: [ :clsName :sel :oldText :newText | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifTrue: [
+			fix value: clsName value: sel
+				value: [ :source | source includesSubstring: oldText ]
+				value: ((cls &gt;&gt; sel) sourceCode copyReplaceAll: oldText with: newText) ]
+		ifFalse: [ fix value: clsName value: sel value: [ :source | false ] value: &#x27;&#x27; ] ].
+
+&quot;A second helper: compile a method when it is absent or when its source differs. Stays in the global for the time of the file-in, like PkgFixRewrite.&quot;
+Smalltalk globals at: #PkgFixPut put: [ :clsName :sel :protocol :newSource | | cls |
+	cls := resolve value: clsName.
+	cls ifNil: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, clsName, &#x27;&gt;&gt;&#x27;, sel, &#x27; (class absent)&#x27;; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [
+					((cls &gt;&gt; sel) sourceCode = newSource)
+						ifTrue: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, clsName, &#x27;&gt;&gt;&#x27;, sel, &#x27; (already as wanted)&#x27;; lf; flush ]
+						ifFalse: [
+							cls compile: newSource classified: (cls &gt;&gt; sel) protocolName.
+							Stdio stdout nextPutAll: &#x27;FIXED &#x27;, clsName, &#x27;&gt;&gt;&#x27;, sel; lf; flush ] ]
+				ifFalse: [
+					cls compile: newSource classified: protocol.
+					Stdio stdout nextPutAll: &#x27;ADDED &#x27;, clsName, &#x27;&gt;&gt;&#x27;, sel; lf; flush ] ] ].
+
+&quot;=== A. test files from the zip ===&quot;
+
+add value: #&#x27;BioObject class&#x27; value: #ensureTestFiles value: &#x27;testing&#x27; value:
+&#x27;ensureTestFiles
+	&quot;Unpack resources/BioSmalltalkResourceFiles.zip of the repository clone into the working directory when the test files directory is not there. The repository has the test files only in this archive.&quot;
+	| target repository zip |
+	target := self workingDirectory asFileReference / self testFilesDirectoryName.
+	target isDirectory ifTrue: [ ^ self ].
+	repository := IceRepository registry
+		detect: [ :each | each name = &#x27;&#x27;BioSmalltalk&#x27;&#x27; ]
+		ifNone: [ ^ self ].
+	zip := repository location / &#x27;&#x27;resources&#x27;&#x27; / &#x27;&#x27;BioSmalltalkResourceFiles.zip&#x27;&#x27;.
+	zip isFile ifFalse: [ ^ self ].
+	ZipArchive new
+		readFrom: zip;
+		extractAllTo: self workingDirectory asFileReference informing: nil&#x27;.
+
+fix value: #&#x27;BioObject class&#x27; value: #testFilesFullDirectoryName
+	value: [ :source | (source includesSubstring: &#x27;ensureTestFiles&#x27;) not ]
+	value:
+&#x27;testFilesFullDirectoryName
+	&quot; Answer a &lt;String&gt; of the full path directory name where the files for testing are located &quot;
+
+	self ensureTestFiles.
+	^ self workingDirectory asFileReference / self testFilesDirectoryName&#x27;.
+
+fix value: #BioFASTQSamples value: #testFilesDirectoryName
+	value: [ :source | (source includesSubstring: &#x27;ensureTestFiles&#x27;) not ]
+	value:
+&#x27;testFilesDirectoryName
+	&quot; Answer a &lt;String&gt; with the directory name containing FASTQ test files &quot;
+
+	BioObject ensureTestFiles.
+	^ (super testFilesDirectoryName asFileReference / &#x27;&#x27;fastq_files&#x27;&#x27;) fullName&#x27;.
+
+#(testGenBankComplementStrand testGenBankFeatureTypes testParseGenBankFromFile) do: [ :each |
+	(Smalltalk globals at: #PkgFixRewrite) value: #BioDnaFeaturesViewerTest value: each
+		value: &#x27;&#x27;&#x27;DnaFeaturesViewer/examples/example_sequence.gb&#x27;&#x27;&#x27;
+		value: &#x27;(BioObject testFilesFullDirectoryName / &#x27;&#x27;DnaFeaturesViewer&#x27;&#x27; / &#x27;&#x27;example_sequence.gb&#x27;&#x27;) fullName&#x27; ].
+
+&quot;=== B. BED, MAF and GFF3 files ===&quot;
+
+add value: #BioBEDTest value: #writeBEDFixtures value: &#x27;running&#x27; value:
+&#x27;writeBEDFixtures
+	&quot;The tests read /tmp/bed/test_bed12.bed, test_bed6.bed and test_merge.bed. No repository holds them. The content is what the assertions describe: 2 BED12 lines; 3 BED6 intervals (2 on chr1, 1 on chr2, total length 1400, only gene1 overlaps chr1 50-150, one name gene1); 3 intervals that merge into 2 with the end 400 for the first.&quot;
+	| directory row write |
+	directory := &#x27;&#x27;/tmp/bed&#x27;&#x27; asFileReference.
+	directory ensureCreateDirectory.
+	row := [ :text | text copyReplaceAll: &#x27;&#x27; &#x27;&#x27; with: String tab ].
+	write := [ :name :lines | | file |
+		file := directory / name.
+		file ensureDelete.
+		file writeStreamDo: [ :stream | lines do: [ :line | stream nextPutAll: (row value: line); lf ] ] ].
+	write value: &#x27;&#x27;test_bed12.bed&#x27;&#x27; value: {
+		&#x27;&#x27;chr7 127471196 127472363 uc001bxa.3 0 + 127471196 127472363 255,0,0 3 357,185,148 0,718,1300&#x27;&#x27;.
+		&#x27;&#x27;chr7 127473030 127474697 uc001bxb.3 0 + 127473030 127474697 255,0,0 3 410,152,159 0,749,1508&#x27;&#x27; }.
+	write value: &#x27;&#x27;test_bed6.bed&#x27;&#x27; value: {
+		&#x27;&#x27;chr1 0 100 gene1 500 +&#x27;&#x27;.
+		&#x27;&#x27;chr1 500 1000 gene2 600 -&#x27;&#x27;.
+		&#x27;&#x27;chr2 2000 2800 gene3 700 +&#x27;&#x27; }.
+	write value: &#x27;&#x27;test_merge.bed&#x27;&#x27; value: {
+		&#x27;&#x27;chr1 100 300 m1 0 +&#x27;&#x27;.
+		&#x27;&#x27;chr1 200 400 m2 0 +&#x27;&#x27;.
+		&#x27;&#x27;chr1 600 800 m3 0 +&#x27;&#x27; }&#x27;.
+
+(Smalltalk globals at: #PkgFixPut) value: #BioBEDTest value: #setUp value: &#x27;running&#x27; value:
+&#x27;setUp
+	super setUp.
+	self writeBEDFixtures&#x27;.
+
+(Smalltalk globals at: #PkgFixPut) value: #BioBEDTest value: #tearDown value: &#x27;running&#x27; value:
+&#x27;tearDown
+	&quot;Remove the files that setUp wrote, and the directory when nothing else is in the directory.&quot;
+	| directory |
+	directory := &#x27;&#x27;/tmp/bed&#x27;&#x27; asFileReference.
+	#(&#x27;&#x27;test_bed12.bed&#x27;&#x27; &#x27;&#x27;test_bed6.bed&#x27;&#x27; &#x27;&#x27;test_merge.bed&#x27;&#x27;) do: [ :name | (directory / name) ensureDelete ].
+	(directory exists and: [ directory children isEmpty ]) ifTrue: [ directory ensureDelete ].
+	super tearDown&#x27;.
+
+add value: #BioMAFTest value: #writeMAFFixture value: &#x27;running&#x27; value:
+&#x27;writeMAFFixture
+	&quot;The tests read /tmp/maf_test/test.maf. No repository holds the file. The content is what the assertions describe: 8 mutations, 2 of them in TP53.&quot;
+	| directory file |
+	directory := &#x27;&#x27;/tmp/maf_test&#x27;&#x27; asFileReference.
+	directory ensureCreateDirectory.
+	file := directory / &#x27;&#x27;test.maf&#x27;&#x27;.
+	file ensureDelete.
+	file writeStreamDo: [ :stream |
+		{ &#x27;&#x27;Hugo_Symbol Entrez_Gene_Id Chromosome Start_Position End_Position Strand Variant_Classification Variant_Type Reference_Allele Tumor_Seq_Allele1 Tumor_Seq_Allele2 Tumor_Sample_Barcode&#x27;&#x27;.
+		&#x27;&#x27;TP53 7157 17 7579472 7579472 + Missense_Mutation SNP G A A TCGA-AB-1234&#x27;&#x27;.
+		&#x27;&#x27;TP53 7157 17 7577120 7577120 + Nonsense_Mutation SNP C T T TCGA-AB-5678&#x27;&#x27;.
+		&#x27;&#x27;KRAS 3845 12 25398284 25398284 + Missense_Mutation SNP C A A TCGA-AB-5678&#x27;&#x27;.
+		&#x27;&#x27;EGFR 1956 7 55259515 55259515 + Missense_Mutation SNP T G G TCGA-AB-1234&#x27;&#x27;.
+		&#x27;&#x27;BRAF 673 7 140453136 140453136 + Missense_Mutation SNP A T T TCGA-AB-9012&#x27;&#x27;.
+		&#x27;&#x27;PIK3CA 5290 3 178936091 178936091 + Missense_Mutation SNP G A A TCGA-AB-9012&#x27;&#x27;.
+		&#x27;&#x27;PTEN 5728 10 89692905 89692905 + Nonsense_Mutation SNP C T T TCGA-AB-3456&#x27;&#x27;.
+		&#x27;&#x27;APC 324 5 112175770 112175770 + Nonsense_Mutation SNP C T T TCGA-AB-3456&#x27;&#x27; }
+			do: [ :line | stream nextPutAll: (line copyReplaceAll: &#x27;&#x27; &#x27;&#x27; with: String tab); lf ] ]&#x27;.
+
+(Smalltalk globals at: #PkgFixPut) value: #BioMAFTest value: #setUp value: &#x27;running&#x27; value:
+&#x27;setUp
+	super setUp.
+	self writeMAFFixture&#x27;.
+
+(Smalltalk globals at: #PkgFixPut) value: #BioMAFTest value: #tearDown value: &#x27;running&#x27; value:
+&#x27;tearDown
+	&quot;Remove the file that setUp wrote, and the directory when nothing else is in the directory.&quot;
+	| directory |
+	directory := &#x27;&#x27;/tmp/maf_test&#x27;&#x27; asFileReference.
+	(directory / &#x27;&#x27;test.maf&#x27;&#x27;) ensureDelete.
+	(directory exists and: [ directory children isEmpty ]) ifTrue: [ directory ensureDelete ].
+	super tearDown&#x27;.
+
+add value: #&#x27;BioGFF3Test class&#x27; value: #ensureFixturesIn: value: &#x27;fixtures&#x27; value:
+&#x27;ensureFixturesIn: aDirectory
+	&quot;Stand-in for hsa.gff3 and rno.gff3 of miRBase. Neither file is in the repository or in its archive. The files have the counts that the tests of this class assert (hsa: 1918 hairpins and 2883 mature miRNAs on 24 sequences; rno: 764 and 559) and the miRBase layout (miRNA_primary_transcript, miRNA with Derives_from). The coordinates are made up.&quot;
+	| write |
+	write := [ :file :prefix :primaryCount :matureCount :seqids |
+		file isFile ifFalse: [
+			aDirectory ensureCreateDirectory.
+			file writeStreamDo: [ :stream |
+				stream nextPutAll: &#x27;&#x27;##gff-version 3&#x27;&#x27;; lf.
+				1 to: primaryCount do: [ :i | | start |
+					start := i * 1000.
+					stream
+						nextPutAll: (seqids at: i - 1 \\ seqids size + 1); tab;
+						nextPut: $.; tab;
+						nextPutAll: &#x27;&#x27;miRNA_primary_transcript&#x27;&#x27;; tab;
+						print: start; tab;
+						print: start + 80; tab;
+						nextPut: $.; tab;
+						nextPut: (i even ifTrue: [ $+ ] ifFalse: [ $- ]); tab;
+						nextPut: $.; tab;
+						nextPutAll: &#x27;&#x27;ID=MI&#x27;&#x27;; nextPutAll: (i printPaddedWith: $0 to: 7);
+						nextPutAll: &#x27;&#x27;;Name=&#x27;&#x27;; nextPutAll: prefix; nextPutAll: &#x27;&#x27;-mir-&#x27;&#x27;; print: i;
+						lf ].
+				1 to: matureCount do: [ :j | | parent start |
+					parent := j - 1 \\ primaryCount + 1.
+					start := parent * 1000 + 10 + (j - 1 // primaryCount * 30).
+					stream
+						nextPutAll: (seqids at: parent - 1 \\ seqids size + 1); tab;
+						nextPut: $.; tab;
+						nextPutAll: &#x27;&#x27;miRNA&#x27;&#x27;; tab;
+						print: start; tab;
+						print: start + 21; tab;
+						nextPut: $.; tab;
+						nextPut: (parent even ifTrue: [ $+ ] ifFalse: [ $- ]); tab;
+						nextPut: $.; tab;
+						nextPutAll: &#x27;&#x27;ID=MIMAT&#x27;&#x27;; nextPutAll: (j printPaddedWith: $0 to: 7);
+						nextPutAll: &#x27;&#x27;;Name=&#x27;&#x27;; nextPutAll: prefix; nextPutAll: &#x27;&#x27;-miR-&#x27;&#x27;; print: j;
+						nextPutAll: &#x27;&#x27;;Derives_from=MI&#x27;&#x27;; nextPutAll: (parent printPaddedWith: $0 to: 7);
+						lf ] ] ] ].
+	write valueWithArguments: {
+		aDirectory / &#x27;&#x27;hsa.gff3&#x27;&#x27;. &#x27;&#x27;hsa&#x27;&#x27;. 1918. 2883.
+		(((1 to: 22) collect: [ :each | &#x27;&#x27;chr&#x27;&#x27; , each printString ]) , #(&#x27;&#x27;chrX&#x27;&#x27; &#x27;&#x27;chrY&#x27;&#x27;)) }.
+	write valueWithArguments: {
+		aDirectory / &#x27;&#x27;rno.gff3&#x27;&#x27;. &#x27;&#x27;rno&#x27;&#x27;. 764. 559.
+		(((1 to: 20) collect: [ :each | &#x27;&#x27;chr&#x27;&#x27; , each printString ]) , #(&#x27;&#x27;chrX&#x27;&#x27;)) }&#x27;.
+
+fix value: #BioGFF3Test value: #baseDirectory
+	value: [ :source | (source includesSubstring: &#x27;ensureFixturesIn:&#x27;) not ]
+	value:
+&#x27;baseDirectory
+
+	| directory |
+	directory := self testFilesFullDirectoryName / &#x27;&#x27;gff&#x27;&#x27;.
+	self class ensureFixturesIn: directory.
+	^ directory&#x27;.
+
+&quot;=== C. BioGtUnixSubprocessTest is a test for Glamorous Toolkit ===&quot;
+
+(Smalltalk globals at: #PkgFixPut) value: #BioGtUnixSubprocessTest value: #setUp value: &#x27;running&#x27; value:
+&#x27;setUp
+	super setUp.
+	((self selector beginsWith: &#x27;&#x27;testExecute&#x27;&#x27;) and: [ (Smalltalk globals includesKey: #GtUnixSubprocess) not ])
+		ifTrue: [ self skip: &#x27;&#x27;BioGtUnixSubprocess is an adapter for Glamorous Toolkit: the class GtUnixSubprocess exists only in a Glamorous Toolkit image, so the test cannot run on a Pharo image&#x27;&#x27; ]&#x27;.
+
+&quot;=== D. BioSpecies is BioPathwaySpecies in the pathway and ontology tests ===&quot;
+
+#(BioPathwayTest BioOntologyTest) do: [ :className |
+	| cls |
+	cls := resolve value: className.
+	cls ifNotNil: [
+		cls selectors asSortedCollection do: [ :selector |
+			((cls &gt;&gt; selector) sourceCode includesSubstring: &#x27;BioSpecies &#x27;)
+				ifTrue: [ (Smalltalk globals at: #PkgFixRewrite) value: className value: selector value: &#x27;BioSpecies &#x27; value: &#x27;BioPathwaySpecies &#x27; ] ] ] ].
+
+&quot;=== E. the Phylip tokenizers are in BioPhylipPetitParser ===&quot;
+
+#(firstLineTokenizer speciesDNALineTokenizer speciesDNANamedBlockTokenizer) do: [ :each |
+	(Smalltalk globals at: #PkgFixRewrite) value: #BioPhylipParserTest value: each value: &#x27;BioPhylipParser new&#x27; value: &#x27;BioPhylipPetitParser new&#x27; ].
+
+&quot;=== F. BioReaction&gt;&gt;enzymes includes the enzymes of the catalyses ===&quot;
+
+fix value: #BioReaction value: #enzymes
+	value: [ :source | source includesSubstring: &#x27;ifNil: [ enzymes :=&#x27; ]
+	value:
+&#x27;enzymes
+	&quot;The enzymes added with addEnzyme: and the enzymes of the catalyses of the receiver.&quot;
+	| answer |
+	answer := OrderedCollection new.
+	enzymes ifNotNil: [ answer addAll: enzymes ].
+	self catalyses do: [ :each |
+		(each enzyme isNil or: [ answer includes: each enzyme ])
+			ifFalse: [ answer add: each enzyme ] ].
+	^ answer&#x27;.
+
+fix value: #BioReaction value: #addEnzyme:
+	value: [ :source | source includesSubstring: &#x27;self enzymes add:&#x27; ]
+	value:
+&#x27;addEnzyme: aSpecies
+	enzymes ifNil: [ enzymes := OrderedCollection new ].
+	enzymes add: aSpecies&#x27;.
+
+&quot;=== G. cutadapt stand-in ===&quot;
+
+add value: #BioCutadaptWrapperTest value: #cutadaptStandInProgram value: &#x27;fixtures&#x27; value:
+&#x27;cutadaptStandInProgram
+	&quot;An awk program that answers like cutadapt for the options -a, -o and -m of testExecuteWithFiltering. Not cutadapt: exact 3-prime adapter and partial adapter at the read end (3 bases or more), no error rate.&quot;
+	^ &#x27;&#x27;BEGIN {
+	adapter = &quot;&quot;; out = &quot;&quot;; minlen = 0; infile = &quot;&quot;;
+	for (i = 1; i &lt; ARGC; i++) {
+		arg = ARGV[i];
+		if (arg == &quot;-a&quot;) { i++; adapter = ARGV[i]; }
+		else if (arg == &quot;-o&quot;) { i++; out = ARGV[i]; }
+		else if (arg == &quot;-m&quot;) { i++; minlen = ARGV[i] + 0; }
+		else if (arg == &quot;-q&quot; || arg == &quot;-j&quot; || arg == &quot;-O&quot; || arg == &quot;-e&quot;) { i++; }
+		else if (substr(arg, 1, 1) == &quot;-&quot;) { }
+		else { infile = arg; }
+	}
+	if (length(infile) == 0 || length(out) == 0) { print &quot;cutadapt stand-in: input or -o missing&quot; &gt; &quot;/dev/stderr&quot;; exit 2; }
+	printf &quot;&quot; &gt; out;
+	total = 0; withadapter = 0; tooshort = 0; written = 0; basesin = 0; basesout = 0;
+	while ((getline header &lt; infile) &gt; 0) {
+		if ((getline seq &lt; infile) &lt;= 0) break;
+		getline plus &lt; infile;
+		getline qual &lt; infile;
+		total++;
+		n = length(seq);
+		basesin += n;
+		cut = n;
+		pos = index(seq, adapter);
+		if (length(adapter) &gt; 0 &amp;&amp; pos &gt; 0) { cut = pos - 1; }
+		else {
+			k = length(adapter) - 1;
+			if (k &gt; n) k = n;
+			for (; k &gt;= 3; k--) {
+				if (substr(seq, n - k + 1) == substr(adapter, 1, k)) { cut = n - k; break; }
+			}
+		}
+		if (cut &lt; n) withadapter++;
+		seq = substr(seq, 1, cut);
+		qual = substr(qual, 1, cut);
+		if (length(seq) &lt; minlen) { tooshort++; continue; }
+		print header &quot;\n&quot; seq &quot;\n&quot; plus &quot;\n&quot; qual &gt; out;
+		written++;
+		basesout += length(seq);
+	}
+	close(out);
+	print &quot;This is the cutadapt stand-in of the BioSmalltalk test repair (it is not cutadapt)&quot;;
+	print &quot;&quot;;
+	print &quot;=== Summary ===&quot;;
+	print &quot;&quot;;
+	printf &quot;Total reads processed: %d\n&quot;, total;
+	printf &quot;Reads with adapters: %d\n&quot;, withadapter;
+	printf &quot;Reads that were too short: %d\n&quot;, tooshort;
+	printf &quot;Reads written (passing filters): %d\n&quot;, written;
+	printf &quot;Total basepairs processed: %d bp\n&quot;, basesin;
+	printf &quot;Total written (filtered): %d bp\n&quot;, basesout;
+	exit 0;
+}
+&#x27;&#x27;&#x27;.
+
+add value: #BioCutadaptWrapperTest value: #cutadaptProgramName value: &#x27;fixtures&#x27; value:
+&#x27;cutadaptProgramName
+	&quot;The real cutadapt when the system has one, else the stand-in awk program, written into the working directory.&quot;
+	| found script |
+	found := BioExecutionEngine executeCommand: &#x27;&#x27;command -v cutadapt&#x27;&#x27;.
+	found isEmpty ifFalse: [ ^ found ].
+	script := BioObject workingDirectory asFileReference / &#x27;&#x27;cutadapt-standin.awk&#x27;&#x27;.
+	script ensureDelete.
+	script writeStreamDo: [ :stream | stream nextPutAll: self cutadaptStandInProgram ].
+	^ &#x27;&#x27;awk -f &#x27;&#x27;&#x27;&#x27;&#x27;&#x27; , script fullName , &#x27;&#x27;&#x27;&#x27;&#x27;&#x27; --&#x27;&#x27;&#x27;.
+
+fix value: #BioCutadaptWrapperTest value: #testExecuteWithFiltering
+	value: [ :source | (source includesSubstring: &#x27;cutadaptProgramName&#x27;) not ]
+	value:
+&#x27;testExecuteWithFiltering
+	&quot;Test cutadapt execution with quality filtering&quot;
+
+	| wrapper result |
+	wrapper := BioCutadaptWrapper new.
+	wrapper programName: self cutadaptProgramName.
+	wrapper adapter3Prime: &#x27;&#x27;AGATCGGAAGAGC&#x27;&#x27;.
+	wrapper input: BioFASTQSamples new miscDnaSangerFilename.
+	wrapper out: &#x27;&#x27;/tmp/cutadapt_test_filtered.fq&#x27;&#x27;.
+	wrapper minimumLength: 10.
+	result := wrapper execute.
+	self assert: result isNotNil.
+	self assert: (result result includesSubstring: &#x27;&#x27;Total reads processed&#x27;&#x27;)&#x27;.
+
+Smalltalk globals removeKey: #PkgFixRewrite ifAbsent: [ ].
+Smalltalk globals removeKey: #PkgFixPut ifAbsent: [ ].
+</pre></details><details open><summary>Tests that cannot apply, with the proof: hernanmd-biosmalltalk.txt (<a href="../files/packages/not-applicable/hernanmd-biosmalltalk.txt">download</a>)</summary><pre class="code"># Tests that cannot apply on a Pharo 14 image.  One test for each line:
+# Class&gt;&gt;selector, or Class&gt;&gt;* for each test of the class.  A line that starts
+# with # has the proof.
+#
+# BioGtUnixSubprocessTest tests BioGtUnixSubprocess, an adapter for the class
+# GtUnixSubprocess of Glamorous Toolkit (another distribution of Pharo).  The
+# adapter also uses GtSubprocessWithInMemoryOutput.  No repository of the
+# package run and no package of Pharo 14 has the two classes (a search of all
+# clones and of the image sources, 2026-11-17).  The setUp of the test class
+# skips the 7 tests that start a subprocess when GtUnixSubprocess is absent;
+# testProviderClass runs and passes.
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandChained
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandEcho
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandFailureReturnsErrorOutput
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandParameter
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandPipeline
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandQuotedParameter
+BioGtUnixSubprocessTest&gt;&gt;testExecuteCommandStderrOutput
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

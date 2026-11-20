@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MicMetaDataBlockTest - Pharo test defects</title><meta name="description" content="MicMetaDataBlockTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>MicMetaDataBlockTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-MicMetaDataBlockTest.st</dd><dt>Upstream repository</dt><dd>pillar-markup/Microdown</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-MicMetaDataBlockTest.st</code></li>
+<li>Methods: <code>MicMetaDataBlockTest&gt;&gt;testCreatingAnInstanceInitializeTheMetadatDictionary</code></li>
+</ul>
+<p>The test called self skip as its first statement, then asserted that a freshly created MicMetaDataBlock has a non-nil body. That expectation is obsolete. MicMetaDataBlock&gt;&gt;initialize has the line &quot;body := SmallDictionary new&quot; commented out. MicStartStopMarkupBlock&gt;&gt;bodyFromLine: collects the block's lines with &quot;body := body ifNil: [ line ] ifNotNil: [ body , String cr , line ]&quot;, so body must start as nil. MicMetaDataBlock&gt;&gt;closeMe then parses the collected text with STONJSON into the metadata dictionary. I replaced the test with one that feeds a line to a new block, calls closeMe, and asserts the dictionary exists, holds the right value, and bogusParsing is false. No code under test was changed. The new test passes on both VMs.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MicMetaDataBlockTest&gt;&gt;testCreatingAnInstanceInitializeTheMetadatDictionary</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>The test was unconditionally skipped and asserted something the design no longer does. body is nil on a new instance and becomes the metadata dictionary at closeMe. The rewritten test checks that lifecycle and asserts body isNotNil, (metadata at: 'authors') equals 'S. Ducasse', and deny bogusParsing.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran the whole MicMetaDataBlockTest class 3 times on our VM and 3 times on Cog, on the fixed images. Each run gave 21 of 21 PASS. I did not run the class on the unfixed images, so I have no before count from this session; the cluster file only shows this one test as SKIP on both VMs, so the other 20 should have passed before. I changed only a test method and no non-test method, so no other test class needed a regression run. I did not run the nojit variant of our VM.</p>
+<p>Upstream note: Title: Microdown: MicMetaDataBlockTest replace obsolete skipped test. Description: testCreatingAnInstanceInitializeTheMetadatDictionary calls self skip and expects a non-nil body on a new MicMetaDataBlock. MicMetaDataBlock&gt;&gt;initialize has the SmallDictionary initialization commented out, and MicStartStopMarkupBlock&gt;&gt;bodyFromLine: needs body to start as nil. The test now checks that closeMe turns the collected line into the metadata dictionary. The change is in the Microdown project, which is external to the pharo repository; the owner must review it before any upstream pull request.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>MicMetaDataBlockTest&gt;&gt;testCreatingAnInstanceInitializeTheMetadatDictionary</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((MicMetaDataBlockTest selector: #testCreatingAnInstanceInitializeTheMetadatDictionary) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>MicMetaDataBlockTest&gt;&gt;testCreatingAnInstanceInitializeTheMetadatDictionary before the fix (Pharo 14 build 791)</summary><pre class="code">testCreatingAnInstanceInitializeTheMetadatDictionary
+
+	| metadata |
+	self skip.
+	metadata := MicMetaDataBlock new.
+	self assert: metadata body isNotNil</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-MicMetaDataBlockTest.st (<a href="../files/image-fixes/20-MicMetaDataBlockTest.st">download</a>)</summary><pre class="code">fix value: #MicMetaDataBlockTest value: #testCreatingAnInstanceInitializeTheMetadatDictionary
+	value: [ :s | s includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testCreatingAnInstanceInitializeTheMetadatDictionary
+
+	&quot;MicStartStopMarkupBlock&gt;&gt;bodyFromLine: collects the lines of the block in body, starting from nil (the initialization to a SmallDictionary is commented out in MicMetaDataBlock&gt;&gt;initialize).  closeMe turns the collected text into the metadata dictionary.  So the dictionary exists after closeMe, not after new.&quot;
+
+	| metadata |
+	metadata := MicMetaDataBlock new.
+	metadata bodyFromLine: &#x27;&#x27;&quot;authors&quot; : &quot;S. Ducasse&quot;&#x27;&#x27;.
+	metadata closeMe.
+	self assert: metadata body isNotNil.
+	self assert: (metadata atKey: &#x27;&#x27;authors&#x27;&#x27;) equals: &#x27;&#x27;S. Ducasse&#x27;&#x27;.
+	self deny: metadata bogusParsing&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

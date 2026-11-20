@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: FamixTagging (moosetechnology/FamixTagging, row 105) - Pharo test defects</title><meta name="description" content="Package: FamixTagging (moosetechnology/FamixTagging, row 105): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: FamixTagging (moosetechnology/FamixTagging, row 105)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>moosetechnology-famixtagging.st</dd><dt>Upstream repository</dt><dd>moosetechnology/FamixTagging</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 115 tests, 0 pass, 114 errors, 1 expected failure on the two
+VMs (<code>UndeclaredVariableRead</code> of the model classes).</li>
+<li>Causes:
+<ul>
+<li>The model classes need <code>MooseEntity</code> and <code>MooseModel</code>.  Nothing loaded
+Famix.  The baseline has <code>spec for: #needsFamix</code>, and its
+<code>customProjectAttributes</code> answers <code>#NeedsFamix</code>: Metacello compares the
+case, so the Famix part of the baseline never applies.  The CI of the
+package loads Famix first.</li>
+<li>The expected failure <code>testProviderMethodToTags</code> hides a gap:
+<code>FamixTag&gt;&gt;isLinkedTo:dependancyDirection:in:</code> does not look at the
+children of the tagged entities.</li>
+</ul>
+</li>
+<li>Repair here: the manifest row loads Famix (groups <code>Core</code> and
+<code>TestModels</code>) first.  <code>fixes/moosetechnology-famixtagging.st</code> repairs the
+method and removes the mark.</li>
+<li>Result: 115 of 115 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 105&quot;
+Metacello new baseline: &#x27;Famix&#x27;; repository: &#x27;github://moosetechnology/Famix:development/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;TestModels&#x27;). Metacello new baseline: &#x27;FamixTagging&#x27;; repository: &#x27;github://moosetechnology/FamixTagging:development/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Tagging&#x27; &#x27;TaggingTests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>105</td><td><code>moosetechnology-famixtagging</code></td><td>ok</td><td>tests=115 P=115 F=0 E=0 S=0 T=0 X=0</td><td>tests=115 P=115 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): moosetechnology-famixtagging.st (<a href="../files/packages/fixes/moosetechnology-famixtagging.st">download</a>)</summary><pre class="code">&quot;moosetechnology/FamixTagging (development), Pharo 14.  The load of the row does not bring in
+Famix, so every test fails with UndeclaredVariableRead (the manifest row, not this file,
+repairs the load: it loads the Famix baseline first, as the file .dependencies.st of the
+repository does).  The two entries below are for the one test that the load repair leaves
+open.
+
+Entry 1 (FamixTag&gt;&gt;isLinkedTo:dependancyDirection:in:).  The test
+FamixTaggingDependencyDetectorTest&gt;&gt;testProviderMethodToTags has the mark expectedFailure
+and the comment &#x27;client/provider methods are not tagged&#x27;.  The mark hides this defect: for an
+entity E that is not a tag, MooseEntity&gt;&gt;isLinkedTo:dependancyDirection:in: looks at the
+dependencies of E, of all children of E, and of the containers of those dependencies.  The tag
+version looked only at the dependencies of the tagged entities at their own scope
+(allProvidersAtMyScope or allClientsAtMyScope), and not at the children of the tagged
+entities, and not at containers.  So a method m1 that calls method2 of the class Class2, with
+Class2 tagged, was not a provider or a client in that tag, but the class Class1 of m1 was.  The
+repair gives the tag the same levels as MooseEntity.
+
+Entry 2 (FamixTaggingDependencyDetectorTest&gt;&gt;testProviderMethodToTags).  The same test
+without the mark expectedFailure and without the flag TODO.&quot;
+
+fix value: #FamixTag value: #isLinkedTo:dependancyDirection:in:
+	value: [ :source | source includesSubstring: &#x27;dependenciesAtReceiverScopeOf&#x27; ]
+	value:
+&#x27;isLinkedTo: aTagOrEntity dependancyDirection: aDirectionStrategy in: aMooseModel
+	| dependencies |
+	&quot;The same levels as MooseEntity&gt;&gt;isLinkedTo:dependancyDirection:in: for each tagged entity: its own dependencies, the dependencies of all its children, and the containers of all of them.&quot;
+	dependencies := Set new.
+	(self allEntitiesRecursivelyIn: aMooseModel) do: [ :taggedEntity |
+		| found |
+		found := taggedEntity allChildrenDependenciesThrough: aDirectionStrategy.
+		dependencies addAll: found.
+		found do: [ :each | dependencies addAll: each allContainers ] ].
+
+	&quot;In the entity is a MooseEntity, with check if it is in its dependencies.
+	If it is a tag, we look in the tags of its dependencies and the parents of those tags.&quot;
+	^ (aTagOrEntity isTag
+		ifTrue: [ dependencies flatCollectAsSet: [ :entity | entity tags , (entity tags flatCollect: #allParentTags) ] ]
+		ifFalse: [ dependencies ]) includes: aTagOrEntity&#x27;.
+
+fix value: #FamixTaggingDependencyDetectorTest value: #testProviderMethodToTags
+	value: [ :source | source includesSubstring: &#x27;expectedFailure&#x27; ]
+	value:
+&#x27;testProviderMethodToTags
+	self createTags.
+	self assert: (self m1 allProvidersIn: {self tag2}) size equals: 1.
+	self assert: (self m1 allProvidersIn: {self compositeTag2}) size equals: 1&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

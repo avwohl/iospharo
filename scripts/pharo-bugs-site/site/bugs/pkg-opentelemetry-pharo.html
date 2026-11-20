@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: opentelemetry-pharo (Gabriel-Darbord/opentelemetry-pharo, row 44) - Pharo test defects</title><meta name="description" content="Package: opentelemetry-pharo (Gabriel-Darbord/opentelemetry-pharo, row 44): Fixed (package repair) (the tests use a stand-in server in the fixes file)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: opentelemetry-pharo (Gabriel-Darbord/opentelemetry-pharo, row 44)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-part">Fixed (package repair) (the tests use a stand-in server in the fixes file)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>gabriel-darbord-opentelemetry-pharo.st</dd><dt>Upstream repository</dt><dd>Gabriel-Darbord/opentelemetry-pharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: the manifest row loaded the baseline with no group, and the
+image had no test class.  With the group <code>tests</code>: 1034 tests, 1033 pass,
+1 skip on the two VMs.  The group <code>integration-tests</code> (3 tests) was not
+loaded.</li>
+<li>The skip: <code>OTOtlpGrpcSpanExporterTest&gt;&gt;testExportUsesGrpcTransportStackEndToEnd</code>
+runs only when 9 classes of grpc-pharo are in the image.  One of them,
+<code>GRPCHTTP2MockStream</code>, is in the package <code>GRPC-Tests</code>.  The baseline of
+the package loads grpc-pharo with its default group, and that group does
+not have <code>GRPC-Tests</code>.</li>
+<li>The 3 integration tests send one gRPC call each to an OpenTelemetry
+collector on <code>127.0.0.1:4317</code>, and then read the file that the collector
+writes.  The test machine runs no collector.</li>
+<li>Repair here:
+<ul>
+<li>The manifest row loads the groups <code>tests</code> and <code>integration-tests</code>.</li>
+<li><code>fixes/gabriel-darbord-opentelemetry-pharo.st</code> defines
+<code>GRPCHTTP2MockStream</code> (a copy of the class of grpc-pharo v0.1.0).</li>
+<li>The same file adds the class <code>OTLPGrpcCollectorDouble</code>: a receiver for
+gRPC on HTTP/2 in the image.  The receiver decodes each request and
+writes the JSON file that the collector writes.  The <code>setUp</code> of
+<code>OTOtlpGrpcIntegrationTest</code> starts the receiver and sets the environment
+variables that the tests read.  No assertion has a change.</li>
+</ul>
+</li>
+<li>Limits: the receiver uses the HTTP/2 code of the GRPC package for the
+server side.  A defect that the reader and the writer of that code share
+does not show.  The receiver does not check the request headers or the
+rules of the OTLP data.  The 3 tests are thus a check of the client
+against a receiver in the image, and not against the real collector.</li>
+<li>Result: 1037 of 1037 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 44&quot;
+Metacello new baseline: &#x27;OpenTelemetry&#x27;; repository: &#x27;github://Gabriel-Darbord/opentelemetry-pharo:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;tests&#x27; &#x27;integration-tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>44</td><td><code>gabriel-darbord-opentelemetry-pharo</code></td><td>ok</td><td>tests=1037 P=1037 F=0 E=0 S=0 T=0 X=0</td><td>tests=1037 P=1037 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): gabriel-darbord-opentelemetry-pharo.st (<a href="../files/packages/fixes/gabriel-darbord-opentelemetry-pharo.st">download</a>)</summary><pre class="code">&quot;gabriel-darbord-opentelemetry-pharo: two defects, both of the way the tests meet the GRPC package.
+
+1. OTOtlpGrpcSpanExporterTest&gt;&gt;testExportUsesGrpcTransportStackEndToEnd skips
+   because OTGrpcTestSupport class&gt;&gt;hasActualGrpcTransportStack needs the class
+   GRPCHTTP2MockStream.  That class is in the package GRPC-Tests of grpc-pharo.
+   BaselineOfOpenTelemetry loads the baseline GRPC with its default group
+   (core: GRPC-Core, GRPC-HTTP2), so GRPC-Tests is not in the image.  The first
+   part of this file defines GRPCHTTP2MockStream, copied from GRPC-Tests of
+   grpc-pharo v0.1.0 (the clone under iceberg/Gabriel-Darbord/grpc-pharo).
+   Loading the group tests of BaselineOfGRPC from that clone is the alternative.
+
+2. The four integration test classes need an OpenTelemetry collector on
+   127.0.0.1:4317 (ci/otel-collector-otlp-grpc.yaml).  The class
+   OTLPGrpcCollectorDouble is a gRPC/HTTP2 receiver in the image.  It uses the
+   frame reader and writer, the HPACK codec and the message framer of the GRPC
+   package for the server side, and the OTProtobufReader of the OpenTelemetry
+   package to decode the request into the JSON that the file exporter of the
+   collector writes.  The setUp of OTOtlpGrpcIntegrationTest starts the double and
+   sets the environment variables that the tests read.  The assertions of the
+   tests are not changed.  Evidence and limits: docs/upstream/package-repairs.md.&quot;
+
+(Smalltalk globals includesKey: #GRPCHTTP2MockStream) ifFalse: [
+	(Smalltalk globals includesKey: #GRPCHTTP2Transport) ifTrue: [
+		(Object &lt;&lt; #GRPCHTTP2MockStream
+			slots: { #readStream. #writeStream. #timeoutSeconds. #closed };
+			package: &#x27;GRPC-Tests&#x27;;
+			yourself) install ] ].
+
+add value: #&#x27;GRPCHTTP2MockStream class&#x27; value: #&#x27;readingBytes:&#x27; value: &#x27;instance creation&#x27; value:
+&#x27;readingBytes: aByteArray
+
+^ self new
+	readingBytes: aByteArray;
+	yourself&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;atEnd&#x27; value: &#x27;testing&#x27; value:
+&#x27;atEnd
+
+^ readStream atEnd&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;close&#x27; value: &#x27;initialization&#x27; value:
+&#x27;close
+
+closed := true&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;closed&#x27; value: &#x27;accessing&#x27; value:
+&#x27;closed
+
+^ closed&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;flush&#x27; value: &#x27;stream out&#x27; value:
+&#x27;flush
+
+^ self&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;initialize&#x27; value: &#x27;initialization&#x27; value:
+&#x27;initialize
+
+super initialize.
+readStream := #[ ] readStream.
+writeStream := ByteArray new writeStream.
+timeoutSeconds := nil.
+closed := false&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;next&#x27; value: &#x27;stream in&#x27; value:
+&#x27;next
+
+^ readStream next&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;next:&#x27; value: &#x27;stream in&#x27; value:
+&#x27;next: anInteger
+
+^ readStream next: anInteger&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;nextPut:&#x27; value: &#x27;stream out&#x27; value:
+&#x27;nextPut: anInteger
+
+writeStream nextPut: anInteger&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;nextPutAll:&#x27; value: &#x27;stream out&#x27; value:
+&#x27;nextPutAll: aCollection
+
+writeStream nextPutAll: aCollection&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;readingBytes:&#x27; value: &#x27;initialization&#x27; value:
+&#x27;readingBytes: aByteArray
+
+readStream := aByteArray readStream&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;timeout:&#x27; value: &#x27;accessing&#x27; value:
+&#x27;timeout: anInteger
+
+timeoutSeconds := anInteger&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;timeoutSeconds&#x27; value: &#x27;accessing&#x27; value:
+&#x27;timeoutSeconds
+
+^ timeoutSeconds&#x27;.
+
+add value: #&#x27;GRPCHTTP2MockStream&#x27; value: #&#x27;writtenBytes&#x27; value: &#x27;accessing&#x27; value:
+&#x27;writtenBytes
+
+^ writeStream contents&#x27;.
+
+
+&quot;--- the collector double ---&quot;
+
+(Smalltalk globals includesKey: #OTLPGrpcCollectorDouble) ifFalse: [
+	(Smalltalk globals includesKey: #GRPCHTTP2FrameReader) ifTrue: [
+		(Object &lt;&lt; #OTLPGrpcCollectorDouble
+			sharedVariables: { #Listener. #Acceptor. #Lock. #Documents. #Failures. #Received. #Schema };
+			package: &#x27;OTLP-Grpc-Collector-Double&#x27;;
+			yourself) install ] ].
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;port&#x27; value: &#x27;configuration&#x27; value:
+&#x27;port
+	&quot;The port of the OpenTelemetry collector in ci/otel-collector-otlp-grpc.yaml.&quot;
+	^ 4317&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;ensureStarted&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;ensureStarted
+	&quot;Called by setUp of the OTLP/gRPC integration tests.  Starts the listener on
+	 127.0.0.1:4317 when it does not run, and sets the environment variables that
+	 the tests read.  A setUp error here (port in use) is the right signal: another
+	 collector listens on the port.&quot;
+	(Acceptor notNil and: [ Acceptor isTerminated not and: [ Listener notNil and: [ Listener isValid ] ] ])
+		ifFalse: [ self start ].
+	self publishEnvironment&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;start&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;start
+	self stop.
+	Lock := Mutex new.
+	Documents := Dictionary new.
+	Failures := OrderedCollection new.
+	Received := 0.
+	#( #traces #logs #metrics ) do: [ :each | (self outputFileFor: each) ensureDelete ].
+	Listener := ZnNetworkingUtils serverSocketOn: self port interface: #[ 127 0 0 1 ].
+	Acceptor := [ self acceptLoop ] forkAt: Processor lowIOPriority named: &#x27;&#x27;OTLP gRPC collector double&#x27;&#x27;&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;stop&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;stop
+	Acceptor ifNotNil: [ Acceptor terminate ].
+	Acceptor := nil.
+	Listener ifNotNil: [ [ Listener destroy ] on: Error do: [ :error | nil ] ].
+	Listener := nil&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;failures&#x27; value: &#x27;accessing&#x27; value:
+&#x27;failures
+	&quot;Errors that ended a connection or a request, as strings.  Empty on a clean run.&quot;
+	^ Failures ifNil: [ #() ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;received&#x27; value: &#x27;accessing&#x27; value:
+&#x27;received
+	&quot;The number of Export requests that the double accepted.&quot;
+	^ Received ifNil: [ 0 ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;publishEnvironment&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;publishEnvironment
+	| environment prefix |
+	environment := Smalltalk os environment.
+	prefix := &#x27;&#x27;OTEL_PHARO_OTLP_GRPC_INTEGRATION_&#x27;&#x27;.
+	environment at: prefix, &#x27;&#x27;ENABLED&#x27;&#x27; put: &#x27;&#x27;true&#x27;&#x27;.
+	environment at: prefix, &#x27;&#x27;TRACE_OUTPUT_FILE&#x27;&#x27; put: (self outputPathFor: #traces).
+	environment at: prefix, &#x27;&#x27;LOG_OUTPUT_FILE&#x27;&#x27; put: (self outputPathFor: #logs).
+	environment at: prefix, &#x27;&#x27;METRIC_OUTPUT_FILE&#x27;&#x27; put: (self outputPathFor: #metrics)&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;outputFileFor:&#x27; value: &#x27;files&#x27; value:
+&#x27;outputFileFor: aSignalSymbol
+	| directory |
+	directory := FileLocator temp / &#x27;&#x27;otlp-grpc-collector-double&#x27;&#x27;.
+	directory ensureCreateDirectory.
+	^ (directory / (&#x27;&#x27;otlp-grpc-&#x27;&#x27;, aSignalSymbol, &#x27;&#x27;.json&#x27;&#x27;)) resolve&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;outputPathFor:&#x27; value: &#x27;files&#x27; value:
+&#x27;outputPathFor: aSignalSymbol
+	^ (self outputFileFor: aSignalSymbol) fullName&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;acceptLoop&#x27; value: &#x27;server&#x27; value:
+&#x27;acceptLoop
+	[ | socket |
+	  Listener isValid ifFalse: [ ^ self ].
+	  socket := Listener waitForAcceptFor: 1.
+	  socket ifNotNil: [ self serveSocket: socket ] ] repeat&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;serveSocket:&#x27; value: &#x27;server&#x27; value:
+&#x27;serveSocket: aSocket
+	[ | stream |
+	  stream := ZnNetworkingUtils socketStreamOn: aSocket.
+	  [ self serveConnection: stream ]
+		on: Error
+		do: [ :error | self noteFailure: error ].
+	  [ stream close ] on: Error do: [ :error | nil ].
+	  [ aSocket destroy ] on: Error do: [ :error | nil ] ]
+		forkAt: Processor lowIOPriority
+		named: &#x27;&#x27;OTLP gRPC collector double connection&#x27;&#x27;&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;noteFailure:&#x27; value: &#x27;server&#x27; value:
+&#x27;noteFailure: anError
+	Lock critical: [ Failures add: anError class name, &#x27;&#x27;: &#x27;&#x27;, anError messageText printString ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;serveConnection:&#x27; value: &#x27;server&#x27; value:
+&#x27;serveConnection: aStream
+	&quot;One HTTP/2 connection: the client preface, the server SETTINGS, then frames
+	 until the client closes (peek answers nil then).  Every request is answered at the end of its stream.&quot;
+	| reader writer streams |
+	reader := GRPCHTTP2FrameReader new.
+	writer := GRPCHTTP2FrameWriter new.
+	streams := Dictionary new.
+	reader readClientConnectionPrefaceFrom: aStream.
+	writer writeFrame: (GRPCHTTP2SettingsFrame settings: GRPCHTTP2Settings new) on: aStream.
+	aStream flush.
+	[ aStream peek notNil ] whileTrue: [ | frame |
+		frame := reader readNextFrameFrom: aStream.
+		frame ifNotNil: [ self handleFrame: frame streams: streams writer: writer on: aStream ] ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;handleFrame:streams:writer:on:&#x27; value: &#x27;server&#x27; value:
+&#x27;handleFrame: aFrame streams: streams writer: writer on: aStream
+	| entry |
+	aFrame class = GRPCHTTP2SettingsFrame ifTrue: [
+		aFrame acknowledgment ifFalse: [
+			writer writeFrame: GRPCHTTP2SettingsFrame acknowledgment on: aStream.
+			aStream flush ].
+		^ self ].
+	aFrame class = GRPCHTTP2PingFrame ifTrue: [
+		aFrame acknowledgment ifFalse: [
+			writer
+				writeFrame: (GRPCHTTP2PingFrame ack: true payload1: aFrame payload1 payload2: aFrame payload2)
+				on: aStream.
+			aStream flush ].
+		^ self ].
+	aFrame class = GRPCHTTP2HeadersFrame ifTrue: [
+		entry := Array with: aFrame headers with: (WriteStream on: ByteArray new).
+		aFrame endStream
+			ifTrue: [ self respondTo: entry streamId: aFrame streamId writer: writer on: aStream ]
+			ifFalse: [ streams at: aFrame streamId put: entry ].
+		^ self ].
+	aFrame class = GRPCHTTP2DataFrame ifTrue: [
+		entry := streams at: aFrame streamId ifAbsent: [ ^ self ].
+		entry second nextPutAll: aFrame payload.
+		aFrame payload isEmpty ifFalse: [
+			writer
+				writeFrame: (GRPCHTTP2WindowUpdateFrame streamId: 0 increment: aFrame payload size)
+				on: aStream.
+			aFrame endStream ifFalse: [
+				writer
+					writeFrame: (GRPCHTTP2WindowUpdateFrame streamId: aFrame streamId increment: aFrame payload size)
+					on: aStream ].
+			aStream flush ].
+		aFrame endStream ifTrue: [
+			streams removeKey: aFrame streamId.
+			self respondTo: entry streamId: aFrame streamId writer: writer on: aStream ].
+		^ self ].
+	aFrame class = GRPCHTTP2RstStreamFrame ifTrue: [ streams removeKey: aFrame streamId ifAbsent: [ nil ] ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;servicesByPath&#x27; value: &#x27;server&#x27; value:
+&#x27;servicesByPath
+	&quot;The gRPC path of each Export method -&gt; the signal and the root message.&quot;
+	^ Dictionary new
+		at: &#x27;&#x27;/opentelemetry.proto.collector.trace.v1.TraceService/Export&#x27;&#x27; put: #( #traces #ExportTraceServiceRequest );
+		at: &#x27;&#x27;/opentelemetry.proto.collector.logs.v1.LogsService/Export&#x27;&#x27; put: #( #logs #ExportLogsServiceRequest );
+		at: &#x27;&#x27;/opentelemetry.proto.collector.metrics.v1.MetricsService/Export&#x27;&#x27; put: #( #metrics #ExportMetricsServiceRequest );
+		yourself&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;respondTo:streamId:writer:on:&#x27; value: &#x27;server&#x27; value:
+&#x27;respondTo: anEntry streamId: anInteger writer: writer on: aStream
+	&quot;anEntry is (request headers, request body stream).  The answer is the one
+	 of a real collector: HEADERS, one empty response message, trailers with
+	 grpc-status 0.  An unknown path or a body that does not decode gets a
+	 trailers-only answer with grpc-status 12 or 3.&quot;
+	| headers path service document frame |
+	headers := anEntry first.
+	path := (headers detect: [ :each | each key = &#x27;&#x27;:path&#x27;&#x27; ] ifNone: [ nil ])
+		ifNotNil: [ :each | each value asString ].
+	service := path ifNotNil: [ self servicesByPath at: path ifAbsent: [ nil ] ].
+	service ifNil: [
+		^ self answerWithStatus: 12 message: &#x27;&#x27;unknown method &#x27;&#x27;, path printString streamId: anInteger writer: writer on: aStream ].
+	[ frame := GRPCMessageFramer readSingleFrameFrom: anEntry second contents readStream.
+	  frame isCompressed ifTrue: [ Error signal: &#x27;&#x27;compressed request messages are not supported by the double&#x27;&#x27; ].
+	  document := self decode: frame payload as: service second ]
+		on: Error
+		do: [ :error |
+			self noteFailure: error.
+			^ self answerWithStatus: 3 message: error messageText asString streamId: anInteger writer: writer on: aStream ].
+	self record: document signal: service first.
+	writer
+		writeFrame: (GRPCHTTP2HeadersFrame
+			streamId: anInteger
+			headers: { &#x27;&#x27;:status&#x27;&#x27; -&gt; &#x27;&#x27;200&#x27;&#x27;. &#x27;&#x27;content-type&#x27;&#x27; -&gt; &#x27;&#x27;application/grpc+proto&#x27;&#x27; }
+			endStream: false)
+		on: aStream.
+	writer
+		writeFrame: (GRPCHTTP2DataFrame
+			streamId: anInteger
+			payload: (GRPCMessageFramer frameMessage: #[ ] compressed: false)
+			endStream: false)
+		on: aStream.
+	writer
+		writeFrame: (GRPCHTTP2HeadersFrame streamId: anInteger headers: { &#x27;&#x27;grpc-status&#x27;&#x27; -&gt; &#x27;&#x27;0&#x27;&#x27; } endStream: true)
+		on: aStream.
+	aStream flush&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;answerWithStatus:message:streamId:writer:on:&#x27; value: &#x27;server&#x27; value:
+&#x27;answerWithStatus: aCode message: aString streamId: anInteger writer: writer on: aStream
+	writer
+		writeFrame: (GRPCHTTP2HeadersFrame
+			streamId: anInteger
+			headers: {
+				&#x27;&#x27;:status&#x27;&#x27; -&gt; &#x27;&#x27;200&#x27;&#x27;.
+				&#x27;&#x27;content-type&#x27;&#x27; -&gt; &#x27;&#x27;application/grpc+proto&#x27;&#x27;.
+				&#x27;&#x27;grpc-status&#x27;&#x27; -&gt; aCode printString.
+				&#x27;&#x27;grpc-message&#x27;&#x27; -&gt; (aString copyReplaceAll: String lf with: &#x27;&#x27; &#x27;&#x27;) }
+			endStream: true)
+		on: aStream.
+	aStream flush&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;record:signal:&#x27; value: &#x27;output&#x27; value:
+&#x27;record: aDocument signal: aSignalSymbol
+	&quot;One JSON line for each Export request, as the file exporter of the real
+	 collector writes it, then the whole file again (the writes are rare).&quot;
+	| lines text |
+	Lock critical: [
+		lines := Documents at: aSignalSymbol ifAbsentPut: [ OrderedCollection new ].
+		lines add: (STON toJsonString: aDocument).
+		Received := Received + 1.
+		text := String streamContents: [ :out |
+			lines do: [ :each | out nextPutAll: each; nextPut: Character lf ] ].
+		(self outputFileFor: aSignalSymbol) ensureDelete.
+		(self outputFileFor: aSignalSymbol) binaryWriteStreamDo: [ :out | out nextPutAll: text utf8Encoded ] ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;decode:as:&#x27; value: &#x27;decoder&#x27; value:
+&#x27;decode: someBytes as: aMessageName
+	&quot;Decode a protobuf message by the table of schema into a Dictionary with the
+	 field names of the OTLP JSON mapping.  A field that the table does not name
+	 is kept as unknown&lt;number&gt; (hex), so nothing is dropped silently.&quot;
+	| reader fields result |
+	reader := OTProtobufReader on: someBytes.
+	fields := self schema at: aMessageName.
+	result := Dictionary new.
+	[ reader atEnd ] whileFalse: [ | tag number wire raw spec |
+		tag := reader readTag.
+		number := tag first.
+		wire := tag second.
+		raw := self readWire: wire from: reader.
+		spec := fields at: number ifAbsent: [ nil ].
+		spec
+			ifNil: [
+				result
+					at: &#x27;&#x27;unknown&#x27;&#x27;, number printString
+					put: (raw isInteger ifTrue: [ raw printString ] ifFalse: [ raw hex ]) ]
+			ifNotNil: [ self store: raw spec: spec into: result ] ].
+	result keys do: [ :key |
+		(result at: key) class = OrderedCollection ifTrue: [ result at: key put: (result at: key) asArray ] ].
+	^ result&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;readWire:from:&#x27; value: &#x27;decoder&#x27; value:
+&#x27;readWire: aWireType from: aReader
+	aWireType = 0 ifTrue: [ ^ aReader readVarint ].
+	aWireType = 1 ifTrue: [ ^ aReader readFixed64 ].
+	aWireType = 2 ifTrue: [ ^ aReader readBytes ].
+	aWireType = 5 ifTrue: [ ^ aReader readFixed32 ].
+	Error signal: &#x27;&#x27;Unsupported protobuf wire type &#x27;&#x27;, aWireType printString&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;store:spec:into:&#x27; value: &#x27;decoder&#x27; value:
+&#x27;store: raw spec: spec into: aDictionary
+	| name value |
+	name := spec first asString.
+	value := self convert: raw kind: (spec at: 2) nested: (spec at: 3).
+	(spec at: 4)
+		ifTrue: [ (aDictionary at: name ifAbsentPut: [ OrderedCollection new ]) add: value ]
+		ifFalse: [ aDictionary at: name put: value ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;convert:kind:nested:&#x27; value: &#x27;decoder&#x27; value:
+&#x27;convert: raw kind: aKind nested: aMessageName
+	&quot;The wire type must fit the kind: bytes for str, hex, bytes and msg, a number for the rest.&quot;
+	| isBytes |
+	isBytes := raw isInteger not.
+	(#( #str #hex #bytes #msg ) includes: aKind)
+		ifTrue: [ isBytes ifFalse: [ Error signal: &#x27;&#x27;field of kind &#x27;&#x27;, aKind, &#x27;&#x27; has a numeric wire type&#x27;&#x27; ] ]
+		ifFalse: [ isBytes ifTrue: [ Error signal: &#x27;&#x27;field of kind &#x27;&#x27;, aKind, &#x27;&#x27; has a length-delimited wire type&#x27;&#x27; ] ].
+	aKind = #str ifTrue: [ ^ raw utf8Decoded ].
+	aKind = #hex ifTrue: [ ^ raw hex ].
+	aKind = #bytes ifTrue: [ ^ raw base64Encoded ].
+	aKind = #msg ifTrue: [ ^ self decode: raw as: aMessageName ].
+	aKind = #int ifTrue: [ ^ raw ].
+	aKind = #fx32 ifTrue: [ ^ raw ].
+	aKind = #bool ifTrue: [ ^ raw ~= 0 ].
+	aKind = #fx64 ifTrue: [ ^ raw printString ].
+	(aKind = #i64 or: [ aKind = #sfx64 ])
+		ifTrue: [ ^ (raw &gt;= (1 bitShift: 63) ifTrue: [ raw - (1 bitShift: 64) ] ifFalse: [ raw ]) printString ].
+	aKind = #dbl ifTrue: [ ^ Float fromIEEE64Bit: raw ].
+	Error signal: &#x27;&#x27;no such kind in the table: &#x27;&#x27;, aKind printString&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;schema&#x27; value: &#x27;decoder&#x27; value:
+&#x27;schema
+	&quot;message name -&gt; (field number -&gt; #(json name, kind, nested message, repeated)).
+	 The field numbers are those of opentelemetry-proto, which the encoders of the
+	 package write (OTOtlpProtobufTraceEncoder and its log and metric relatives).
+	 Kinds: str hex bytes msg int bool i64 (varint as signed decimal string)
+	 fx64 (unsigned decimal string) sfx64 (signed decimal string) fx32 dbl.&quot;
+	^ Schema ifNil: [ Schema := self buildSchema ]&#x27;.
+
+add value: #&#x27;OTLPGrpcCollectorDouble class&#x27; value: #&#x27;buildSchema&#x27; value: &#x27;decoder&#x27; value:
+&#x27;buildSchema
+	| table |
+	table := Dictionary new.
+	#(
+	#( #ExportTraceServiceRequest #( 1 #resourceSpans #msg #ResourceSpans true ) )
+	#( #ExportLogsServiceRequest #( 1 #resourceLogs #msg #ResourceLogs true ) )
+	#( #ExportMetricsServiceRequest #( 1 #resourceMetrics #msg #ResourceMetrics true ) )
+	#( #Resource #( 1 #attributes #msg #KeyValue true ) #( 2 #droppedAttributesCount #int nil false ) )
+	#( #Scope #( 1 #name #str nil false ) #( 2 #version #str nil false ) #( 3 #attributes #msg #KeyValue true ) #( 4 #droppedAttributesCount #int nil false ) )
+	#( #KeyValue #( 1 #key #str nil false ) #( 2 #value #msg #AnyValue false ) )
+	#( #AnyValue #( 1 #stringValue #str nil false ) #( 2 #boolValue #bool nil false ) #( 3 #intValue #i64 nil false ) #( 4 #doubleValue #dbl nil false ) #( 5 #arrayValue #msg #ArrayValue false ) #( 6 #kvlistValue #msg #KeyValueList false ) #( 7 #bytesValue #bytes nil false ) )
+	#( #ArrayValue #( 1 #values #msg #AnyValue true ) )
+	#( #KeyValueList #( 1 #values #msg #KeyValue true ) )
+	#( #ResourceSpans #( 1 #resource #msg #Resource false ) #( 2 #scopeSpans #msg #ScopeSpans true ) #( 3 #schemaUrl #str nil false ) )
+	#( #ScopeSpans #( 1 #scope #msg #Scope false ) #( 2 #spans #msg #Span true ) #( 3 #schemaUrl #str nil false ) )
+	#( #Span #( 1 #traceId #hex nil false ) #( 2 #spanId #hex nil false ) #( 3 #traceState #str nil false ) #( 4 #parentSpanId #hex nil false ) #( 5 #name #str nil false ) #( 6 #kind #int nil false ) #( 7 #startTimeUnixNano #fx64 nil false ) #( 8 #endTimeUnixNano #fx64 nil false ) #( 9 #attributes #msg #KeyValue true ) #( 10 #droppedAttributesCount #int nil false ) #( 11 #events #msg #SpanEvent true ) #( 12 #droppedEventsCount #int nil false ) #( 13 #links #msg #SpanLink true ) #( 14 #droppedLinksCount #int nil false ) #( 15 #status #msg #SpanStatus false ) #( 16 #flags #fx32 nil false ) )
+	#( #SpanEvent #( 1 #timeUnixNano #fx64 nil false ) #( 2 #name #str nil false ) #( 3 #attributes #msg #KeyValue true ) #( 4 #droppedAttributesCount #int nil false ) )
+	#( #SpanLink #( 1 #traceId #hex nil false ) #( 2 #spanId #hex nil false ) #( 3 #traceState #str nil false ) #( 4 #attributes #msg #KeyValue true ) #( 5 #droppedAttributesCount #int nil false ) #( 6 #flags #fx32 nil false ) )
+	#( #SpanStatus #( 2 #message #str nil false ) #( 3 #code #int nil false ) )
+	#( #ResourceLogs #( 1 #resource #msg #Resource false ) #( 2 #scopeLogs #msg #ScopeLogs true ) #( 3 #schemaUrl #str nil false ) )
+	#( #ScopeLogs #( 1 #scope #msg #Scope false ) #( 2 #logRecords #msg #LogRecord true ) #( 3 #schemaUrl #str nil false ) )
+	#( #LogRecord #( 1 #timeUnixNano #fx64 nil false ) #( 2 #severityNumber #int nil false ) #( 3 #severityText #str nil false ) #( 5 #body #msg #AnyValue false ) #( 6 #attributes #msg #KeyValue true ) #( 7 #droppedAttributesCount #int nil false ) #( 8 #flags #fx32 nil false ) #( 9 #traceId #hex nil false ) #( 10 #spanId #hex nil false ) #( 11 #observedTimeUnixNano #fx64 nil false ) #( 12 #eventName #str nil false ) )
+	#( #ResourceMetrics #( 1 #resource #msg #Resource false ) #( 2 #scopeMetrics #msg #ScopeMetrics true ) #( 3 #schemaUrl #str nil false ) )
+	#( #ScopeMetrics #( 1 #scope #msg #Scope false ) #( 2 #metrics #msg #Metric true ) #( 3 #schemaUrl #str nil false ) )
+	#( #Metric #( 1 #name #str nil false ) #( 2 #description #str nil false ) #( 3 #unit #str nil false ) #( 5 #gauge #msg #Gauge false ) #( 7 #sum #msg #Sum false ) )
+	#( #Gauge #( 1 #dataPoints #msg #NumberDataPoint true ) )
+	#( #Sum #( 1 #dataPoints #msg #NumberDataPoint true ) #( 2 #aggregationTemporality #int nil false ) #( 3 #isMonotonic #bool nil false ) )
+	#( #NumberDataPoint #( 2 #startTimeUnixNano #fx64 nil false ) #( 3 #timeUnixNano #fx64 nil false ) #( 4 #asDouble #dbl nil false ) #( 6 #asInt #sfx64 nil false ) #( 7 #attributes #msg #KeyValue true ) #( 8 #flags #int nil false ) ) )
+		do: [ :message | | fields |
+			fields := Dictionary new.
+			message allButFirst do: [ :spec | fields at: spec first put: spec allButFirst ].
+			table at: message first put: fields ].
+	^ table&#x27;.
+
+
+&quot;--- the tests start the double ---&quot;
+
+fix value: #OTOtlpGrpcIntegrationTest value: #setUp
+	value: [ :source | (source includesSubstring: &#x27;OTLPGrpcCollectorDouble&#x27;) not ]
+	value:
+&#x27;setUp
+	&quot;The collector double listens on 127.0.0.1:4317 and the tests find its output files through the environment.&quot;
+	OTLPGrpcCollectorDouble ensureStarted.
+	super setUp.
+	self snapshotOtelEnvironment.
+	self clearNonIntegrationOtelEnvironmentValues.
+	OTGrpcTestSupport removeFakeGrpcResolvers.
+	self resetTelemetryConfiguration&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

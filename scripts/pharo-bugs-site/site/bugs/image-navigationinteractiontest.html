@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NavigationInteractionTest - Pharo test defects</title><meta name="description" content="NavigationInteractionTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>NavigationInteractionTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-NavigationInteractionTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-NavigationInteractionTest.st</code></li>
+<li>Methods: <code>ClyBrowserMorph&gt;&gt;browseImplementorsOf:inNameResolver:</code>, <code>ClyBrowserMorph&gt;&gt;spawnQueryBrowserOn:withState:</code>, <code>NavigationInteractionTest&gt;&gt;testBrowseMethodViaImplementorActuallyBrowseTheClass</code></li>
+</ul>
+<p>The test called self skip with the comment &quot;not possible to simply write a test for the normal case&quot;. Removing the skip showed three separate defects. (1) The test used an unbuilt ClyFullBrowserMorph new, whose defaultNavigationScope fails with SubclassResponsibility (ClyUnknownScope&gt;&gt;representsScope:) because packageView is not built. (2) ClyBrowserMorph&gt;&gt;spawnQueryBrowserOn:withState: spawned (Smalltalk tools toolNamed: #messageList), which in Pharo 14 is the NewTools StMethodBrowser. StMethodBrowser does not understand the Calypso protocol on:systemScope:, so the method fails with doesNotUnderstand. Every caller of spawnQueryBrowserOn: is affected (ClyTextEditor, the implementors/senders navigation). (3) ClyBrowserMorph&gt;&gt;browseImplementorsOf:inNameResolver: returned the bare symbol #NormalImplementorBrowse, while the class branch returns { browser. symbol }, which is the shape the test reads with res first / res second. The fix spawns ClyQueryBrowserMorph (the class that has on:systemScope:, queryScopes: and showResultOf:), makes browseImplementorsOf:inNameResolver: return { spawnedBrowser. #NormalImplementorBrowse }, and rewrites the test to open a real browser with ClyFullBrowserMorph openOnClass: Object. The test closes both browsers in an ensure: block. The assertion on res second is unchanged, and an assertion that res first is not nil was added.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NavigationInteractionTest&gt;&gt;testBrowseMethodViaImplementorActuallyBrowseTheClass</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Skipped by the test itself. The test used an unbuilt browser. spawnQueryBrowserOn:withState: used the NewTools StMethodBrowser, which lacks on:systemScope:. browseImplementorsOf:inNameResolver: returned a bare symbol instead of { browser. symbol }.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: NavigationInteractionTest (3 tests) on both ours and cog with the fix: 3 of 3 pass, 3 runs each. Before the fix: 2 pass, 1 skip. ClyQueryBrowserStateTest on both VMs: 13 PASS before and 13 PASS after. I also ran ClyFullBrowserMorphTest, ClyBrowserMorphTest, ClyNavigationHistoryTest and ClyTextEditorTest. They gave 0 passes before and after, on both VMs. ClyNavigationHistoryTest exists in the sources but its run printed only &quot;RT| DONE&quot;, and I did not find out why it has no tests; I did not check whether the other three classes exist in the image. Only the JIT-on build (ours) and Cog were run, not ours-nojit. No other test class covering spawnQueryBrowserOn: was found in the Pharo sources.</p>
+<p>Upstream note: Title: Calypso: spawnQueryBrowserOn:withState: uses the NewTools message list, which does not speak the Calypso protocol; enable NavigationInteractionTest&gt;&gt;testBrowseMethodViaImplementorActuallyBrowseTheClass. Project: pharo (Calypso-SystemTools-QueryBrowser and Calypso-Browser-Tests). ClyBrowserMorph&gt;&gt;spawnQueryBrowserOn:withState: calls &quot;Smalltalk tools toolNamed: #messageList&quot;, which is now StMethodBrowser. StMethodBrowser class does not understand #on:systemScope:, so any implementors or senders navigation from a Calypso browser fails with doesNotUnderstand. The fix spawns ClyQueryBrowserMorph directly. browseImplementorsOf:inNameResolver: now returns { browser. #NormalImplementorBrowse }, like its class branch. The test opened a bare ClyFullBrowserMorph new, which cannot compute defaultNavigationScope; it now opens a real browser with openOnClass: and closes both browsers. The self skip is removed. Needs human review before any upstream PR.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>NavigationInteractionTest&gt;&gt;testBrowseMethodViaImplementorActuallyBrowseTheClass</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((NavigationInteractionTest selector: #testBrowseMethodViaImplementorActuallyBrowseTheClass) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>NavigationInteractionTest&gt;&gt;testBrowseMethodViaImplementorActuallyBrowseTheClass before the fix (Pharo 14 build 791)</summary><pre class="code">testBrowseMethodViaImplementorActuallyBrowseTheClass
+
+	| browser res |
+	self skip.
+	&quot;This is not possible to simply write a test for the normal case... how sad!!!&quot;
+	browser := ClyFullBrowserMorph new.
+	res := (browser browseImplementorsOf: #add: inNameResolver: Object).
+	&quot;this does not work with inNameResolver: nil&quot;
+	self assert: res second equals: #NormalImplementorBrowse.
+	res first close</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-NavigationInteractionTest.st (<a href="../files/image-fixes/20-NavigationInteractionTest.st">download</a>)</summary><pre class="code">fix value: #ClyBrowserMorph value: #browseImplementorsOf:inNameResolver: value: [ :s | (s includesSubstring: &#x27;spawned&#x27;) not and: [ s includesSubstring: &#x27;^ #NormalImplementorBrowse&#x27; ] ] value: &#x27;browseImplementorsOf: aSymbol inNameResolver: aNameResolver
+	| classBinding classToBrowse spawned |
+	aSymbol first isUppercase ifTrue: [
+		aNameResolver 
+			ifNil: [ classToBrowse := self class environment at: aSymbol.
+						^ { ClyFullBrowserMorph openOnClass: classToBrowse.
+						#BrowseClassWithoutNameResolver} ]
+			ifNotNil: [ 
+		classBinding := aNameResolver bindingOf: aSymbol.
+	   
+		classBinding ifNotNil: [
+			classToBrowse := classBinding definingClass ifNil: [ classBinding value ].
+			classToBrowse isClassOrTrait ifFalse: [ classToBrowse := classToBrowse class ].
+			self spawnBrowser: ClyFullBrowserMorph withState: [ :browser |
+				browser selectClass: classToBrowse].
+			^ #NormalBrowseClass ] ] ].
+
+	self
+		spawnQueryBrowserOn: (ClyMessageImplementorsQuery of: aSymbol)
+		withState: [ :browser | spawned := browser ].
+	^ { spawned. #NormalImplementorBrowse }&#x27;.
+fix value: #ClyBrowserMorph value: #spawnQueryBrowserOn:withState: value: [ :s | s includesSubstring: &#x27;toolNamed: #messageList&#x27; ] value: &#x27;spawnQueryBrowserOn: aQuery withState: navigationBlock
+	| targetQuery |
+	targetQuery := aQuery.
+	aQuery isBoundToEnvironment ifFalse: [
+		targetQuery := aQuery withScope: self defaultNavigationScope].
+
+	targetQuery scope = self systemScope ifTrue: [
+		&quot;If query is empty in system (global) scope then it is empty in any other scope.
+		In that case we do not need a query browser because it will be always empty and useless&quot;
+		targetQuery semiAsync hasEmptyResult ifTrue: [
+			&quot;For slow queries we will not wait and open a browser to indicate execution progress&quot;
+			^ InformativeNotification signal:  &#x27;&#x27;There are no &#x27;&#x27;, targetQuery description ]  ].
+
+	&quot;The message list tool of the Smalltalk tools registry is the NewTools StMethodBrowser, which does not
+	understand the Calypso protocol used here (on:systemScope:, queryScopes:, showResultOf:).  The Calypso
+	query browser does.&quot;
+	self 
+		spawnBrowser: ClyQueryBrowserMorph
+		withState: [ :browser |
+			browser queryScopes: self allNavigationScopes.
+			browser showResultOf: targetQuery.
+			navigationBlock valueWithPossibleArgs: {browser} ]&#x27;.
+fix value: #NavigationInteractionTest value: #testBrowseMethodViaImplementorActuallyBrowseTheClass value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testBrowseMethodViaImplementorActuallyBrowseTheClass
+
+	| browser res |
+	&quot;The browser must be built and opened: the method implementors query is scoped by the package view of the full browser.&quot;
+	browser := ClyFullBrowserMorph openOnClass: Object.
+	[ res := browser browseImplementorsOf: #add: inNameResolver: Object.
+	self assert: res second equals: #NormalImplementorBrowse.
+	self assert: res first isNotNil ] ensure: [
+		res ifNotNil: [ res first ifNotNil: [ :spawned | spawned close ] ].
+		browser close ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

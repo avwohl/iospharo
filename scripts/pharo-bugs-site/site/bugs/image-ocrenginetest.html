@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCRengineTest - Pharo test defects</title><meta name="description" content="OCRengineTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>OCRengineTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-OCRengineTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-OCRengineTest.st</code></li>
+<li>Methods: <code>OCRengineTest&gt;&gt;testWhichUNodesDefinesBlockArg</code></li>
+</ul>
+<p>The test had a leftover self skip as its first statement. With the skip removed, the assertion (whichUpNodeDefines: 'each' on the variable node inside a block returns the OCBlockNode) passes on both VMs. The code under test (OCProgramNode&gt;&gt;whichUpNodeDefines:) was already correct. The fix is a guarded replacement of the test method without the skip. The assertion is unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OCRengineTest&gt;&gt;testWhichUNodesDefinesBlockArg</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Test method started with an unconditional self skip; the underlying code works.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: The whole OCRengineTest class was run on ours (JIT) and Cog with and without the fix. Ours: base 36 pass and 1 skip, fixed 37 pass. Cog: base 36 pass and 1 skip, fixed 37 pass. No non-test method was changed, so no other classes were run.</p>
+<p>Upstream note: Pharo: Refactoring-Transformations-Tests, OCRengineTest&gt;&gt;testWhichUNodesDefinesBlockArg. Remove the stale self skip; the test passes as written because OCProgramNode&gt;&gt;whichUpNodeDefines: returns the OCBlockNode for a block argument.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>OCRengineTest&gt;&gt;testWhichUNodesDefinesBlockArg</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((OCRengineTest selector: #testWhichUNodesDefinesBlockArg) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>OCRengineTest&gt;&gt;testWhichUNodesDefinesBlockArg before the fix (Pharo 14 build 791)</summary><pre class="code">testWhichUNodesDefinesBlockArg
+
+	| ast |
+	self skip.
+	ast := OCParser parseMethod: &#x27;whoDefines
+
+[ :each | ^ each ]	
+	&#x27;.
+	self assert: (ast body children first body children first value whichUpNodeDefines: &#x27;each&#x27;) class equals: OCBlockNode</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-OCRengineTest.st (<a href="../files/image-fixes/20-OCRengineTest.st">download</a>)</summary><pre class="code">fix value: #OCRengineTest value: #testWhichUNodesDefinesBlockArg value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testWhichUNodesDefinesBlockArg
+
+	| ast |
+	ast := OCParser parseMethod: &#x27;&#x27;whoDefines
+
+[ :each | ^ each ]	
+	&#x27;&#x27;.
+	self assert: (ast body children first body children first value whichUpNodeDefines: &#x27;&#x27;each&#x27;&#x27;) class equals: OCBlockNode&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

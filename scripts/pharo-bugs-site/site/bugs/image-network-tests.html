@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>network-tests - Pharo test defects</title><meta name="description" content="network-tests: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>network-tests</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>4</dd><dt>Fix</dt><dd>image fix 20-network-tests.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-network-tests.st</code></li>
+<li>Methods: <code>NetNameResolver class&gt;&gt;localHostAddress</code>, <code>NetNameResolverTest&gt;&gt;testLocalHostAddress</code>, <code>ZnHTTPSTest&gt;&gt;testSNIPage</code>, <code>ZnHTTPSTest&gt;&gt;testGetPharoVersion</code>, <code>ZnClientTest&gt;&gt;testQueryGoogle</code></li>
+</ul>
+<p>Network works from the shell and from both VMs (DNS, HTTP, HTTPS through ZdcSecureSocketStream with the SSL plugin present), so no Apple network prompt blocked these runs. Four causes. (1) testLocalHostAddress was skipped as broken. The real defect is NetNameResolver class&gt;&gt;localHostAddress: stock Cog primitive (SocketPluginImpl.c sqResolverLocalAddress) looks only at interfaces eth0 and wlan0 so it answers 0.0.0.0 on macOS, and our VM primitiveResolverLocalAddress is a stub that always answers 127.0.0.1. The image method then answered loopback on a connected machine, which the test denies. Fix: when the primitive gives 0.0.0.0 or 127.x, use the address the host name resolves to (10.3.0.128 here), fall back to loopback; the skip is removed. (2) testSNIPage: the commented-out body works today (www.mnot.net redirects to mnot.net, ZnClient follows), so the body is restored with the other HTTPS tests' guards. (3) testGetPharoVersion was an empty skip; it now GETs https://get.pharo.org/64/stable and checks success and that the script text mentions Pharo. (4) testQueryGoogle: www.google.com answers a non-JavaScript client with an enablejs page (no results, no pharo.org), so the test fails on every VM; same test now queries https://www.bing.com/search?q=Pharo+Smalltalk with unchanged assertions (success, text/html, contains pharo.org). Search-engine dependence is as fragile as the original.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NetNameResolverTest&gt;&gt;testLocalHostAddress</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>localHostAddress trusted a primitive that answers 0.0.0.0 (Cog on macOS) or a hardcoded 127.0.0.1 (our VM); test was skipped</td>
+</tr>
+<tr>
+<td><code>ZnHTTPSTest&gt;&gt;testGetPharoVersion</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>empty skip stub; replaced by a real HTTPS GET of get.pharo.org/64/stable (content comes as ByteArray, decoded with asString)</td>
+</tr>
+<tr>
+<td><code>ZnHTTPSTest&gt;&gt;testSNIPage</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>skipped with comment 'no longer works'; the commented body works (redirect followed), restored with ensureSocketStreamFactory and plugin guards</td>
+</tr>
+<tr>
+<td><code>ZnClientTest&gt;&gt;testQueryGoogle</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>google.com serves a JavaScript-required page to non-JS clients, no 'pharo.org' in body; same assertions now against bing.com over https</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Ran NetNameResolverTest, ZnHTTPSTest, ZnClientTest, TCPSocketEchoTest, UDPSocketEchoTest (UUIDGeneratorTest also requested; counted as whatever exists) on both VMs, base image vs fixed image (ours JIT build, Cog arm64). Ours: base 65 pass / 1 bad / 3 skip, fixed 69 pass / 0 bad / 0 skip. Cog: base 65 pass / 1 bad / 3 skip, fixed 69 pass / 0 bad / 0 skip. No test that passed before fails. Only the Pharo 14 image was tested; the guards are written to be idempotent for Pharo 13 but not run there.</p>
+<p>VM change: Both VMs are wrong about the local address; the image fix above hides nothing because the VM answers are still wrong and should be repaired too. (a) Our VM: src/vm/Primitives.cpp, Interpreter::primitiveResolverLocalAddress (~line 33375) always returns 127.0.0.1 instead of a real interface address; implement it like Cog with getifaddrs, returning the first non-loopback AF_INET address of an up interface. (b) Cog (for the owner to review before anything goes upstream; I made no PR): pharo-vm/plugins/SocketPlugin/src/common/SocketPluginImpl.c sqResolverLocalAddress (line ~1716) accepts only interface names eth0 and wlan0 (its own TODO says it is incomplete), so on macOS (en0) and many Linux names it returns 0, and Pharo's image comment says 'On Mac the primitive is buggy'. Proposal: drop the name test, take the first AF_INET address that is not 127.x and whose interface is IFF_UP. Reproducer: NetNameResolver primLocalAddress. Output: Cog #[0 0 0 0], ours #[127 0 0 1]; expected a LAN address such as #[10 3 0 128] on a connected machine (NetNameResolver addressForName: NetNameResolver localHostName gives 10.3.0.128 on both).</p>
+<p>Open points: None for the four tests. Caveats: testQueryGoogle, testSNIPage and testGetPharoVersion depend on live third-party servers (bing.com, mnot.net, get.pharo.org) and will fail offline, as the original tests did. testLocalHostAddress would still fail on a connected machine whose host name resolves only to loopback. The Apple network prompt did not appear in these runs, so I made no workaround for it and did not investigate the prompt on the GUI app.</p>
+<p>Upstream note: Pharo PR candidate (Network-Kernel, Network-Tests, Zinc tests): 'NetNameResolver class&gt;&gt;localHostAddress: use the host name address when the primitive gives none or loopback; un-skip NetNameResolverTest&gt;&gt;testLocalHostAddress; restore ZnHTTPSTest&gt;&gt;testSNIPage; implement ZnHTTPSTest&gt;&gt;testGetPharoVersion; ZnClientTest&gt;&gt;testQueryGoogle queries a search engine that serves non-JavaScript clients'. Zinc is an external project (svenvc/zinc) for the Zn tests. Not opened; owner reviews first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>NetNameResolverTest&gt;&gt;testLocalHostAddress</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ZnClientTest&gt;&gt;testQueryGoogle</code></td><td>FAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ZnHTTPSTest&gt;&gt;testGetPharoVersion</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ZnHTTPSTest&gt;&gt;testSNIPage</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((NetNameResolverTest selector: #testLocalHostAddress) run) printString.
+((ZnClientTest selector: #testQueryGoogle) run) printString.
+((ZnHTTPSTest selector: #testGetPharoVersion) run) printString.
+((ZnHTTPSTest selector: #testSNIPage) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>NetNameResolverTest&gt;&gt;testLocalHostAddress before the fix (Pharo 14 build 791)</summary><pre class="code">testLocalHostAddress
+	self skip. &quot;This test is currently broken&quot;
+	NetNameResolver isConnected
+		ifTrue: [self deny: self localHostAddressIsLoopBackAddress]
+		ifFalse: [self assert: self localHostAddressIsLoopBackAddress]</pre></details><details><summary>ZnClientTest&gt;&gt;testQueryGoogle before the fix (Pharo 14 build 791)</summary><pre class="code">testQueryGoogle
+	| client |
+	(client := ZnClient new)
+		http;
+		host: &#x27;www.google.com&#x27;;
+		addPath: &#x27;search&#x27;;
+		queryAt: &#x27;q&#x27; put: &#x27;Pharo Smalltalk&#x27;;
+		get.
+	self assert: client isSuccess.
+	self assert: (client response contentType matches: ZnMimeType textHtml).
+	self assert: (client contents includesSubstring: &#x27;pharo.org&#x27;).
+	client close</pre></details><details><summary>ZnHTTPSTest&gt;&gt;testGetPharoVersion before the fix (Pharo 14 build 791)</summary><pre class="code">testGetPharoVersion
+	&quot;Make sure to overwrite on older test&quot;
+
+	self skip</pre></details><details><summary>ZnHTTPSTest&gt;&gt;testSNIPage before the fix (Pharo 14 build 791)</summary><pre class="code">testSNIPage
+	&quot;| client |
+	self ensureSocketStreamFactory.
+	self isNativeSSLPluginPresent ifFalse: [ ^ self skip ].
+	self doesNativeSSLPluginSupportSNI ifFalse: [ ^ self skip ].&quot;
+	
+	self skip. &quot;This does no longer work, but we have to find out why&quot;
+	
+	&quot;(client := ZnClient new) 
+		get: &#x27;https://www.mnot.net/blog/2014/05/09/if_you_can_read_this_youre_sniing&#x27;.
+
+	self assert: client isSuccess.
+
+	client close&quot;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-network-tests.st (<a href="../files/image-fixes/20-network-tests.st">download</a>)</summary><pre class="code">&quot;network-tests cluster.  Entries only; see tools/fix_header.st.&quot;
+
+&quot;N1. NetNameResolver class&gt;&gt;localHostAddress: the primitive answers 0.0.0.0 on
+macOS under stock Cog (the plugin looks only at the interfaces eth0 and wlan0)
+and always 127.0.0.1 under our VM (the primitive is a stub).  The method then
+answers the loopback address on a connected machine, which
+NetNameResolverTest&gt;&gt;testLocalHostAddress denies.  When the primitive gives no
+usable address, use the address that the name of this host resolves to.&quot;
+fix value: #&#x27;NetNameResolver class&#x27; value: #localHostAddress
+	value: [ :source | (source includesSubstring: &#x27;primAddress = #[0 0 0 0] ifTrue:&#x27;) ]
+	value:
+&#x27;localHostAddress
+	&quot;Return the local address of this host.&quot;
+	&quot;NetNameResolver localHostAddress&quot;
+	&quot;The primitive can answer an empty address (stock Cog looks only at the interfaces eth0 and wlan0, so it answers 0.0.0.0 on macOS) or the loopback address (a VM that stubs the primitive).  In both cases use the address to which the name of this host resolves.  When that fails too, or is a loopback address, use the loopback address.&quot;
+
+	| primAddress hostAddress |
+	self initializeNetwork.
+	[ primAddress := self primLocalAddress ] on: PrimitiveFailed do: [ :err | primAddress := #[0 0 0 0] ].
+	(primAddress = #[0 0 0 0] or: [ primAddress first = 127 ]) ifTrue: [
+		hostAddress := [ self addressForName: self localHostName ]
+			on: NameLookupFailure
+			do: [ :err | nil ].
+		primAddress := (hostAddress notNil and: [ hostAddress size = 4 and: [ hostAddress first ~= 127 ] ])
+			ifTrue: [ hostAddress asByteArray ]
+			ifFalse: [ #[127 0 0 1] ] ].
+	^ SocketAddress fromOldByteAddress: primAddress&#x27;.
+
+&quot;N2. NetNameResolverTest&gt;&gt;testLocalHostAddress: skipped as broken; the cause is
+N1, so the skip goes.&quot;
+fix value: #NetNameResolverTest value: #testLocalHostAddress
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testLocalHostAddress
+	NetNameResolver isConnected
+		ifTrue: [self deny: self localHostAddressIsLoopBackAddress]
+		ifFalse: [self assert: self localHostAddressIsLoopBackAddress]&#x27;.
+
+&quot;N3. ZnHTTPSTest&gt;&gt;testSNIPage: the commented-out body works today (the page
+redirects from www.mnot.net to mnot.net and ZnClient follows the redirect);
+restore the body, with the guards of the other HTTPS tests.&quot;
+fix value: #ZnHTTPSTest value: #testSNIPage
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testSNIPage
+	| client |
+	self ensureSocketStreamFactory.
+	self isNativeSSLPluginPresent ifFalse: [ ^ self ].
+	(client := ZnClient new)
+		get: &#x27;&#x27;https://www.mnot.net/blog/2014/05/09/if_you_can_read_this_youre_sniing&#x27;&#x27;.
+	self assert: client isSuccess.
+	client close&#x27;.
+
+&quot;N4. ZnHTTPSTest&gt;&gt;testGetPharoVersion: an empty skip.  Fetch the zero-conf
+script of the Pharo download server over HTTPS (served as bytes, so
+decode with asString).&quot;
+fix value: #ZnHTTPSTest value: #testGetPharoVersion
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGetPharoVersion
+	| client |
+	self ensureSocketStreamFactory.
+	self isNativeSSLPluginPresent ifFalse: [ ^ self ].
+	(client := ZnClient new) get: &#x27;&#x27;https://get.pharo.org/64/stable&#x27;&#x27;.
+	self assert: client isSuccess.
+	self assert: (client contents asString includesSubstring: &#x27;&#x27;Pharo&#x27;&#x27;).
+	client close&#x27;.
+
+&quot;N5. ZnClientTest&gt;&gt;testQueryGoogle: www.google.com answers a client without
+JavaScript with a page that asks for JavaScript, with no search result, so the
+assertion on &#x27;pharo.org&#x27; fails on every VM.  The test checks that a query is
+sent and an HTML answer comes back; use a search engine that answers without
+JavaScript.&quot;
+fix value: #ZnClientTest value: #testQueryGoogle
+	value: [ :source | source includesSubstring: &#x27;www.google.com&#x27; ]
+	value:
+&#x27;testQueryGoogle
+	| client |
+	(client := ZnClient new)
+		https;
+		host: &#x27;&#x27;www.bing.com&#x27;&#x27;;
+		addPath: &#x27;&#x27;search&#x27;&#x27;;
+		queryAt: &#x27;&#x27;q&#x27;&#x27; put: &#x27;&#x27;Pharo Smalltalk&#x27;&#x27;;
+		get.
+	self assert: client isSuccess.
+	self assert: (client response contentType matches: ZnMimeType textHtml).
+	self assert: (client contents includesSubstring: &#x27;&#x27;pharo.org&#x27;&#x27;).
+	client close&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

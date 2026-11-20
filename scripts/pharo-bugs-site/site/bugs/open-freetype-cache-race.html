@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FreeType cache: a race on the lazy FreeType face - Pharo test defects</title><meta name="description" content="FreeType cache: a race on the lazy FreeType face: Open: no fix">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>FreeType cache: a race on the lazy FreeType face</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: no fix</span></dd><dt>Defect in</dt><dd>the Pharo image or the test (not proven)</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>none</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Summary</h2><p>Pharo 14 arm64: our VM failed 11 of 50 runs, stock Cog 9 of 50 runs.  Pharo 13 shows it too.  The records name a race in the image on the lazy FreeType face.  Both tests pass in the 6 saved sweeps of 2026-11-17.  No fix exists.  The rule of the project counts a test that fails at times as a test that fails.</p><h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((FreeTypeCacheTest selector: #testGlyphAccessIsThreadSafe) run) printString.
+((FreeTypeCacheTest selector: #testGlyphAccessIsThreadSafeWhenAskingWidth) run) printString.</pre><details><summary>FreeTypeCacheTest&gt;&gt;testGlyphAccessIsThreadSafe</summary><pre class="code">testGlyphAccessIsThreadSafe
+	&quot;This test is weak because it depends in the rendering of Morphic and Rubrik&quot;
+	&quot;This test breaks 95% of times&quot;
+
+	self timeLimit: 20 seconds.
+
+	10 timesRepeat: [
+		 | sem text canvases blocky |
+
+		sem := Semaphore new.
+		text := (String loremIpsum: 25*1024).
+		FreeTypeCache current removeAll.
+		canvases := OrderedCollection new.
+
+		blocky := [  | canvas |
+			canvas := FormCanvas extent: 1000@1000.
+			canvases add: canvas.
+			(RubScrolledTextMorph new)
+					setText: text;
+					font: StandardFonts codeFont;
+					bounds: (0@0 corner: canvas form extent);
+					fullDrawOn: canvas.
+			sem signal ].
+
+		blocky forkAt: 39.
+		blocky forkAt: 39.
+		blocky forkAt: 39.
+
+		sem
+			wait;
+			wait;
+			wait.
+
+		self assert: (((canvases at:1) form bits = (canvases at:2) form bits) and: [ ((canvases at:2) form bits = (canvases at:3) form bits) ])
+	]</pre></details><details><summary>FreeTypeCacheTest&gt;&gt;testGlyphAccessIsThreadSafeWhenAskingWidth</summary><pre class="code">testGlyphAccessIsThreadSafeWhenAskingWidth
+	&quot;This test is weak because it depends in the rendering of Morphic and Rubrik&quot;
+	&quot;This test breaks 95% of times&quot;
+
+	self timeLimit: 20 seconds.
+
+	10 timesRepeat: [
+		 | sem text canvases blocky widthAsk |
+
+		sem := Semaphore new.
+		text := (String loremIpsum: 25*1024).
+		FreeTypeCache current removeAll.
+		canvases := OrderedCollection new.
+
+		widthAsk := [
+			1 to: text size do: [ :i | StandardFonts codeFont widthOf: (text at: i). i % 50 = 0 ifTrue: [ Processor yield ]].
+			sem signal ].
+
+
+		blocky := [  | canvas |
+			canvas := FormCanvas extent: 1000@1000.
+			canvases add: canvas.
+			(RubScrolledTextMorph new)
+					setText: text;
+					font: StandardFonts codeFont;
+					bounds: (0@0 corner: canvas form extent);
+					fullDrawOn: canvas.
+			sem signal ].
+
+		blocky forkAt: 39.
+		blocky forkAt: 39.
+		blocky forkAt: 39.
+		widthAsk forkAt: 39.
+
+		sem
+			wait;
+			wait;
+			wait;
+			wait.
+
+		self assert: (((canvases at:1) form bits = (canvases at:2) form bits) and: [ ((canvases at:2) form bits = (canvases at:3) form bits) ])
+	]</pre></details><h2>Fix</h2><p>None yet.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

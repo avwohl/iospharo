@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: PolyMath (PolyMathOrg/PolyMath, row 80) - Pharo test defects</title><meta name="description" content="Package: PolyMath (PolyMathOrg/PolyMath, row 80): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: PolyMath (PolyMathOrg/PolyMath, row 80)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>PolyMathOrg/PolyMath</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 777 tests, 776 pass, 1 error on the two VMs
+(<code>PMKDTreeTest&gt;&gt;testBenchmark</code>, <code>UndeclaredVariableRead: PMKDTreeBenchmark</code>).</li>
+<li>Cause: the test uses a class of the package <code>Math-Benchmarks-KDTree</code>.  The
+baseline has that package only in the group <code>Benchmarks</code>, and the group
+<code>Tests</code> does not ask for it.</li>
+<li>Repair here: the manifest row loads <code>Math-Benchmarks-KDTree</code> too.</li>
+<li>Result: 777 of 777 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 80&quot;
+Metacello new baseline: &#x27;PolyMath&#x27;; repository: &#x27;github://PolyMathOrg/PolyMath:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;Extensions&#x27; &#x27;Tests&#x27; &#x27;Math-Benchmarks-KDTree&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>80</td><td><code>polymathorg-polymath</code></td><td>ok</td><td>tests=777 P=777 F=0 E=0 S=0 T=0 X=0</td><td>tests=777 P=777 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><p>No fixes file; the record above says what changed.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

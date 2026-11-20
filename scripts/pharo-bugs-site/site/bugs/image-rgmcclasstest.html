@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RGMCClassTest - Pharo test defects</title><meta name="description" content="RGMCClassTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>RGMCClassTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-RGMCClassTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-RGMCClassTest.st</code></li>
+<li>Methods: <code>RGMCClassTest&gt;&gt;testClassesWithTraits</code>, <code>RGMCTest&gt;&gt;testClass:</code>, <code>MCClassDefinition&gt;&gt;ensureRingDefinitionIn:</code></li>
+</ul>
+<p>The test skipped itself on a 2018 FogBugz issue. With the skip removed it failed on both VMs for two reasons, both defects in the image (test and Ring-Monticello code). (1) RGMCTest&gt;&gt;testClass: compared the slots of the Ring definition with aClass instVarNames, which includes slots a trait provides. Monticello exports only the local slots (Class&gt;&gt;asClassDefinition uses localSlots), so the test now compares with localSlots, on the instance side and the class side. (2) MCClassDefinition&gt;&gt;ensureRingDefinitionIn: kept the '#' in the name of a plain variable when the class also has complex slots. Monticello writes such a variable as '#y', so ObservablePoint gave the slot name #'#y' and a class-side '#customExtent' gave #'#customExtent'. The method now strips '#' for both instance and class-side plain variables. The skip is removed from the test. Only the fixed image was run; the fix does not change VM behaviour.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RGMCClassTest&gt;&gt;testClassesWithTraits</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Skip on an old issue; then the test compared the Ring slots with instVarNames (which includes trait slots) instead of localSlots; and MCClassDefinition&gt;&gt;ensureRingDefinitionIn: kept '#' in plain variable names of classes with complex slots.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran these classes on our VM and on Cog, once on the base image and once on the fixed image. The pass counts are the same before and after on both VMs. RGMCClassTest went from 3 pass and 1 skip to 4 pass. MCClassDefinitionTest 13, MCStWriterTest 9, RGMonticelloTest 4, TraitMCDefinitionsTest 16 and MCSnapshotTest 5 all passed everywhere. RGMCTest has no test methods, so it printed no result lines. I did not run the full suite. I ran our VM only with the JIT setting that the &quot;ours&quot; runner selects.</p>
+<p>Upstream note: Pharo: fix RGMCClassTest&gt;&gt;testClassesWithTraits and the Ring-Monticello slot names. Remove the skip for issue 22080. In RGMCTest&gt;&gt;testClass:, compare the Ring slots with the local slots of the class (aClass localSlots), because Monticello exports only the local slots and not the ones from traits. In MCClassDefinition&gt;&gt;ensureRingDefinitionIn:, strip the '#' from the name of a plain instance or class-side variable in a class with complex slots (MC writes such a variable as '#y'). Without this fix ObservablePoint gives the slot name #'#y'. Project: pharo (Ring-Monticello and Ring-Monticello-Tests).</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>RGMCClassTest&gt;&gt;testClassesWithTraits</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((RGMCClassTest selector: #testClassesWithTraits) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>RGMCClassTest&gt;&gt;testClassesWithTraits before the fix (Pharo 14 build 791)</summary><pre class="code">testClassesWithTraits
+
+	&quot;classes without special slots&quot;
+
+	self skip.
+	&quot;skip because of https://pharo.fogbugz.com/f/cases/22080/Monticello-wrongly-resolves-names-for-instance-variables-in-classes-that-contain-slots&quot;
+
+	Smalltalk allClasses
+		select: [ :each | each isTrait not and: [each traits notEmpty or: [ each class traits notEmpty ]] ]
+		thenDo: [ :each | self testClass: each ]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-RGMCClassTest.st (<a href="../files/image-fixes/20-RGMCClassTest.st">download</a>)</summary><pre class="code">fix value: #RGMCClassTest value: #testClassesWithTraits value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testClassesWithTraits
+
+	&quot;classes with traits&quot;
+
+	Smalltalk allClasses
+		select: [ :each | each isTrait not and: [each traits notEmpty or: [ each class traits notEmpty ]] ]
+		thenDo: [ :each | self testClass: each ]&#x27;.
+
+&quot;The MC class definition stores only the slots a class defines itself (localSlots); slots that
+ a trait provides are not part of it.  The test compared with instVarNames, which includes the
+ slots from traits.  Compare with the local slots, as asClassDefinition exports them.&quot;
+fix value: #RGMCTest value: #testClass: value: [ :s | s includesSubstring: &#x27;equals: aClass instVarNames&#x27; ] value: &#x27;testClass: aClass
+
+	| mcDef def env|
+	mcDef := 	aClass asClassDefinition.
+	def := mcDef asRGDefinition.
+	env := def environment.
+
+	self assert: def name equals: aClass name.
+	aClass superclass ifNotNil: [ &quot;ProtoObject &amp; co.&quot;
+		self assert: def superclass name equals: aClass superclass name.].
+	self assert: def category equals: aClass category.
+	self assert: def layout class equals: (self layoutClassesMapping at: aClass classLayout class).
+
+	def layout isPointerLayout ifTrue: [
+		&quot;Monticello keeps only the slots the class defines itself, not the ones from its traits&quot;
+		self assert: (def layout slots collect: [:each | each name]) asArray equals: (aClass localSlots collect: [:each | each name]) asArray.].
+	self assert: (def metaclass layout slots collect: [:each | each name]) asArray equals: (aClass class localSlots collect: [:each | each name]) asArray.
+	self assert: (def classVariables collect: [:each | each name]) equals: aClass classVarNames.
+	self assert: (def sharedPoolNames asArray) equals: aClass sharedPoolNames asArray.
+
+	&quot;Monticello class definition still use only class categories, packages are unresolved&quot;
+	self assert: (def hasUnresolved: #package).
+	self assert: (def hasResolved: #traitComposition).
+	self compareTraitComposition: aClass traitComposition with: def traitComposition.
+	self compareTraitComposition: aClass class traitComposition with: def metaclass traitComposition&#x27;.
+
+&quot;In a class with complex slots Monticello exports a plain variable as #y; the Ring definition kept the # in the slot name, for instance and class-side variables.&quot;
+fix value: #MCClassDefinition value: #ensureRingDefinitionIn: value: [ :s | (s includesSubstring: &#x27;RGInstanceVariableSlot named: each name parent: def layout&#x27;) ] value: &#x27;ensureRingDefinitionIn: anRGEnvironment
+
+	^ anRGEnvironment backend definitionFor: self ifAbsentRegister: [
+		| def metaclassDef |
+		def := anRGEnvironment ensureClassNamed: self className asSymbol.
+		metaclassDef := anRGEnvironment ensureClassNamed: (self className, &#x27;&#x27; class&#x27;&#x27;) asSymbol.
+		def metaclass: metaclassDef.
+		def traitComposition: (self traitCompositionFrom: self traitComposition parent: def).
+		metaclassDef traitComposition: (self traitCompositionFrom: self classTraitComposition parent: metaclassDef).
+		(self superclassName = #nil)
+			ifTrue: [ def superclass: def ]
+			ifFalse: [ def superclass: (anRGEnvironment ensureClassNamed: superclassName ) ].
+		def category: self category.
+		def layout: (self ring2LayoutType parent: def).
+		metaclassDef layout: (RGFixedLayout parent: metaclassDef).
+		def comment: (
+			(RGComment parent: def)
+				content: self comment;
+				author: (self authorForStamp: self commentStamp);
+				time: (self timeForStamp: self commentStamp);
+				yourself).
+		self variables do: [ :each |
+			(each class type = #instance) ifTrue: [
+				(each name includes: $&gt;)
+					ifFalse: [ def layout addSlot: (RGInstanceVariableSlot named: (each name copyWithout: $#) trimBoth parent: def layout)]
+					ifTrue: [
+						| unknownSlot |
+						unknownSlot := RGUnknownSlot named: ((each name copyUpTo: $=) copyWithout: $#) trimBoth parent: def layout.
+						unknownSlot expression: (each name copyAfter: $&gt;) trimBoth.
+						def layout addSlot: unknownSlot]].
+			(each class type = #class) ifTrue: [
+				def addClassVariable: (RGClassVariable named: each name parent: def)].
+			(each class type = #classInstance) ifTrue: [
+				metaclassDef layout addSlot: (RGInstanceVariableSlot named: (each name copyWithout: $#) trimBoth parent: metaclassDef layout)].
+			(each class type = #pool) ifTrue: [
+				def addSharedPool: (RGPoolVariable named: each name parent: def)]. ].
+		def]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

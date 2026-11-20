@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: SocketPlugin: local address from any interface that is up - Pharo test defects</title><meta name="description" content="Cog: SocketPlugin: local address from any interface that is up: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: SocketPlugin: local address from any interface that is up</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>cog-socketplugin-local-address.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>Defect: <code>sqResolverLocalAddress</code> accepts only interfaces with the names
+<code>eth0</code> and <code>wlan0</code>.  On macOS the primitive answers 0.0.0.0, and
+<code>NetNameResolver localHostAddress</code> is then the loopback address on a
+connected machine.  The image has
+<code>NetNameResolverTest&gt;&gt;testLocalHostAddress</code> set to skip as &quot;currently
+broken&quot;.</li>
+<li>Change: take the first IPv4 address of an interface that is up and is not
+the loopback.</li>
+<li>Test (2026-11-17, macOS 27, arm64, a Debug build of the branch):
+<code>NetNameResolver primLocalAddress</code> answers <code>#[10 3 0 128]</code>.  The stock VM
+answers <code>#[0 0 0 0]</code>.  Seven network test classes give the same results on
+the two VMs (73 tests pass, 1 skip).</li>
+<li>Our VM had its own defect in the same primitive (a stub that answered
+127.0.0.1).  This repository has the fix for that defect.</li>
+</ul>
+<h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image.&quot;
+NetNameResolver primLocalAddress printString.
+&quot;Stock Cog on macOS answers #[0 0 0 0].  With the change: the address of an interface that is up.&quot;</pre><p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/resolver-local-address-any-interface</code>.  State: committed on the branch, tested.  Not sent upstream.</p><details open><summary>cog-socketplugin-local-address.patch (<a href="../files/cog/cog-socketplugin-local-address.patch">download</a>)</summary><pre class="code">From 27578be5eb355e195c372b9e04f76a4d87b5345a Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 07:15:10 -0500
+Subject: [PATCH] SocketPlugin: local address from any interface that is up,
+ not only eth0 and wlan0
+
+sqResolverLocalAddress accepted only interfaces with the names eth0 and
+wlan0.  On macOS (en0, en1, ...) and on a Linux with predictable interface
+names (enp3s0, wlp2s0, ...) the primitive answered 0.0.0.0, and
+NetNameResolver class&gt;&gt;localHostAddress then answered the loopback address
+on a connected machine.  NetNameResolverTest&gt;&gt;testLocalHostAddress is set
+to skip in the image as &#x27;currently broken&#x27; for this reason.
+
+Take the first IPv4 address of an interface that is up and is not the
+loopback.  An interface that is also running, with an address outside
+169.254/16, wins over one that is only up.  With no such interface the
+answer stays 0.0.0.0.  The early returns no longer skip freeifaddrs.
+
+Measured on macOS 27, arm64, interface en6 at 10.3.0.128:
+  before: NetNameResolver primLocalAddress -&gt; #[0 0 0 0]
+  after:  NetNameResolver primLocalAddress -&gt; #[10 3 0 128]
+
+Co-Authored-By: Claude Fable 5.2 &lt;noreply@anthropic.com&gt;
+---
+ .../src/common/SocketPluginImpl.c             | 67 ++++++++++---------
+ 1 file changed, 37 insertions(+), 30 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..034ca133f 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -107,6 +107,7 @@ struct sockaddr_un
+ # include &lt;arpa/inet.h&gt;
+ # include &lt;netdb.h&gt;
+ #include &lt;ifaddrs.h&gt;
++#include &lt;net/if.h&gt;
+ 
+ #define closesocket(x) close(x)
+ #define SD_SEND 	SHUT_WR
+@@ -1718,45 +1719,51 @@ sqInt sqResolverLocalAddress(void) {
+ #ifndef _WIN32
+ 
+ 	/*
+-	 * TODO: Check all this code, because is does not work if you have more than one network interface.
++	 * Answer the IPv4 address of the first network interface that is up and is
++	 * not the loopback.  An interface that is also running, with an address
++	 * outside the link-local range 169.254/16, wins over one that is only up.
++	 *
++	 * Before, this function accepted only the interface names &quot;eth0&quot; and
++	 * &quot;wlan0&quot;.  The answer was 0.0.0.0 on macOS (en0, en1, ...) and on a Linux
++	 * with predictable interface names (enp3s0, wlp2s0, ...).
+ 	 */
+ 
+ 	struct ifaddrs *ifaddr, *ifa;
+-    int s;
+-    char host[NI_MAXHOST];
+-    sqInt localAddr = 0;
++	struct ifaddrs *best = NULL, *fallback = NULL, *pick;
++	sqInt localAddr = 0;
+ 
+-    if (getifaddrs(&amp;ifaddr) == -1) {
+-        success(false);
+-        return 0;
+-    }
++	if (getifaddrs(&amp;ifaddr) == -1) {
++		success(false);
++		return 0;
++	}
+ 
++	for (ifa = ifaddr; ifa != NULL; ifa = ifa-&gt;ifa_next)
++	{
++		unsigned char *bytes;
+ 
+-    for (ifa = ifaddr; ifa != NULL; ifa = ifa-&gt;ifa_next) 
+-    {
+-        if (ifa-&gt;ifa_addr == NULL)
+-            continue;  
++		if (ifa-&gt;ifa_addr == NULL || ifa-&gt;ifa_addr-&gt;sa_family != AF_INET)
++			continue;
++		if (!(ifa-&gt;ifa_flags &amp; IFF_UP) || (ifa-&gt;ifa_flags &amp; IFF_LOOPBACK))
++			continue;
+ 
+-        s=getnameinfo(ifa-&gt;ifa_addr,sizeof(struct sockaddr_in),host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
++		bytes = (unsigned char *)&amp;((struct sockaddr_in *)(ifa-&gt;ifa_addr))-&gt;sin_addr;
++		if ((ifa-&gt;ifa_flags &amp; IFF_RUNNING) &amp;&amp; !(bytes[0] == 169 &amp;&amp; bytes[1] == 254)) {
++			best = ifa; /* take the first plausible answer */
++			break;
++		}
++		if (fallback == NULL)
++			fallback = ifa;
++	}
+ 
+-        if(((strcmp(ifa-&gt;ifa_name,&quot;eth0&quot;)==0)||(strcmp(ifa-&gt;ifa_name,&quot;wlan0&quot;)==0))&amp;&amp;(ifa-&gt;ifa_addr-&gt;sa_family==AF_INET))
+-        {
+-            if (s != 0)
+-            {
+-                success(false);
+-                return 0;
+-            }
+-            logTrace( &quot;\tInterface : &lt;%s&gt;\n&quot;,ifa-&gt;ifa_name );
+-            logTrace( &quot;\t IP       : &lt;%s&gt;\n&quot;, inet_ntoa(((struct sockaddr_in *)(ifa-&gt;ifa_addr))-&gt;sin_addr));
+-            if(localAddr == 0) { /* take the first plausible answer */
+-                localAddr = ((struct sockaddr_in *)(ifa-&gt;ifa_addr))-&gt;sin_addr.s_addr;
+-            }
+-           
+-        }
+-    }
++	pick = (best != NULL) ? best : fallback;
++	if (pick != NULL) {
++		logTrace( &quot;\tInterface : &lt;%s&gt;\n&quot;, pick-&gt;ifa_name );
++		logTrace( &quot;\t IP       : &lt;%s&gt;\n&quot;, inet_ntoa(((struct sockaddr_in *)(pick-&gt;ifa_addr))-&gt;sin_addr));
++		localAddr = ((struct sockaddr_in *)(pick-&gt;ifa_addr))-&gt;sin_addr.s_addr;
++	}
+ 
+-    freeifaddrs(ifaddr);
+-    return ntohl(localAddr);
++	freeifaddrs(ifaddr);
++	return ntohl(localAddr);
+ #else
+ 
+     static char localHostName[MAXHOSTNAMELEN];
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

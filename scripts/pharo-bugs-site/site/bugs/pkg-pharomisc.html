@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: PharoMisc (bouraqadi/PharoMisc, row 6) - Pharo test defects</title><meta name="description" content="Package: PharoMisc (bouraqadi/PharoMisc, row 6): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: PharoMisc (bouraqadi/PharoMisc, row 6)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>bouraqadi-pharomisc.st, bouraqadi-pharomisc.patch</dd><dt>Upstream repository</dt><dd>bouraqadi/PharoMisc</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>Defect of our manifest: the row loaded the baseline <code>PharoMisc</code> only.
+That baseline has one class and no test.  The repository has one baseline
+for each of its projects.</li>
+<li>Repair: the row now loads nine baselines (<code>PharoMisc</code>, <code>StateMachine</code>,
+<code>Concurrency</code>, <code>BooleanExpressions</code>, <code>BaselineAnalyzer</code>, <code>CodeMetrics</code>,
+<code>LightweightObserver</code>, <code>PharoExtra</code>, <code>SimpleMiddleware</code>).  Not in the row:
+<code>Tasks</code>, <code>NetworkExtras</code> and <code>EasyUI</code>, whose baselines name the repository
+without its <code>Pharo</code> directory.</li>
+<li>State before the repairs: 225 tests, 160 pass, 41 fail, 24 errors, the
+same on the two VMs.  The branch of the package is <code>pharo12</code>: the code is
+for Pharo 12.</li>
+<li>Result with <code>fixes/bouraqadi-pharomisc.st</code>: 225 of 225 pass on the two VMs.</li>
+<li>CodeMetrics (<code>CmCodeAnalyzerTest</code>, 5 errors): <code>CmCodeAnalyzer</code> asks the
+global <code>SystemOrganizer</code> for category names and for the classes of a
+category.  Pharo 14 has no such global.  The two methods now read the
+package tags (<code>PackageTag&gt;&gt;categoryName</code>).  The tests need a category with
+no class, which a Tonel repository cannot hold, so <code>setUp</code> makes the tag
+and <code>tearDown</code> removes it.</li>
+<li>LightweightObserver (57 tests).  The fixes file has a port to Pharo 14:
+<ul>
+<li><code>LoSubject class</code> wrapped each method that writes an instance variable
+through the Pharo 12 hook
+<code>ClassDescription&gt;&gt;addAndClassifySelector:withMethod:inProtocol:</code>.  Pharo
+14 installs a method with <code>addSelectorSilently:withMethod:</code>, and the
+port puts the hook there.</li>
+<li>The source of a wrapper method is the source of its basic method.  The
+Pharo 14 compiler keeps the generated source in the <code>#source</code> property
+of the wrapper, and a file-out of the class then had the generated
+source (<code>testFileOutIngnoresGeneratedMethods</code>).</li>
+<li>The tests made their classes with the ST80 class creation messages of
+<code>ClassFactoryForTestCase</code>.  They now use the class builder.</li>
+<li><code>Array&gt;&gt;asSubject</code> sends <code>becomeForward:</code> to the receiver.  A literal
+array is read-only in Pharo 14, so the method makes the receiver
+writable first.</li>
+<li><code>LoSubjectSortedCollection&gt;&gt;addLast:</code> came from a trait and called
+<code>SortedCollection&gt;&gt;addLast:</code>, which is <code>shouldNotImplement</code>.</li>
+<li>Three presenter classes are Spec 1 code.  The port has Spec 2 versions.</li>
+</ul>
+</li>
+<li>SimpleMiddleware (<code>SmSingleMiddlewareTest&gt;&gt;testCommunication</code>,
+<code>ConnectionClosed</code> after 8 ms): the test uses the default port of
+<code>SmServer</code>, 54321.  On the test machine another program listens on
+<code>127.0.0.1:54321</code>.  <code>SmServer</code> listens on the wildcard address with the
+address reuse option, and macOS lets that bind go through.  The proxy
+connects to <code>127.0.0.1:54321</code>, and the other program gets the connection
+and closes it.  The test now asks the system for a free port.  The change
+for the package: do not use a fixed port in a test.</li>
+<li>Three more baselines (<code>Tasks</code>, <code>NetworkExtras</code>, <code>EasyUI</code>) name the
+repository as <code>github://bouraqadi/PharoMisc:pharo12</code>, and the code is in
+the directory <code>Pharo</code>.  <code>patches/bouraqadi-pharomisc.patch</code> adds <code>/Pharo</code>
+to that repository line in the three baselines, and the row now loads
+them: 361 tests.</li>
+<li>NetworkExtras, multicast sockets.  13 tests failed on our VM only.  They
+showed a defect of our VM: the socket option primitives knew 6 option
+names and gave a false success for each other name
+(the iospharo defect list).  The tests also showed these
+defects of the package:
+<ul>
+<li>Two sockets on one port.  The tests make the sender as a second
+<code>NeMulticastSocket</code> on the port of the receiver, and
+<code>NeMulticastSocket&gt;&gt;group:port:</code> always binds the port.  The stock VM
+does not report the failed bind of the second socket
+(<code>scripts/cogdiff/socket_bind_in_use.st</code>), so the sender stayed unbound
+there with no error, and the tests passed.  Our VM reports
+<code>Address already in use</code>.  The fixes file adds a socket that only sends
+(<code>NeMulticastSocket class&gt;&gt;sendToGroup:port:</code>: no bind, no group
+membership), and the tests use it for the sender.  A first repair (the
+reuse options before the bind) was wrong: three sockets then listen on
+one port, and the system gives a unicast datagram to only one of them.</li>
+<li><code>NeUdpUnicastSocketTest&gt;&gt;testCloseWhileReceiving</code> sends a datagram,
+closes the receiver, and expects that the reader gets no data.  The
+datagram is in the buffer of the receiver before the close, so the
+reader can get it.  The test passed on the stock VM in each run and
+failed on our VM in some runs.  The test now sends no datagram: a reader
+that waits gets <code>ConnectionClosed</code> when the socket closes.</li>
+<li><code>NeMulticastSocketTest&gt;&gt;testInterface</code> was an expected failure that ends
+with <code>self fail: #todo</code>.  The fixes file has the finished test and the
+two accessors of <code>IP_MULTICAST_IF</code> that the test needs.</li>
+</ul>
+</li>
+<li>Tasks, <code>TkThreadTest&gt;&gt;testPeriodFixedDuration</code>: the cause is a defect of
+the Pharo image, <code>Duration&gt;&gt;asDelay</code>.  See
+pharo-image-repairs-2026-11-17.md.</li>
+<li>Result of the row with 12 baselines: 361 of 361 pass on the two VMs.</li>
+<li>Open, in stock Cog: a segmentation fault in its garbage collector.  The
+fault came with the first repair of the multicast tests (the reuse
+options, three sockets on one port).  Stock Cog stopped in
+<code>TkThreadTest&gt;&gt;testFinalization</code>, in 3 runs of 3.  The fixes file of commit
+<code>5053c46f</code> gives that state.  With the repair of this section the fault
+does not show.  The cause is not known.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 6&quot;
+Metacello new baseline: &#x27;PharoMisc&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;StateMachine&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;Concurrency&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;BooleanExpressions&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;BaselineAnalyzer&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;CodeMetrics&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;LightweightObserver&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;PharoExtra&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;SimpleMiddleware&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;Tasks&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;NetworkExtras&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load. Metacello new baseline: &#x27;EasyUI&#x27;; repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>6</td><td><code>bouraqadi-pharomisc</code></td><td>ok</td><td>tests=361 P=361 F=0 E=0 S=0 T=0 X=0</td><td>tests=361 P=361 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): bouraqadi-pharomisc.st (<a href="../files/packages/fixes/bouraqadi-pharomisc.st">download</a>)</summary><pre class="code">&quot;PharoMisc (bouraqadi/PharoMisc, branch pharo12).  The code is for Pharo 12.
+The tests that do not pass on Pharo 14 are the same on stock Cog and on our
+VM.
+
+M1. CodeMetrics (CmCodeAnalyzerTest, 5 errors: &#x27;Attempt to read undeclared
+variable&#x27; for the old organizer class).  CmCodeAnalyzer asked the old
+organizer global for the category names and for the classes of a category.
+Pharo 14 does not have that global.  &#x27;Smalltalk organization&#x27; answers a
+PackageOrganizer, and a category is a package tag: PackageTag&gt;&gt;categoryName
+is the package name, a hyphen and the tag name, or the package name for the
+root tag.  The two methods now read the package tags and keep the match of
+the category pattern.  The tests need a category with no class
+(CodeMetrics-Tests-CategoryEmptyOnPurpose).  A Tonel repository cannot hold a
+tag with no class, so setUp makes the tag and tearDown removes it when it is
+still empty.&quot;
+
+fix value: #CmCodeAnalyzer value: #initCategories
+	value: [ :source | source includesSubstring: &#x27;SystemOrganizer&#x27; ]
+	value:
+&#x27;initCategories
+	&quot;The categories are the names of the package tags (PackageTag&gt;&gt;categoryName).  The root tag of a package counts only when it holds a class.&quot;
+
+	| all |
+	all := OrderedCollection new.
+	Smalltalk organization packages do: [ :package |
+		package tags do: [ :tag |
+			(tag isRoot not or: [ tag isEmpty not ])
+				ifTrue: [ all add: tag categoryName asString ] ] ].
+	^ categories := all select: [ :each | categoriesMatchString match: each ]&#x27;.
+
+fix value: #CmCodeAnalyzer value: #addClassesInCategory:
+	value: [ :source | source includesSubstring: &#x27;SystemOrganizer&#x27; ]
+	value:
+&#x27;addClassesInCategory: aCategory
+
+	Smalltalk organization packages do: [ :package |
+		package tags do: [ :tag |
+			tag categoryName asString = aCategory asString
+				ifTrue: [ classes addAll: tag classes ] ] ]&#x27;.
+
+fix value: #CmCodeAnalyzerTest value: #setUp
+	value: [ :source | (source includesSubstring: &#x27;CategoryEmptyOnPurpose&#x27;) not ]
+	value:
+&#x27;setUp
+
+	super setUp.
+	Smalltalk organization ensureTag: #CategoryEmptyOnPurpose inPackage: #&#x27;&#x27;CodeMetrics-Tests&#x27;&#x27;.
+	analyzer := CmCodeAnalyzer new&#x27;.
+
+add value: #CmCodeAnalyzerTest value: #tearDown value: &#x27;running&#x27;
+	value:
+&#x27;tearDown
+
+	| package |
+	package := Smalltalk organization packageNamed: #&#x27;&#x27;CodeMetrics-Tests&#x27;&#x27; ifAbsent: [ nil ].
+	package ifNotNil: [
+		(package tagNamed: #CategoryEmptyOnPurpose ifAbsent: [ nil ]) ifNotNil: [ :tag |
+			tag isEmpty ifTrue: [ package removeTag: tag ] ] ].
+	super tearDown&#x27;.
+
+&quot;PharoMisc, LightweightObserver (append to the entries of this file).
+
+G1. LoSubject class used the Pharo 12 hook ClassDescription&gt;&gt;addAndClassifySelector:withMethod:inProtocol: to wrap each method that writes an instance variable (wrapper method with the old selector sends the event, the user method is kept under basicSubjectMethod_&lt;selector&gt;).  Pharo 14 never sends that message: every installer ends in Behavior&gt;&gt;addSelectorSilently:withMethod: (OCMethodInstaller&gt;&gt;addAndClassifyMethod:into:), so no wrapper exists and no observer fires.  The hook now overrides addSelectorSilently:withMethod: in LoSubject class, updates methodDict and localMethodDict, and the old compiler calls (failBlock:, compile, putSource:withPreamble:) are replaced.  A wrapper answers the source pointer and the source of its basic method, so Behavior&gt;&gt;compile:from: keeps the user source through every recompilation.  LoSubject initialize at the end wraps the methods that were loaded before the hook existed.
+
+G2. LoSubjectAutomaticCodeGenerationTest used ClassFactoryForTestCase&gt;&gt;silentlyNewSubclassOf:instanceVariableNames:classVariableNames: and newSubclassOf:..., the ST80 subclass:instanceVariableNames:... message and Class&gt;&gt;fileOutOn:.  Pharo 14 has silentlyMake:, make:, update:to: (with ClassFactoryForTestCase environment:) and the Fileouter class.  The tests keep every assertion; only the way to make or change the class and to file it out changes.
+
+G3. Array&gt;&gt;asSubject sends becomeForward: to the receiver.  The receiver of LoArrayAutomaticEventGenerationTest&gt;&gt;testReset is a literal Array, and Pharo 14 compiles literals as read-only (beReadOnlyLiteral).  Primitive 72 refuses a read-only receiver with &#x27;no modification&#x27; on Cog and on our VM, so the receiver is made writable first.
+
+G4. LoSubjectSortedCollection got addLast: from a trait whose super is SortedCollection&gt;&gt;addLast:, which is shouldNotImplement, so the tests that append at the end fail.  SortedCollection&gt;&gt;addAll: adds with addNoSort: and sorts once, so add: is never sent and no event is dispatched.  addLast: now appends without sorting and sends the add event, and addAll: sends add: for each element.
+
+G5. LoDicePresenter, LoDiceListPresenter and LoDiceAdderPresenter are Spec 1 classes (ComposablePresenter, DynamicComposablePresenter, SpecLayout).  Pharo 14 has only Spec 2, so the three classes are not created at load and LoDiceUiTest reads undeclared variables.  The classes are made again with Spec 2 and the observer logic is unchanged.  Lowest confidence: Spec 2 messages were not checked against sources.&quot;
+
+&quot;G1: source of a wrapper method comes from its basic method.&quot;
+add value: #LoSubjectSupportMethod value: #basicMethodOrNil value: &#x27;subject support&#x27; value:
+&#x27;basicMethodOrNil
+	&quot;The basic method that a wrapper method calls.  Answers nil when the receiver is itself the basic method, or when there is none.&quot;
+
+	| basicMethod |
+	self methodClass ifNil: [ ^ nil ].
+	basicMethod := self methodClass methodDict
+		at: (LoSubject basicMethodSelectorFrom: self selector)
+		ifAbsent: [ ^ nil ].
+	^ basicMethod == self
+		ifTrue: [ nil ]
+		ifFalse: [ basicMethod ]&#x27;.
+
+add value: #LoSubjectSupportMethod value: #sourcePointer value: &#x27;source code management&#x27; value:
+&#x27;sourcePointer
+	&quot;A wrapper method has no source of its own: it answers the source pointer of its basic method.  Behavior&gt;&gt;compile:from: copies this pointer to the new method, so the user source survives a recompilation.&quot;
+
+	| pointer basicMethod |
+	pointer := super sourcePointer.
+	pointer = 0 ifFalse: [ ^ pointer ].
+	basicMethod := self basicMethodOrNil.
+	^ basicMethod
+		ifNil: [ 0 ]
+		ifNotNil: [ basicMethod sourcePointer ]&#x27;.
+
+add value: #LoSubjectSupportMethod value: #sourceCodeOrNil value: &#x27;source code management&#x27; value:
+&#x27;sourceCodeOrNil
+	&quot;The source of a wrapper method is the source that the user wrote, which the basic method holds.  The #source property of the wrapper (set by the Pharo 14 compiler, OpalCompiler&gt;&gt;generateMethod) is the generated wrapper source and must not win: the file-out of a class reads sourceCode.&quot;
+
+	| basicMethod |
+	basicMethod := self basicMethodOrNil.
+	^ basicMethod
+		ifNil: [ super sourceCodeOrNil ]
+		ifNotNil: [ basicMethod sourceCodeOrNil ]&#x27;.
+
+add value: #LoSubjectSupportMethod value: #sourceCode value: &#x27;source code management&#x27; value:
+&#x27;sourceCode
+	&quot;Never decompile a wrapper method: its bytecode shows the generated code.  Without any source, the decompiled basic method is the code of the user.&quot;
+
+	| basicMethod |
+	^ self sourceCodeOrNil ifNil: [
+		basicMethod := self basicMethodOrNil.
+		basicMethod
+			ifNil: [ super sourceCode ]
+			ifNotNil: [ basicMethod sourceCode ] ]&#x27;.
+
+&quot;G1: the new hook.  Pharo 14 installs every compiled method with addSelectorSilently:withMethod: (OCMethodInstaller&gt;&gt;addAndClassifyMethod:into:).&quot;
+add value: #&#x27;LoSubject class&#x27; value: #addSelectorSilently:withMethod: value: &#x27;accessing method dictionary&#x27; value:
+&#x27;addSelectorSilently: selector withMethod: compiledMethod
+	&quot;Pharo 14 installs every compiled method with this message (OCMethodInstaller&gt;&gt;addAndClassifyMethod:into:).  The Pharo 12 hook, ClassDescription&gt;&gt;addAndClassifySelector:withMethod:inProtocol:, does not exist any more.&quot;
+
+	(compiledMethod isKindOf: LoSubjectSupportMethod)
+		ifTrue: [ ^ super addSelectorSilently: selector withMethod: compiledMethod ].
+	compiledMethod isFromTrait
+		ifTrue: [ ^ super addSelectorSilently: selector withMethod: compiledMethod ].
+	^ self addAndClassifySelector: selector withMethod: compiledMethod inProtocol: nil&#x27;.
+
+add value: #&#x27;LoSubject class&#x27; value: #restoreLocalMethodAt: value: &#x27;subject support&#x27; value:
+&#x27;restoreLocalMethodAt: selector
+	&quot;OCTraitMethodInstaller puts a method in the local method dictionary before the hook runs.  Put back what the method dictionary holds when the hook refuses the method.&quot;
+
+	(self respondsTo: #localMethodDict) ifFalse: [ ^ self ].
+	(self methodDict at: selector ifAbsent: [ nil ])
+		ifNil: [ self localMethodDict removeKey: selector ifAbsent: [ nil ] ]
+		ifNotNil: [ :method | self localMethodDict at: selector put: method ]&#x27;.
+
+fix value: #&#x27;LoSubject class&#x27; value: #addAndClassifySelector:withMethod:inProtocol:
+	value: [ :source | (source includesSubstring: &#x27;restoreLocalMethodAt:&#x27;) not ]
+	value:
+&#x27;addAndClassifySelector: selector withMethod: compiledMethod inProtocol: aProtocol
+	(self isBasicMethodSelector: selector) ifTrue: [
+		self restoreLocalMethodAt: selector.
+		^ LoSubjectBasicMethodChangeForbiddenError signal ].
+	self
+		addObservingHooksFor: selector
+		withMethod: compiledMethod
+		inProtocol: aProtocol&#x27;.
+
+fix value: #&#x27;LoSubject class&#x27; value: #addObservingHooksFor:withMethod:inProtocol:
+	value: [ :source | (source includesSubstring: &#x27;attachSourceOf:&#x27;) ]
+	value:
+&#x27;addObservingHooksFor: selector withMethod: compiledMethod inProtocol: aProtocol
+	| ivWriteNodes wrapperMethod basicSelector |
+	ivWriteNodes := compiledMethod instanceVariableWriteNodes reject: [ :ivNode | ivNode name asSymbol = self dispatcherIvName ].
+	basicSelector := self basicMethodSelectorFrom: selector.
+	wrapperMethod := ivWriteNodes isEmpty
+		ifTrue: [ nil ]
+		ifFalse: [ self newWrapperMethod: selector forWritingIvs: (ivWriteNodes collect: [ :each | each name asSymbol ]) ].
+	wrapperMethod ifNil: [
+		(self includesLocalSelector: basicSelector) ifTrue: [ super removeSelector: basicSelector ].
+		^ super addSelectorSilently: selector withMethod: compiledMethod ].
+	{ wrapperMethod. compiledMethod } do: [ :each | LoSubjectSupportMethod adoptInstance: each ].
+	super addSelectorSilently: selector withMethod: wrapperMethod.
+	super addSelectorSilently: basicSelector withMethod: compiledMethod.
+	(self respondsTo: #localMethodDict) ifTrue: [
+		self localMethodDict at: selector put: wrapperMethod.
+		self localMethodDict at: basicSelector put: compiledMethod ].
+	self codeChangeAnnouncer suspendAllWhile: [
+		self classify: basicSelector under: #&#x27;&#x27;private-generated&#x27;&#x27; ]&#x27;.
+
+fix value: #&#x27;LoSubject class&#x27; value: #newWrapperMethod:forWritingIvs:
+	value: [ :source | source includesSubstring: &#x27;failBlock:&#x27; ]
+	value:
+&#x27;newWrapperMethod: selector forWritingIvs: writtenIvs
+	| wrapperMethodSource |
+	wrapperMethodSource := self newWrapperMethodSource: selector forWriting: writtenIvs.
+	^ [ self compiler
+		source: wrapperMethodSource;
+		compileOrFail ]
+		on: Error
+		do: [ :error | nil ]&#x27;.
+
+fix value: #&#x27;LoSubject class&#x27; value: #attachSourceOf:to:
+	value: [ :source | source includesSubstring: &#x27;putSource:withPreamble:&#x27; ]
+	value:
+&#x27;attachSourceOf: compiledMethod to: wrapperMethod
+	&quot;Nothing to do: the source of a wrapper method is the source of its basic method, see LoSubjectSupportMethod&gt;&gt;sourcePointer and sourceCodeOrNil.  CompiledMethod&gt;&gt;putSource:withPreamble: does not exist in Pharo 14.&quot;&#x27;.
+
+fix value: #&#x27;LoSubject class&#x27; value: #recompile:from:
+	value: [ :source | source includesSubstring: &#x27;addAndClassifySelector:&#x27; ]
+	value:
+&#x27;recompile: selector from: oldClass
+	&quot;The hook in #addSelectorSilently:withMethod: wraps the new method, as for any compilation.&quot;
+
+	(self isBasicMethodSelector: selector) ifTrue: [ ^ self ].
+	^ super recompile: selector from: oldClass&#x27;.
+
+fix value: #&#x27;LoSubject class&#x27; value: #removeSelector:
+	value: [ :source | (source includesSubstring: &#x27;includesLocalSelector:&#x27;) not ]
+	value:
+&#x27;removeSelector: selector
+	| basicSelector |
+	(self isBasicMethodSelector: selector) ifTrue: [
+		^ LoSubjectBasicMethodChangeForbiddenError signal ].
+	super removeSelector: selector.
+	basicSelector := self basicMethodSelectorFrom: selector.
+	(self includesLocalSelector: basicSelector) ifTrue: [ super removeSelector: basicSelector ]&#x27;.
+
+&quot;Pharo 14 Fileouter&gt;&gt;addFullClass: reads #localMethods, not #localSelectors.&quot;
+add value: #&#x27;LoSubject class&#x27; value: #localMethods value: &#x27;accessing method dictionary&#x27; value:
+&#x27;localMethods
+	&quot;The generated basic methods are not part of the source of a subject class (compare #localSelectors).&quot;
+
+	^ self localSelectors collect: [ :each | self compiledMethodAt: each ]&#x27;.
+
+&quot;Wrap the methods of all the subject classes that were loaded before the hook existed (the package does the same in LoSubject class&gt;&gt;initialize).  The class is reached through Smalltalk globals: this file is compiled as one chunk.&quot;
+(Smalltalk globals at: #LoSubject ifAbsent: [ nil ])
+	ifNotNil: [ :subjectClass | subjectClass initialize ].
+
+&quot;G2: LoSubjectAutomaticCodeGenerationTest&quot;
+fix value: #LoSubjectAutomaticCodeGenerationTest value: #setUp
+	value: [ :source | source includesSubstring: &#x27;silentlyNewSubclassOf:&#x27; ]
+	value:
+&#x27;setUp
+	super setUp.
+	factory := ClassFactoryForTestCase environment: self class environment.
+	class := factory silentlyMake: [ :aBuilder |
+		aBuilder
+			superclass: LoSubject;
+			slots: { #a. #b } ]&#x27;.
+
+fix value: #LoSubjectAutomaticCodeGenerationTest value: #testGeneratingSupportMethodsUponInheritance
+	value: [ :source | source includesSubstring: &#x27;newSubclassOf:&#x27; ]
+	value:
+&#x27;testGeneratingSupportMethodsUponInheritance
+	| newClass |
+	newClass := factory make: [ :aBuilder | aBuilder slots: { #x } ].
+	newClass compile: &#x27;&#x27;x: anObject
+		x := anObject&#x27;&#x27;.
+	self assertCollection: newClass localSelectors hasSameElements: #(x:).
+	newClass := factory update: newClass to: [ :aBuilder | aBuilder superclass: LoSubject ].
+	self assert: newClass superclass == LoSubject.
+	self assertCollection: newClass basicLocalSelectors hasSameElements: #(x: basicSubjectMethod_x:)&#x27;.
+
+fix value: #LoSubjectAutomaticCodeGenerationTest value: #testRemovingGeneratedSupportMethodsUponInheritance
+	value: [ :source | source includesSubstring: &#x27;newSubclassOf:&#x27; ]
+	value:
+&#x27;testRemovingGeneratedSupportMethodsUponInheritance
+	| newClass |
+	newClass := factory make: [ :aBuilder |
+		aBuilder
+			superclass: LoSubject;
+			slots: { #x } ].
+	newClass compile: &#x27;&#x27;x: anObject
+		x := anObject&#x27;&#x27;.
+	self assertCollection: newClass basicLocalSelectors hasSameElements: #(x: basicSubjectMethod_x:).
+	newClass := factory update: newClass to: [ :aBuilder | aBuilder superclass: Object ].
+	self assert: newClass superclass == Object.
+	self assertCollection: newClass localSelectors hasSameElements: #(x:)&#x27;.
+
+fix value: #LoSubjectAutomaticCodeGenerationTest value: #testFileOutIngnoresGeneratedMethods
+	value: [ :source | source includesSubstring: &#x27;fileOutOn:&#x27; ]
+	value:
+&#x27;testFileOutIngnoresGeneratedMethods
+	| fileOutStream |
+	class compile: &#x27;&#x27;a: anObject
+		a := anObject&#x27;&#x27;.
+	fileOutStream := String new writeStream.
+	Fileouter new
+		addFullClass: class;
+		fileoutOnStream: fileOutStream.
+	self deny: (fileOutStream contents includesSubstring: #basicSubjectMethod_a:)&#x27;.
+
+&quot;G3: LoArrayAutomaticEventGenerationTest&gt;&gt;testReset&quot;
+fix value: #Array value: #asSubject
+	value: [ :source | (source includesSubstring: &#x27;isReadOnlyObject&#x27;) not ]
+	value:
+&#x27;asSubject
+	| subject |
+	subject := LoSubjectArray new: self size.
+	self withIndexDo: [ :value :index | subject at: index put: value ].
+	&quot;A literal array is read-only in Pharo 14 (the compiler sends beReadOnlyLiteral), and the become primitive refuses a read-only receiver (no modification).  The identity of the receiver must change in place, so make the receiver writable first.&quot;
+	self isReadOnlyObject ifTrue: [ self beWritableObject ].
+	self becomeForward: subject&#x27;.
+
+&quot;G4: LoSortedCollectionAutomaticEventGenerationTest&quot;
+fix value: #LoSubjectSortedCollection value: #addLast:
+	value: [ :source | source includesSubstring: &#x27;super addLast:&#x27; ]
+	value:
+&#x27;addLast: addedObject
+	&quot;SortedCollection refuses #addLast: with ShouldNotImplement.  A subject sorted collection appends the element without sorting and sends the add event, as its tests expect.&quot;
+
+	self addNoSort: addedObject.
+	self dispatchEventAdded: addedObject at: self size.
+	^ addedObject&#x27;.
+
+add value: #LoSubjectSortedCollection value: #addAll: value: &#x27;adding&#x27; value:
+&#x27;addAll: aCollection
+	&quot;SortedCollection&gt;&gt;addAll: adds the elements with #addNoSort: and sorts once, so #add: is not sent and no event is dispatched.  Send #add: for each element.&quot;
+
+	aCollection do: [ :each | self add: each ].
+	^ aCollection&#x27;.
+
+&quot;G5: Spec 2 port of the three presenter classes (the classes do not exist after the load, so they are made here).  Spec 2 classes are reached through Smalltalk globals: this file is compiled as one chunk.&quot;
+(Smalltalk globals at: #SpPresenter ifAbsent: [ nil ]) ifNotNil: [ :presenterClass |
+	(Smalltalk globals includesKey: #LoDicePresenter) ifFalse: [
+		(presenterClass &lt;&lt; #LoDicePresenter)
+			slots: { #diceFaceUpPresenter };
+			tag: &#x27;Example&#x27;;
+			package: &#x27;LightweightObserver&#x27;;
+			install ].
+	(Smalltalk globals includesKey: #LoDiceListPresenter) ifFalse: [
+		(presenterClass &lt;&lt; #LoDiceListPresenter)
+			slots: { #dicePresenters };
+			tag: &#x27;Example&#x27;;
+			package: &#x27;LightweightObserver&#x27;;
+			install ].
+	(Smalltalk globals includesKey: #LoDiceAdderPresenter) ifFalse: [
+		(presenterClass &lt;&lt; #LoDiceAdderPresenter)
+			slots: { #totalPresenter. #rollButton. #addDiceButton. #removeDiceButton. #diceGroupPresenter };
+			tag: &#x27;Example&#x27;;
+			package: &#x27;LightweightObserver&#x27;;
+			install ] ].
+
+&quot;LoDicePresenter&quot;
+add value: #&#x27;LoDicePresenter class&#x27; value: #title value: &#x27;specs&#x27; value: &#x27;title
+	^ &#x27;&#x27;Dice (Click to Roll)&#x27;&#x27;&#x27;.
+add value: #&#x27;LoDicePresenter class&#x27; value: #exampleBasic value: &#x27;examples&#x27; value: &#x27;exampleBasic
+	&lt;example&gt;
+	^ self new
+		linkTo: LoDice new;
+		open;
+		yourself&#x27;.
+add value: #&#x27;LoDicePresenter class&#x27; value: #example32FacesDice value: &#x27;examples&#x27; value: &#x27;example32FacesDice
+	&lt;example&gt;
+	^ self new
+		linkTo: (LoDice of: 32);
+		open;
+		yourself&#x27;.
+add value: #&#x27;LoDicePresenter class&#x27; value: #exampleAlphabetDice value: &#x27;examples&#x27; value: &#x27;exampleAlphabetDice
+	&lt;example&gt;
+	^ self new
+		linkTo: (LoDice faces: Character alphabet asUppercase);
+		open;
+		yourself&#x27;.
+add value: #LoDicePresenter value: #initializePresenters value: &#x27;initialization&#x27; value: &#x27;initializePresenters
+	diceFaceUpPresenter := self newButton.
+	self diceFaceUp: &#x27;&#x27;-&#x27;&#x27;.
+	self font: self defaultFont.
+	self color: self defaultColor.
+	self layout: (SpBoxLayout newTopToBottom
+		add: diceFaceUpPresenter;
+		yourself)&#x27;.
+add value: #LoDicePresenter value: #initializeWindow: value: &#x27;initialization&#x27; value: &#x27;initializeWindow: aWindowPresenter
+	aWindowPresenter
+		title: self class title;
+		initialExtent: 300 @ 200&#x27;.
+add value: #LoDicePresenter value: #color: value: &#x27;initialization&#x27; value: &#x27;color: aColor
+	(diceFaceUpPresenter respondsTo: #color:) ifTrue: [ diceFaceUpPresenter color: aColor ]&#x27;.
+add value: #LoDicePresenter value: #font: value: &#x27;initialization&#x27; value: &#x27;font: aFont
+	(diceFaceUpPresenter respondsTo: #font:) ifTrue: [ diceFaceUpPresenter font: aFont ]&#x27;.
+add value: #LoDicePresenter value: #defaultColor value: &#x27;queries&#x27; value: &#x27;defaultColor
+	^ Color yellow&#x27;.
+add value: #LoDicePresenter value: #defaultFont value: &#x27;queries&#x27; value: &#x27;defaultFont
+	^ LogicalFont familyName: StandardFonts defaultFont familyName pointSize: 42&#x27;.
+add value: #LoDicePresenter value: #diceFaceUp: value: &#x27;initialization&#x27; value: &#x27;diceFaceUp: newValue
+	diceFaceUpPresenter label: newValue asString&#x27;.
+add value: #LoDicePresenter value: #diceFaceUpPresenter value: &#x27;accessing&#x27; value: &#x27;diceFaceUpPresenter
+	^ diceFaceUpPresenter&#x27;.
+add value: #LoDicePresenter value: #diceFaceUpString value: &#x27;accessing&#x27; value: &#x27;diceFaceUpString
+	^ diceFaceUpPresenter label asString&#x27;.
+add value: #LoDicePresenter value: #linkTo: value: &#x27;initialization&#x27; value: &#x27;linkTo: aDice
+	self diceFaceUp: aDice faceUp.
+	aDice afterChangeOf: #faceUp do: [ :newValue | self diceFaceUp: newValue ].
+	diceFaceUpPresenter action: [ aDice roll ]&#x27;.
+
+&quot;LoDiceListPresenter&quot;
+add value: #&#x27;LoDiceListPresenter class&#x27; value: #exampleBasicDice value: &#x27;example&#x27; value: &#x27;exampleBasicDice
+	&lt;example&gt;
+	| presenter diceList |
+	presenter := self new.
+	diceList := LoDiceList withDiceCount: 3.
+	presenter linkTo: diceList.
+	presenter open.
+	^ diceList&#x27;.
+add value: #&#x27;LoDiceListPresenter class&#x27; value: #exampleProvidedDice value: &#x27;example&#x27; value: &#x27;exampleProvidedDice
+	&lt;example&gt;
+	| presenter diceList |
+	diceList := LoDiceList with: {
+		LoDice faces: Character alphabet asUppercase.
+		LoDice of: 32 }.
+	presenter := self new.
+	presenter linkTo: diceList.
+	presenter open.
+	^ diceList&#x27;.
+add value: #LoDiceListPresenter value: #initialize value: &#x27;initialization&#x27; value: &#x27;initialize
+	dicePresenters := OrderedCollection new.
+	super initialize&#x27;.
+add value: #LoDiceListPresenter value: #initializePresenters value: &#x27;initialization&#x27; value: &#x27;initializePresenters
+	self layout: SpBoxLayout newLeftToRight&#x27;.
+add value: #LoDiceListPresenter value: #initializeWindow: value: &#x27;initialization&#x27; value: &#x27;initializeWindow: aWindowPresenter
+	aWindowPresenter title: &#x27;&#x27;Dice Group&#x27;&#x27;&#x27;.
+add value: #LoDiceListPresenter value: #dicePresenters value: &#x27;accessing&#x27; value: &#x27;dicePresenters
+	^ dicePresenters&#x27;.
+add value: #LoDiceListPresenter value: #addPresenterForDice: value: &#x27;protocol&#x27; value: &#x27;addPresenterForDice: aDice
+	| dicePresenter |
+	dicePresenter := self instantiate: LoDicePresenter.
+	dicePresenter linkTo: aDice.
+	dicePresenters add: dicePresenter.
+	self layout add: dicePresenter&#x27;.
+add value: #LoDiceListPresenter value: #removePresenterAt: value: &#x27;protocol&#x27; value: &#x27;removePresenterAt: index
+	self layout remove: (dicePresenters removeAt: index)&#x27;.
+add value: #LoDiceListPresenter value: #linkTo: value: &#x27;initialization&#x27; value: &#x27;linkTo: aDiceList
+	aDiceList dice do: [ :aDice | self addPresenterForDice: aDice ].
+	aDiceList
+		afterAddToCollection: #dice
+		do: [ :newDice | self addPresenterForDice: newDice ].
+	aDiceList
+		afterRemoveFromCollection: #dice
+		do: [ :oldDice :oldDiceIndex | self removePresenterAt: oldDiceIndex ]&#x27;.
+
+&quot;LoDiceAdderPresenter&quot;
+add value: #&#x27;LoDiceAdderPresenter class&#x27; value: #example value: &#x27;examples&#x27; value: &#x27;example
+	&lt;example&gt;
+	| presenter diceGroup |
+	presenter := self new.
+	diceGroup := LoDiceAdder withDiceCount: 3.
+	presenter linkTo: diceGroup.
+	presenter open.
+	^ presenter&#x27;.
+add value: #LoDiceAdderPresenter value: #initializePresenters value: &#x27;initialization&#x27; value: &#x27;initializePresenters
+	diceGroupPresenter := self instantiate: LoDiceListPresenter.
+	totalPresenter := self newButton.
+	totalPresenter label: &#x27;&#x27;0&#x27;&#x27;.
+	self font: self majorFont of: totalPresenter.
+	self color: Color green of: totalPresenter.
+	addDiceButton := self newButton.
+	addDiceButton label: &#x27;&#x27;+&#x27;&#x27;.
+	self font: self minorFont of: addDiceButton.
+	removeDiceButton := self newButton.
+	removeDiceButton label: &#x27;&#x27;-&#x27;&#x27;.
+	self font: self minorFont of: removeDiceButton.
+	rollButton := self newButton.
+	rollButton label: &#x27;&#x27;Roll Dice&#x27;&#x27;.
+	self font: self minorFont of: rollButton.
+	self layout: (SpBoxLayout newTopToBottom
+		add: diceGroupPresenter;
+		add: (SpBoxLayout newLeftToRight
+			add: addDiceButton;
+			add: removeDiceButton;
+			yourself) expand: false;
+		add: totalPresenter;
+		add: rollButton expand: false;
+		yourself)&#x27;.
+add value: #LoDiceAdderPresenter value: #initializeWindow: value: &#x27;initialization&#x27; value: &#x27;initializeWindow: aWindowPresenter
+	aWindowPresenter
+		title: &#x27;&#x27;Dice Game&#x27;&#x27;;
+		initialExtent: 360 @ 440&#x27;.
+add value: #LoDiceAdderPresenter value: #font:of: value: &#x27;initialization&#x27; value: &#x27;font: aFont of: aButton
+	(aButton respondsTo: #font:) ifTrue: [ aButton font: aFont ]&#x27;.
+add value: #LoDiceAdderPresenter value: #color:of: value: &#x27;initialization&#x27; value: &#x27;color: aColor of: aButton
+	(aButton respondsTo: #color:) ifTrue: [ aButton color: aColor ]&#x27;.
+add value: #LoDiceAdderPresenter value: #majorFont value: &#x27;initialization&#x27; value: &#x27;majorFont
+	^ LogicalFont familyName: StandardFonts defaultFont familyName pointSize: 42&#x27;.
+add value: #LoDiceAdderPresenter value: #minorFont value: &#x27;initialization&#x27; value: &#x27;minorFont
+	^ LogicalFont familyName: StandardFonts defaultFont familyName pointSize: 24&#x27;.
+add value: #LoDiceAdderPresenter value: #addDiceButton value: &#x27;accessing&#x27; value: &#x27;addDiceButton
+	^ addDiceButton&#x27;.
+add value: #LoDiceAdderPresenter value: #removeDiceButton value: &#x27;accessing&#x27; value: &#x27;removeDiceButton
+	^ removeDiceButton&#x27;.
+add value: #LoDiceAdderPresenter value: #rollButton value: &#x27;accessing&#x27; value: &#x27;rollButton
+	^ rollButton&#x27;.
+add value: #LoDiceAdderPresenter value: #totalPresenter value: &#x27;accessing&#x27; value: &#x27;totalPresenter
+	^ totalPresenter&#x27;.
+add value: #LoDiceAdderPresenter value: #diceListPresenter value: &#x27;accessing&#x27; value: &#x27;diceListPresenter
+	^ diceGroupPresenter&#x27;.
+add value: #LoDiceAdderPresenter value: #dicePresenters value: &#x27;accessing&#x27; value: &#x27;dicePresenters
+	^ self diceListPresenter dicePresenters&#x27;.
+add value: #LoDiceAdderPresenter value: #totalString value: &#x27;accessing&#x27; value: &#x27;totalString
+	^ self totalPresenter label asString&#x27;.
+add value: #LoDiceAdderPresenter value: #totalValue: value: &#x27;initialization&#x27; value: &#x27;totalValue: newTotal
+	^ totalPresenter label: newTotal asString&#x27;.
+add value: #LoDiceAdderPresenter value: #linkTo: value: &#x27;initialization&#x27; value: &#x27;linkTo: aDiceGroup
+	diceGroupPresenter linkTo: aDiceGroup.
+	addDiceButton action: [ aDiceGroup addDice ].
+	removeDiceButton action: [ aDiceGroup removeDice ].
+	rollButton action: [ aDiceGroup roll ].
+	aDiceGroup
+		afterChangeOf: #total
+		do: [ :newTotal | self totalValue: newTotal ].
+	self totalValue: aDiceGroup total&#x27;.
+
+&quot;The tests click with #performAction.  Add it only if SpButtonPresenter has no such message (ask the image: SpButtonPresenter selectors).&quot;
+(Smalltalk globals at: #SpButtonPresenter ifAbsent: [ nil ]) ifNotNil: [ :buttonClass |
+	(buttonClass canUnderstand: #performAction) ifFalse: [
+		add value: #SpButtonPresenter value: #performAction value: &#x27;*LightweightObserver&#x27; value: &#x27;performAction
+	&quot;Simulate a click: run the action block.&quot;
+
+	^ (self respondsTo: #action)
+		ifTrue: [ self action ifNotNil: [ :aBlock | aBlock cull: self ] ]
+		ifFalse: [ self click ]&#x27; ] ].
+
+
+&quot;PharoMisc, SimpleMiddleware.
+
+G7. SmSingleMiddlewareTest&gt;&gt;testCommunication (ConnectionClosed after 8 ms).  SmServer&gt;&gt;defaultPort is 54321, and the test uses the default.  On the test machine another program listens on 127.0.0.1:54321 (lsof, 2026-11-17).  SmServer listens on the wildcard address with the address reuse option, and macOS lets that bind go through.  The proxy connects to 127.0.0.1:54321, the other program gets the connection and closes it.  SmThreeMiddlewareTest uses other ports and passes.  The test now asks the system for a free port.&quot;
+
+fix value: #SmSingleMiddlewareTest value: #setUp
+	value: [ :source | (source includesSubstring: &#x27;listenOn: 0&#x27;) not ]
+	value:
+&#x27;setUp
+	&quot;The default port of SmServer (54321) can be in use by another program of the machine.  A program that listens on 127.0.0.1:54321 gets the connection of the proxy and closes it, so the test read ConnectionClosed.  The middleware of this test uses a free port that the system chooses.&quot;
+
+	| probe freePort |
+	super setUp.
+	probe := Socket newTCP.
+	[ probe listenOn: 0 backlogSize: 1.
+	freePort := probe localPort ] ensure: [ probe closeAndDestroy ].
+	middleware := SmMiddleware port: freePort&#x27;.
+
+&quot;PharoMisc, NetworkExtras.
+
+G9. NeMulticastSocketTest&gt;&gt;testInterface (2 expected failures: NeLoopbackAddressMulticastSocketTest, NeRoutedAddressMulticastSocketTest).  The test was marked &lt;expectedFailure&gt; and ended with &#x27;self fail: #todo&#x27;; the author never wrote the second half.  The package code under the test is also wrong.  NeMulticastSocket&gt;&gt;networkInterfaceIp: gives an NeIpV4Address to Socket&gt;&gt;setOption:value:, which sends asString.  NeIpV4Address&gt;&gt;asString answers the dotted text (&#x27;127.0.0.1&#x27;, 9 bytes), and the plugin passes those 9 bytes to setsockopt(IP_MULTICAST_IF), which needs the 4 bytes of the address (struct in_addr).  The option is then set to the text bytes or refused, depending on the system.  The method now gives a plain ByteArray with the 4 bytes (ByteArray&gt;&gt;asString keeps the bytes; an NeIpV4Address is a ByteArray subclass, so asByteArray would answer the same object and the dotted asString would win again).  NeMulticastSocket&gt;&gt;networkInterface answered the raw {0. int} of getOption:, with the 4 bytes of the address as one host-order int; it now answers the NeIpV4Address (the system reads in_addr in memory order, so the first byte is the low byte on a little-endian machine, which is every machine of the supported systems).  The test uses the loopback interface (127.0.0.1) and not the address 10.89.2.24 of the network of the author.&quot;
+
+fix value: #NeMulticastSocket value: #networkInterface
+	value: [ :source | (source includesSubstring: &#x27;NeIpV4Address&#x27;) not ]
+	value:
+&#x27;networkInterface
+	&quot;The IP address of the interface that sends my multicast datagrams (option IP_MULTICAST_IF).  NeIpV4Address allNetworkInterfaces (0.0.0.0) means that the system chooses.  The system answers the 4 bytes of the address as one int in the byte order of the machine, first address byte in the low byte.&quot;
+
+	| value |
+	value := (self getOption: &#x27;&#x27;IP_MULTICAST_IF&#x27;&#x27;) last.
+	^ NeIpV4Address newFrom: ((0 to: 3) collect: [ :index | (value &gt;&gt; (8 * index)) bitAnd: 255 ])&#x27;.
+
+fix value: #NeMulticastSocket value: #networkInterfaceIp:
+	value: [ :source | (source includesSubstring: &#x27;ByteArray&#x27;) not ]
+	value:
+&#x27;networkInterfaceIp: newAddress
+	&quot;Socket&gt;&gt;setOption:value: sends asString to the value, and NeIpV4Address&gt;&gt;asString is the dotted text.  The option needs the 4 bytes of the address, so give a plain ByteArray.&quot;
+
+	networkInterfaceIp := newAddress asIpAddress.
+	self setOption: &#x27;&#x27;IP_MULTICAST_IF&#x27;&#x27; value: (ByteArray withAll: networkInterfaceIp)&#x27;.
+
+fix value: #NeMulticastSocketTest value: #testInterface
+	value: [ :source | source includesSubstring: &#x27;todo&#x27; ]
+	value:
+&#x27;testInterface
+	&quot;The loopback interface exists on every machine; the test does not need the network of the author.&quot;
+
+	| loopback |
+	loopback := NeIpV4Address loopback.
+	self assert: socket networkInterface equals: NeIpV4Address allNetworkInterfaces.
+	socket networkInterfaceIp: loopback.
+	self assert: socket networkInterface equals: loopback.
+	self assert: socket networkInterfaceIp equals: loopback.
+	socket networkInterfaceIp: &#x27;&#x27;127.0.0.1&#x27;&#x27;.
+	self assert: socket networkInterface equals: loopback&#x27;.
+
+&quot;PharoMisc, NetworkExtras: one socket listens on a port, and a sender does not bind (G10 to G13).
+
+The tests of the multicast sockets made the sender as a second NeMulticastSocket on the port of the receiver.  The stock VM does not report the failed bind of the second socket (scripts/cogdiff/socket_bind_in_use.st), so the second socket stayed unbound there with no error, and the tests passed.  Our VM reports the error.  A first repair here (reuse options before the bind) made three sockets listen on one port, and the system then gave a unicast datagram to only one of them: testRestartAfterStop of the loopback variant failed on the two VMs.&quot;
+
+&quot;PharoMisc, NetworkExtras.
+
+G10. A multicast socket that only sends.  NeMulticastSocket&gt;&gt;group:port: binds the port, joins the group, and registers the port.  A sender of a multicast datagram needs none of that, and NeUdpSocket&gt;&gt;send: needs only targetIp and targetPort (the group and the port).  A test that makes a second bound socket on the port of a receiver gets a different result on each system: a bind that fails and is not reported (stock VM), an error (our VM), or, with the reuse options, a split of the unicast datagrams of the loopback group between the sockets (the oldest socket gets the datagram on macOS, the hash of the addresses decides on Linux).  NeMulticastSocket class&gt;&gt;sendToGroup:port: makes a socket that does not bind, does not join, and does not register the port in the tracker; its close does not leave a group, and its destroy does not unregister the port of the receiver.  The method needs one new instance variable, isSendOnly.&quot;
+
+(resolve value: &#x27;NeMulticastSocket&#x27;)
+	ifNil: [ Stdio stdout nextPutAll: &#x27;SKIP NeMulticastSocket instVar isSendOnly (class absent)&#x27;; lf; flush ]
+	ifNotNil: [ :multicastClass |
+		(multicastClass instVarNames includes: #isSendOnly)
+			ifTrue: [ Stdio stdout nextPutAll: &#x27;SKIP NeMulticastSocket instVar isSendOnly (already present)&#x27;; lf; flush ]
+			ifFalse: [
+				multicastClass addInstVarNamed: &#x27;isSendOnly&#x27;.
+				Stdio stdout nextPutAll: &#x27;ADDED NeMulticastSocket instVar isSendOnly&#x27;; lf; flush ] ].
+
+add value: #&#x27;NeMulticastSocket class&#x27; value: #sendToGroup:port: value: &#x27;instance creation&#x27;
+	value:
+&#x27;sendToGroup: groupIp port: anInteger
+	&quot;A socket that only sends to the group and the port.  It does not bind the port, and it does not join the group.&quot;
+
+	^ self new
+		sendToGroup: groupIp port: anInteger;
+		yourself&#x27;.
+
+add value: #NeMulticastSocket value: #sendToGroup:port: value: &#x27;initialize-destroy&#x27;
+	value:
+&#x27;sendToGroup: anIpAddress port: aPortNumber
+	&quot;The group IP address must be within the range: 224.0.0.0 - 239.255.255.255 (or the loopback address).
+	I only send.  The system gives me a free port when I send, so I do not take the port of a receiver of the group.
+	The port is not registered: the tracker keeps one entry for each socket that listens on a port, and I do not listen.&quot;
+
+	self ensureValidPort: aPortNumber.
+	isSendOnly := true.
+	receptionPort := aPortNumber.
+	self groupAddress: anIpAddress&#x27;.
+
+add value: #NeMulticastSocket value: #isSendOnly value: &#x27;testing&#x27;
+	value:
+&#x27;isSendOnly
+	^ isSendOnly == true&#x27;.
+
+add value: #NeMulticastSocket value: #unregisterUsedPort value: &#x27;reception ports tracking&#x27;
+	value:
+&#x27;unregisterUsedPort
+	&quot;A socket that only sends did not register its port.  The port belongs to the receiver.&quot;
+
+	self isSendOnly ifTrue: [ ^ self ].
+	super unregisterUsedPort&#x27;.
+
+fix value: #NeMulticastSocket value: #close
+	value: [ :source | (source includesSubstring: &#x27;isSendOnly&#x27;) not ]
+	value:
+&#x27;close
+	&quot;A socket that only sends never joined the group.&quot;
+
+	[ self isSendOnly ifFalse: [ self leaveGroup ] ] ensure: [
+		super close ]&#x27;.
+
+&quot;PharoMisc, NetworkExtras.
+
+G11. The tests of the multicast sockets and servers made the sender as a second NeMulticastSocket on the port of the receiver, with the hack &#x27;unregisterUsedPort&#x27; to get round the tracker.  Two sockets bound to one port: see G10.  NeLoopbackAddressMulticastUdpServerTest&gt;&gt;testRestartAfterStop failed in the second round because of this: NeMulticastUdpServerTest&gt;&gt;startServer runs once in setUp and once more in each round of the test, and each run made a new bound sender; the sender of setUp (the oldest socket of the port after the first server is stopped) was never closed and took the datagram of the second round (a unicast datagram to the loopback address goes to the oldest socket on macOS).  The sender is now a socket that only sends (G10), and no test needs the hack.  Each test still checks what it checked: the receiver gets the datagram that a sender of the group sends, and datagrams to another group do not arrive.&quot;
+
+add value: #NeUdpSocketTest value: #newMulticastSenderOnGroup:port: value: &#x27;testing&#x27;
+	value:
+&#x27;newMulticastSenderOnGroup: groupIp port: port
+	^ self createSocket: [ NeMulticastSocket sendToGroup: groupIp port: port ]&#x27;.
+
+fix value: #NeMulticastUdpServerTest value: #startServer
+	value: [ :source | source includesSubstring: &#x27;unregisterUsedPort&#x27; ]
+	value:
+&#x27;startServer
+	&quot;The sender only sends.  It does not bind the port of the server: two sockets bound to one port split the datagrams between them in a way that depends on the system.&quot;
+
+	server start.
+	sender := self newMulticastSenderOnGroup: multicastGroup port: multicastPort&#x27;.
+
+fix value: #NeMulticastSocketTest value: #testSendReceive
+	value: [ :source | source includesSubstring: &#x27;unregisterUsedPort&#x27; ]
+	value:
+&#x27;testSendReceive
+	&quot;The sender only sends, so the order of creation does not matter.&quot;
+
+	| sender receiver |
+	receiver := socket.
+	sender := self
+		          newMulticastSenderOnGroup: self groupIp
+		          port: multicastPort.
+	sender send: &#x27;&#x27;Hello&#x27;&#x27;.
+	self assert: (receiver receiveTimeout: 0.1) asString equals: &#x27;&#x27;Hello&#x27;&#x27;&#x27;.
+
+fix value: #NeRoutedAddressMulticastSocketTest value: #testSendReceiveOnDifferentGroups
+	value: [ :source | source includesSubstring: &#x27;unregisterUsedPort&#x27; ]
+	value:
+&#x27;testSendReceiveOnDifferentGroups
+
+	| sender1 receiver1 receiver2 multicastPort2 otherGroupIp sender2 message1 message2 |
+	receiver1 := socket.
+	sender1 := self
+		           newMulticastSenderOnGroup: self groupIp
+		           port: multicastPort.
+	multicastPort2 := NeUdpUsedPortsTracker freePortAtRandom.
+	otherGroupIp := &#x27;&#x27;226.1.1.42&#x27;&#x27;.
+	self deny: otherGroupIp asIpAddress equals: self groupIp asIpAddress.
+	receiver2 := self
+		             newMulticastSocketOnGroup: otherGroupIp
+		             port: multicastPort2.
+	sender2 := self
+		           newMulticastSenderOnGroup: otherGroupIp
+		           port: multicastPort2.
+	message1 := &#x27;&#x27;Hello111&#x27;&#x27;.
+	message2 := &#x27;&#x27;Hello222&#x27;&#x27;.
+	sender1 send: message1.
+	sender2 send: message2.
+	self
+		assert: (receiver1 receiveTimeout: 0.1) asString
+		equals: message1.
+	self
+		assert: (receiver2 receiveTimeout: 0.1) asString
+		equals: message2&#x27;.
+
+&quot;PharoMisc, NetworkExtras.
+
+G12. NeUdpLargeDataSender class&gt;&gt;multicastSocketGroup:port: made a NeMulticastSocket that binds the port, for a sender that only sends chunks.  A receiver of the group on the same port (same image: the tracker refuses the bind; another process of the host: the bind fails) cannot work with it.  No test in the package uses this method.  The sender socket now only sends (G10).&quot;
+
+fix value: #&#x27;NeUdpLargeDataSender class&#x27; value: #multicastSocketGroup:port:
+	value: [ :source | (source includesSubstring: &#x27;sendToGroup&#x27;) not ]
+	value:
+&#x27;multicastSocketGroup: groupIp port: port
+	| socket |
+	socket := NeMulticastSocket sendToGroup: groupIp port: port.
+	^ self socket: socket&#x27;.
+
+&quot;PharoMisc, NetworkExtras.
+
+G13. NeUdpUnicastSocketTest&gt;&gt;testCloseWhileReceiving sent a datagram to the receiver and closed the receiver at once, and expected that the reader of the receiver gets no data and ConnectionClosed.  A datagram that is in the buffer of the socket before the close is data that the reader can read: NeUdpSocket&gt;&gt;receiveTimeout: and Socket&gt;&gt;waitForDataFor:ifClosed:ifTimedOut: test dataAvailable first and the connection state only when no data is there.  Which of the two comes first depended on the time that the VM needs to wake the reader (a VM that signals the semaphore of the socket at once lets the reader win).  The test is about a reader that waits and is woken by the close, so no datagram is sent.  The reader sets a flag before it waits, the test goes on only when the flag is set (the reader has a higher priority, so the reader is then blocked in the wait), and the wait of the test is shorter than the timeout of the reader, so the wake-up must come from the close and not from the timeout.&quot;
+
+fix value: #NeUdpUnicastSocketTest value: #testCloseWhileReceiving
+	value: [ :source | source includesSubstring: &#x27;sender send:&#x27; ]
+	value:
+&#x27;testCloseWhileReceiving
+	&quot;A reader that waits for a datagram gets ConnectionClosed when the socket is closed.  No datagram is sent: a datagram that arrives before the close is read by the reader, so a test that sends one depends on the time that the VM needs to wake the reader.&quot;
+
+	| isDataReceived isErrorSignaled isTimedOut isWaiting |
+	isDataReceived := false.
+	isErrorSignaled := false.
+	isTimedOut := false.
+	isWaiting := false.
+	[
+	[
+	[
+	isWaiting := true.
+	receiver receiveTimeout: 2.
+	isDataReceived := true ]
+		on: ConnectionClosed
+		do: [ isErrorSignaled := true ] ]
+		on: ConnectionTimedOut
+		do: [ isTimedOut := true ] ] forkAt: Processor userInterruptPriority.
+	&quot;The reader has a higher priority: it has run up to the wait.&quot;
+	self assert: isWaiting.
+	receiver closeAndDestroy.
+	self
+		waitUntil: [ isDataReceived | isErrorSignaled | isTimedOut ]
+		timeout: 500 milliSeconds. &quot;Shorter than the 2 seconds of the reader: the close must wake the reader.&quot;
+	self deny: isDataReceived.
+	self deny: isTimedOut.
+	self assert: isErrorSignaled&#x27;.
+</pre></details><details open><summary>Patch of the package source: bouraqadi-pharomisc.patch (<a href="../files/packages/patches/bouraqadi-pharomisc.patch">download</a>)</summary><pre class="code">diff --git a/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st b/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st
+index 2361436..e5b0b1d 100644
+--- a/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st
++++ b/Pharo/BaselineOfEasyUI/BaselineOfEasyUI.class.st
+@@ -12,6 +12,6 @@ BaselineOfEasyUI &gt;&gt; baseline: spec [
+ 	spec for: #common do: [ 
+ 		spec
+ 			baseline: &#x27;PharoMisc&#x27;
+-			with: [ spec repository: &#x27;github://bouraqadi/PharoMisc:pharo12&#x27; ].
++			with: [ spec repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27; ].
+ 		spec package: &#x27;EasyUI&#x27; with: [ spec requires: #( &#x27;PharoMisc&#x27; ) ] ]
+ ]
+diff --git a/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st b/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st
+index 665e73f..27b81c9 100644
+--- a/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st
++++ b/Pharo/BaselineOfNetworkExtras/BaselineOfNetworkExtras.class.st
+@@ -12,7 +12,7 @@ BaselineOfNetworkExtras &gt;&gt; baseline: spec [
+ 	spec for: #&#x27;common&#x27; do: [
+ 		spec 
+ 			baseline: #Concurrency with: [
+-				spec repository: &#x27;github://bouraqadi/PharoMisc:pharo12&#x27;];
++				spec repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27;];
+ 			package: #NetNameResolverBugFix;
+ 			package: #NetworkExtras with: [
+ 				spec requires: #(Concurrency NetNameResolverBugFix)
+diff --git a/Pharo/BaselineOfTasks/BaselineOfTasks.class.st b/Pharo/BaselineOfTasks/BaselineOfTasks.class.st
+index a6d4c9d..6d9e49e 100644
+--- a/Pharo/BaselineOfTasks/BaselineOfTasks.class.st
++++ b/Pharo/BaselineOfTasks/BaselineOfTasks.class.st
+@@ -13,7 +13,7 @@ BaselineOfTasks &gt;&gt; baseline: spec [
+ 		spec 
+ 			baseline: &#x27;StateMachine&#x27; with: [
+ 				spec
+-					repository: &#x27;github://bouraqadi/PharoMisc:pharo12&#x27; ].
++					repository: &#x27;github://bouraqadi/PharoMisc:pharo12/Pharo&#x27; ].
+ 		spec 
+ 			package: &#x27;Tasks&#x27;.
+ 	]
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

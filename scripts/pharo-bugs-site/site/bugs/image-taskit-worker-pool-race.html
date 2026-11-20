@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TaskIt-worker-pool-race - Pharo test defects</title><meta name="description" content="TaskIt-worker-pool-race: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>TaskIt-worker-pool-race</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 25-taskit-worker-pool-race.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: a read-only review by a second agent, then loops on the two VMs.</li>
+<li>Entries: <code>scripts/image-fixes/25-taskit-worker-pool-race.st</code></li>
+<li>Methods: <code>TKTCommonQueueWorkerPool&gt;&gt;privateRemoveIdleWorkerIfNeeded</code>, new
+<code>AtomicSharedQueue&gt;&gt;isProcessWaiting:</code>, new <code>isWaitingForTask</code> and
+<code>suspendIfWaitingForTask</code> in <code>TKTWorkerProcess</code> and <code>TKTWorker</code></li>
+</ul>
+<p><code>privateRemoveIdleWorkerIfNeeded</code> stops one worker that is free.  A worker is
+free from the end of a task until <code>executeTask:</code> records the next task, so a
+free worker can be in the code that takes a task from the queue, or can hold
+a task.  The pool then terminates a process that holds a task, and the future
+of the task never gets a value.  The entry stops a worker only when its
+process waits on the semaphore of the task queue, and takes the process out
+of that wait in the same step, at the highest priority.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TKTCommonQueueWorkerPoolTest&gt;&gt;testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>The pool stops a worker that holds a task (<code>TKTTimeoutException</code>).</td>
+</tr>
+<tr>
+<td><code>TKTFutureTest&gt;&gt;testFutureFirstCompleteOfSuccessIfFirstSuccessFaster</code></td>
+<td>image-code and test</td>
+<td>repaired</td>
+<td>The same cause in the pool of the test profile, and the order of two callbacks (next group).</td>
+</tr>
+</tbody>
+</table>
+<p>Measurements: <code>docs/image_issues.md</code>, section &quot;TaskIt worker pool kills a
+busy worker&quot;.  Loops: <code>scripts/cogdiff/taskit_pool_stress.st</code> and
+<code>scripts/cogdiff/taskit_pool_diag.st</code>.</p>
+<p>Upstream note: Title: TaskIt: the common-queue worker pool stops a worker
+that holds a task.  Project: pharo (TaskIt).  The change is in the three
+classes that the entry names.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>TKTCommonQueueWorkerPoolTest&gt;&gt;testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr><tr><td><code>TKTFutureTest&gt;&gt;testFutureFirstCompleteOfSuccessIfFirstSuccessFaster</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  </p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((TKTCommonQueueWorkerPoolTest selector: #testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel) run) printString.
+((TKTFutureTest selector: #testFutureFirstCompleteOfSuccessIfFirstSuccessFaster) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>TKTCommonQueueWorkerPoolTest&gt;&gt;testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel before the fix (Pharo 14 build 791)</summary><pre class="code">testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel
+	| pool totalTasks futures |
+	pool := TKTCommonQueueWorkerPool new.
+	pool poolMaxSize: 10.
+	pool start.
+	totalTasks := 0.
+	futures := AtomicSharedQueue new.
+	1 to: 10 do: [ :i | futures nextPut: (pool future: [ 10 timesRepeat: [ futures nextPut: (pool future: [ totalTasks := totalTasks + 1 ]) ] ]) ].
+	[ futures isEmpty ] whileFalse: [ futures next waitForCompletion: 100 milliSeconds ].
+	self assert: totalTasks equals: 100.
+	self assert: pool size &lt;= 10</pre></details><details><summary>TKTFutureTest&gt;&gt;testFutureFirstCompleteOfSuccessIfFirstSuccessFaster before the fix (Pharo 14 build 791)</summary><pre class="code">testFutureFirstCompleteOfSuccessIfFirstSuccessFaster
+	| future got secondFuture error |
+	future := TKTFuture new.
+	secondFuture := TKTFuture new.
+	(future firstCompleteOf: secondFuture) onSuccessDo: [ :v | got := v ].
+	future deploySuccess: 5.
+	error := Error new.
+	[ error signal ]
+		on: Error
+		do: [ :e | secondFuture deployFailure: e ].
+	50 milliSecond wait.
+	self assert: got equals: 5</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>25-taskit-worker-pool-race.st (<a href="../files/image-fixes/25-taskit-worker-pool-race.st">download</a>)</summary><pre class="code">&quot;TaskIt: the worker pool stops a worker that holds a task (2026-11-17).
+
+TKTCommonQueueWorkerPool&gt;&gt;privateRemoveIdleWorkerIfNeeded stops one free
+worker.  A worker is free (currentTaskExecution isNil) from the moment when
+its task ends to the moment when TKTWorkerProcess&gt;&gt;executeTask: records the
+next task.  In that time the worker can be in AtomicSharedQueue&gt;&gt;next, in the
+code that takes an item, or can hold the task that it took.  The pool also
+makes the list of the free workers some time before it stops one of them, and
+the worker can take and start a task in that time.  The pool then terminates
+a process that holds a task: the task never runs, and its future never gets a
+value.  A process that is terminated in WaitfreeQueue&gt;&gt;nextIfNone: also
+leaves the queue in the state that a reader holds the queue.
+
+The processes of a pool have the priority of the process that made them, so a
+test and its workers run at one priority.  The image runs with
+preemptionYields: each time a process of a higher priority runs (a timer, the
+UI cycle), the VM puts the active process behind the other processes of its
+priority.  Stock Cog and our VM do the same, and the defect shows on the two.
+
+Tests that fail from this cause, in scripts/cogdiff/taskit_pool_stress.st:
+  TKTCommonQueueWorkerPoolTest&gt;&gt;testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel
+      (TKTTimeoutException: 83 of 600 runs on our VM, 2 of 600 on stock Cog)
+
+The repair: the pool stops a worker only when the process of the worker waits
+on the semaphore of the task queue, and the pool takes the process out of
+that wait in the same step.  A process in that wait is in
+AtomicSharedQueue&gt;&gt;next and holds no item.  The test and the suspend run at
+the highest priority (valueUnpreemptively), so the worker cannot leave the
+wait between the two.  After the suspend, a signal of the queue goes to
+another reader, so no wake-up is lost.
+
+Two weaker repairs failed, and the event log of
+scripts/cogdiff/taskit_pool_diag.st showed why:
+- &#x27;the worker is free&#x27; and then &#x27;the process of the worker waits&#x27;: a worker
+  passed that took a task between the two reads, started the task, and then
+  waited for the mutex of the pool (4 failures in 3000 runs).
+- &#x27;the process waits on the semaphore of the queue&#x27;, then the stop: correct
+  while each signal of the queue comes under the mutex of the pool (0
+  failures in 3000 runs on our VM, 0 in 600 on stock Cog).  The repair of the
+  queue in 27-atomic-shared-queue-wakeups.st makes a reader give a signal
+  too, so the test and the suspend must be one step.
+
+P1. AtomicSharedQueue&gt;&gt;isProcessWaiting:
+P2, P3. isWaitingForTask of the worker process and of the worker (a first
+test with no cost).
+P4, P5. suspendIfWaitingForTask of the worker process and of the worker (the
+test and the suspend in one step).
+P6. The pool stops a worker only when suspendIfWaitingForTask answers true.&quot;
+
+add value: #AtomicSharedQueue value: #isProcessWaiting: value: &#x27;testing&#x27;
+	value:
+&#x27;isProcessWaiting: aProcess
+	&quot;Answer if aProcess waits in #next for an item.  A process in that state holds no item of the queue.&quot;
+
+	^ aProcess suspendingList == availSema&#x27;.
+
+add value: #TKTWorkerProcess value: #isWaitingForTask value: &#x27;testing&#x27;
+	value:
+&#x27;isWaitingForTask
+	&quot;The process of the worker waits in the task queue for a task.  A worker that is free (isFree) can be in the code that takes a task from the queue, or can hold a task that executeTask: did not record yet.&quot;
+
+	^ process isNotNil and: [ taskQueue isNotNil and: [ taskQueue isProcessWaiting: process ] ]&#x27;.
+
+add value: #TKTWorker value: #isWaitingForTask value: &#x27;testing&#x27;
+	value:
+&#x27;isWaitingForTask
+
+	^ process ifNil: [ false ] ifNotNil: [ process isWaitingForTask ]&#x27;.
+
+add value: #TKTWorkerProcess value: #suspendIfWaitingForTask value: &#x27;start-stop&#x27;
+	value:
+&#x27;suspendIfWaitingForTask
+	&quot;If the process of the worker waits in the task queue for a task, take the process out of that wait and answer true.  The process holds no task then, and it cannot get one: a signal of the queue goes to another reader.  The test and the suspend run at the highest priority, so the worker cannot leave the wait between the two.&quot;
+
+	self isWaitingForTask ifFalse: [ ^ false ].
+	^ [ (taskQueue isProcessWaiting: process)
+		    ifTrue: [ process suspend. true ]
+		    ifFalse: [ false ] ] valueUnpreemptively&#x27;.
+
+add value: #TKTWorker value: #suspendIfWaitingForTask value: &#x27;starting&#x27;
+	value:
+&#x27;suspendIfWaitingForTask
+
+	^ process ifNil: [ false ] ifNotNil: [ process suspendIfWaitingForTask ]&#x27;.
+
+fix value: #TKTCommonQueueWorkerPool value: #privateRemoveIdleWorkerIfNeeded
+	value: [ :source | (source includesSubstring: &#x27;suspendIfWaitingForTask&#x27;) not ]
+	value:
+&#x27;privateRemoveIdleWorkerIfNeeded
+	&quot;Stop one worker that waits for a task.  A free worker can hold a task that it did not record yet, and can start a task after the list of the free workers is made: the stop of such a worker loses the task.  suspendIfWaitingForTask takes a worker out of the task queue only when the worker waits there, and such a worker holds no task.&quot;
+
+	| removing free |
+	free := self privateFreeWorkers.
+	free size &lt; taskQueue size
+		ifTrue: [ ^ self ].
+	removing := workers detect: [ :each | each suspendIfWaitingForTask ] ifNone: [ ^ self ].
+	workers remove: removing.
+	removing stop&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

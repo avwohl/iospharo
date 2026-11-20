@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ReflectivityOnStackTest - Pharo test defects</title><meta name="description" content="ReflectivityOnStackTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>ReflectivityOnStackTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-ReflectivityOnStackTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-ReflectivityOnStackTest.st</code></li>
+<li>Methods: <code>ReflectivityOnStackTest&gt;&gt;testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually</code>, <code>CompiledMethod&gt;&gt;sourceNodeForPC:</code></li>
+</ul>
+<p>The test called self skip with a reference to pharo issue 20072. With the skip removed it fails the same way on our VM and on Cog: SubscriptOutOfBounds (index 16) in Context&gt;&gt;computePCForNewMethod:, called from Context&gt;&gt;method:. The defect is in image code, not in either VM. After a metalink is installed, ReflectiveMethod&gt;&gt;compileAST saves the bytecode-to-AST cache of the OLD bytecode layout in the properties of the old CompiledMethod (saveBcToASTCacheWithAST:). Nothing reads that saved cache for pc lookup. CompiledMethod&gt;&gt;sourceNode answers the shared, now recompiled AST, whose own cache describes the NEW bytecodes. So for the old method still on the stack, sourceNodeForPC: gives wrong nodes, and the old CompiledBlock&gt;&gt;ast of both blocks came back as the whole OCMethodNode. Context&gt;&gt;method: matches old blocks to new blocks by comparing these ASTs, so for the suspended block contexts it either found no match or picked the wrong code, and the pc computation then ran off the new bytecodes. The fix adds CompiledMethod&gt;&gt;sourceNodeForPC:, which uses the saved cache of the old layout when the method has one and otherwise calls super. The same file removes the self skip line from the test; the rest of the test body is unchanged and no assertion was weakened. The repaired test passes on both VMs.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ReflectivityOnStackTest&gt;&gt;testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Old CompiledMethod kept on the stack resolves sourceNodeForPC: through the shared recompiled AST (new bytecode layout) instead of the old-layout cache that ReflectiveMethod&gt;&gt;compileAST saved in the method properties; Context&gt;&gt;method: then cannot map the old blocks to the new ones. The test also had a self skip for pharo issue 20072.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran each class on our VM (JIT on) and on Cog, with and without the fix, and counted PASS. All counts are equal with and without the fix. The only difference is ReflectivityOnStackTest, where the fix turns 22 PASS + 1 SKIP into 23 PASS on both VMs. Counts below are ours = Cog. ReflectivityOnStackTest 22+1 SKIP to 23. ReflectiveMethodTest 22. ReflectivityTest 5. ReflectivityControlTest 71. ReflectivityReificationTest 113. MetaLinkTest 10. OCBytecodeToASTCacheTest 17. MethodMapTest 34. CompiledBlockTest 2. ContextTest 19. StepIntoTest 7. StepOverTest 10. RestartTest 3. RecompileTest 3. StepThroughTest 12. OCCacheResetTest 1. DebugPointTest 45. CompiledMethodTest is not in the image (MISSING-CLASS). DebuggerTest is in the image but ran no tests (it printed only DONE). The repaired test was also run 3 times on each VM, each time as a single test through runtest.sh, and passed every time. I did not run ours-nojit, and I did not run the full suite.</p>
+<p>Upstream note: Title: Reflectivity: sourceNodeForPC: of an old CompiledMethod uses the AST cache of the new bytecodes; re-enable the test for issue 20072. Description: ReflectiveMethod&gt;&gt;compileAST saves the old-layout bytecode-to-AST cache in the properties of the old CompiledMethod (saveBcToASTCacheWithAST:), but nothing reads it for pc lookup. CompiledMethod&gt;&gt;sourceNode answers the shared recompiled AST, whose cache describes the new bytecodes. For a method that is still on the stack, CompiledBlock&gt;&gt;ast therefore answered the whole OCMethodNode, and Context&gt;&gt;method: (Reflectivity) could not map old blocks to new blocks; computePCForNewMethod: then raised SubscriptOutOfBounds. Fix: CompiledMethod&gt;&gt;sourceNodeForPC: uses the saved cache when the method has one and otherwise calls super. This makes ReflectivityOnStackTest&gt;&gt;testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually pass, so the self skip for issue 20072 is removed. Project: pharo (OpalCompiler-Core or Reflectivity package, plus Reflectivity-Tests). It needs review by the owner before anything is sent upstream.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ReflectivityOnStackTest&gt;&gt;testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ReflectivityOnStackTest selector: #testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>ReflectivityOnStackTest&gt;&gt;testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually before the fix (Pharo 14 build 791)</summary><pre class="code">testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually
+
+	| instance messageNode process |
+	self skip. &quot;see https://github.com/pharo-project/pharo/issues/20072&quot;
+	instance := ReflectivityExampleOnStack new.
+
+	process := [ instance exampleMethodWaitingOnSemaphoreInEmbeddedBlock ]
+		           fork.
+	0.1 seconds wait.
+	&quot;If we install a link after we execute, we expect it to not matter for this test, as the new code will not be executed&quot;
+	messageNode := (ReflectivityExampleOnStack
+	                &gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock)
+		               ast sendNodes last parent.
+	link := MetaLink new
+		        metaObject: self;
+		        selector: #tagExec.
+	messageNode link: link.
+
+	self assert: messageNode hasMetalink.
+	self
+		assert: (ReflectivityExampleOnStack
+			 &gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock) class
+		equals: ReflectiveMethod.
+	self assert: tag isNil.
+
+	&quot;make sure to create the compiledMethod&quot;
+	(ReflectivityExampleOnStack
+	 &gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock)
+		compileAndInstallCompiledMethod.
+
+	(process findContextsForMethod: process suspendedContext homeMethod)
+		do: [ :ctx |
+			ctx method: ReflectivityExampleOnStack
+				&gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock ].
+
+	&quot;here check that the method is on the stack&quot;
+
+	self
+		assert: process suspendedContext sender sender method selector
+		equals: #exampleMethodWaitingOnSemaphoreInEmbeddedBlock.
+	&quot;process should be running&quot;
+	self deny: process isTerminated.
+
+	instance continue.
+	0.1 seconds wait.
+	self assert: process isTerminated.
+
+	&quot;It got executed!!&quot;
+	self assert: tag notNil</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-ReflectivityOnStackTest.st (<a href="../files/image-fixes/20-ReflectivityOnStackTest.st">download</a>)</summary><pre class="code">fix value: #ReflectivityOnStackTest value: #testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually
+	| instance messageNode process |
+	instance := ReflectivityExampleOnStack new.
+
+	process := [ instance exampleMethodWaitingOnSemaphoreInEmbeddedBlock ]
+		           fork.
+	0.1 seconds wait.
+	&quot;If we install a link after we execute, we expect it to not matter for this test, as the new code will not be executed&quot;
+	messageNode := (ReflectivityExampleOnStack
+	                &gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock)
+		               ast sendNodes last parent.
+	link := MetaLink new
+		        metaObject: self;
+		        selector: #tagExec.
+	messageNode link: link.
+
+	self assert: messageNode hasMetalink.
+	self
+		assert: (ReflectivityExampleOnStack
+			 &gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock) class
+		equals: ReflectiveMethod.
+	self assert: tag isNil.
+
+	&quot;make sure to create the compiledMethod&quot;
+	(ReflectivityExampleOnStack
+	 &gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock)
+		compileAndInstallCompiledMethod.
+
+	(process findContextsForMethod: process suspendedContext homeMethod)
+		do: [ :ctx |
+			ctx method: ReflectivityExampleOnStack
+				&gt;&gt; #exampleMethodWaitingOnSemaphoreInEmbeddedBlock ].
+
+	&quot;here check that the method is on the stack&quot;
+
+	self
+		assert: process suspendedContext sender sender method selector
+		equals: #exampleMethodWaitingOnSemaphoreInEmbeddedBlock.
+	&quot;process should be running&quot;
+	self deny: process isTerminated.
+
+	instance continue.
+	0.1 seconds wait.
+	self assert: process isTerminated.
+
+	&quot;It got executed!&quot;
+	self assert: tag notNil&#x27;.
+add value: #CompiledMethod value: #sourceNodeForPC: value: &#x27;*Reflectivity&#x27; value: &#x27;sourceNodeForPC: aPC
+	&quot;After metalinks were installed the AST of this method describes the NEW bytecodes, but this method still has the OLD ones (it stays on the stack of suspended processes).  ReflectiveMethod&gt;&gt;compileAST saved the bytecode-to-AST cache of the OLD layout in the properties of this method: use it.&quot;
+
+	| cache |
+	cache := self propertyAt: self bcToASTCacheKey ifAbsent: [ nil ].
+	^ cache
+		  ifNil: [ super sourceNodeForPC: aPC ]
+		  ifNotNil: [ cache nodeForPC: aPC ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

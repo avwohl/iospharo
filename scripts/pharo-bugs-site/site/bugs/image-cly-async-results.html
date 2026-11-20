@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cly-async-results - Pharo test defects</title><meta name="description" content="Cly-async-results: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cly-async-results</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-Cly-async-results.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Cly-async-results.st</code></li>
+<li>Methods: <code>ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems</code></li>
+</ul>
+<p>Both tests were an obsolete inverted expectation in the test, not a VM defect. ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems was marked expectedFailure and called super, i.e. ClyQueryNavigationResultTest's test that itemsChanged resets items (deny isBuilt, items isNil). By design an async result never resets built items: ClyAsyncQueryResult&gt;&gt;initializeItems says so, and the sibling ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldNotResetExistingItems asserts the opposite of the inherited test. The inherited test can never pass, so the mark was permanent. The fix removes the expectedFailure mark and the super call, and the test now checks the async contract (initializeItems builds, then itemsChanged leaves isBuilt true, items non-nil, needsRebuild true). ClySemiAsyncQueryResultTest inherits the test via shouldInheritSelectors, so one entry repairs both.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Expected-failure override called the superclass test whose expectation (items reset) contradicts the documented async behaviour; changed expectation to the async contract</td>
+</tr>
+<tr>
+<td><code>ClySemiAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Inherited from ClyAsyncQueryResultTest (shouldInheritSelectors); same override, same repair</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Whole classes run before (base image) and after (fixed image). ClyAsyncQueryResultTest: ours and Cog 19 PASS + 1 FAIL before, 20 PASS after. ClySemiAsyncQueryResultTest: ours and Cog 20 PASS + 1 FAIL before, 21 PASS after. ClyQueryNavigationResultTest (abstract superclass, unchanged by the fix): 10 ERROR before and after on both VMs, identical. No non-test method was changed, so no other classes cover the change.</p>
+<p>Upstream note: Pharo, package Calypso-NavigationModel-Tests: ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems is an expectedFailure that calls super, whose expectation (itemsChanged resets items) contradicts ClyAsyncQueryResult&gt;&gt;initializeItems (&quot;async query should never reset existing items&quot;) and the sibling test testItemsChangedNotificationShouldNotResetExistingItems. It can never pass. Replace the body with the async contract (items stay built, needsRebuild is true) and drop the expectedFailure pragma. ClySemiAsyncQueryResultTest inherits it. Not for Cog; the owner reviews any PR first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClySemiAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ClyAsyncQueryResultTest selector: #testItemsChangedNotificationShouldResetItems) run) printString.
+((ClySemiAsyncQueryResultTest selector: #testItemsChangedNotificationShouldResetItems) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>ClyAsyncQueryResultTest&gt;&gt;testItemsChangedNotificationShouldResetItems before the fix (Pharo 14 build 791)</summary><pre class="code">testItemsChangedNotificationShouldResetItems
+	&lt;expectedFailure&gt;
+	&quot;Async query should not reset own items which was already built.
+	Another test describes that it should only reset actual result&quot;
+
+	super testItemsChangedNotificationShouldResetItems</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Cly-async-results.st (<a href="../files/image-fixes/20-Cly-async-results.st">download</a>)</summary><pre class="code">fix value: #ClyAsyncQueryResultTest value: #testItemsChangedNotificationShouldResetItems
+	value: [ :src | src includesSubstring: &#x27;expectedFailure&#x27; ]
+	value: &#x27;testItemsChangedNotificationShouldResetItems
+	&quot;The inherited test expects itemsChanged to reset the items. An async result must not:
+	ClyAsyncQueryResult&gt;&gt;initializeItems says it never resets existing items, so that the
+	browser can swap the items when the new result is ready. itemsChanged only marks the
+	result as needing a rebuild and keeps the items built so far.&quot;
+
+	queryResult initializeItems.
+	self assert: queryResult isBuilt.
+
+	queryResult itemsChanged.
+
+	self assert: queryResult isBuilt.
+	self assert: queryResult items isNotNil.
+	self assert: queryResult needsRebuild&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

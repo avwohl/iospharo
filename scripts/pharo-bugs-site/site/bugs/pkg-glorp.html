@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Glorp (pharo-rdbms/glorp, row 3) - Pharo test defects</title><meta name="description" content="Package: Glorp (pharo-rdbms/glorp, row 3): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Glorp (pharo-rdbms/glorp, row 3)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-rdbms-glorp.st</dd><dt>Upstream repository</dt><dd>pharo-rdbms/glorp</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>Defect: <code>BaselineOfGlorp</code> loads the package <code>Glorp-Pharo10</code> for
+<code>pharo10.x</code> to <code>pharo13.x</code> only.  The package has one method,
+<code>String&gt;&gt;convertToEncoding:</code>.  On Pharo 14 the method is absent.</li>
+<li>Effect: <code>GlorpDatabasePlatformTest&gt;&gt;testTrimString1</code> and <code>testTrimString2</code>
+stop with <code>MessageNotUnderstood</code> (2 errors of 262 tests).</li>
+<li>Repair here: <code>fixes/pharo-rdbms-glorp.st</code> adds the method.</li>
+<li>Change for the package: add <code>#'pharo14.x'</code> to the platform list in
+<code>BaselineOfGlorp&gt;&gt;baseline:</code>.</li>
+<li>Result with the repair: 262 of 262 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 3&quot;
+Metacello new baseline: &#x27;Glorp&#x27;; repository: &#x27;github://pharo-rdbms/glorp:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;CI&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>3</td><td><code>pharo-rdbms-glorp</code></td><td>ok</td><td>tests=262 P=262 F=0 E=0 S=0 T=0 X=0</td><td>tests=262 P=262 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-rdbms-glorp.st (<a href="../files/packages/fixes/pharo-rdbms-glorp.st">download</a>)</summary><pre class="code">&quot;Glorp (pharo-rdbms/glorp, master 520f5db): the baseline loads the package
+Glorp-Pharo10 for pharo10.x to pharo13.x only.  The package has one method,
+String&gt;&gt;convertToEncoding:, that Dialect class&gt;&gt;convert:toEncoding: calls.  On
+Pharo 14 the method is absent, and GlorpDatabasePlatformTest&gt;&gt;testTrimString1
+and testTrimString2 stop with MessageNotUnderstood on stock Cog and on our VM.
+
+The repair in the package is one more platform name in BaselineOfGlorp
+(#&#x27;pharo14.x&#x27;).  Here the method of the package is added.&quot;
+
+add value: #String value: #convertToEncoding: value: &#x27;*Glorp-Pharo10&#x27;
+	value:
+&#x27;convertToEncoding: encodingName
+
+	^ self encodeWith: encodingName&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

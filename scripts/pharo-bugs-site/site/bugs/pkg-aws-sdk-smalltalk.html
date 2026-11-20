@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: aws-sdk-smalltalk (newapplesho/aws-sdk-smalltalk, row 42) - Pharo test defects</title><meta name="description" content="Package: aws-sdk-smalltalk (newapplesho/aws-sdk-smalltalk, row 42): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: aws-sdk-smalltalk (newapplesho/aws-sdk-smalltalk, row 42)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>newapplesho-aws-sdk-smalltalk.st</dd><dt>Upstream repository</dt><dd>newapplesho/aws-sdk-smalltalk</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 59 tests, 39 pass, 20 errors on the two VMs
+(<code>ConnectionClosed</code> to <code>127.0.0.1:8000</code> and <code>127.0.0.1:4566</code>).</li>
+<li>Cause: 20 tests are live tests.  They need DynamoDB Local on port 8000 (19
+tests) and an S3 emulator on port 4566 (1 test).  The class comments and
+the <code>docker-compose.yml</code> of the package say so.  The test machine runs
+neither, and no download of an emulator is permitted.</li>
+<li>Repair here: <code>fixes/newapplesho-aws-sdk-smalltalk.st</code> adds the class
+<code>AWSLocalEmulatorDouble</code>: two <code>ZnServer</code> instances in the image that
+answer the requests of the tests (tables and items with their state, and
+buckets).  The <code>setUp</code> of the three live test classes starts the two
+servers.  No assertion has a change.</li>
+<li>Limit: the 20 tests now check the client side (the request format, the
+JSON mapping, the response handling, the sockets and the HTTP server of
+the VM).  They do not check the request signature, and they are not a
+check against the real services.</li>
+<li>Result: 59 of 59 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 42&quot;
+Metacello new baseline: &#x27;AWS&#x27;; repository: &#x27;github://newapplesho/aws-sdk-smalltalk:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>42</td><td><code>newapplesho-aws-sdk-smalltalk</code></td><td>ok</td><td>tests=59 P=59 F=0 E=0 S=0 T=0 X=0</td><td>tests=59 P=59 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): newapplesho-aws-sdk-smalltalk.st (<a href="../files/packages/fixes/newapplesho-aws-sdk-smalltalk.st">download</a>)</summary><pre class="code">&quot;newapplesho-aws-sdk-smalltalk: the live integration tests need DynamoDB Local
+(127.0.0.1:8000) and floci (127.0.0.1:4566), which this machine does not run.
+No emulator may be downloaded, so the class AWSLocalEmulatorDouble answers the
+requests inside the image with two ZnServer instances.  See
+docs/upstream/package-repairs.md for the evidence and the limits of the double.
+The three setUp methods of the live tests start the double first; their
+assertions are not changed.&quot;
+
+(Smalltalk globals includesKey: #AWSLocalEmulatorDouble) ifFalse: [
+	(Object &lt;&lt; #AWSLocalEmulatorDouble
+		sharedVariables: { #Servers. #Tables. #Buckets };
+		package: &#x27;AWS-Local-Emulator-Double&#x27;;
+		yourself) install ].
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ensureServers&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;ensureServers
+	&quot;Start the two local servers when they do not run. Called by setUp of the
+	 live integration tests.&quot;
+	(Servers notNil and: [ Servers allSatisfy: [ :each | each isRunning ] ])
+		ifTrue: [ ^ self ].
+	self startServers&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;startServers&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;startServers
+	&quot;DynamoDB Local listens on 127.0.0.1:8000, floci on 127.0.0.1:4566.&quot;
+	Servers ifNotNil: [ Servers do: [ :each | each stop ] ].
+	Tables := Dictionary new.
+	Buckets := OrderedCollection new.
+	Servers := {
+		self serverOn: 8000 selector: #handleDynamoDB:.
+		self serverOn: 4566 selector: #handleS3: }&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;serverOn:selector:&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;serverOn: aPort selector: aSelector
+	| server |
+	server := ZnServer on: aPort.
+	server bindingAddress: #[127 0 0 1].
+	server delegate: (ZnValueDelegate with: [ :request | self perform: aSelector with: request ]).
+	server start.
+	^ server&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;bodyOf:&#x27; value: &#x27;http&#x27; value:
+&#x27;bodyOf: aRequest
+	| contents |
+	contents := aRequest contents.
+	contents ifNil: [ ^ &#x27;&#x27;&#x27;&#x27; ].
+	^ contents isString ifTrue: [ contents ] ifFalse: [ contents utf8Decoded ]&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;jsonResponse:status:&#x27; value: &#x27;http&#x27; value:
+&#x27;jsonResponse: aDictionary status: aStatusLine
+	^ (ZnResponse statusLine: aStatusLine)
+		entity: ((ZnEntity bytes: (NeoJSONWriter toString: aDictionary) utf8Encoded)
+			contentType: &#x27;&#x27;application/x-amz-json-1.0&#x27;&#x27;;
+			yourself);
+		yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;xmlResponse:status:&#x27; value: &#x27;http&#x27; value:
+&#x27;xmlResponse: aString status: aStatusLine
+	^ (ZnResponse statusLine: aStatusLine)
+		entity: ((ZnEntity bytes: aString utf8Encoded)
+			contentType: &#x27;&#x27;application/xml&#x27;&#x27;;
+			yourself);
+		yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbError:message:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbError: aTypeString message: aMessage
+	^ self
+		jsonResponse: (Dictionary new
+			at: &#x27;&#x27;__type&#x27;&#x27; put: &#x27;&#x27;com.amazonaws.dynamodb.v20120810#&#x27;&#x27;, aTypeString;
+			at: &#x27;&#x27;message&#x27;&#x27; put: aMessage;
+			yourself)
+		status: ZnStatusLine badRequest&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;checkKeysOf:allowed:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;checkKeysOf: aBody allowed: anArray
+	&quot;Nil when every parameter is one that this double implements, else the
+	 error response. A parameter that the double ignores would hide a defect.&quot;
+	| unknown |
+	unknown := aBody keys reject: [ :each | anArray includes: each ].
+	unknown isEmpty ifTrue: [ ^ nil ].
+	^ self
+		ddbError: &#x27;&#x27;ValidationException&#x27;&#x27;
+		message: &#x27;&#x27;The local double does not implement the parameters &#x27;&#x27;, (&#x27;&#x27;, &#x27;&#x27; join: unknown asSortedCollection)&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;tableFor:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;tableFor: aBody
+	^ Tables at: (aBody at: &#x27;&#x27;TableName&#x27;&#x27; ifAbsent: [ nil ]) ifAbsent: [ nil ]&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;missingTableError&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;missingTableError
+	^ self ddbError: &#x27;&#x27;ResourceNotFoundException&#x27;&#x27; message: &#x27;&#x27;Cannot do operations on a non-existent table&#x27;&#x27;&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;itemIn:keyedBy:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;itemIn: aTable keyedBy: aKeyDictionary
+	| keyName |
+	keyName := aTable at: &#x27;&#x27;key&#x27;&#x27;.
+	^ (aTable at: &#x27;&#x27;items&#x27;&#x27;)
+		detect: [ :each | (each at: keyName) = (aKeyDictionary at: keyName ifAbsent: [ 0 ]) ]
+		ifNone: [ nil ]&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;descriptionOfTable:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;descriptionOfTable: aName
+	| table |
+	table := Tables at: aName.
+	^ Dictionary new
+		at: &#x27;&#x27;TableName&#x27;&#x27; put: aName;
+		at: &#x27;&#x27;TableStatus&#x27;&#x27; put: &#x27;&#x27;ACTIVE&#x27;&#x27;;
+		at: &#x27;&#x27;KeySchema&#x27;&#x27; put: {
+			Dictionary new
+				at: &#x27;&#x27;AttributeName&#x27;&#x27; put: (table at: &#x27;&#x27;key&#x27;&#x27;);
+				at: &#x27;&#x27;KeyType&#x27;&#x27; put: &#x27;&#x27;HASH&#x27;&#x27;;
+				yourself };
+		at: &#x27;&#x27;ItemCount&#x27;&#x27; put: (table at: &#x27;&#x27;items&#x27;&#x27;) size;
+		yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;evaluateCondition:on:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;evaluateCondition: anExpression on: anItem
+	&quot;True or false for attribute_exists(name) and attribute_not_exists(name),
+	 nil for any other expression.&quot;
+	| text name present |
+	text := anExpression trimmed.
+	((text beginsWith: &#x27;&#x27;attribute_not_exists(&#x27;&#x27;) or: [ text beginsWith: &#x27;&#x27;attribute_exists(&#x27;&#x27; ])
+		ifFalse: [ ^ nil ].
+	((text endsWith: &#x27;&#x27;)&#x27;&#x27;) and: [ (text occurrencesOf: $() = 1 and: [ (text occurrencesOf: $)) = 1 ] ])
+		ifFalse: [ ^ nil ].
+	name := ((text copyAfter: $() copyUpTo: $)) trimmed.
+	(name isEmpty or: [ name includes: Character space ]) ifTrue: [ ^ nil ].
+	present := anItem notNil and: [ anItem includesKey: name ].
+	^ (text beginsWith: &#x27;&#x27;attribute_not_exists(&#x27;&#x27;)
+		ifTrue: [ present not ]
+		ifFalse: [ present ]&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;handleDynamoDB:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;handleDynamoDB: aRequest
+	| target operation selector result |
+	target := aRequest headers at: &#x27;&#x27;X-Amz-Target&#x27;&#x27; ifAbsent: [ nil ].
+	target ifNil: [
+		^ self ddbError: &#x27;&#x27;MissingAuthenticationTokenException&#x27;&#x27; message: &#x27;&#x27;Missing the X-Amz-Target header&#x27;&#x27; ].
+	operation := target copyAfterLast: $..
+	selector := (&#x27;&#x27;ddb&#x27;&#x27;, operation, &#x27;&#x27;:&#x27;&#x27;) asSymbol.
+	(self respondsTo: selector) ifFalse: [
+		^ self ddbError: &#x27;&#x27;UnknownOperationException&#x27;&#x27; message: &#x27;&#x27;The local double does not implement &#x27;&#x27;, operation ].
+	result := self perform: selector with: (NeoJSONReader fromString: (self bodyOf: aRequest)).
+	^ result isDictionary
+		ifTrue: [ self jsonResponse: result status: ZnStatusLine ok ]
+		ifFalse: [ result ]&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbCreateTable:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbCreateTable: aBody
+	| name hash |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27; &#x27;&#x27;AttributeDefinitions&#x27;&#x27; &#x27;&#x27;KeySchema&#x27;&#x27; &#x27;&#x27;ProvisionedThroughput&#x27;&#x27;))
+		ifNotNil: [ :error | ^ error ].
+	name := aBody at: &#x27;&#x27;TableName&#x27;&#x27; ifAbsent: [ nil ].
+	name ifNil: [ ^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27; message: &#x27;&#x27;TableName is missing&#x27;&#x27; ].
+	(Tables includesKey: name)
+		ifTrue: [ ^ self ddbError: &#x27;&#x27;ResourceInUseException&#x27;&#x27; message: &#x27;&#x27;Cannot create preexisting table&#x27;&#x27; ].
+	hash := (aBody at: &#x27;&#x27;KeySchema&#x27;&#x27; ifAbsent: [ #() ])
+		detect: [ :each | (each at: &#x27;&#x27;KeyType&#x27;&#x27;) = &#x27;&#x27;HASH&#x27;&#x27; ]
+		ifNone: [ nil ].
+	hash ifNil: [ ^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27; message: &#x27;&#x27;KeySchema has no HASH key&#x27;&#x27; ].
+	Tables at: name put: (Dictionary new
+		at: &#x27;&#x27;key&#x27;&#x27; put: (hash at: &#x27;&#x27;AttributeName&#x27;&#x27;);
+		at: &#x27;&#x27;items&#x27;&#x27; put: OrderedCollection new;
+		yourself).
+	^ Dictionary new at: &#x27;&#x27;TableDescription&#x27;&#x27; put: (self descriptionOfTable: name); yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbDeleteTable:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbDeleteTable: aBody
+	| description |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27;)) ifNotNil: [ :error | ^ error ].
+	(self tableFor: aBody) ifNil: [ ^ self missingTableError ].
+	description := self descriptionOfTable: (aBody at: &#x27;&#x27;TableName&#x27;&#x27;).
+	Tables removeKey: (aBody at: &#x27;&#x27;TableName&#x27;&#x27;).
+	^ Dictionary new at: &#x27;&#x27;TableDescription&#x27;&#x27; put: description; yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbDescribeTable:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbDescribeTable: aBody
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27;)) ifNotNil: [ :error | ^ error ].
+	(self tableFor: aBody) ifNil: [ ^ self missingTableError ].
+	^ Dictionary new at: &#x27;&#x27;Table&#x27;&#x27; put: (self descriptionOfTable: (aBody at: &#x27;&#x27;TableName&#x27;&#x27;)); yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbListTables:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbListTables: aBody
+	&quot;The client puts TableName in each request (DynamoDBTable&gt;&gt;action:), also in this one.  ListTables has no such member.  The test of the package for this request is made for DynamoDB Local, so that server accepts the member.&quot;
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27;)) ifNotNil: [ :error | ^ error ].
+	^ Dictionary new at: &#x27;&#x27;TableNames&#x27;&#x27; put: Tables keys asSortedCollection asArray; yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbPutItem:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbPutItem: aBody
+	| table item existing condition result items |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27; &#x27;&#x27;Item&#x27;&#x27; &#x27;&#x27;ConditionExpression&#x27;&#x27; &#x27;&#x27;ExpressionAttributeValues&#x27;&#x27;))
+		ifNotNil: [ :error | ^ error ].
+	table := self tableFor: aBody.
+	table ifNil: [ ^ self missingTableError ].
+	item := aBody at: &#x27;&#x27;Item&#x27;&#x27; ifAbsent: [ nil ].
+	(item isNil or: [ (item includesKey: (table at: &#x27;&#x27;key&#x27;&#x27;)) not ]) ifTrue: [
+		^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27;
+			message: &#x27;&#x27;One or more parameter values were invalid: Missing the key &#x27;&#x27;, (table at: &#x27;&#x27;key&#x27;&#x27;), &#x27;&#x27; in the item&#x27;&#x27; ].
+	existing := self itemIn: table keyedBy: item.
+	condition := aBody at: &#x27;&#x27;ConditionExpression&#x27;&#x27; ifAbsent: [ nil ].
+	condition ifNotNil: [
+		result := self evaluateCondition: condition on: existing.
+		result ifNil: [
+			^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27;
+				message: &#x27;&#x27;The local double does not implement the ConditionExpression &#x27;&#x27;, condition ].
+		result ifFalse: [
+			^ self ddbError: &#x27;&#x27;ConditionalCheckFailedException&#x27;&#x27; message: &#x27;&#x27;The conditional request failed&#x27;&#x27; ] ].
+	items := table at: &#x27;&#x27;items&#x27;&#x27;.
+	existing
+		ifNil: [ items add: item ]
+		ifNotNil: [ items at: (items indexOf: existing) put: item ].
+	^ Dictionary new&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbGetItem:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbGetItem: aBody
+	| table item |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27; &#x27;&#x27;Key&#x27;&#x27;)) ifNotNil: [ :error | ^ error ].
+	table := self tableFor: aBody.
+	table ifNil: [ ^ self missingTableError ].
+	item := self itemIn: table keyedBy: (aBody at: &#x27;&#x27;Key&#x27;&#x27; ifAbsent: [ Dictionary new ]).
+	^ item
+		ifNil: [ Dictionary new ]
+		ifNotNil: [ Dictionary new at: &#x27;&#x27;Item&#x27;&#x27; put: item; yourself ]&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbDeleteItem:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbDeleteItem: aBody
+	| table item |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27; &#x27;&#x27;Key&#x27;&#x27;)) ifNotNil: [ :error | ^ error ].
+	table := self tableFor: aBody.
+	table ifNil: [ ^ self missingTableError ].
+	item := self itemIn: table keyedBy: (aBody at: &#x27;&#x27;Key&#x27;&#x27; ifAbsent: [ Dictionary new ]).
+	item ifNotNil: [ (table at: &#x27;&#x27;items&#x27;&#x27;) remove: item ].
+	^ Dictionary new&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbQuery:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbQuery: aBody
+	| table tokens values wanted items |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27; &#x27;&#x27;Select&#x27;&#x27; &#x27;&#x27;KeyConditionExpression&#x27;&#x27; &#x27;&#x27;ExpressionAttributeValues&#x27;&#x27;))
+		ifNotNil: [ :error | ^ error ].
+	table := self tableFor: aBody.
+	table ifNil: [ ^ self missingTableError ].
+	tokens := (aBody at: &#x27;&#x27;KeyConditionExpression&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) substrings.
+	((tokens size = 3 and: [ (tokens at: 2) = &#x27;&#x27;=&#x27;&#x27; ]) and: [ (tokens at: 1) = (table at: &#x27;&#x27;key&#x27;&#x27;) ])
+		ifFalse: [
+			^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27;
+				message: &#x27;&#x27;The local double implements only a KeyConditionExpression of the form &lt;hash key&gt; = :value&#x27;&#x27; ].
+	values := aBody at: &#x27;&#x27;ExpressionAttributeValues&#x27;&#x27; ifAbsent: [ Dictionary new ].
+	wanted := values at: (tokens at: 3) ifAbsent: [
+		^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27;
+			message: &#x27;&#x27;An expression attribute value is used in an expression but not defined: &#x27;&#x27;, (tokens at: 3) ].
+	items := (table at: &#x27;&#x27;items&#x27;&#x27;) select: [ :each | (each at: (table at: &#x27;&#x27;key&#x27;&#x27;)) = wanted ].
+	^ Dictionary new
+		at: &#x27;&#x27;Items&#x27;&#x27; put: items asArray;
+		at: &#x27;&#x27;Count&#x27;&#x27; put: items size;
+		at: &#x27;&#x27;ScannedCount&#x27;&#x27; put: items size;
+		yourself&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;ddbScan:&#x27; value: &#x27;dynamodb&#x27; value:
+&#x27;ddbScan: aBody
+	&quot;Like DynamoDB, a page that reaches Limit carries a LastEvaluatedKey even
+	 when no item follows; the next page is then empty.&quot;
+	| table items start found limit page result keyName |
+	(self checkKeysOf: aBody allowed: #(&#x27;&#x27;TableName&#x27;&#x27; &#x27;&#x27;Select&#x27;&#x27; &#x27;&#x27;Limit&#x27;&#x27; &#x27;&#x27;ExclusiveStartKey&#x27;&#x27;))
+		ifNotNil: [ :error | ^ error ].
+	table := self tableFor: aBody.
+	table ifNil: [ ^ self missingTableError ].
+	(aBody at: &#x27;&#x27;Select&#x27;&#x27; ifAbsent: [ &#x27;&#x27;ALL_ATTRIBUTES&#x27;&#x27; ]) = &#x27;&#x27;ALL_ATTRIBUTES&#x27;&#x27; ifFalse: [
+		^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27; message: &#x27;&#x27;The local double implements only Select ALL_ATTRIBUTES&#x27;&#x27; ].
+	keyName := table at: &#x27;&#x27;key&#x27;&#x27;.
+	items := table at: &#x27;&#x27;items&#x27;&#x27;.
+	start := 0.
+	(aBody at: &#x27;&#x27;ExclusiveStartKey&#x27;&#x27; ifAbsent: [ nil ]) ifNotNil: [ :startKey |
+		found := self itemIn: table keyedBy: startKey.
+		found ifNil: [
+			^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27; message: &#x27;&#x27;The provided starting key is invalid&#x27;&#x27; ].
+		start := items indexOf: found ].
+	limit := aBody at: &#x27;&#x27;Limit&#x27;&#x27; ifAbsent: [ nil ].
+	(limit notNil and: [ limit &lt; 1 ]) ifTrue: [
+		^ self ddbError: &#x27;&#x27;ValidationException&#x27;&#x27; message: &#x27;&#x27;Limit must be greater than or equal to 1&#x27;&#x27; ].
+	page := (items copyFrom: start + 1 to: items size) asOrderedCollection.
+	(limit notNil and: [ limit &lt; page size ]) ifTrue: [ page := page first: limit ].
+	result := Dictionary new
+		at: &#x27;&#x27;Items&#x27;&#x27; put: page asArray;
+		at: &#x27;&#x27;Count&#x27;&#x27; put: page size;
+		at: &#x27;&#x27;ScannedCount&#x27;&#x27; put: page size;
+		yourself.
+	(limit notNil and: [ page size = limit ]) ifTrue: [
+		result at: &#x27;&#x27;LastEvaluatedKey&#x27;&#x27; put: (Dictionary new
+			at: keyName put: (page last at: keyName);
+			yourself) ].
+	^ result&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;s3Error:code:message:&#x27; value: &#x27;s3&#x27; value:
+&#x27;s3Error: aStatusLine code: aCode message: aMessage
+	^ self
+		xmlResponse: &#x27;&#x27;&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;Error&gt;&lt;Code&gt;&#x27;&#x27;, aCode, &#x27;&#x27;&lt;/Code&gt;&lt;Message&gt;&#x27;&#x27;, aMessage, &#x27;&#x27;&lt;/Message&gt;&lt;/Error&gt;&#x27;&#x27;
+		status: aStatusLine&#x27;.
+
+add value: #&#x27;AWSLocalEmulatorDouble class&#x27; value: #&#x27;handleS3:&#x27; value: &#x27;s3&#x27; value:
+&#x27;handleS3: aRequest
+	&quot;The bucket is in the host name (virtual-hosted style): &lt;bucket&gt;.localhost:4566.&quot;
+	| host bucket isRoot method entry xml |
+	host := (aRequest headers at: &#x27;&#x27;Host&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) copyUpTo: $:.
+	bucket := (host endsWith: &#x27;&#x27;.localhost&#x27;&#x27;)
+		ifTrue: [ host copyFrom: 1 to: host size - &#x27;&#x27;.localhost&#x27;&#x27; size ]
+		ifFalse: [ nil ].
+	isRoot := aRequest uri printString = &#x27;&#x27;/&#x27;&#x27;.
+	method := aRequest method.
+	(bucket notNil and: [ bucket isEmpty or: [ bucket anySatisfy: [ :each |
+			(each isLowercase or: [ each isDigit or: [ &#x27;&#x27;-.&#x27;&#x27; includes: each ] ]) not ] ] ])
+		ifTrue: [ ^ self s3Error: ZnStatusLine badRequest code: &#x27;&#x27;InvalidBucketName&#x27;&#x27; message: &#x27;&#x27;The specified bucket is not valid&#x27;&#x27; ].
+	(bucket isNil and: [ isRoot and: [ method = #GET ] ]) ifTrue: [
+		xml := WriteStream on: String new.
+		xml nextPutAll: &#x27;&#x27;&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;ListAllMyBucketsResult xmlns=&quot;http://s3.amazonaws.com/doc/2006-03-01/&quot;&gt;&lt;Owner&gt;&lt;ID&gt;local&lt;/ID&gt;&lt;DisplayName&gt;local&lt;/DisplayName&gt;&lt;/Owner&gt;&lt;Buckets&gt;&#x27;&#x27;.
+		Buckets do: [ :each |
+			xml nextPutAll: &#x27;&#x27;&lt;Bucket&gt;&lt;Name&gt;&#x27;&#x27;, each key, &#x27;&#x27;&lt;/Name&gt;&lt;CreationDate&gt;&#x27;&#x27;, each value, &#x27;&#x27;&lt;/CreationDate&gt;&lt;/Bucket&gt;&#x27;&#x27; ].
+		xml nextPutAll: &#x27;&#x27;&lt;/Buckets&gt;&lt;/ListAllMyBucketsResult&gt;&#x27;&#x27;.
+		^ self xmlResponse: xml contents status: ZnStatusLine ok ].
+	(bucket notNil and: [ isRoot and: [ method = #PUT ] ]) ifTrue: [
+		(Buckets anySatisfy: [ :each | each key = bucket ]) ifTrue: [
+			^ self s3Error: (ZnStatusLine code: 409) code: &#x27;&#x27;BucketAlreadyOwnedByYou&#x27;&#x27; message: &#x27;&#x27;Your previous request to create the named bucket succeeded and you already own it&#x27;&#x27; ].
+		Buckets add: bucket -&gt; DateAndTime now asUTC printString.
+		^ ZnResponse ok: (ZnEntity text: &#x27;&#x27;&#x27;&#x27;) ].
+	(bucket notNil and: [ isRoot and: [ method = #DELETE ] ]) ifTrue: [
+		entry := Buckets detect: [ :each | each key = bucket ] ifNone: [ nil ].
+		entry ifNil: [
+			^ self s3Error: ZnStatusLine notFound code: &#x27;&#x27;NoSuchBucket&#x27;&#x27; message: &#x27;&#x27;The specified bucket does not exist&#x27;&#x27; ].
+		Buckets remove: entry.
+		^ ZnResponse noContent ].
+	^ self s3Error: ZnStatusLine notImplemented code: &#x27;&#x27;NotImplemented&#x27;&#x27; message: &#x27;&#x27;The local double implements only the bucket operations ListBuckets, CreateBucket and DeleteBucket&#x27;&#x27;&#x27;.
+
+&quot;The live tests: setUp starts the double, then runs the unchanged old setUp
+under the name setUpAgainstEmulator.  The guard is the absence of the call.&quot;
+#(#DynamoDBTableTest #DynamoDBRawClientTest #AWSS3IntegrationTest) do: [ :className |
+	| cls oldSource |
+	cls := Smalltalk globals at: className ifAbsent: [ nil ].
+	(cls notNil and: [ cls includesSelector: #setUp ])
+		ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, className, &#x27;&gt;&gt;setUp (absent)&#x27;; lf; flush ]
+		ifTrue: [
+			oldSource := (cls &gt;&gt; #setUp) sourceCode.
+			(oldSource includesSubstring: &#x27;AWSLocalEmulatorDouble&#x27;)
+				ifTrue: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, className, &#x27;&gt;&gt;setUp (defect not present)&#x27;; lf; flush ]
+				ifFalse: [
+					cls compile: &#x27;setUpAgainstEmulator&#x27;, (oldSource allButFirst: &#x27;setUp&#x27; size) classified: &#x27;running&#x27;.
+					cls compile: &#x27;setUp
+	AWSLocalEmulatorDouble ensureServers.
+	self setUpAgainstEmulator&#x27; classified: &#x27;running&#x27;.
+					Stdio stdout nextPutAll: &#x27;FIXED &#x27;, className, &#x27;&gt;&gt;setUp&#x27;; lf; flush ] ] ].
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

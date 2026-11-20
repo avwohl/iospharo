@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rubric-anchors - Pharo test defects</title><meta name="description" content="Rubric-anchors: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Rubric-anchors</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>3</dd><dt>Fix</dt><dd>image fix 20-Rubric-anchors.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Rubric-anchors.st</code></li>
+<li>Methods: <code>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawn</code>, <code>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition</code>, <code>RubScrolledTextMorphTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition</code></li>
+</ul>
+<p>All three tests were disabled by a leftover &quot;self skip&quot; line with a comment &quot;fails in CI&quot;. With the skip removed, the tests pass unchanged on both VMs, so the CI failure no longer occurs; the old CI failure was not investigated. The fix file replaces the three test methods with their original source minus the skip line. No assertion was changed.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawn</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Test starts with 'self skip' (stale CI workaround); without it the test passes</td>
+</tr>
+<tr>
+<td><code>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Test starts with 'self skip' (stale CI workaround); without it the test passes</td>
+</tr>
+<tr>
+<td><code>RubScrolledTextMorphTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Test starts with 'self skip' (stale CI workaround); without it the test passes</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Whole classes RubEditingAreaTest and RubScrolledTextMorphTest, on ours (JIT) and Cog, before and after the fix. RubEditingAreaTest: 5 PASS + 2 SKIP before, 7 PASS after, on both VMs. RubScrolledTextMorphTest: 1 PASS + 1 SKIP before, 2 PASS after, on both VMs. No non-test methods were changed. The ours-nojit mode was not run.</p>
+<p>Upstream note: Pharo: Rubric-Tests, re-enable the three embedded-anchor tests. RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawn, RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition and RubScrolledTextMorphTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition begin with 'self skip' and a 'fails in CI' comment. Removing the skip makes them pass on Pharo 14 build 791 on stock Cog v12.0.6 arm64 (and on our VM) when run headless with a fake Display. Proposal: delete the skip lines and watch CI; the old CI failure was not reproduced or investigated here.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawn</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>RubScrolledTextMorphTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((RubEditingAreaTest selector: #testEmbeddedAnchorInTextAreDrawn) run) printString.
+((RubEditingAreaTest selector: #testEmbeddedAnchorInTextAreDrawnAtRightPosition) run) printString.
+((RubScrolledTextMorphTest selector: #testEmbeddedAnchorInTextAreDrawnAtRightPosition) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawn before the fix (Pharo 14 build 791)</summary><pre class="code">testEmbeddedAnchorInTextAreDrawn
+	| circle text canvas|
+	self skip. &quot;Somehow this test fails in the CI&quot;
+	circle := CircleMorph new extent: 50 @ 50;color: Color blue.
+
+	self assert: circle owner isNil.
+	self assert: circle position equals: 0@0.
+	&quot;add the circle to a text string&quot;
+	text := (&#x27;aaaaa&#x27;,(String value: 1),&#x27;bbbbbbb&#x27;) asText
+			addAttribute: (TextAnchor new anchoredMorph: circle).
+	&quot;render the text in a RubEditingArea to place the circle in a layout&quot;
+	area updateTextWith: text.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: area.
+	self assert: (circle hasProperty: #hasBeenPositioned).
+	self deny: circle position equals: 0@0</pre></details><details><summary>RubEditingAreaTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition before the fix (Pharo 14 build 791)</summary><pre class="code">testEmbeddedAnchorInTextAreDrawnAtRightPosition
+	| circle longTextWithCircleAtEnd canvas|
+	self skip. &quot;The test fails in CI&quot;
+	circle := CircleMorphCounter new extent: 50 @ 50;color: Color blue.
+	longTextWithCircleAtEnd := ((String loremIpsum: 10000),
+		(String value: 1)) asText
+			addAttribute: (TextAnchor new anchoredMorph: circle).
+
+	self assert: circle owner isNil.
+	self assert: circle position equals: 0@0.
+	self assert: circle counter equals: 0.
+	area updateTextWith: longTextWithCircleAtEnd.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: area.
+
+	self assert: circle counter equals: 1.
+	self assert: circle position y &gt; 500</pre></details><details><summary>RubScrolledTextMorphTest&gt;&gt;testEmbeddedAnchorInTextAreDrawnAtRightPosition before the fix (Pharo 14 build 791)</summary><pre class="code">testEmbeddedAnchorInTextAreDrawnAtRightPosition
+	| circle longTextWithCircleAtEnd canvas|
+	self skip. &quot;Test fail in CI&quot;
+	circle := CircleMorphCounter new extent: 50 @ 50;color: Color blue.
+	longTextWithCircleAtEnd := ((String loremIpsum: 10000),
+		(String value: 1)) asText
+			addAttribute: (TextAnchor new anchoredMorph: circle).
+
+	self assert: circle owner isNil.
+	self assert: circle position equals: 0@0.
+	morph updateTextWith: longTextWithCircleAtEnd.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: morph.
+
+	self assert: circle owner equals: nil.
+	self assert: circle counter equals: 0.
+
+	morph scrollToEndOfText.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: morph.
+	self assert: circle counter &gt; 0</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Rubric-anchors.st (<a href="../files/image-fixes/20-Rubric-anchors.st">download</a>)</summary><pre class="code">fix value: #RubEditingAreaTest value: #testEmbeddedAnchorInTextAreDrawn
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testEmbeddedAnchorInTextAreDrawn
+	| circle text canvas|
+	circle := CircleMorph new extent: 50 @ 50;color: Color blue.
+
+	self assert: circle owner isNil.
+	self assert: circle position equals: 0@0.
+	&quot;add the circle to a text string&quot;
+	text := (&#x27;&#x27;aaaaa&#x27;&#x27;,(String value: 1),&#x27;&#x27;bbbbbbb&#x27;&#x27;) asText
+			addAttribute: (TextAnchor new anchoredMorph: circle).
+	&quot;render the text in a RubEditingArea to place the circle in a layout&quot;
+	area updateTextWith: text.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: area.
+	self assert: (circle hasProperty: #hasBeenPositioned).
+	self deny: circle position equals: 0@0&#x27;.
+
+fix value: #RubEditingAreaTest value: #testEmbeddedAnchorInTextAreDrawnAtRightPosition
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testEmbeddedAnchorInTextAreDrawnAtRightPosition
+	| circle longTextWithCircleAtEnd canvas|
+	circle := CircleMorphCounter new extent: 50 @ 50;color: Color blue.
+	longTextWithCircleAtEnd := ((String loremIpsum: 10000),
+		(String value: 1)) asText
+			addAttribute: (TextAnchor new anchoredMorph: circle).
+
+	self assert: circle owner isNil.
+	self assert: circle position equals: 0@0.
+	self assert: circle counter equals: 0.
+	area updateTextWith: longTextWithCircleAtEnd.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: area.
+
+	self assert: circle counter equals: 1.
+	self assert: circle position y &gt; 500&#x27;.
+
+fix value: #RubScrolledTextMorphTest value: #testEmbeddedAnchorInTextAreDrawnAtRightPosition
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testEmbeddedAnchorInTextAreDrawnAtRightPosition
+	| circle longTextWithCircleAtEnd canvas|
+	circle := CircleMorphCounter new extent: 50 @ 50;color: Color blue.
+	longTextWithCircleAtEnd := ((String loremIpsum: 10000),
+		(String value: 1)) asText
+			addAttribute: (TextAnchor new anchoredMorph: circle).
+
+	self assert: circle owner isNil.
+	self assert: circle position equals: 0@0.
+	morph updateTextWith: longTextWithCircleAtEnd.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: morph.
+
+	self assert: circle owner equals: nil.
+	self assert: circle counter equals: 0.
+
+	morph scrollToEndOfText.
+	canvas := FormCanvas extent: 500@500.
+	canvas fullDrawMorph: morph.
+	self assert: circle counter &gt; 0&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

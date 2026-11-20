@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: primitiveDoNamedPrimitiveWithArgs: PrimErrNotFound - Pharo test defects</title><meta name="description" content="Cog: primitiveDoNamedPrimitiveWithArgs: PrimErrNotFound: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: primitiveDoNamedPrimitiveWithArgs: PrimErrNotFound</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>cog-named-primitive-not-found.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>Defect: for a named primitive that does not exist, the real call fails with
+<code>PrimErrNotFound</code>, and the simulated call (primitive 218, used by
+<code>Context&gt;&gt;tryNamedPrimitiveIn:for:withArgs:</code>) fails with the generic
+code -1.  The debugger simulation then gives another error code than the
+real execution.  The image has <code>CodeSimulationTest&gt;&gt;testErrorCodeNotFound</code>
+set to skip.</li>
+<li>Change: primitive 218 fails with <code>PrimErrNotFound</code> when the function does
+not exist.</li>
+<li>Test (2026-11-17, a Debug build with the change): <code>CodeSimulationTest</code>
+gives 9 passes of 9 with the skip removed.  The stock VM fails
+<code>testErrorCodeNotFound</code> (&quot;Got #'not found' instead of nil&quot;).</li>
+<li>Our VM gave nil for the real call and for the simulated call.  This
+repository has the fix for that defect.</li>
+</ul>
+<h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image.&quot;
+| r |
+r := CodeSimulationTest new veryBasicAt: 1.
+{ r. (Context sender: nil receiver: nil method: Object &gt;&gt; #at: arguments: #(10)) push: nil; push: 500;
+	doPrimitive: 117 method: CodeSimulationTest &gt;&gt; #veryBasicAt: receiver: CodeSimulationTest new args: #(999) }
+&quot;Stock Cog: {#&#x27;not found&#x27;. {token. nil}}: the simulation loses the error code.  With the change the two agree.&quot;</pre><p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/named-primitive-not-found-in-simulation</code>.  State: committed on the branch, tested.  Not sent upstream.</p><details open><summary>cog-named-primitive-not-found.patch (<a href="../files/cog/cog-named-primitive-not-found.patch">download</a>)</summary><pre class="code">From d60074f617fd8b7ca8ec8ce6616ea9ce61aabcaa Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 07:39:09 -0500
+Subject: [PATCH] primitiveDoNamedPrimitiveWithArgs: PrimErrNotFound when the
+ function does not exist
+
+primitiveExternalCall fails with PrimErrNotFound when a named primitive
+does not exist, so &lt;primitive: &#x27;name&#x27; module: &#x27;m&#x27; error: code&gt; gets
+#&#x27;not found&#x27; in code.  primitiveDoNamedPrimitiveWithArgs, which the image
+uses to simulate the same call (Context&gt;&gt;tryNamedPrimitiveIn:for:withArgs:),
+failed with the generic code -1 for the same case, and the simulation
+answered nil as the error code.
+
+CodeSimulationTest&gt;&gt;testErrorCodeNotFound compares the two answers.  The
+image has the test set to skip.  With this change the test passes with the
+skip removed.
+
+Measured on macOS 27, arm64, a Debug build:
+  real call, before and after:  #&#x27;not found&#x27;
+  simulated call, before:       nil
+  simulated call, after:        #&#x27;not found&#x27;
+
+Co-Authored-By: Claude Fable 5.2 &lt;noreply@anthropic.com&gt;
+---
+ smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+index 3e19d3e0a..8ebbf3489 100644
+--- a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
++++ b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+@@ -913,7 +913,7 @@ StackInterpreterPrimitives &gt;&gt; primitiveDoNamedPrimitiveWithArgs [
+ 				         addressOf: metaAccessorDepth
+ 				         put: [ :val | metaAccessorDepth := val ]).
+ 	addr = 0 ifTrue: [ metaAccessorDepth := -2 ].
+-	addr = 0 ifTrue: [ ^ self primitiveFailFor: -1 ]. &quot;could not find function; answer generic failure (see below)&quot;
++	addr = 0 ifTrue: [ ^ self primitiveFailFor: PrimErrNotFound ]. &quot;could not find function; the same code as primitiveExternalCall gives for the real call&quot;
+ 
+ 	&quot;Cannot fail this primitive from now on.  Can only fail the external primitive.&quot;
+ 	tempOop := objectMemory
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

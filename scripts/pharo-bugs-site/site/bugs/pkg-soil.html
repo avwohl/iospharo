@@ -1,0 +1,1156 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Soil (ApptiveGrid/Soil, row 84) - Pharo test defects</title><meta name="description" content="Package: Soil (ApptiveGrid/Soil, row 84): Open: 3 tests">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Soil (ApptiveGrid/Soil, row 84)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: 3 tests</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>17</dd><dt>Fix</dt><dd>apptivegrid-soil.st</dd><dt>Upstream repository</dt><dd>ApptiveGrid/Soil</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 1139 tests, 1109 pass, 30 skips on the two VMs.  Each of the
+30 is a <code>self skip</code> of the package.</li>
+<li>Defects of the package that the skips hid, each repaired in
+<code>fixes/apptivegrid-soil.st</code>:
+<ul>
+<li><code>SoilBTreePage&gt;&gt;cleanRemovedIn:</code> removed each removed entry by its key.
+With two entries of one key the search can find the live entry, so the
+live entry went and the removed one stayed.</li>
+<li><code>SoilRestoringIndexIterator</code> had no <code>size</code> for an older transaction: a
+transaction saw the count of a later commit.</li>
+<li><code>SoilObjectProxy</code> had no <code>class</code> method (a commit removed it), so
+<code>class</code> answered the proxy class and not the class of the object.</li>
+<li><code>SoilObjectRepository&gt;&gt;cacheSegmentAt:using:</code> gave its block the segment
+where the block needs the cache.</li>
+<li><code>SoilBehaviorRegistry&gt;&gt;recreateIndex</code> did a commit and then an abort of
+the same transaction.</li>
+<li>A method with no sender in the image
+(<code>checkDescriptionsOf:referencedBy:in:</code>) is gone, and a class with no
+use (<code>SoilObjectVisitor</code>) too.</li>
+</ul>
+</li>
+<li>Tests:
+<ul>
+<li>3 tests were stale and have a body for the code as it is.</li>
+<li>The lint tests of the package (no class with no use, no call with no
+implementor, no selector with no sender) run now.  For them:
+<code>SoilJournalConverter</code>, a tool that a user starts by hand, got a test;
+44 new tests (<code>SoilApiSurfaceTest</code>) call the API that no test called;
+and a reader of the method format of Pharo 11 has the lint mark for the
+selector that Pharo 14 does not have.</li>
+</ul>
+</li>
+<li>Result: 1184 tests, 1167 pass and 17 skips on the two VMs, in a run from a
+new load.
+<ul>
+<li>14 skips cannot apply (<code>not-applicable/apptivegrid-soil.txt</code>): 8 tests
+of file locks of Windows, and 6 cases of a parametrized test that have
+no meaning for their parameter.</li>
+<li>Open, 3 skips: the three <code>testCodeCoverage</code> tests ask for a coverage of
+93 percent.  The measured coverage is 86 percent (Soil-Core), 81 percent
+(Soil-Serializer) and 85 percent (Soil-Resident).  The package needs
+more tests for about 210 methods.  The row is not clean.</li>
+</ul>
+</li>
+<li>For the owner of Soil: <code>SoilObjectProxy&gt;&gt;class</code> is back, which the author
+removed on purpose or by accident; the review must decide.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 84&quot;
+Metacello new baseline: &#x27;Soil&#x27;; repository: &#x27;github://ApptiveGrid/Soil:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>84</td><td><code>apptivegrid-soil</code></td><td>ok</td><td>tests=1184 P=1167 F=0 E=0 S=17 T=0 X=0</td><td>tests=1184 P=1167 F=0 E=0 S=17 T=0 X=0</td></tr></table><h3>Tests that do not pass</h3><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>SoilCleanCodeTest&gt;&gt;testCodeCoverage</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilIndexIteratorTest&gt;&gt;testMoveKey(#classToTest-&gt;SoilBTree_#uniqueKeys-&gt;false)</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilIndexIteratorTest&gt;&gt;testMoveKey(#classToTest-&gt;SoilSkipList_#uniqueKeys-&gt;false)</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilIndexIteratorTest&gt;&gt;testMoveKeyOnNonUniqueIndexIsRefused(#classToTest-&gt;SoilBTree_#uniqueKeys-&gt;true)</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilIndexIteratorTest&gt;&gt;testMoveKeyOnNonUniqueIndexIsRefused(#classToTest-&gt;SoilSkipList_#uniqueKeys-&gt;true)</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilIndexIteratorTest&gt;&gt;testMoveKeyOverwritesTheTarget(#classToTest-&gt;SoilBTree_#uniqueKeys-&gt;false)</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilIndexIteratorTest&gt;&gt;testMoveKeyOverwritesTheTarget(#classToTest-&gt;SoilSkipList_#uniqueKeys-&gt;false)</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilResidentCleanCodeTest&gt;&gt;testCodeCoverage</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilSerializerCleanCodeTest&gt;&gt;testCodeCoverage</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testFlushFileBuffersDirect</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testFsyncEntireFile</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testLockAndUnlockEntireFile</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testLockAndUnlockRange</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testLockExclusive</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testLockOrErrorSuccess</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testLockShared</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>SoilWindowsFileLockTest&gt;&gt;testMultipleLocks</code></td><td>SKIP</td><td>SKIP</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): apptivegrid-soil.st (<a href="../files/packages/fixes/apptivegrid-soil.st">download</a>)</summary><pre class="code">&quot;apptivegrid-soil: tests that did not pass, and the repair of each.  Causes, by group:
+
+1. SoilIndexedDictionaryTest&gt;&gt;testAReplayDoesNotAddAValueTheIndexHoldsAgain (BTree
+   case).  SoilBTreePage&gt;&gt;cleanRemovedIn: dropped a removed entry by its key.  With
+   duplicate keys the binary search for the key can land on the live entry next to
+   the removed one, so the cleaner removed the live entry and kept the removed
+   one.  The repair drops the removed entries themselves (as
+   SoilSkipListPage&gt;&gt;cleanRemoved already does).  The test lost its BTree skip.
+
+2. SoilIndexedDictionaryTest&gt;&gt;testConcurrentIsEmpty (both backends).  The iterator
+   of a transaction answered #size from the header page of the index.  The header
+   counts the newest committed state, so a transaction that began before another
+   commit saw the count of the other commit.  The repair adds
+   SoilRestoringIndexIterator&gt;&gt;size: when the database moved past the read version
+   of the iterator, the size is counted with the same visibility rule that #do:
+   uses.  The test lost its skip (issue 1137 of the package).
+
+3. SoilIndexedDictionaryTest&gt;&gt;testRemoveKeyWithTwoTransactions (both backends).
+   The test is stale.  Its comment says that the commit conflict cannot be
+   detected yet.  Soil detects the conflict now (SoilIndexHasConcurrentChange, a
+   subclass of SoilObjectHasConcurrentChange, see
+   testRemovingAKeyAnotherTransactionRemovedIsAConflict).  The test is brought to
+   the present design: the commit conflict is checked as before, and the size is
+   read in a new transaction after the conflict.
+
+4. SoilTest&gt;&gt;testRootSendingClass.  Commit c8aee57a of the package took
+   SoilObjectProxy&gt;&gt;class out (the message says: called too often, breaks the
+   inspector), so ProtoObject&gt;&gt;class answers SoilObjectProxy for a proxy, and a #=
+   that compares #class (OrderedCollection&gt;&gt;remove: sends real = proxy) does not
+   find its element.  The author skipped the test in commit abb46f0c.  The repair
+   puts SoilObjectProxy&gt;&gt;class back (an owner decision to review) and uses a small
+   class of the test package (SoilTestEqualsUsingClass) in place of the
+   deprecated AST alias RBComment.
+
+5. Lint tests.  SoilCleanCodeTest&gt;&gt;testNoUnusedClasses (and the copy that
+   SoilResidentCleanCodeTest inherits): SoilDatabaseMigration subclasses are found
+   by SoilDatabaseMigration class&gt;&gt;migratesVersion: with #allSubclasses, so the
+   lint test needs the isUsed override that the test comment names.
+   SoilObjectVisitor has no sender, no subclass and no test: dead code, it is
+   removed in the image.  SoilJournalConverter is a tool that a user starts by
+   hand to convert a journal of the first format (one file for each transaction)
+   into the journal of today.  Nothing in the code sends it, and no test ran it.
+   The new SoilJournalConverterTest runs it on a journal in the old form.
+   SoilSerializerCleanCodeTest&gt;&gt;testNoUnimplementedCalls and #testNoUnsentMessages
+   lost the skip.  SoilMaterializer&gt;&gt;nextCompiledMethod11: is the reader for the
+   format of Pharo 11 and older.  It sends CompiledMethod&gt;&gt;#trailer, which Pharo 12
+   and newer do not have, and #nextCompiledMethod: sends it only before Pharo 12.
+   The lint test has a pragma for such a case, &lt;ignoreNotImplementedSelectors:&gt;,
+   and the method now carries it.
+
+6. SoilCleanCodeTest&gt;&gt;testNoUnsentMessages (Soil-Core).  The test lists 65
+   selectors of Soil-Core that no code sends.  Most are public API that no test
+   called.  The new SoilApiSurfaceTest calls them and checks the answer of each.
+   Three selectors were wrong, and the tests found it:
+   - SoilSetup&gt;&gt;cacheSegmentAt:maximumBytes: and SoilSetup&gt;&gt;cacheObjectRecordsUsing:
+     give a block to SoilObjectRepository&gt;&gt;cacheSegmentAt:using:, and the
+     repository gave the block the segment.  The block sends #computeWeight: and
+     #maximumWeight:, which are messages of the LRU cache of the segment, so each
+     use failed with a doesNotUnderstand.  The repository now gives the block
+     the cache of the segment, as its comment says.
+   - SoilBehaviorRegistry&gt;&gt;recreateIndex committed its read-only transaction and
+     aborted it again in an ensure block, and the second removal from the
+     transaction manager failed.  The commit is gone; the abort stays.
+   - SoilDatabaseConsistencyTracker&gt;&gt;checkDescriptionsOf:referencedBy:in: has no
+     sender anywhere in the image.  The tracker loops over the versions and
+     sends #checkDescriptionsOfVersion:referencedBy:in: itself.  The method only
+     repeated that loop, so it is removed.
+   The test lost its skip.
+
+Also: SoilWindowsFileLockTest&gt;&gt;testErrorDescriptions and &gt;&gt;testWinOverlappedStructure
+lose their isWindows skip (no call into kernel32).
+
+Not repaired here: the three #testCodeCoverage tests (measured: Soil-Core 86
+percent of 2279 methods, Soil-Serializer 81 percent of 313, Soil-Resident 85
+percent of 183; the test wants 93), the six SoilIndexIteratorTest cases that
+cannot apply (SoilIndexIterator&gt;&gt;moveKey:to:ifAbsent: refuses an index with
+duplicate keys, and the opposite case has a test of its own), and the eight
+SoilWindowsFileLockTest tests that call kernel32.&quot;
+
+fix value: #SoilBTreePage value: #cleanRemovedIn:
+	value: [ :source | source includesSubstring: &#x27;self remove: removedItem key for: index&#x27; ]
+	value:
+&#x27;cleanRemovedIn: index
+	&quot;Drop the removed items themselves.  A removal by key takes any entry under
+	the key when the keys are not unique, and that can be the live entry next to
+	the removed one.&quot;
+	items removeAllSuchThat: [ :each | each value isRemoved ].
+	needWrite := true&#x27;.
+
+add value: #SoilRestoringIndexIterator value: #size value: &#x27;accessing&#x27; value:
+&#x27;size
+	&quot;The header of the index counts the newest committed state.  A reader whose
+	read version is older than the database version may see other entries, so it
+	counts the entries that it sees, the way #do: does.&quot;
+	| count item |
+	(readVersion isNil or: [ journal isNil ]) ifTrue: [ ^ super size ].
+	readVersion &gt;= journal soil control databaseVersion ifTrue: [ ^ super size ].
+	count := 0.
+	currentPage := nil.
+	[ (item := self basicNextAssociation) notNil ] whileTrue: [
+		(self restoreItem: item) ifNotNil: [ count := count + 1 ] ].
+	^ count&#x27;.
+
+fix value: #SoilIndexedDictionaryTest value: #testAReplayDoesNotAddAValueTheIndexHoldsAgain
+	value: [ :source | source includesSubstring: &#x27;backend = SoilBTree ifTrue: [ ^ self skip ]&#x27; ]
+	value:
+&#x27;testAReplayDoesNotAddAValueTheIndexHoldsAgain
+	&quot;a replay applies journals whose changes are already on disk, so an add finds its
+	pair on a page read back from disk - as a byte array, while the journal hands it a
+	SoilObjectId. Compared as they were, every replayed add appended a second entry
+	for its pair, and the index answered a value twice and a size too large.
+
+	On a BTree the cleaning of removed entries (SoilBTreePage&gt;&gt;#cleanRemovedIn:) used
+	to drop an entry by its key, and with duplicate keys that can be the live entry
+	next to the removed one.&quot;
+	| tx checkpoint values |
+	tx := soil newTransaction.
+	dict index allowDuplicateKeys.
+	tx root: dict.
+	tx commit.
+	checkpoint := soil control lastCheckpoint.
+
+	tx := soil newTransaction.
+	tx root
+		at: #testkey put: &#x27;&#x27;one&#x27;&#x27;;
+		at: #testkey put: &#x27;&#x27;two&#x27;&#x27;.
+	tx commit.
+	tx := soil newTransaction.
+	values := tx root at: #testkey.
+	tx root removeKey: #testkey value: values first.
+	tx commit.
+	&quot;back to a checkpoint before both commits - what a crash after them would have left&quot;
+	soil control checkpoint: checkpoint.
+	self reopen.
+
+	tx := soil newTransaction.
+	values := tx root at: #testkey.
+	self assert: values size equals: 1.
+	self assert: values first equals: &#x27;&#x27;two&#x27;&#x27;.
+	self assert: tx root size equals: 1.
+	tx abort&#x27;.
+
+fix value: #SoilIndexedDictionaryTest value: #testConcurrentIsEmpty
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testConcurrentIsEmpty
+	| tx1 tx2 tx3 |
+	tx1 := soil newTransaction.
+	tx1 root: dict.
+	dict
+		at: #one put: #onevalue.
+	tx1 commit.
+	tx2 := soil newTransaction.
+	&quot;After creating tx2 we open a concurrent transaction and remove the key of
+	the dictionary, which should still be visible to tx2&quot;
+	tx3 := soil newTransaction.
+	tx3 root removeKey: #one.
+	tx3 commit.
+	&quot;invisible: tx2 still has the key&quot;
+	self deny: tx2 root isEmpty.
+	self assert: tx2 root size equals: 1&#x27;.
+
+fix value: #SoilIndexedDictionaryTest value: #testRemoveKeyWithTwoTransactions
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testRemoveKeyWithTwoTransactions
+	&quot;the second transaction sees the key at its read version and can remove it in
+	its own view.  Its commit is a concurrent change: the first transaction removed
+	the key and committed.  The conflict is an SoilIndexHasConcurrentChange, a
+	SoilObjectHasConcurrentChange.&quot;
+	| tx tx2 |
+	tx := soil newTransaction.
+	tx root: dict.
+	dict at: #one put: #onevalue.
+	dict at: #two put: #twovalue.
+	tx commit.
+	&quot;we create two transactions&quot;
+	tx := soil newTransaction.
+	tx2 := soil newTransaction.
+	&quot;remove the key&quot;
+	tx2 root removeKey: #two.
+	tx2 commit.
+	&quot;check that we can still see in the first tr&quot;
+	self assert: (tx root at: #two) equals: #twovalue.
+	&quot;but removeKey: does not see it, we can remove it without error&quot;
+	tx root removeKey: #two ifAbsent: [ self fail ].
+	&quot;in its own view the first transaction holds one key now&quot;
+	self assert: tx root size equals: 1.
+	&quot;but commiting it will fail, as we have commited the remove in t2&quot;
+	self should: [ tx commit ] raise: SoilObjectHasConcurrentChange.
+	&quot;the first removal stands and the other key is untouched&quot;
+	tx := soil newTransaction.
+	self assert: (tx root at: #one) equals: #onevalue.
+	self assert: (tx root at: #two ifAbsent: [ nil ]) isNil.
+	self assert: tx root size equals: 1.
+	tx abort&#x27;.
+
+(Smalltalk globals includesKey: #SoilTestEqualsUsingClass) ifFalse: [
+	(Object &lt;&lt; #SoilTestEqualsUsingClass
+		slots: { #text };
+		package: &#x27;Soil-Core-Tests&#x27;;
+		yourself) install ].
+
+add value: #SoilTestEqualsUsingClass value: #text value: &#x27;accessing&#x27; value:
+&#x27;text
+	^ text&#x27;.
+
+add value: #SoilTestEqualsUsingClass value: #text: value: &#x27;accessing&#x27; value:
+&#x27;text: aString
+	text := aString&#x27;.
+
+add value: #SoilTestEqualsUsingClass value: #= value: &#x27;comparing&#x27; value:
+&#x27;= anObject
+	&quot;compares the class by sending #class to the other object, as the AST nodes of
+	the image do&quot;
+	self == anObject ifTrue: [ ^ true ].
+	^ self class = anObject class and: [ text = anObject text ]&#x27;.
+
+add value: #SoilTestEqualsUsingClass value: #hash value: &#x27;comparing&#x27; value:
+&#x27;hash
+	^ text hash&#x27;.
+
+add value: #SoilObjectProxy value: #class value: &#x27;class membership&#x27; value:
+&#x27;class
+	&quot;ProtoObject&gt;&gt;#class would answer SoilObjectProxy.  The proxy stands for its real
+	object, so it answers the class of the real object (as the package did until
+	commit c8aee57a, which took this method out).&quot;
+	^ self soilRealObject class&#x27;.
+
+fix value: #SoilTest value: #testRootSendingClass
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testRootSendingClass
+	&quot;We have a root in a Dictionary and that object overrides #= that checks using #class.
+	This tests that the proxy forwards #class correctly&quot;
+
+	| tx collection objectUsingClassinQueals |
+	tx := soil newTransaction.
+	collection := OrderedCollection new.
+	tx root: collection.
+	objectUsingClassinQueals := SoilTestEqualsUsingClass new
+		text: &#x27;&#x27;Some sample text&#x27;&#x27;;
+		yourself.
+	tx makeRoot: objectUsingClassinQueals.
+	collection add: objectUsingClassinQueals.
+	tx markDirty: objectUsingClassinQueals.
+	tx markDirty: collection.
+	tx commit.
+
+	&quot;now lets try to remove the object in a new transaction, note that the #remove uses #= which sends #class&quot;
+	tx := soil newTransaction.
+	tx root remove: objectUsingClassinQueals.
+	tx commit.
+	tx := soil newTransaction.
+	self assert: tx root isEmpty.
+	tx abort&#x27;.
+
+add value: #&#x27;SoilDatabaseMigration class&#x27; value: #isUsed value: &#x27;testing&#x27; value:
+&#x27;isUsed
+	&quot;the subclasses are found by #migratesVersion: with #allSubclasses, and no
+	method names one of them&quot;
+	^ true&#x27;.
+
+(Smalltalk globals at: #SoilObjectVisitor ifAbsent: [ nil ]) ifNotNil: [ :visitorClass |
+	(visitorClass isUsed not)
+		ifTrue: [
+			visitorClass removeFromSystem.
+			Stdio stdout nextPutAll: &#x27;FIXED SoilObjectVisitor removed (no sender, no subclass, no test)&#x27;; lf; flush ]
+		ifFalse: [
+			Stdio stdout nextPutAll: &#x27;SKIP SoilObjectVisitor (has a subclass or a reference)&#x27;; lf; flush ] ].
+
+fix value: #SoilCleanCodeTest value: #testNoUnusedClasses
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testNoUnusedClasses
+	&quot;Fail if there are Classes that are not used. They should either be tested or deleted.
+	(check how to override #isUsed for cases where classes are discovered reflectively)&quot;
+	| found  knownviolations |
+	found := self packageToCheck definedClasses reject: [ :class | class isUsed].
+
+	knownviolations := #(SoilSkipListDictionary SoilBTreeDictionary).
+	found := found reject: [:class | knownviolations includes: class name  ].
+
+	self
+		assert: found isEmpty
+		description: (&#x27;&#x27;the following classes are unused: &#x27;&#x27;, found asString)&#x27;.
+
+fix value: #SoilSerializerCleanCodeTest value: #testNoUnimplementedCalls
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testNoUnimplementedCalls
+
+	| remaining |
+	&quot;To tag selectors send that are not implemented that should not trigger this rule, use the pragma
+	&lt;ignoreNotImplementedSelectors: #(selector:to:be:ignored)&gt;&quot;
+
+	remaining := self packageToCheck methods select: [ :meth |
+		             | ignored |
+		             ignored := meth allIgnoredNotImplementedSelectors.
+						 meth messages anySatisfy: [ :m |
+			             m isSelectorSymbol not and: [
+				             (ignored includes: m) not ] ] ].
+
+	self assert: remaining isEmpty description: (&#x27;&#x27;the following methods send selectors that do not exist&#x27;&#x27;, remaining asString)&#x27;.
+
+fix value: #SoilSerializerCleanCodeTest value: #testNoUnsentMessages
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testNoUnsentMessages
+	&quot;Fail if there are methods implemented whose selectors is not sent anywhere in Pharo.
+	Please add a test or remove the method!&quot;
+
+	| found methods validExceptions |
+	found := self packageToCheck allUnsentMessages.
+	methods := self packageToCheck methods select: [ :method | found includes: method selector ].
+	methods := methods reject: [:method | method hasPragmaNamed: #inspectorPresentationOrder:title:
+  ].
+  validExceptions := { }.
+	&quot;No other exceptions beside the ones mentioned here should be allowed&quot;
+	 SystemVersion current major = 11 ifTrue: [
+		validExceptions := {
+		SoilMaterializer&gt;&gt;#nextCompiledBlock12: .
+		SoilMaterializer&gt;&gt;#nextCompiledMethod12: }
+	].
+
+	methods := methods asOrderedCollection
+								removeAll: validExceptions;
+								yourself.
+
+
+	self
+		assert: methods isEmpty
+		description: (&#x27;&#x27;the following selectors are implemented, but never send&#x27;&#x27;, methods asString)&#x27;.
+
+fix value: #SoilWindowsFileLockTest value: #testErrorDescriptions
+	value: [ :source | source includesSubstring: &#x27;OSPlatform current isWindows ifFalse: [ ^ self skip ]&#x27; ]
+	value:
+&#x27;testErrorDescriptions
+	&quot;Test error description helper method.  The method only answers texts for numbers,
+	so it runs on every platform.&quot;
+
+	&quot;Test known error codes&quot;
+	self assert: (SoilWindowsFileLock errorDescription: 5) equals: &#x27;&#x27;Access denied&#x27;&#x27;.
+	self assert: (SoilWindowsFileLock errorDescription: 6) equals: &#x27;&#x27;Invalid file handle&#x27;&#x27;.
+	self assert: (SoilWindowsFileLock errorDescription: 33) equals: &#x27;&#x27;Lock violation (region already locked)&#x27;&#x27;.
+	self assert: (SoilWindowsFileLock errorDescription: 158) equals: &#x27;&#x27;Region not locked&#x27;&#x27;.
+
+	&quot;Test unknown error code&quot;
+	self assert: ((SoilWindowsFileLock errorDescription: 9999) includesSubstring: &#x27;&#x27;Unknown error&#x27;&#x27;)&#x27;.
+
+fix value: #SoilWindowsFileLockTest value: #testWinOverlappedStructure
+	value: [ :source | source includesSubstring: &#x27;OSPlatform current isWindows ifFalse: [ ^ self skip ]&#x27; ]
+	value:
+&#x27;testWinOverlappedStructure
+	&quot;Test WinOverlapped structure initialization and field access.  The structure is
+	plain memory, no call into kernel32, so it runs on every platform.&quot;
+
+	| overlapped |
+	overlapped := SoilWinOverlappedStruct new.
+
+	&quot;Test field setters and getters&quot;
+	overlapped offset: 16r12345678.
+	self assert: overlapped offset equals: 16r12345678.
+
+	overlapped offsetHigh: 16rABCDEF00.
+	self assert: overlapped offsetHigh equals: 16rABCDEF00.
+
+	overlapped internal: 0.
+	self assert: overlapped internal equals: 0.
+
+	overlapped internalHigh: 0.
+	self assert: overlapped internalHigh equals: 0.
+
+	overlapped hEvent: ExternalAddress null.
+	self assert: overlapped hEvent getHandle equals: ExternalAddress null&#x27;.
+
+(Smalltalk globals includesKey: #SoilApiSurfaceTest) ifFalse: [
+	(TestCase &lt;&lt; #SoilApiSurfaceTest
+		slots: { #soil };
+		package: &#x27;Soil-Core-Tests&#x27;;
+		yourself) install ].
+
+add value: #SoilApiSurfaceTest value: #setUp value: &#x27;tests&#x27; value:
+&#x27;setUp
+	super setUp.
+	soil := Soil path: &#x27;&#x27;soil-api-surface-tests&#x27;&#x27;.
+	soil
+		destroy;
+		initializeFilesystem&#x27;.
+
+add value: #SoilApiSurfaceTest value: #tearDown value: &#x27;tests&#x27; value:
+&#x27;tearDown
+	soil ifNotNil: [
+		soil isOpen ifTrue: [ soil close ].
+		soil destroy ].
+	super tearDown&#x27;.
+
+add value: #SoilApiSurfaceTest value: #newIndex: value: &#x27;tests&#x27; value:
+&#x27;newIndex: anIndexClass
+	&quot;a stand-alone index in a file of its own, five keys in it&quot;
+	| index |
+	index := anIndexClass new
+		path: &#x27;&#x27;sunit-api-surface-index&#x27;&#x27;;
+		destroy;
+		initializeFilesystem;
+		initializeHeaderPage;
+		keySize: 8;
+		valueSize: 8;
+		uniqueKeys: true;
+		yourself.
+	anIndexClass == SoilSkipList ifTrue: [ index maxLevel: 4 ].
+	1 to: 5 do: [ :n | index at: n add: (n asByteArrayOfSize: 8) ].
+	^ index&#x27;.
+
+add value: #SoilApiSurfaceTest value: #commitRoot value: &#x27;tests&#x27; value:
+&#x27;commitRoot
+	&quot;a committed root, changed once by a second commit; answers the object id of the root&quot;
+	| tx |
+	tx := soil newTransaction.
+	tx root: (SoilPersistentDictionary new
+		at: #a put: 1;
+		yourself).
+	tx commit.
+	tx := soil newTransaction.
+	tx root at: #a put: 2.
+	tx commit.
+	tx := soil newTransaction.
+	^ [ tx objectIdOf: tx root ] ensure: [ tx abort ]&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testObjectIdPredicates value: &#x27;tests&#x27; value:
+&#x27;testObjectIdPredicates
+	self deny: Object new isObjectId.
+	self assert: (SoilObjectId segment: 1 index: 1) isObjectId&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIndexKindPredicates value: &#x27;tests&#x27; value:
+&#x27;testIndexKindPredicates
+	self assert: SoilBTree new isBTree.
+	self deny: SoilSkipList new isBTree.
+	self should: [ SoilIndex new isBTree ] raise: Error&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testSoilEmit value: &#x27;tests&#x27; value:
+&#x27;testSoilEmit
+	self shouldnt: [ 3 soilEmit ] raise: Error&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testPageNavigation value: &#x27;tests&#x27; value:
+&#x27;testPageNavigation
+	{ SoilSkipList. SoilBTree } do: [ :each | | index page keys |
+		index := self newIndex: each.
+		page := index firstPage.
+		keys := page items collect: #key.
+		self assert: (page itemAfter: keys first) key equals: (keys at: 2).
+		self assert: (page itemAfter: keys last) isNil.
+		self assert: (page itemBefore: (keys at: 3)) key equals: (keys at: 2).
+		index close ]&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testSkipListPageKeyQueries value: &#x27;tests&#x27; value:
+&#x27;testSkipListPageKeyQueries
+	| index page keys |
+	index := self newIndex: SoilSkipList.
+	page := index firstPage.
+	keys := page items collect: #key.
+	self assert: (page firstItemIndexForKey: keys first) equals: 1.
+	self assert: (page firstItemIndexForKey: keys last) equals: keys size.
+	self assert: (page firstItemIndexForKey: 16r7FFFFFFF) equals: 0.
+	self assert: page sizeInBytes equals: page headerSize + (keys size * (page keySize + page valueSize)).
+	index close&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testBTreePageFindItemBefore value: &#x27;tests&#x27; value:
+&#x27;testBTreePageFindItemBefore
+	| index page keys |
+	index := self newIndex: SoilBTree.
+	page := index firstPage.
+	keys := page items collect: #key.
+	self assert: (page findItemBefore: keys last) key equals: (keys at: keys size - 1).
+	index close&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIteratorResetCurrentKey value: &#x27;tests&#x27; value:
+&#x27;testIteratorResetCurrentKey
+	{ SoilSkipList. SoilBTree } do: [ :each | | index iterator first |
+		index := self newIndex: each.
+		iterator := index newIterator.
+		first := iterator next.
+		iterator next.
+		iterator resetCurrentKey.
+		self assert: iterator next equals: first.
+		index close ]&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIteratorRemoveItemsSuchThat value: &#x27;tests&#x27; value:
+&#x27;testIteratorRemoveItemsSuchThat
+	{ SoilSkipList. SoilBTree } do: [ :each | | index |
+		index := self newIndex: each.
+		self assert: (index firstPage hasKey: 3).
+		index newIterator removeItemsSuchThat: [ :item | item key = 3 ].
+		self deny: (index firstPage hasKey: 3).
+		self assert: (index firstPage hasKey: 4).
+		index close ]&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIndexMarkAllDirty value: &#x27;tests&#x27; value:
+&#x27;testIndexMarkAllDirty
+	{ SoilSkipList. SoilBTree } do: [ :each | | index |
+		index := self newIndex: each.
+		index flush.
+		index markAllDirty.
+		self assert: index dirtyPages notEmpty.
+		index close ]&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIndexBasicRemoveKey value: &#x27;tests&#x27; value:
+&#x27;testIndexBasicRemoveKey
+	{ SoilSkipList. SoilBTree } do: [ :each | | index |
+		index := self newIndex: each.
+		index basicRemoveKey: 3.
+		self deny: (index firstPage hasKey: 3).
+		self should: [ index basicRemoveKey: 3 ] raise: KeyNotFound.
+		index close ]&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testStoreKinds value: &#x27;tests&#x27; value:
+&#x27;testStoreKinds
+	| index store copy |
+	index := self newIndex: SoilBTree.
+	store := index store.
+	self deny: store isCopyOnWrite.
+	self assert: store orderedPages size equals: 1.
+	self assert: store orderedPages first == (store pageAt: 1).
+	copy := SoilCopyOnWriteIndexStore new.
+	copy wrappedStore: store.
+	self assert: copy isCopyOnWrite.
+	self assert: copy wrappedStore == store.
+	index close&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testRewriterForce value: &#x27;tests&#x27; value:
+&#x27;testRewriterForce
+	&quot;a reindexing file that an aborted rewrite left behind stops the next rewrite,
+	unless the rewrite is forced&quot;
+	| index staleFile |
+	index := self newIndex: SoilBTree.
+	staleFile := index path , #reindex.
+	staleFile ensureCreateFile.
+	self should: [ index newPluggableRewriter rewrite ] raise: Error.
+	index newPluggableRewriter
+		force: true;
+		rewrite.
+	self deny: staleFile exists.
+	self assert: (index firstPage hasKey: 3).
+	index close&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testFabricAccessors value: &#x27;tests&#x27; value:
+&#x27;testFabricAccessors
+	| fabric |
+	fabric := SoilFabric new.
+	fabric serializerClass: Object.
+	fabric materializerClass: Array.
+	fabric transactionClass: String.
+	self assert: fabric serializerClass equals: Object.
+	self assert: fabric materializerClass equals: Array.
+	self assert: fabric transactionClass equals: String.
+	soil fabric: fabric.
+	self assert: soil fabric == fabric&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testSetupCaches value: &#x27;tests&#x27; value:
+&#x27;testSetupCaches
+	| metrics |
+	soil notificationHandler: SoilMetrics new.
+	metrics := soil notificationHandler.
+	soil setup cacheObjectRecordsUsing: [ :cache |
+		cache
+			computeWeight: #soilSizeInMemory;
+			maximumWeight: 100000 ].
+	self assert: metrics metaRecordCacheTotalWeight equals: 0.
+	soil setup cacheSegmentAt: 1 maximumBytes: 100000.
+	self assert: metrics metaRecordCacheTotalWeight isInteger&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testSetupFsyncEnabled value: &#x27;tests&#x27; value:
+&#x27;testSetupFsyncEnabled
+	soil setup fsyncEnabled: false.
+	self deny: soil setup isFsyncEnabled.
+	soil setup fsyncEnabled: true.
+	self assert: soil setup isFsyncEnabled&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testMetadataUpdateLastBackup value: &#x27;tests&#x27; value:
+&#x27;testMetadataUpdateLastBackup
+	self assert: soil metadata lastBackup equals: DateAndTime epoch.
+	soil metadata updateLastBackup.
+	self assert: soil metadata lastBackup &gt; DateAndTime epoch&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testOpenLogged value: &#x27;tests&#x27; value:
+&#x27;testOpenLogged
+	soil close.
+	soil openLogged.
+	self assert: soil isOpen.
+	self assert: soil metadata lastOpened &gt; DateAndTime epoch&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testEnsureOnPath value: &#x27;tests&#x27; value:
+&#x27;testEnsureOnPath
+	&quot;an existing database is opened, a missing one is created&quot;
+	| path other |
+	path := &#x27;&#x27;soil-api-surface-ensure&#x27;&#x27;.
+	(Soil path: path) destroy.
+	other := Soil ensureOnPath: path.
+	[ self assert: other isInitialized ] ensure: [
+		other isOpen ifTrue: [ other close ].
+		other destroy ].&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testMigrateDatabaseFormatRefusesACurrentDatabase value: &#x27;tests&#x27; value:
+&#x27;testMigrateDatabaseFormatRefusesACurrentDatabase
+	&quot;a database in the current format needs no migration&quot;
+	soil close.
+	self
+		should: [ soil migrateDatabaseFormat ]
+		raise: Error
+		whoseDescriptionIncludes: &#x27;&#x27;does not need migration&#x27;&#x27;
+		description: &#x27;&#x27;migrating a current database must be refused&#x27;&#x27;&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIndexManagerKnowsItsIndexes value: &#x27;tests&#x27; value:
+&#x27;testIndexManagerKnowsItsIndexes
+	| manager |
+	manager := (soil objectRepository segmentAt: 1) indexManager.
+	self deny: (manager hasIndexId: &#x27;&#x27;no-such-index&#x27;&#x27;).
+	manager createIndexWithId: &#x27;&#x27;api-surface-index&#x27;&#x27; class: SoilSkipList.
+	self assert: (manager hasIndexId: &#x27;&#x27;api-surface-index&#x27;&#x27;)&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testAbortAll value: &#x27;tests&#x27; value:
+&#x27;testAbortAll
+	| one two |
+	one := soil newTransaction.
+	two := soil newTransaction.
+	soil transactionManager abortAll.
+	self assert: soil transactionManager smallestReadVersion isNil&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testTransactionManualWriteTracking value: &#x27;tests&#x27; value:
+&#x27;testTransactionManualWriteTracking
+	| tx |
+	tx := soil newTransaction.
+	self deny: tx commitStrategy hasRecords.
+	tx beManualWriteTracking.
+	tx root: (SoilPersistentDictionary new
+		at: #a put: 1;
+		yourself).
+	self assert: tx commitStrategy hasRecords.
+	tx markDirty: tx root.
+	tx commit.
+	tx := soil newTransaction.
+	self assert: (tx root at: #a) equals: 1.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testTransactionSetWriteVersion value: &#x27;tests&#x27; value:
+&#x27;testTransactionSetWriteVersion
+	| tx |
+	tx := soil newTransaction.
+	self should: [ tx setWriteVersion: tx readVersion ] raise: SoilInvalidWriteVersion.
+	tx setWriteVersion: tx readVersion + 1.
+	self assert: tx writeVersion equals: tx readVersion + 1.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testTransactionRegisterRecord value: &#x27;tests&#x27; value:
+&#x27;testTransactionRegisterRecord
+	| tx record |
+	tx := soil newTransaction.
+	self should: [ tx registerRecord: SoilClusterRecord new ] raise: Error.
+	record := SoilClusterRecord new
+		objectId: (SoilObjectId segment: 1 index: 77);
+		object: &#x27;&#x27;registered&#x27;&#x27;;
+		yourself.
+	tx registerRecord: record.
+	self assert: (tx objectIdOf: &#x27;&#x27;registered&#x27;&#x27;) equals: record objectId.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testJournalQueriesByObjectId value: &#x27;tests&#x27; value:
+&#x27;testJournalQueriesByObjectId
+	| objectId |
+	objectId := self commitRoot.
+	self assert: (soil journal entriesWithObjectId: objectId) notEmpty.
+	self assert: (soil journal historyOfObjectId: objectId) notEmpty.
+	self assert: (soil journal lastObjectVersionEntriesWithObjectId: objectId) notEmpty&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testJournalNewTransactionJournal value: &#x27;tests&#x27; value:
+&#x27;testJournalNewTransactionJournal
+	| journal |
+	self commitRoot.
+	journal := soil journal newTransactionJournalForId: soil control databaseVersion + 1.
+	self assert: journal index equals: soil control databaseVersion + 1&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testJournalMaxFragmentFiles value: &#x27;tests&#x27; value:
+&#x27;testJournalMaxFragmentFiles
+	soil setup maxFragmentFiles: 3.
+	self assert: soil journal maxFragmentFiles equals: 3&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testFragmentFileEntriesCollect value: &#x27;tests&#x27; value:
+&#x27;testFragmentFileEntriesCollect
+	| classes |
+	self commitRoot.
+	classes := soil journal fragmentFiles flatCollect: [ :each | each entriesCollect: #class ].
+	self assert: classes notEmpty.
+	self assert: (classes includes: SoilNewObjectEntry).
+	self assert: (classes includes: SoilNewObjectVersionEntry)&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testJournalEntryAccessors value: &#x27;tests&#x27; value:
+&#x27;testJournalEntryAccessors
+	| entries checkpoints versions |
+	self commitRoot.
+	entries := soil journal fragmentFiles flatCollect: [ :each | each entriesCollect: #yourself ].
+	checkpoints := entries select: [ :each | each class == SoilCheckpointEntry ].
+	self assert: checkpoints notEmpty.
+	self assert: (checkpoints first checkpointedAt isKindOf: DateAndTime).
+	self assert: checkpoints first previousCheckpoint notNil.
+	versions := entries select: [ :each | each class == SoilNewObjectVersionEntry ].
+	self assert: versions notEmpty.
+	self deny: versions first oldBytes isString&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testJournalEntryClassMap value: &#x27;tests&#x27; value:
+&#x27;testJournalEntryClassMap
+	self assert: (SoilJournalEntry allMapped at: SoilCheckpointEntry journalTypeCode) equals: SoilCheckpointEntry&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testRecordFindReferences value: &#x27;tests&#x27; value:
+&#x27;testRecordFindReferences
+	| tx record |
+	self commitRoot.
+	tx := soil newTransaction.
+	tx root at: #a.
+	record := tx objectMap at: tx root theNonSoilProxy.
+	self assert: record findReferencesTo isCollection.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testExporterExportOn value: &#x27;tests&#x27; value:
+&#x27;testExporterExportOn
+	&quot;exporting to a stream by #exportOn: writes what #stream: and #export write&quot;
+	| tx expected actual |
+	self commitRoot.
+	tx := soil newTransaction.
+	expected := ByteArray streamContents: [ :stream |
+		(SoilGraphExporter new
+			transaction: tx;
+			addObject: tx root;
+			yourself)
+				stream: stream;
+				export ].
+	actual := ByteArray streamContents: [ :stream |
+		(SoilGraphExporter new
+			transaction: tx;
+			addObject: tx root;
+			yourself)
+				exportOn: stream ].
+	tx abort.
+	self assert: actual equals: expected&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testExporterExportObjectId value: &#x27;tests&#x27; value:
+&#x27;testExporterExportObjectId
+	| tx bytes |
+	self commitRoot.
+	tx := soil newTransaction.
+	bytes := ByteArray streamContents: [ :stream |
+		(SoilGraphExporter new
+			transaction: tx;
+			stream: stream;
+			yourself)
+				export: (tx objectIdOf: tx root) ].
+	tx abort.
+	self assert: bytes notEmpty&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testExporterMigrateAll value: &#x27;tests&#x27; value:
+&#x27;testExporterMigrateAll
+	| tx exporter |
+	tx := soil newTransaction.
+	tx root: SoilTestClass1 new.
+	tx commit.
+	tx := soil newTransaction.
+	exporter := SoilGraphExporter new
+		transaction: tx;
+		yourself.
+	exporter migrateAll: { SoilTestClass1 } to: [ :object | object ].
+	self assert: (exporter instVarNamed: #classMigrations) keys equals: { SoilTestClass1 }.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testFindRecordsVisitorLimit value: &#x27;tests&#x27; value:
+&#x27;testFindRecordsVisitorLimit
+	| tx visitor |
+	self commitRoot.
+	tx := soil newTransaction.
+	visitor := SoilFindRecordsVisitor new
+		numberOfRecords: 1;
+		yourself.
+	visitor find: [ :version | true ] in: tx.
+	self assert: visitor records size equals: 1.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testTrackingVisitorTrackers value: &#x27;tests&#x27; value:
+&#x27;testTrackingVisitorTrackers
+	| visitor tracker |
+	tracker := SoilTestCountingTracker new.
+	visitor := SoilTrackingVisitor new.
+	visitor addTracker: tracker.
+	self assert: visitor trackers asArray equals: { tracker }&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testDetachedObjectFuelReplacement value: &#x27;tests&#x27; value:
+&#x27;testDetachedObjectFuelReplacement
+	| tx detached real |
+	self commitRoot.
+	tx := soil newTransaction.
+	real := tx root theNonSoilProxy.
+	detached := SoilFullyDetachedObject on: tx root in: tx.
+	self assert: detached fuelReplacement == real.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testProxyFuelReplacement value: &#x27;tests&#x27; value:
+&#x27;testProxyFuelReplacement
+	&quot;a proxy that is not loaded stands for itself in a serialization, one that is loaded
+	for the object it holds&quot;
+	| tx graph proxy |
+	tx := soil newTransaction.
+	graph := SoilTestGraphRoot new
+		nested: (SoilTestNestedObject new
+			label: &#x27;&#x27;nested under root&#x27;&#x27;;
+			reference: (SoilTestClusterRoot new
+				nested: (SoilTestNestedObject new
+					label: &#x27;&#x27;nested under cluster&#x27;&#x27;))).
+	tx makeRoot: graph nested reference.
+	tx root: graph.
+	tx commit.
+	tx := soil newTransaction.
+	proxy := tx root nested reference.
+	self assert: proxy isSoilProxy.
+	self assert: proxy objectIsNotLoaded.
+	self assert: proxy fuelReplacement class equals: SoilUnresolvedProxy.
+	self assert: proxy fuelReplacement objectId equals: proxy objectId.
+	proxy nested.
+	self deny: proxy objectIsNotLoaded.
+	self assert: proxy fuelReplacement == proxy theNonSoilProxy.
+	tx abort&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testObjectRepositoryLocations value: &#x27;tests&#x27; value:
+&#x27;testObjectRepositoryLocations
+	&quot;the places of the versions that a reader still needs: with no reader only the
+	newest, with a reader at the first commit the newest and the one the reader sees&quot;
+	| objectId |
+	objectId := self commitRoot.
+	self assert: (soil objectRepository locationsOf: objectId upToReadVersion: nil) size equals: 1.
+	self assert: (soil objectRepository locationsOf: objectId upToReadVersion: 1) size equals: 2&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testFileFieldInitialBlock value: &#x27;tests&#x27; value:
+&#x27;testFileFieldInitialBlock
+	| field |
+	field := SoilFileField name: #answer size: 4 initialBlock: [ 42 ].
+	self assert: field initialBlock value equals: 42&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testBehaviorShapeConflictAccessors value: &#x27;tests&#x27; value:
+&#x27;testBehaviorShapeConflictAccessors
+	| error |
+	error := SoilBehaviorShapeConflict new
+		behaviorIdentifier: &#x27;&#x27;Foo&#x27;&#x27;;
+		importedInstVarNames: #(a b);
+		presentInstVarNames: #(a c);
+		yourself.
+	self assert: error importedInstVarNames equals: #(a b).
+	self assert: error presentInstVarNames equals: #(a c).
+	self assert: (error messageText includesSubstring: &#x27;&#x27;Foo&#x27;&#x27;)&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testIncompatibleExportFormatAccessors value: &#x27;tests&#x27; value:
+&#x27;testIncompatibleExportFormatAccessors
+	| error |
+	error := SoilIncompatibleExportFormat new
+		importerUnderstands: 1;
+		streamSays: 2;
+		yourself.
+	self assert: error importerUnderstands equals: 1.
+	self assert: error streamSays equals: 2.
+	self assert: (error messageText includesSubstring: &#x27;&#x27;2&#x27;&#x27;)&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testClusterVersionResetBytes value: &#x27;tests&#x27; value:
+&#x27;testClusterVersionResetBytes
+	| objectId version |
+	objectId := self commitRoot.
+	version := (soil objectRepository segmentAt: objectId segment) at: objectId index.
+	self deny: (version instVarNamed: #bytes) isNil.
+	version resetBytes.
+	self assert: (version instVarNamed: #bytes) isNil&#x27;.
+
+add value: #SoilApiSurfaceTest value: #testBehaviorRegistryRecreateIndex value: &#x27;tests&#x27; value:
+&#x27;testBehaviorRegistryRecreateIndex
+	&quot;the index of class names is built again from the descriptions in the meta segment&quot;
+	| tx |
+	tx := soil newTransaction.
+	tx root: SoilTestClass1 new.
+	tx commit.
+	soil behaviorRegistry recreateIndex.
+	self assert: (soil behaviorRegistry nameAt: SoilTestClass1 name ifAbsent: [ nil ]) notNil.
+	soil close.
+	soil := (Soil path: &#x27;&#x27;soil-api-surface-tests&#x27;&#x27;) open.
+	tx := soil newTransaction.
+	self assert: tx root class equals: SoilTestClass1.
+	tx abort&#x27;.
+
+(Smalltalk globals includesKey: #SoilJournalConverterTest) ifFalse: [
+	(TestCase &lt;&lt; #SoilJournalConverterTest
+		slots: { #soil };
+		package: &#x27;Soil-Core-Tests&#x27;;
+		yourself) install ].
+
+add value: #SoilJournalConverterTest value: #setUp value: &#x27;tests&#x27; value:
+&#x27;setUp
+	super setUp.
+	soil := Soil path: &#x27;&#x27;soil-journal-converter-tests&#x27;&#x27;.
+	soil
+		destroy;
+		initializeFilesystem&#x27;.
+
+add value: #SoilJournalConverterTest value: #tearDown value: &#x27;tests&#x27; value:
+&#x27;tearDown
+	soil ifNotNil: [
+		soil isOpen ifTrue: [ soil close ].
+		soil destroy ].
+	super tearDown&#x27;.
+
+add value: #SoilJournalConverterTest value: #testConvertRebuildsTheJournalFromOldFiles value: &#x27;tests&#x27; value:
+&#x27;testConvertRebuildsTheJournalFromOldFiles
+	&quot;The first format of the journal kept one file for each transaction, named for the
+	transaction (1.journal, 2.journal ...). The converter reads such files, writes the
+	same transactions into the journal of today and deletes the old files.&quot;
+	| tx journals journalPath |
+	1 to: 2 do: [ :n |
+		tx := soil newTransaction.
+		tx root: (SoilPersistentDictionary new
+			at: #n put: n;
+			yourself).
+		tx commit ].
+	journals := (1 to: soil control databaseVersion) collect: [ :each |
+		soil journal transactionJournalAt: each ifAbsent: [ self fail ] ].
+	soil close.
+	&quot;put the journal into the old form: the fragment files go, one file for each transaction comes&quot;
+	journalPath := soil path / #journal.
+	journalPath files do: [ :each | each delete ].
+	journals do: [ :each |
+		(journalPath / (each index printString , &#x27;&#x27;.journal&#x27;&#x27;)) binaryWriteStreamDo: [ :stream |
+			each writeOn: stream ] ].
+	self assert: (journalPath allChildrenMatching: &#x27;&#x27;*.journal&#x27;&#x27;) size equals: journals size.
+	soil basicOpen.
+	(SoilJournalConverter new
+		soil: soil;
+		yourself) convert.
+	self assert: (journalPath allChildrenMatching: &#x27;&#x27;*.journal&#x27;&#x27;) isEmpty.
+	journals do: [ :each |
+		self assert: (soil journal transactionJournalAt: each index ifAbsent: [ nil ]) notNil ].
+	soil close.
+	soil := (Soil path: &#x27;&#x27;soil-journal-converter-tests&#x27;&#x27;) open.
+	tx := soil newTransaction.
+	self assert: (tx root at: #n) equals: 2.
+	tx abort&#x27;.
+
+
+fix value: #SoilBehaviorRegistry value: #recreateIndex
+	value: [ :source | source includesSubstring: &#x27;txn commit ] &#x27; ]
+	value:
+&#x27;recreateIndex 
+	| txn metaSegment record zeroFound |
+	&quot;this is a last resort action to recreate the index in a sane
+	state. It assumes that all behavior descriptions are written 
+	in the meta segement but the entry in the index is bogus. 
+	So we read all from the segment and readd them.
+	The transaction only reads, so it is aborted at the end. A commit before the abort
+	removed the transaction from the transaction manager a second time and failed&quot;
+	txn := soil newTransaction.
+	[
+		metaSegment := soil objectRepository metaSegment.
+		3 to: metaSegment lastObjectIndex do: [ :n |
+			record := txn materializeRecord: (metaSegment at: n). 
+			self nameAt: record object behaviorIdentifier put: record objectId 
+		] ] 
+			ensure: [ txn abort ].
+	&quot;there are pages with multiple zero entries. The only way right now
+	is to remove the same key until the ifAbsent block is executed&quot;
+	zeroFound := true.
+	[ zeroFound ] whileTrue: [  
+		index removeKey: 0 ifAbsent: [ zeroFound := false ] ].
+	&quot;as we are on it we can also compact the index&quot;
+	index compact&#x27;.
+
+fix value: #SoilObjectRepository value: #cacheSegmentAt:using:
+	value: [ :source | source includesSubstring: &#x27;aBlock value: metaSegment&#x27; ]
+	value:
+&#x27;cacheSegmentAt: index using: aBlock
+	| segment |
+	&quot;exchange object segment with a LRU cached segment. The block is given the LRU
+	cache of the new segment and sets it up (SoilSetup&gt;&gt;cacheSegmentAt:maximumBytes:
+	sends #computeWeight: and #maximumWeight: to what it is given, and those are
+	messages of the cache, not of the segment)&quot;
+	(index == 0) 
+		ifTrue: [ 
+			metaSegment := metaSegment asCachedSegment.
+			aBlock value: metaSegment cache ]
+		ifFalse: [ 
+			segment := (segments at: index) asCachedSegment.
+			aBlock value: segment cache.
+			segments 	
+				at: index 
+				put: segment ]&#x27;.
+
+fix value: #SoilMaterializer value: #nextCompiledMethod11:
+	value: [ :source | (source includesSubstring: &#x27;ignoreNotImplementedSelectors&#x27;) not ]
+	value:
+&#x27;nextCompiledMethod11: aClass
+	&quot;The reader for the format of Pharo 11 and older: #nextCompiledMethod: sends it only
+	before Pharo 12. Pharo 12 and newer have no CompiledMethod&gt;&gt;#trailer, so the lint
+	test for unimplemented calls must not count that send.&quot;
+	&lt;ignoreNotImplementedSelectors: #(trailer)&gt;
+
+ 	| header bytecodesPlusTrailerSize compiledMethod |
+
+ 	header :=  self nextSoilObject.
+ 	bytecodesPlusTrailerSize := self nextLengthEncodedInteger.
+
+ 	compiledMethod := aClass
+ 		newMethod: bytecodesPlusTrailerSize
+ 		header: header.
+
+	self registerObject: compiledMethod.
+
+ 	&quot;first the literals&quot;
+	1 to: compiledMethod numLiterals do: [ :i |		
+		compiledMethod literalAt: i put: self nextSoilObject ].
+	
+	
+	&quot;LiteralVariables have been restored as new instances pointing to nil, we now do a pass to re-lookup. We have to do this as a second pass as the last literal encodes the class name we have to use to re-lookup&quot;
+	
+	1 to: compiledMethod numLiterals do: [ :i |	 | literal className class |	
+		className :=  (compiledMethod literalAt: compiledMethod numLiterals) name.
+		class := Smalltalk globals at: className.
+		literal := compiledMethod literalAt: i.
+		(literal isKindOf: LiteralVariable) ifTrue: [ 
+			compiledMethod literalAt: i put: (class lookupVar: literal name).
+			 ]  ].
+
+ 	&quot;then the bytecodes, we ignore the trailer for now&quot;
+ 	compiledMethod initialPC 
+ 		to: compiledMethod size - compiledMethod trailer size
+ 		do: [ :index |
+ 			compiledMethod
+ 				at: index
+ 				put: self nextByte ].
+	
+ 	^compiledMethod&#x27;.
+
+fix value: #SoilCleanCodeTest value: #testNoUnsentMessages
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testNoUnsentMessages
+	&quot;Fail if there are methods implemented whose selectors is not sent anywhere in Pharo.
+	Please add a test or remove the method!&quot;
+
+	| found methods|
+	found := self packageToCheck allUnsentMessages.
+	methods := self packageToCheck methods select: [ :method | found includes: method selector ].
+	methods := methods reject: [:method | method hasPragmaNamed: #inspectorPresentationOrder:title:
+  ].
+	
+	self
+		assert: methods isEmpty
+		description: (&#x27;&#x27;the following selectors are implemented, but never send&#x27;&#x27;, methods asString)&#x27;.
+
+&quot;A method that has no sender anywhere in the image, only a copy of the loop that its
+sibling #checkDescriptionsOfVersion:referencedBy:in: runs&quot;
+(Smalltalk globals at: #SoilDatabaseConsistencyTracker ifAbsent: [ nil ]) ifNotNil: [ :trackerClass |
+	(trackerClass includesSelector: #checkDescriptionsOf:referencedBy:in:)
+		ifTrue: [
+			trackerClass removeSelector: #checkDescriptionsOf:referencedBy:in:.
+			Stdio stdout nextPutAll: &#x27;FIXED SoilDatabaseConsistencyTracker&gt;&gt;checkDescriptionsOf:referencedBy:in: removed (no sender)&#x27;; lf; flush ]
+		ifFalse: [
+			Stdio stdout nextPutAll: &#x27;SKIP SoilDatabaseConsistencyTracker&gt;&gt;checkDescriptionsOf:referencedBy:in: (absent)&#x27;; lf; flush ] ].
+</pre></details><details open><summary>Tests that cannot apply, with the proof: apptivegrid-soil.txt (<a href="../files/packages/not-applicable/apptivegrid-soil.txt">download</a>)</summary><pre class="code"># Tests that cannot apply.  One test for each line: Class&gt;&gt;selector (with the
+# parameters of a parametrized case), or Class&gt;&gt;* for each test of the class.
+# A line that starts with # has the proof.
+#
+# SoilIndexIteratorTest is a parametrized test class (index class and
+# uniqueKeys).  SoilIndexIterator&gt;&gt;moveKey:to:ifAbsent: signals a SoilError
+# when the index does not have unique keys (Soil-Core, SoilIndexIterator,
+# &#x27;index hasUniqueKeys ifFalse: [ SoilError signal: ... ]&#x27;).  So testMoveKey
+# and testMoveKeyOverwritesTheTarget have a meaning only for uniqueKeys true,
+# and testMoveKeyOnNonUniqueIndexIsRefused only for uniqueKeys false.  Each
+# test skips for the other value, and the cases with a meaning pass.
+SoilIndexIteratorTest&gt;&gt;testMoveKey(#classToTest-&gt;SoilBTree_#uniqueKeys-&gt;false)
+SoilIndexIteratorTest&gt;&gt;testMoveKey(#classToTest-&gt;SoilSkipList_#uniqueKeys-&gt;false)
+SoilIndexIteratorTest&gt;&gt;testMoveKeyOverwritesTheTarget(#classToTest-&gt;SoilBTree_#uniqueKeys-&gt;false)
+SoilIndexIteratorTest&gt;&gt;testMoveKeyOverwritesTheTarget(#classToTest-&gt;SoilSkipList_#uniqueKeys-&gt;false)
+SoilIndexIteratorTest&gt;&gt;testMoveKeyOnNonUniqueIndexIsRefused(#classToTest-&gt;SoilBTree_#uniqueKeys-&gt;true)
+SoilIndexIteratorTest&gt;&gt;testMoveKeyOnNonUniqueIndexIsRefused(#classToTest-&gt;SoilSkipList_#uniqueKeys-&gt;true)
+#
+# SoilWindowsFileLockTest: each of these tests starts with
+# &#x27;OSPlatform current isWindows ifFalse: [ ^ self skip ]&#x27; and calls kernel32
+# through FFI (LockFileEx, UnlockFileEx, FlushFileBuffers: Soil-File,
+# SoilWindowsFileLock, &#x27;module: #kernel32&#x27;).  The test machine is macOS.  The
+# two tests of the class that do not call kernel32 (testErrorDescriptions,
+# testWinOverlappedStructure) run and pass.  SoilLockableStreamTest and
+# SoilFileLockRegistryTest test the file locks of macOS and pass.
+SoilWindowsFileLockTest&gt;&gt;testFlushFileBuffersDirect
+SoilWindowsFileLockTest&gt;&gt;testFsyncEntireFile
+SoilWindowsFileLockTest&gt;&gt;testLockAndUnlockEntireFile
+SoilWindowsFileLockTest&gt;&gt;testLockAndUnlockRange
+SoilWindowsFileLockTest&gt;&gt;testLockExclusive
+SoilWindowsFileLockTest&gt;&gt;testLockOrErrorSuccess
+SoilWindowsFileLockTest&gt;&gt;testLockShared
+SoilWindowsFileLockTest&gt;&gt;testMultipleLocks
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: MCP (Evref-BL/MCP, row 82) - Pharo test defects</title><meta name="description" content="Package: MCP (Evref-BL/MCP, row 82): Fixed; 1 test cannot apply">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: MCP (Evref-BL/MCP, row 82)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed; 1 test cannot apply</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>Evref-BL/MCP</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 1167 tests.  Stock Cog: 947 pass, 188 failures, 31 errors, 1
+skip.  Our VM: 946 pass, 189 failures.</li>
+<li>Cause of 218 tests: the manifest row loaded the groups <code>Core</code> and <code>Tests</code>.
+The helper selectors that the tests need (<code>mcp...</code>) are in the package
+<code>MCP-IDE-Compatibility-From12</code>, and the baseline has that package only in
+the group <code>IDE</code>.</li>
+<li>Repair here: the manifest row loads <code>Core</code>, <code>IDE</code> and <code>Tests</code>.</li>
+<li>Result: stock Cog 1166 pass and 1 skip.  Our VM 1165 pass, 1 failure and
+1 skip.</li>
+<li>The failure on our VM only:
+<code>MCPToolContractsTest&gt;&gt;testEvaluateStopsAnEndlessRecursionWithinASecondOrTwo</code>.
+The evaluator of the package stops an endless recursion at a depth of
+1000000 frames.  Our VM gives its own error at 56000 frames first.  This
+is a defect of our VM (<code>the iospharo defect list</code>, the first entry), and the
+repair is in work.</li>
+<li>The skip: the test needs the World to step the Transcript.  Pharo 14 does
+not do that any more (<code>WorldState&gt;&gt;runStepMethodsIn:</code> does not send
+<code>stepGlobal</code>), so the test cannot apply on this image.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 82&quot;
+Metacello new baseline: &#x27;MCP&#x27;; repository: &#x27;github://Evref-BL/MCP:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;IDE&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>82</td><td><code>evref-bl-mcp</code></td><td>ok</td><td>tests=1167 P=1166 F=0 E=0 S=1 T=0 X=0</td><td>tests=1167 P=1166 F=0 E=0 S=1 T=0 X=0</td></tr></table><h3>Tests that do not pass</h3><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>MCPToolStructuredOutputTest&gt;&gt;testEvaluateTakesTheStepTheWorldGivesTheTranscript</code></td><td>SKIP</td><td>SKIP</td></tr></table><h2>Fix</h2><details open><summary>Tests that cannot apply, with the proof: evref-bl-mcp.txt (<a href="../files/packages/not-applicable/evref-bl-mcp.txt">download</a>)</summary><pre class="code"># Tests that cannot apply on a Pharo 14 image.  One test for each line:
+# Class&gt;&gt;selector, or Class&gt;&gt;* for each test of the class.  A line that starts
+# with # has the proof.
+#
+# The test needs the World to step the Transcript.  The test skips itself
+# with &quot;The world no longer steps the Transcript.&quot; when the image does not do
+# that.  Pharo 14: WorldState&gt;&gt;runStepMethodsIn: does not send stepGlobal.
+MCPToolStructuredOutputTest&gt;&gt;testEvaluateTakesTheStepTheWorldGivesTheTranscript
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

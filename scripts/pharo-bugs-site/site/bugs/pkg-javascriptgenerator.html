@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: JavaScriptGenerator (feenkcom/JavaScriptGenerator, row 24) - Pharo test defects</title><meta name="description" content="Package: JavaScriptGenerator (feenkcom/JavaScriptGenerator, row 24): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: JavaScriptGenerator (feenkcom/JavaScriptGenerator, row 24)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>feenkcom-javascriptgenerator.st</dd><dt>Upstream repository</dt><dd>feenkcom/JavaScriptGenerator</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 45 tests, 43 pass, 2 fail on the two VMs.</li>
+<li>Cause: two tests of <code>JSGExtensionsTest</code> compare the output for a
+Dictionary and for a Set with a fixed string.  The string has the elements
+in the order of the image of the author.  The two collections enumerate in
+hash order.</li>
+<li>Repair here: <code>fixes/feenkcom-javascriptgenerator.st</code>.  The tests compare
+the elements and not their order.</li>
+<li>Result: 45 of 45 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 24&quot;
+Metacello new baseline: &#x27;JavaScriptGenerator&#x27;; repository: &#x27;github://feenkcom/JavaScriptGenerator:main/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>24</td><td><code>feenkcom-javascriptgenerator</code></td><td>ok</td><td>tests=45 P=45 F=0 E=0 S=0 T=0 X=0</td><td>tests=45 P=45 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): feenkcom-javascriptgenerator.st (<a href="../files/packages/fixes/feenkcom-javascriptgenerator.st">download</a>)</summary><pre class="code">&quot;JavaScriptGenerator (feenkcom/JavaScriptGenerator, main): two tests of
+JSGExtensionsTest compare the output with a string that has the elements in
+the order of the image of the author.  A Dictionary and a Set enumerate in
+hash order, and Pharo 14 gives another order (Got &#x27;{42 : &#x27;&#x27;b&#x27;&#x27; , 3 : 4 , &#x27;&#x27;a&#x27;&#x27; : 1}&#x27;,
+Got &#x27;{4,1,2,3}&#x27;).  Stock Cog and our VM give the same result.  The tests now
+compare the elements and not their order.  Each check of the old tests is
+still there: the braces, the separators, and each element.&quot;
+
+fix value: #JSGExtensionsTest value: #testDictionaryWriteJavaScriptOn
+	value: [ :source | (source includesSubstring: &#x27;splitOn:&#x27;) not ]
+	value:
+&#x27;testDictionaryWriteJavaScriptOn
+	| dict string pairs |
+	dict := {
+	&#x27;&#x27;a&#x27;&#x27; -&gt; 1.
+	42 -&gt; &#x27;&#x27;b&#x27;&#x27;.
+	3 -&gt; 4 } asDictionary.
+	string := String streamContents: [ :s | dict writeJavaScriptOn: s ].
+	&quot;A Dictionary enumerates in hash order: compare the pairs, not their order.&quot;
+	self assert: string first equals: ${.
+	self assert: string last equals: $}.
+	pairs := (string copyFrom: 2 to: string size - 1) splitOn: &#x27;&#x27; , &#x27;&#x27;.
+	self assert: pairs size equals: 3.
+	self assert: pairs asSet equals: #( &#x27;&#x27;&#x27;&#x27;&#x27;&#x27;a&#x27;&#x27;&#x27;&#x27; : 1&#x27;&#x27; &#x27;&#x27;42 : &#x27;&#x27;&#x27;&#x27;b&#x27;&#x27;&#x27;&#x27;&#x27;&#x27; &#x27;&#x27;3 : 4&#x27;&#x27; ) asSet&#x27;.
+
+fix value: #JSGExtensionsTest value: #testSetWriteJavaScriptOn
+	value: [ :source | (source includesSubstring: &#x27;splitOn:&#x27;) not ]
+	value:
+&#x27;testSetWriteJavaScriptOn
+	| string elements |
+	string := String streamContents: [ :s | #(1 2 3 4) asSet writeJavaScriptOn: s ].
+	&quot;A Set enumerates in hash order: compare the elements, not their order.&quot;
+	self assert: string first equals: ${.
+	self assert: string last equals: $}.
+	elements := (string copyFrom: 2 to: string size - 1) splitOn: &#x27;&#x27;,&#x27;&#x27;.
+	self assert: elements size equals: 4.
+	self assert: elements asSet equals: #( &#x27;&#x27;1&#x27;&#x27; &#x27;&#x27;2&#x27;&#x27; &#x27;&#x27;3&#x27;&#x27; &#x27;&#x27;4&#x27;&#x27; ) asSet.
+
+	string := String streamContents: [ :s | Set new writeJavaScriptOn: s ].
+	self assert: string equals: &#x27;&#x27;set()&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

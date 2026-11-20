@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Metalink-uninstall-order - Pharo test defects</title><meta name="description" content="Metalink-uninstall-order: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Metalink-uninstall-order</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>3</dd><dt>Fix</dt><dd>image fix 33-metalink-uninstall-order.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/33-metalink-uninstall-order.st</code></li>
+<li>Methods: <code>MetaLinkInstaller&gt;&gt;uninstallFromAllAnonymousNodes:</code>,
+<code>MetaLinkNodesMapper&gt;&gt;findNodeLike:forObject:</code>, new helper
+<code>LinkInstallerTest&gt;&gt;nodeSetHomedAt:</code>, new tests
+<code>LinkInstallerTest&gt;&gt;testUninstallVisitsEveryNodeWhenTheNodeSetCollides</code> and
+<code>LinkInstallerTest&gt;&gt;testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode</code></li>
+<li>Script that shows the defect: <code>scripts/cogdiff/metalink_uninstall_order.st</code></li>
+</ul>
+<p><code>MetaLink&gt;&gt;uninstall</code> of an object-specific link calls
+<code>MetaLinkInstaller&gt;&gt;uninstallFromAllAnonymousNodes:</code>.  That method walks
+<code>aMetaLink nodes</code>, an IdentitySet, and calls <code>uninstall:fromNode:forObject:</code>
+for each node.  The call ends with <code>aMetaLink removeNode: node</code>, so the loop
+removes elements from the set that it walks.  <code>Set&gt;&gt;remove:</code> moves a later
+element of the same collision chain back into the slot that the walk has
+left.  The walk does not see that element.</p>
+<p><code>MetaLink&gt;&gt;uninstall</code> then takes the link off the node that the walk
+skipped, so <code>link nodes</code> is empty and no test of the image sees a defect.
+But the installer still has the node in its node mapper for the object.</p>
+<p>A later installation for the same object can put a link at the same source
+position.  The new node is then equivalent to the old node
+(<code>isEquivalentTo:</code>: the same selector, source and position).
+<code>MetaLinkNodesMapper&gt;&gt;findNodeLike:forObject:</code> answers the first equivalent
+node.  When the old node is first, the installer removes the old node.</p>
+<p>The old node is in an old AST that has no link.
+<code>canRemoveMethodNodeContaining:</code> thus answers true, and the installer
+removes the method of the anonymous class of the object.  The uninstall of
+the last new node removes the method again, and <code>removeSelector:</code> signals
+<code>KeyNotFound</code>.</p>
+<p><code>LinkInstallerTest&gt;&gt;testLinkOnTempVarForObject</code> makes three installations
+for one object (read, write, all), so the test can reach this state.  The
+order of the set depends on identity hashes.</p>
+<p>Results of the script on Pharo 14 build 791 with no repair (2026-11-17):</p>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>Stock Cog</th>
+<th>Our VM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A: forced order of the set, three rounds</td>
+<td><code>KeyNotFound</code> in round 3</td>
+<td><code>KeyNotFound</code> in round 3</td>
+</tr>
+<tr>
+<td>B: order of the identity hashes, rounds with <code>KeyNotFound</code> of 300</td>
+<td>12</td>
+<td>9</td>
+</tr>
+<tr>
+<td>B: uninstalls that left a node in the mapper</td>
+<td>332</td>
+<td>368</td>
+</tr>
+</tbody>
+</table>
+<p>The repair:</p>
+<ul>
+<li><code>uninstallFromAllAnonymousNodes:</code> walks a copy of the objects and a copy of
+the nodes, and tests that a node is still a node of the link.</li>
+<li><code>findNodeLike:forObject:</code> answers the given node itself when the object
+has that node, and an equivalent node only when the object does not.</li>
+</ul>
+<p>Results with the repair (2026-11-17, stock Cog and our VM):</p>
+<ul>
+<li>Without the repair, the two new tests fail on the two VMs, and the 40
+other tests of <code>LinkInstallerTest</code> pass.</li>
+<li>With the repair, the 42 tests of <code>LinkInstallerTest</code> pass on the two VMs.</li>
+<li>With the repair, the script gives no <code>KeyNotFound</code> in part A, and in part B
+no uninstall of 300 rounds leaves a node in the mapper.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LinkInstallerTest&gt;&gt;testUninstallVisitsEveryNodeWhenTheNodeSetCollides</code> (new)</td>
+<td>image code</td>
+<td>repaired</td>
+<td>The walk skipped a node, and the mapper kept the node.</td>
+</tr>
+<tr>
+<td><code>LinkInstallerTest&gt;&gt;testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode</code> (new)</td>
+<td>image code</td>
+<td>repaired</td>
+<td>The old node of a skipped uninstall won over the new node.</td>
+</tr>
+<tr>
+<td><code>LinkInstallerTest&gt;&gt;testLinkOnTempVarForObject</code> and each later test of the class in that run</td>
+<td>image code</td>
+<td>repaired</td>
+<td>The method of the anonymous class was removed two times.</td>
+</tr>
+</tbody>
+</table>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>LinkInstallerTest&gt;&gt;testUninstallVisitsEveryNodeWhenTheNodeSetCollides</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr><tr><td><code>LinkInstallerTest&gt;&gt;testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr><tr><td><code>LinkInstallerTest&gt;&gt;testLinkOnTempVarForObject</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  </p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((LinkInstallerTest selector: #testLinkOnTempVarForObject) run) printString.
+((LinkInstallerTest selector: #testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode) run) printString.
+((LinkInstallerTest selector: #testUninstallVisitsEveryNodeWhenTheNodeSetCollides) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>LinkInstallerTest&gt;&gt;testLinkOnTempVarForObject before the fix (Pharo 14 build 791)</summary><pre class="code">testLinkOnTempVarForObject
+	|  link obj temp |
+
+	link := MetaLink new.
+	obj := ReflectivityExamples2 new.
+	temp := (ReflectivityExamples2&gt;&gt;#methodWithTempVarAccess) lookupVar: #temp.
+
+	link installOnVariable: temp
+		for: obj
+		option: #read
+		instanceSpecific: false.
+	self assert: link nodes size equals: 2.
+	self assert: (link nodes allSatisfy: [ :node | node isRead ]).
+	self assert: (link nodes allSatisfy: [ :node | node name = #temp ]).
+	self assert: (link nodes allSatisfy: [ :node | node isTempVariable ]).
+	link uninstall.
+	self assert: link nodes isEmpty.
+	temp := (ReflectivityExamples2&gt;&gt;#methodWithTempVarAccess) lookupVar: #temp.
+
+	link installOnVariable: temp
+		for: obj
+		option: #write
+		instanceSpecific: false.
+	self assert: link nodes size equals: 2.
+	self assert: (link nodes allSatisfy: [ :node | node isAssignment]).
+	self assert: (link nodes allSatisfy: [ :node | node variable name = #temp ]).
+	self assert: (link nodes allSatisfy: [ :node | node variable isTempVariable ]).
+	link uninstall.
+	self assert: link nodes isEmpty.
+
+	temp := (ReflectivityExamples2&gt;&gt;#methodWithTempVarAccess) lookupVar: #temp.
+
+	link installOnVariable: temp
+		for: obj
+		option: #all
+		instanceSpecific: false.
+	self assert: link nodes size equals: 4.
+	link uninstall.
+	self assert: link nodes isEmpty</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>33-metalink-uninstall-order.st (<a href="../files/image-fixes/33-metalink-uninstall-order.st">download</a>)</summary><pre class="code">&quot;Reflectivity: the uninstall of an object-specific link depends on the order
+of a set, and can remove the method of the object two times (2026-11-17).
+
+Symptom: LinkInstallerTest&gt;&gt;testLinkOnTempVarForObject failed in some sweeps
+of our VM (2 of 13 runs of its batch, never in 80 runs of the class alone)
+with &#x27;KeyNotFound: key #methodWithTempVarAccess not found in
+MethodDictionary&#x27;, from ClassDescription&gt;&gt;removeSelector: on the anonymous
+class of the object.  Each later test of the class then failed in the same
+way.
+
+Cause:
+
+U1. MetaLinkInstaller&gt;&gt;uninstallFromAllAnonymousNodes: walks &#x27;aMetaLink
+nodes&#x27; (an IdentitySet).  For each node it calls uninstall:fromNode:forObject:,
+which ends with &#x27;aMetaLink removeNode: node&#x27;: the loop removes elements from
+the set that it walks.  Set&gt;&gt;remove: moves a later element of the same
+collision chain back into the slot that the walk has left, and the walk does
+not see that element.  MetaLink&gt;&gt;uninstall then takes the link off the node
+that the walk skipped, so &#x27;link nodes&#x27; is empty and a test sees no defect.
+But the installer still has the node in its node mapper for the object, the
+anonymous class of the object keeps its method, and the object keeps the
+anonymous class.
+
+U2. MetaLinkNodesMapper&gt;&gt;findNodeLike:forObject: answers the first node of
+the object that is equivalent to the given node (the same selector, source
+and position).  A node that U1 left in the mapper is equivalent to the node
+at the same position of a later installation for the same object.  When the
+set order gives the old node first, the installer removes the old node.  The
+old node is in an old AST with no link, so canRemoveMethodNodeContaining:
+answers true and the method of the anonymous class goes.  The uninstall of the
+last new node removes the method again, and removeSelector: signals
+KeyNotFound.  testLinkOnTempVarForObject makes three installations for one
+object (read, write, all), so it can reach this state.
+
+Measured with scripts/cogdiff/metalink_uninstall_order.st on an image with no
+repair.  The part of the script that forces the order of the set gives the
+KeyNotFound on stock Cog and on our VM.  The part with the order of the
+identity hashes gives the KeyNotFound in 12 of 300 rounds on stock Cog and
+in 9 of 300 on our VM, and 332 and 368 uninstalls leave a node in the mapper.
+
+The repair: the walk uses a copy of the nodes and of the objects (U1), and
+the mapper answers the given node itself when the object has it (U2).
+
+The two new tests force the order with an IdentitySet subclass that gives
+each element the same first slot.  Measured on stock Cog and on our VM: the
+two tests fail before the repair (40 other tests of the class pass), and the
+42 tests of the class pass after the repair.  After the repair the script
+finds no node left in the mapper in 300 rounds.&quot;
+
+fix value: #MetaLinkInstaller value: #uninstallFromAllAnonymousNodes:
+	value: [ :source | (source includesSubstring: &#x27;asArray&#x27;) not ]
+	value:
+&#x27;uninstallFromAllAnonymousNodes: aMetaLink
+
+	| objectsForLink |
+	(linksRegistry isLinkObjectSpecific: aMetaLink) ifFalse: [ ^ self ].
+	objectsForLink := linksRegistry objectsForLink: aMetaLink.
+	&quot;Walk copies.  uninstall:fromNode:forObject: removes the node from aMetaLink nodes (an IdentitySet).  A removal from a hashed collection moves later entries of the collision chain back, so a walk over the collection itself skipped a node: the node kept its entry in the mapper and its link until the end of MetaLink&gt;&gt;uninstall, and a later install found the old node.&quot;
+	objectsForLink asArray do: [ :object |
+		aMetaLink nodes asArray do: [ :node |
+			((aMetaLink nodes includes: node) and: [ linkToNodesMapper isNode: node ownedBy: object ])
+				ifTrue: [ self uninstall: aMetaLink fromNode: node forObject: object ] ] ]&#x27;.
+
+fix value: #MetaLinkNodesMapper value: #findNodeLike:forObject:
+	value: [ :source | (source includesSubstring: &#x27;includes: aNode&#x27;) not ]
+	value:
+&#x27;findNodeLike: aNode forObject: anObject
+	&quot;The node itself when the object has it.  A node of an earlier installation at the same source position is equivalent too, and must not win.&quot;
+
+	| nodesForObject |
+	nodesForObject := nodesForObjects at: anObject ifAbsent: [ #() ].
+	(nodesForObject includes: aNode) ifTrue: [ ^ aNode ].
+	^ nodesForObject detect: [ :node | node isEquivalentTo: aNode ] ifNone: [ nil ]&#x27;.
+
+add value: #LinkInstallerTest value: #nodeSetHomedAt: value: &#x27;helpers&#x27;
+	value:
+&#x27;nodeSetHomedAt: aSlotExpression
+	&quot;An IdentitySet in which every element has the same home slot, so the layout does not depend on the identity hashes of the VM.  aSlotExpression is the source of the home slot: &#x27;&#x27;1&#x27;&#x27; (the first slot) or &#x27;&#x27;array size&#x27;&#x27; (the last slot).&quot;
+
+	| setClass |
+	setClass := IdentitySet newAnonymousSubclass.
+	setClass compile: &#x27;&#x27;scanFor: anObject
+	| index start |
+	index := start := &#x27;&#x27;, aSlotExpression, &#x27;&#x27;.
+	[ | element |
+		((element := array at: index) == nil or: [ element enclosedElement == anObject ])
+			ifTrue: [ ^ index ].
+		(index := index \\ array size + 1) = start ] whileFalse.
+	self errorNoFreeSpace&#x27;&#x27;.
+	^ setClass new&#x27;.
+
+add value: #LinkInstallerTest value: #testUninstallVisitsEveryNodeWhenTheNodeSetCollides value: &#x27;tests&#x27;
+	value:
+&#x27;testUninstallVisitsEveryNodeWhenTheNodeSetCollides
+	&quot;Two nodes of one link have the same home slot in the node set of the link.  MetaLink&gt;&gt;uninstall removes each node from this set while it walks the set; the walk used to skip the second node.  The object then stayed registered for the old node.&quot;
+
+	| link obj temp reads |
+	link := MetaLink new.
+	obj := ReflectivityExamples2 new.
+	temp := (ReflectivityExamples2 &gt;&gt; #methodWithTempVarAccess) lookupVar: #temp.
+	reads := (temp accessingNodesFor: #read) asSortedCollection: [ :a :b | a start &lt;= b start ].
+	link instVarNamed: #nodes put: (self nodeSetHomedAt: &#x27;&#x27;1&#x27;&#x27;).
+	reads do: [ :each | each link: link forObject: obj ].
+	self assert: link nodes size equals: 2.
+	link uninstall.
+	self assert: link nodes isEmpty.
+	self assert: (MetaLink linkInstaller linkToNodesMapper findNodesForObject: obj) isEmpty&#x27;.
+
+add value: #LinkInstallerTest value: #testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode value: &#x27;tests&#x27;
+	value:
+&#x27;testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode
+	&quot;The three rounds of testLinkOnTempVarForObject with a node set that has a fixed layout.  Round 1: the two nodes have the same home slot (the old walk skipped the second node).  Round 2: the nodes leave in the other order and the method of the anonymous class is removed.  Round 3: the install finds the old node of round 1, which belongs to the old AST, and the uninstall removed the method a second time (KeyNotFound).&quot;
+
+	| link obj temp reads writes |
+	link := MetaLink new.
+	obj := ReflectivityExamples2 new.
+	temp := (ReflectivityExamples2 &gt;&gt; #methodWithTempVarAccess) lookupVar: #temp.
+	reads := (temp accessingNodesFor: #read) asSortedCollection: [ :a :b | a start &lt;= b start ].
+	writes := (temp accessingNodesFor: #write) asSortedCollection: [ :a :b | a start &lt;= b start ].
+
+	[ link instVarNamed: #nodes put: (self nodeSetHomedAt: &#x27;&#x27;1&#x27;&#x27;).
+	reads do: [ :each | each link: link forObject: obj ].
+	link uninstall.
+
+	link instVarNamed: #nodes put: (self nodeSetHomedAt: &#x27;&#x27;array size&#x27;&#x27;).
+	writes do: [ :each | each link: link forObject: obj ].
+	link uninstall.
+
+	link instVarNamed: #nodes put: (self nodeSetHomedAt: &#x27;&#x27;array size&#x27;&#x27;).
+	reads do: [ :each | each link: link forObject: obj ].
+	self shouldnt: [ link uninstall ] raise: KeyNotFound.
+	self assert: link nodes isEmpty.
+	self assert: (MetaLink linkInstaller linkToNodesMapper findNodesForObject: obj) isEmpty ]
+		ensure: [ link instVarNamed: #nodes put: IdentitySet new ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

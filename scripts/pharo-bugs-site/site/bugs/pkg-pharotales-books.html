@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Pharotales_Books (neAnasteisha/Pharotales_Books, row 144) - Pharo test defects</title><meta name="description" content="Package: Pharotales_Books (neAnasteisha/Pharotales_Books, row 144): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Pharotales_Books (neAnasteisha/Pharotales_Books, row 144)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>neanasteisha-pharotales-books.st</dd><dt>Upstream repository</dt><dd>neAnasteisha/Pharotales_Books</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 22 tests, 21 pass, 1 failure on the two VMs (&quot;Got 2026
+instead of 2025&quot;).</li>
+<li>Cause: <code>FairyTaleTest&gt;&gt;testInitialize</code> compares the year of a new object
+with the fixed value 2025.  <code>FairyTale&gt;&gt;initialize</code> uses the year of
+today.  The test passed only in 2025.</li>
+<li>Repair (<code>fixes/neanasteisha-pharotales-books.st</code>): the test compares with
+<code>Date today year</code>, as the test <code>testYearLimits</code> of the same class does.</li>
+<li>Result: 22 of 22 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 144&quot;
+Metacello new baseline: &#x27;Pharotales_Books&#x27;; repository: &#x27;github://neAnasteisha/Pharotales_Books:master/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>144</td><td><code>neanasteisha-pharotales-books</code></td><td>ok</td><td>tests=22 P=22 F=0 E=0 S=0 T=0 X=0</td><td>tests=22 P=22 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): neanasteisha-pharotales-books.st (<a href="../files/packages/fixes/neanasteisha-pharotales-books.st">download</a>)</summary><pre class="code">&quot;Pharotales_Books: FairyTaleTest&gt;&gt;testInitialize compared the publication year
+of a new FairyTale with the fixed number 2025.  FairyTale&gt;&gt;initialize sets
+publicationYear to Date today year, so the test passed only in 2025 and fails
+in every other year.  The repair compares with Date today year, the value that
+the code under test uses.  The test still checks that a new FairyTale has the
+current year and empty author, title and publisher.&quot;
+
+fix value: #FairyTaleTest value: #testInitialize
+	value: [ :source | source includesSubstring: &#x27;2025&#x27; ]
+	value:
+&#x27;testInitialize
+	| tale |
+	tale := FairyTale new.
+
+	self assert: tale author equals: &#x27;&#x27;&#x27;&#x27;.
+	self assert: tale title equals: &#x27;&#x27;&#x27;&#x27;.
+	self assert: tale publisher equals: &#x27;&#x27;&#x27;&#x27;.
+	self assert: tale publicationYear equals: Date today year&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

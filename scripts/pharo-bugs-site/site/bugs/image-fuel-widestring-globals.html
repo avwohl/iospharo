@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fuel-widestring-globals - Pharo test defects</title><meta name="description" content="Fuel-widestring-globals: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Fuel-widestring-globals</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>15</dd><dt>Fix</dt><dd>image fix 20-Fuel-widestring-globals.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Fuel-widestring-globals.st</code></li>
+<li>Methods: <code>FLGlobalCluster&gt;&gt;encodeGlobalName:on: (added)</code>, <code>FLGlobalCluster&gt;&gt;nextGlobalNameFrom: (added)</code>, <code>FLGlobalCluster&gt;&gt;serializeGlobalClass:on:</code>, <code>FLGlobalCluster&gt;&gt;serializeGlobalAssociationKeyed:on:</code>, <code>FLGlobalCluster&gt;&gt;materializeGlobalAssociationFrom:</code>, <code>FLGlobalCluster&gt;&gt;materializeGlobalClassFrom:</code>, <code>FLBasicSerializationTest&gt;&gt;testWideStringGlobal</code>, <code>FLSerializationTest&gt;&gt;expectedFailures</code></li>
+</ul>
+<p>Two defects. (1) Fuel (image code) wrote the name of a global (class name or global key) with encodeString:, which stores one byte per character, so the high bytes of a WideString/WideSymbol name were lost and the materializer looked up a wrong name (FLGlobalNotFound, FLClassNotFound). The fix writes global names as UTF-8 and reads them back as UTF-8, with a Latin-1 fallback for bytes that are not valid UTF-8; for ASCII names the bytes are identical to before, so existing files still load. (2) testWideStringGlobal was itself wrong: it used a WideString as a key of SystemEnvironment (which accepts only Symbols) and then asserted that the materialized value is identical to the KEY. The key is now a WideSymbol and the assertion compares with the global value that the key finds. The expectedFailures override in FLSerializationTest (the cause of the 'expected failure' mark) now answers #() because all three tests pass. Behaviour is the same on our VM and on Cog; no VM defect.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLBinaryFileStreamBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>FLGlobalCluster encoded global names one byte per character; wide names lost high bytes</td>
+</tr>
+<tr>
+<td><code>FLBinaryFileStreamBasicSerializationTest&gt;&gt;testWideStringClassName</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same: class name written as bytes, FLClassNotFound</td>
+</tr>
+<tr>
+<td><code>FLBinaryFileStreamBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>WideString key rejected by SystemEnvironment&gt;&gt;at:put: (Symbols only); assertion compared value with the key. Fixed in the test plus the name encoding</td>
+</tr>
+<tr>
+<td><code>FLByteArrayBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLByteArrayBasicSerializationTest&gt;&gt;testWideStringClassName</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLByteArrayBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLFileReferenceStreamBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLFileReferenceStreamBasicSerializationTest&gt;&gt;testWideStringClassName</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLFileReferenceStreamBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLFullBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLFullBasicSerializationTest&gt;&gt;testWideStringClassName</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLFullBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLGZippedBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLGZippedBasicSerializationTest&gt;&gt;testWideStringClassName</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+<tr>
+<td><code>FLGZippedBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same as above</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Whole classes run on both VMs, base image vs fixed image. Our VM and Cog gave the same counts. Base to fixed: FLBinaryFileStream, FLByteArray, FLFileReferenceStream BasicSerializationTest 75 pass + 2 fail + 1 error to 78 pass; FLGZippedBasicSerializationTest 78 pass + 2 fail + 1 error to 81 pass; FLFullBasicSerializationTest 82 pass + 2 fail + 1 error to 85 pass (a first base run of this class came back empty because of a parallel-run collision; I re-ran it alone to get the 82/2/1). Unchanged before and after: FLBlockClosureSerializationTest 18, FLCompiledMethodSerializationTest 6, FLContextSerializationTest 9, FLDecoderTest 8, FLEncoderDecoderTest 5, FLEncoderTest 16, FLFullBlockClosureSerializationTest 8, FLGlobalEnvironmentTest 12 pass + 1 skip, FLGlobalSendSerializationTest 2, FLMaterializerTest 12, FLSerializerTest 34. FLClassSerializationTest and FLTraitSerializationTest printed no result lines in any run, base or fixed, so they are not compared. I did not test the Latin-1 fallback for old files with bytes 128-255; I did not run the full suite.</p>
+<p>Upstream note: Fuel: encode global names as UTF-8 (FLGlobalCluster). FLGlobalCluster wrote class names and global keys with FLEncoder&gt;&gt;encodeString:, one byte per character, so WideString/WideSymbol names lost their high bytes and materialization raised FLGlobalNotFound/FLClassNotFound. Names are now written as UTF-8 (identical bytes for ASCII) and decoded with utf8Decoded, with a Latin-1 fallback for older files. Also fix FLBasicSerializationTest&gt;&gt;testWideStringGlobal (WideString key in SystemEnvironment is rejected; the assertion compared the value to the key; use a WideSymbol key and compare with the global value) and remove the three entries of FLSerializationTest&gt;&gt;expectedFailures. Project: Fuel (pharo-project/fuel, in the image as FL*). Written for the owner to review; no PR opened.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>FLBinaryFileStreamBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLBinaryFileStreamBasicSerializationTest&gt;&gt;testWideStringClassName</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLBinaryFileStreamBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLByteArrayBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLByteArrayBasicSerializationTest&gt;&gt;testWideStringClassName</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLByteArrayBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFileReferenceStreamBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFileReferenceStreamBasicSerializationTest&gt;&gt;testWideStringClassName</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFileReferenceStreamBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFullBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFullBasicSerializationTest&gt;&gt;testWideStringClassName</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLFullBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLGZippedBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLGZippedBasicSerializationTest&gt;&gt;testWideStringClassName</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>FLGZippedBasicSerializationTest&gt;&gt;testWideStringGlobal</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((FLBinaryFileStreamBasicSerializationTest selector: #testConsiderCustomWideSymbolGlobal) run) printString.
+((FLBinaryFileStreamBasicSerializationTest selector: #testWideStringClassName) run) printString.
+((FLBinaryFileStreamBasicSerializationTest selector: #testWideStringGlobal) run) printString.
+((FLByteArrayBasicSerializationTest selector: #testConsiderCustomWideSymbolGlobal) run) printString.
+((FLByteArrayBasicSerializationTest selector: #testWideStringClassName) run) printString.
+((FLByteArrayBasicSerializationTest selector: #testWideStringGlobal) run) printString.
+((FLFileReferenceStreamBasicSerializationTest selector: #testConsiderCustomWideSymbolGlobal) run) printString.
+((FLFileReferenceStreamBasicSerializationTest selector: #testWideStringClassName) run) printString.
+((FLFileReferenceStreamBasicSerializationTest selector: #testWideStringGlobal) run) printString.
+((FLFullBasicSerializationTest selector: #testConsiderCustomWideSymbolGlobal) run) printString.
+((FLFullBasicSerializationTest selector: #testWideStringClassName) run) printString.
+((FLFullBasicSerializationTest selector: #testWideStringGlobal) run) printString.
+((FLGZippedBasicSerializationTest selector: #testConsiderCustomWideSymbolGlobal) run) printString.
+((FLGZippedBasicSerializationTest selector: #testWideStringClassName) run) printString.
+((FLGZippedBasicSerializationTest selector: #testWideStringGlobal) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>FLBasicSerializationTest&gt;&gt;testConsiderCustomWideSymbolGlobal before the fix (Pharo 14 build 791)</summary><pre class="code">testConsiderCustomWideSymbolGlobal
+	&quot;The same than #testConsiderCustomGlobal but with a WideSymbol.&quot;
+	
+	| aWideSymbol aPerson |	
+	aWideSymbol := (WideString streamContents: [ :stream |
+		256 to: 280 do: [ :code | stream nextPut: code asCharacter ] ]) asSymbol.
+
+	self serializer lookUpInGlobals: aWideSymbol.
+
+	aPerson := FLPerson new.	
+	self environmentOfTest
+		at: aWideSymbol
+		put: aPerson.
+	addedGlobals add: aWideSymbol.
+	
+	self
+		shouldnt: [ self resultOfSerializeAndMaterialize: aPerson ]
+		raise: FLGlobalNotFound</pre></details><details><summary>FLBasicSerializationTest&gt;&gt;testWideStringClassName before the fix (Pharo 14 build 791)</summary><pre class="code">testWideStringClassName
+
+	| class className |
+	className := &#x27;Foox&#x27; asWideString
+		             at: 4 put: (Character value: 265);
+		             yourself.
+	class := self classFactory silentlyMake: [ :builder | builder name: className ].
+	self environmentOfTest at: class name put: class.
+
+	self shouldnt: [ self resultOfSerializeAndMaterialize: class ] raise: FLClassNotFound</pre></details><details><summary>FLBasicSerializationTest&gt;&gt;testWideStringGlobal before the fix (Pharo 14 build 791)</summary><pre class="code">testWideStringGlobal
+	| global globalValue |
+	global := &#x27;Foox&#x27; asWideString
+		at: 4 put: (Character value: 265);
+		yourself.
+	globalValue := global , &#x27;value&#x27;.
+	self environmentOfTest
+		at: global
+		put: globalValue.
+	addedGlobals add: global.
+	self serializer lookUpInGlobals: global.
+
+	self shouldnt: [ self serialize: &#x27;bar&#x27; -&gt; globalValue ] raise: Error.
+	self assert: self materialized class equals: Association.
+	self assert: self materialized value identicalTo: global</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Fuel-widestring-globals.st (<a href="../files/image-fixes/20-Fuel-widestring-globals.st">download</a>)</summary><pre class="code">&quot;Fuel-widestring-globals.  Fuel wrote the name of a global (a class name, a
+ global key) with encodeString:, which stores one byte per character.  A name
+ with a character above 255 (WideString, WideSymbol) lost its high bytes, so
+ the materializer looked up a wrong name (FLGlobalNotFound, FLClassNotFound).
+ Global names are now written as UTF-8 and read back as UTF-8.  For an ASCII
+ name the bytes are the same as before, so old files still load.  A name with
+ bytes 128-255 that is not valid UTF-8 (a file from before this change) is
+ read as Latin-1, as before.&quot;
+add value: #FLGlobalCluster value: #encodeGlobalName:on: value: &#x27;serialization&#x27;
+	value:
+&#x27;encodeGlobalName: aName on: anEncoder
+	&quot;Write the name of a global as UTF-8.  Same bytes as encodeString: for an ASCII name.&quot;
+
+	anEncoder encodeString: aName asString utf8Encoded asString&#x27;.
+add value: #FLGlobalCluster value: #nextGlobalNameFrom: value: &#x27;serialization&#x27;
+	value:
+&#x27;nextGlobalNameFrom: aDecoder
+	&quot;Read a global name written by #encodeGlobalName:on:.  Bytes that are not valid UTF-8 come from an older file and are Latin-1.&quot;
+
+	| string |
+	string := aDecoder nextEncodedString.
+	^ ([ string asByteArray utf8Decoded ]
+		on: Error
+		do: [ :error | string ]) asSymbol&#x27;.
+fix value: #FLGlobalCluster value: #serializeGlobalClass:on:
+	value: [ :source | source includesSubstring: &#x27;anEncoder encodeString: aClass name&#x27; ]
+	value:
+&#x27;serializeGlobalClass: aClass on: anEncoder
+	self encodeGlobalName: aClass name on: anEncoder&#x27;.
+fix value: #FLGlobalCluster value: #serializeGlobalAssociationKeyed:on:
+	value: [ :source | source includesSubstring: &#x27;anEncoder encodeString: aSymbol&#x27; ]
+	value:
+&#x27;serializeGlobalAssociationKeyed: aSymbol on: anEncoder
+
+	self encodeGlobalName: aSymbol on: anEncoder&#x27;.
+fix value: #FLGlobalCluster value: #materializeGlobalAssociationFrom:
+	value: [ :source | source includesSubstring: &#x27;nextEncodedString asSymbol&#x27; ]
+	value:
+&#x27;materializeGlobalAssociationFrom: aDecoder
+
+	| globalName |
+	globalName := self nextGlobalNameFrom: aDecoder.
+	^ aDecoder globalEnvironment
+		associationAt: globalName
+		ifAbsent: [ FLGlobalNotFound signalWithName: globalName ]&#x27;.
+fix value: #FLGlobalCluster value: #materializeGlobalClassFrom:
+	value: [ :source | source includesSubstring: &#x27;nextEncodedString asSymbol&#x27; ]
+	value:
+&#x27;materializeGlobalClassFrom: aDecoder
+
+	| className |
+	className := self nextGlobalNameFrom: aDecoder.
+	^ aDecoder classNamed: className&#x27;.
+&quot;testWideStringGlobal put a WideString into a SystemEnvironment as key, which
+ only accepts Symbols (SystemEnvironment&gt;&gt;at:put:), and then expected the
+ materialized VALUE to be the KEY.  The key is now a WideSymbol and the value
+ expected is the global value, the object found by that key.&quot;
+fix value: #FLBasicSerializationTest value: #testWideStringGlobal
+	value: [ :source | source includesSubstring: &#x27;yourself.&#x27; ]
+	value:
+&#x27;testWideStringGlobal
+	| global globalValue |
+	global := (&#x27;&#x27;Foox&#x27;&#x27; asWideString
+		at: 4 put: (Character value: 265);
+		yourself) asSymbol.
+	globalValue := global asString , &#x27;&#x27;value&#x27;&#x27;.
+	self environmentOfTest
+		at: global
+		put: globalValue.
+	addedGlobals add: global.
+	self serializer lookUpInGlobals: global.
+
+	self shouldnt: [ self serialize: &#x27;&#x27;bar&#x27;&#x27; -&gt; globalValue ] raise: Error.
+	self assert: self materialized class equals: Association.
+	self assert: self materialized value identicalTo: globalValue&#x27;.
+&quot;The three tests pass now: no expected failures remain.&quot;
+fix value: #FLSerializationTest value: #expectedFailures
+	value: [ :source | source includesSubstring: &#x27;testWideStringGlobal&#x27; ]
+	value:
+&#x27;expectedFailures
+	^ #()&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: pharo-openapi-generator (alkalinan/pharo-openapi-generator, row 112) - Pharo test defects</title><meta name="description" content="Package: pharo-openapi-generator (alkalinan/pharo-openapi-generator, row 112): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: pharo-openapi-generator (alkalinan/pharo-openapi-generator, row 112)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>alkalinan-pharo-openapi-generator.patch</dd><dt>Upstream repository</dt><dd>alkalinan/pharo-openapi-generator</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: <code>LOAD-FAIL</code> (<code>KeyNotFound: key 'BaselineOfOpenAPI'</code>).</li>
+<li>Causes, all in the repository, which is an unfinished state:
+<ul>
+<li>The repository has no <code>.project</code> file and no <code>src/.properties</code>, so
+Iceberg finds no package in <code>src</code>.</li>
+<li>The classes <code>OAContact</code>, <code>OAInfo</code>, <code>OAComponents</code> and <code>OAOperation</code>,
+which the code and the tests use, are not in the repository.</li>
+<li>One test has a literal <code>#{...}</code> that Pharo 14 does not read, and one
+test uses a mock that does not pass <code>visit:</code> on.</li>
+<li>The baseline pins a version of Mocketry of 2019.</li>
+</ul>
+</li>
+<li>Repair here: <code>patches/alkalinan-pharo-openapi-generator.patch</code> adds the
+two project files and the four classes (as small as the tests need),
+nests the JSON mapping of the info object, corrects the two tests and
+names the present Mocketry.</li>
+<li>Limit: the four classes are ours.  The author must add the real ones.</li>
+<li>Result: 16 of 16 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 112&quot;
+Metacello new baseline: &#x27;OpenAPI&#x27;; repository: &#x27;github://alkalinan/pharo-openapi-generator:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>112</td><td><code>alkalinan-pharo-openapi-generator</code></td><td>ok</td><td>tests=16 P=16 F=0 E=0 S=0 T=0 X=0</td><td>tests=16 P=16 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Patch of the package source: alkalinan-pharo-openapi-generator.patch (<a href="../files/packages/patches/alkalinan-pharo-openapi-generator.patch">download</a>)</summary><pre class="code">diff --git a/.project b/.project
+new file mode 100644
+index 0000000..7c4006d
+--- /dev/null
++++ b/.project
+@@ -0,0 +1,3 @@
++{
++	&#x27;srcDirectory&#x27; : &#x27;src&#x27;
++}
+diff --git a/src/.properties b/src/.properties
+new file mode 100644
+index 0000000..53a5454
+--- /dev/null
++++ b/src/.properties
+@@ -0,0 +1,3 @@
++{
++	#format : #tonel
++}
+diff --git a/src/BaselineOfOpenAPI/BaselineOfOpenAPI.class.st b/src/BaselineOfOpenAPI/BaselineOfOpenAPI.class.st
+index d190dfc..1c3a82e 100644
+--- a/src/BaselineOfOpenAPI/BaselineOfOpenAPI.class.st
++++ b/src/BaselineOfOpenAPI/BaselineOfOpenAPI.class.st
+@@ -46,7 +46,7 @@ BaselineOfOpenAPI &gt;&gt; jsonSchema: spec [
+ { #category : #baselines }
+ BaselineOfOpenAPI &gt;&gt; mocketry: spec [
+ 	spec baseline: &#x27;Mocketry&#x27; with: [ 
+-		spec repository: &#x27;github://dionisiydk/Mocketry:v4.0.x&#x27;. ]
++		spec repository: &#x27;github://dionisiydk/Mocketry&#x27;. ]
+ ]
+ 
+ { #category : #baselines }
+diff --git a/src/OpenAPI-Core-Tests/OARequestBuilderTest.class.st b/src/OpenAPI-Core-Tests/OARequestBuilderTest.class.st
+index 59dca83..8b5a97c 100644
+--- a/src/OpenAPI-Core-Tests/OARequestBuilderTest.class.st
++++ b/src/OpenAPI-Core-Tests/OARequestBuilderTest.class.st
+@@ -17,16 +17,19 @@ OARequestBuilderTest &gt;&gt; setUp [
+ 
+ { #category : #tests }
+ OARequestBuilderTest &gt;&gt; testAccessors [
+-	| operation |
++	| operation payload |
+ 	operation := OAOperation new.
++	payload := Dictionary new
++		at: &#x27;key&#x27; put: &#x27;value&#x27;;
++		yourself.
+ 	
+ 	builder 
+ 		operation: operation;
+-		body: #{&#x27;key&#x27; -&gt; &#x27;value&#x27;};
++		body: payload;
+ 		beforeSendBlock: [ :request | request ].
+ 		
+ 	self assert: builder operation equals: operation.
+-	self assert: builder body equals: #{&#x27;key&#x27; -&gt; &#x27;value&#x27;}.
++	self assert: builder body equals: payload.
+ 	self assert: builder beforeSendBlock notNil.
+ ]
+ 
+diff --git a/src/OpenAPI-Core-Tests/OAVisitorSpy.class.st b/src/OpenAPI-Core-Tests/OAVisitorSpy.class.st
+new file mode 100644
+index 0000000..d54bb92
+--- /dev/null
++++ b/src/OpenAPI-Core-Tests/OAVisitorSpy.class.st
+@@ -0,0 +1,25 @@
++Class {
++	#name : #OAVisitorSpy,
++	#superclass : #OAVisitor,
++	#instVars : [
++		&#x27;visitedOpenAPIs&#x27;
++	],
++	#category : #&#x27;OpenAPI-Core-Tests&#x27;
++}
++
++{ #category : #initialization }
++OAVisitorSpy &gt;&gt; initialize [
++	super initialize.
++	visitedOpenAPIs := OrderedCollection new
++]
++
++{ #category : #visiting }
++OAVisitorSpy &gt;&gt; visitOpenAPI: anOpenAPI [
++	visitedOpenAPIs add: anOpenAPI.
++	super visitOpenAPI: anOpenAPI
++]
++
++{ #category : #accessing }
++OAVisitorSpy &gt;&gt; visitedOpenAPIs [
++	^ visitedOpenAPIs
++]
+diff --git a/src/OpenAPI-Core-Tests/OAVisitorTest.class.st b/src/OpenAPI-Core-Tests/OAVisitorTest.class.st
+index bdfcc4b..27c66d3 100644
+--- a/src/OpenAPI-Core-Tests/OAVisitorTest.class.st
++++ b/src/OpenAPI-Core-Tests/OAVisitorTest.class.st
+@@ -22,16 +22,12 @@ OAVisitorTest &gt;&gt; setUp [
+ 
+ { #category : #tests }
+ OAVisitorTest &gt;&gt; testVisit [
+-	| visitedObject |
+-	
+-	&quot;Create a mock visitor that tracks visited objects&quot;
+-	visitor := Mock new.
+-	visitor stub openApi willReturn: openAPI.
+-	visitor stub visitOpenAPI: Any.
+-	
+-	&quot;Visit the OpenAPI object&quot;
+-	visitor visit: openAPI.
+-	
+-	&quot;Verify that visitOpenAPI: was called with the openAPI object&quot;
+-	visitor should receive visitOpenAPI: openAPI.
+-]
+\ No newline at end of file
++	| spy |
++	&quot;The visitor is a real OAVisitor that records what it visits.  A Mocketry
++	mock cannot check this: a mock answers #visit: itself and never sends
++	#visitOpenAPI:.&quot;
++	spy := OAVisitorSpy new.
++	spy visit: openAPI.
++
++	self assert: spy visitedOpenAPIs asArray equals: { openAPI }
++]
+diff --git a/src/OpenAPI-Core/OAComponents.class.st b/src/OpenAPI-Core/OAComponents.class.st
+new file mode 100644
+index 0000000..d09f48c
+--- /dev/null
++++ b/src/OpenAPI-Core/OAComponents.class.st
+@@ -0,0 +1,29 @@
++Class {
++	#name : #OAComponents,
++	#superclass : #Object,
++	#instVars : [
++		&#x27;schemas&#x27;
++	],
++	#category : #&#x27;OpenAPI-Core-Model&#x27;
++}
++
++{ #category : #visiting }
++OAComponents &gt;&gt; accept: aVisitor [
++	aVisitor visitComponents: self
++]
++
++{ #category : #initialization }
++OAComponents &gt;&gt; initialize [
++	super initialize.
++	schemas := Dictionary new
++]
++
++{ #category : #accessing }
++OAComponents &gt;&gt; schemas [
++	^ schemas
++]
++
++{ #category : #accessing }
++OAComponents &gt;&gt; schemas: anObject [
++	schemas := anObject
++]
+diff --git a/src/OpenAPI-Core/OAContact.class.st b/src/OpenAPI-Core/OAContact.class.st
+new file mode 100644
+index 0000000..ee8b34b
+--- /dev/null
++++ b/src/OpenAPI-Core/OAContact.class.st
+@@ -0,0 +1,51 @@
++Class {
++	#name : #OAContact,
++	#superclass : #Object,
++	#instVars : [
++		&#x27;name&#x27;,
++		&#x27;url&#x27;,
++		&#x27;email&#x27;
++	],
++	#category : #&#x27;OpenAPI-Core-Model&#x27;
++}
++
++{ #category : #&#x27;as yet unclassified&#x27; }
++OAContact class &gt;&gt; neoJsonMapping: mapper [
++	mapper for: self do: [ :mapping |
++		mapping mapInstVars: #( name url email ) ]
++]
++
++{ #category : #visiting }
++OAContact &gt;&gt; accept: aVisitor [
++	aVisitor visitContact: self
++]
++
++{ #category : #accessing }
++OAContact &gt;&gt; name [
++	^ name
++]
++
++{ #category : #accessing }
++OAContact &gt;&gt; name: anObject [
++	name := anObject
++]
++
++{ #category : #accessing }
++OAContact &gt;&gt; url [
++	^ url
++]
++
++{ #category : #accessing }
++OAContact &gt;&gt; url: anObject [
++	url := anObject
++]
++
++{ #category : #accessing }
++OAContact &gt;&gt; email [
++	^ email
++]
++
++{ #category : #accessing }
++OAContact &gt;&gt; email: anObject [
++	email := anObject
++]
+diff --git a/src/OpenAPI-Core/OAInfo.class.st b/src/OpenAPI-Core/OAInfo.class.st
+new file mode 100644
+index 0000000..85c1d10
+--- /dev/null
++++ b/src/OpenAPI-Core/OAInfo.class.st
+@@ -0,0 +1,86 @@
++Class {
++	#name : #OAInfo,
++	#superclass : #Object,
++	#instVars : [
++		&#x27;title&#x27;,
++		&#x27;version&#x27;,
++		&#x27;description&#x27;,
++		&#x27;termsOfService&#x27;,
++		&#x27;contact&#x27;,
++		&#x27;license&#x27;
++	],
++	#category : #&#x27;OpenAPI-Core-Model&#x27;
++}
++
++{ #category : #&#x27;as yet unclassified&#x27; }
++OAInfo class &gt;&gt; neoJsonMapping: mapper [
++	mapper for: self do: [ :mapping |
++		mapping mapInstVars: #( title version description termsOfService ).
++		(mapping mapInstVar: #contact) valueSchema: OAContact.
++		(mapping mapInstVar: #license) valueSchema: OALicense ]
++]
++
++{ #category : #visiting }
++OAInfo &gt;&gt; accept: aVisitor [
++	aVisitor visitInfo: self
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; title [
++	^ title
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; title: anObject [
++	title := anObject
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; version [
++	^ version
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; version: anObject [
++	version := anObject
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; description [
++	^ description
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; description: anObject [
++	description := anObject
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; termsOfService [
++	^ termsOfService
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; termsOfService: anObject [
++	termsOfService := anObject
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; contact [
++	^ contact
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; contact: anObject [
++	contact := anObject
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; license [
++	^ license
++]
++
++{ #category : #accessing }
++OAInfo &gt;&gt; license: anObject [
++	license := anObject
++]
+diff --git a/src/OpenAPI-Core/OAOperation.class.st b/src/OpenAPI-Core/OAOperation.class.st
+new file mode 100644
+index 0000000..eea2e12
+--- /dev/null
++++ b/src/OpenAPI-Core/OAOperation.class.st
+@@ -0,0 +1,62 @@
++Class {
++	#name : #OAOperation,
++	#superclass : #Object,
++	#instVars : [
++		&#x27;operationId&#x27;,
++		&#x27;summary&#x27;,
++		&#x27;description&#x27;,
++		&#x27;parameters&#x27;
++	],
++	#category : #&#x27;OpenAPI-Core-Model&#x27;
++}
++
++{ #category : #visiting }
++OAOperation &gt;&gt; accept: aVisitor [
++	aVisitor visitOperation: self
++]
++
++{ #category : #initialization }
++OAOperation &gt;&gt; initialize [
++	super initialize.
++	parameters := OrderedCollection new
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; operationId [
++	^ operationId
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; operationId: anObject [
++	operationId := anObject
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; summary [
++	^ summary
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; summary: anObject [
++	summary := anObject
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; description [
++	^ description
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; description: anObject [
++	description := anObject
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; parameters [
++	^ parameters
++]
++
++{ #category : #accessing }
++OAOperation &gt;&gt; parameters: anObject [
++	parameters := anObject
++]
+diff --git a/src/OpenAPI-Core/OpenAPI.class.st b/src/OpenAPI-Core/OpenAPI.class.st
+index e304651..fef0b2e 100644
+--- a/src/OpenAPI-Core/OpenAPI.class.st
++++ b/src/OpenAPI-Core/OpenAPI.class.st
+@@ -17,7 +17,8 @@ Class {
+ { #category : #&#x27;as yet unclassified&#x27; }
+ OpenAPI class &gt;&gt; neoJsonMapping: mapper [
+ 	mapper for: self do: [ :mapping |
+-		mapping mapInstVars: #( openapi info servers paths components security tags externalDocs ) ]
++		mapping mapInstVars: #( openapi servers paths components security tags externalDocs ).
++		(mapping mapInstVar: #info) valueSchema: OAInfo ]
+ ]
+ 
+ { #category : #&#x27;instance creation&#x27; }
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

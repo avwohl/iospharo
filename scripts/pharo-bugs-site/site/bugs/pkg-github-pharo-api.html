@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: GitHub-Pharo-API (Evref-BL/GitHub-Pharo-API, row 104) - Pharo test defects</title><meta name="description" content="Package: GitHub-Pharo-API (Evref-BL/GitHub-Pharo-API, row 104): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: GitHub-Pharo-API (Evref-BL/GitHub-Pharo-API, row 104)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>evref-bl-github-pharo-api.st</dd><dt>Upstream repository</dt><dd>Evref-BL/GitHub-Pharo-API</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 50 tests, 46 pass, 4 errors on the two VMs
+(<code>UndeclaredVariableRead: GitlabApi</code>).</li>
+<li>Cause: three tests of <code>GithubUsersTest</code> are copies of tests of the GitLab
+project and make a <code>GitlabApi</code>.  The baseline rightly does not load that
+class.  A fourth test calls one of the three.</li>
+<li>Repair here: <code>fixes/evref-bl-github-pharo-api.st</code> uses <code>GithubApi</code>.  The
+tests replace the HTTP client with a mock, so no request leaves the
+machine.</li>
+<li>Result: 50 of 50 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 104&quot;
+Metacello new baseline: &#x27;GithubAPI&#x27;; repository: &#x27;github://Evref-BL/Github-Pharo-API:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>104</td><td><code>evref-bl-github-pharo-api</code></td><td>ok</td><td>tests=50 P=50 F=0 E=0 S=0 T=0 X=0</td><td>tests=50 P=50 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): evref-bl-github-pharo-api.st (<a href="../files/packages/fixes/evref-bl-github-pharo-api.st">download</a>)</summary><pre class="code">&quot;Evref-BL/Github-Pharo-API: GithubUsersTest&gt;&gt;testGet, testGetUnknowUsers and
+testGetUserId were copied from the tests of Evref-BL/Gitlab-Pharo-API and
+still build their API object with &#x27;GitlabApi new&#x27;.  The Github baseline does
+not load GitlabApi (and GitlabApi has no #users that fits).  The class that
+the Github package has is GithubApi (users answers GithubUsers).  The sibling
+tests (GithubOrganizationsTest and others) use GithubApi with the same
+stubbed ZnClient, and they pass.  testGetUsername only sends testGet, so
+the same repair fixes that test.  The repair replaces the class name in each
+of the three test methods.  No request leaves the image: ZnClient&gt;&gt;get is
+stubbed by Mocketry in each test.&quot;
+
+Smalltalk globals at: #PkgFixRewrite put: [ :clsName :sel :oldText :newText | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifTrue: [
+			fix value: clsName value: sel
+				value: [ :source | source includesSubstring: oldText ]
+				value: ((cls &gt;&gt; sel) sourceCode copyReplaceAll: oldText with: newText) ]
+		ifFalse: [ fix value: clsName value: sel value: [ :source | false ] value: &#x27;&#x27; ] ].
+
+#(testGet testGetUnknowUsers testGetUserId) do: [ :selector |
+	(Smalltalk globals at: #PkgFixRewrite) value: #GithubUsersTest value: selector value: &#x27;GitlabApi&#x27; value: &#x27;GithubApi&#x27; ].
+Smalltalk globals removeKey: #PkgFixRewrite ifAbsent: [ nil ].
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Znurl-query-order - Pharo test defects</title><meta name="description" content="Znurl-query-order: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Znurl-query-order</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 34-znurl-query-order.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/34-znurl-query-order.st</code></li>
+<li>Methods: <code>ZnUrl&gt;&gt;equals:</code>, new test
+<code>ZnUrlTest&gt;&gt;testEqualsWithQueryFieldsInAnotherOrder</code></li>
+</ul>
+<p><code>ZnUrl&gt;&gt;equals:</code> compares the queries of two URLs with <code>=</code>.  The query is a
+<code>ZnMultiValueDictionary</code>, a subclass of OrderedDictionary.
+<code>OrderedDictionary&gt;&gt;=</code> of Pharo 14 compares the position of each key
+(<code>OrderedDictionaryTest&gt;&gt;testEqualsWhenKeyArentInTheSameOrder</code>).  In Pharo 13
+the position was not a part of the comparison.  So two URLs with the same
+query fields in another order are equal in Pharo 13 and not equal in Pharo
+14.  Tests of three packages (ba-st Hyperspace, Stargate and Superluminal)
+depend on the old answer, and one of them asserts it.</p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Pharo 13 build 750</th>
+<th>Pharo 14 build 791</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>'https://example.com/pets?start=3&amp;limit=2' asZnUrl = 'https://example.com/pets?limit=2&amp;start=3' asZnUrl</code></td>
+<td>true</td>
+<td>false (stock Cog and our VM)</td>
+</tr>
+</tbody>
+</table>
+<p>The repair compares the fields with no regard to their order.  The two
+queries must have the same count of fields, and each field must have the
+same value.  A field that is there more than one time has an Array of
+values.  The order in that Array stays a part of the comparison, as in
+Pharo 13.</p>
+<p>Another place for the repair is <code>ZnMultiValueDictionary&gt;&gt;=</code>.  That changes
+the equality of header collections too.  The owner of Zinc must decide.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ZnUrlTest&gt;&gt;testEqualsWithQueryFieldsInAnotherOrder</code> (new, 8 cases; each case has the answer of Pharo 13)</td>
+<td>image code</td>
+<td>repaired</td>
+<td>The equality of URLs took the order of the query fields from <code>OrderedDictionary&gt;&gt;=</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ZnUrlTest&gt;&gt;testEqualsWithQueryFieldsInAnotherOrder</code></td><td></td><td>repaired</td><td>PASS</td><td>PASS</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  </p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ZnUrlTest selector: #testEqualsWithQueryFieldsInAnotherOrder) run) printString.</pre><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>34-znurl-query-order.st (<a href="../files/image-fixes/34-znurl-query-order.st">download</a>)</summary><pre class="code">&quot;Zinc: two URLs with the same query fields in another order are not equal in
+Pharo 14 (2026-11-17).
+
+Symptom: tests of three packages of the 200-package run compare a URL with a
+text whose query fields are in another order than the code makes them
+(ba-st/Hyperspace ZnUrlHyperspaceExtensionsTest&gt;&gt;testStartLimit, ba-st/Stargate
+PetsRESTfulControllerTest&gt;&gt;testComplexPagination, four tests of
+ba-st/Superluminal): &#x27;Got https://pets.example.com/pets?limit=2&amp;start=3 instead
+of https://pets.example.com/pets?start=3&amp;limit=2&#x27;.  The tests pass on Pharo 13.
+
+Cause: ZnUrl&gt;&gt;equals: compares the queries with &#x27;self query = url query&#x27;.  The
+query is a ZnMultiValueDictionary, a subclass of OrderedDictionary, in Pharo 13
+and in Pharo 14.  OrderedDictionary&gt;&gt;= of Pharo 14 also compares the position
+of each key (OrderedDictionaryTest&gt;&gt;testEqualsWhenKeyArentInTheSameOrder).  So
+the equality of two URLs changed with it, and nothing says that this was
+meant: the hash of a ZnUrl does not look at the query, and Zinc has no test
+for it.
+
+Measured with the same expression
+(&#x27;https://example.com/pets?start=3&amp;limit=2&#x27; asZnUrl =
+ &#x27;https://example.com/pets?limit=2&amp;start=3&#x27; asZnUrl):
+  Pharo 13 build 750, stock Cog   true
+  Pharo 14 build 791, stock Cog   false
+  Pharo 14 build 791, our VM      false
+
+The repair: ZnUrl&gt;&gt;equals: compares the query fields with no regard to their
+order, as in Pharo 13.  The values of one field (a field that is there more
+than one time) keep their order.  The new test fails on the two VMs before the
+repair.&quot;
+
+fix value: #ZnUrl value: #equals:
+	value: [ :source | source includesSubstring: &#x27;self query = url query&#x27; ]
+	value:
+&#x27;equals: url
+	self scheme = url scheme ifFalse: [ ^ false ].
+	self host = url host ifFalse: [ ^ false ].
+	self portOrDefault = url portOrDefault ifFalse: [ ^ false ].
+	((self isSlash and: [ url isSlash ]) or: [ self segments = url segments ]) ifFalse: [ ^ false ].
+	(self hasQuery or: [ url hasQuery ])
+		ifTrue: [
+			&quot;The same fields with the same values.  The order of the fields is not a part of the comparison: the query is an OrderedDictionary, and OrderedDictionary&gt;&gt;= compares the position of each key.&quot;
+			(self hasQuery and: [ url hasQuery ]) ifFalse: [ ^ false ].
+			self query size = url query size ifFalse: [ ^ false ].
+			self query keysDo: [ :key |
+				(url query at: key ifAbsent: [ ^ false ]) = (self query at: key) ifFalse: [ ^ false ] ] ].
+	self fragment = url fragment ifFalse: [ ^ false ].
+	^ true&#x27;.
+
+add value: #ZnUrlTest value: #testEqualsWithQueryFieldsInAnotherOrder value: &#x27;testing&#x27;
+	value:
+&#x27;testEqualsWithQueryFieldsInAnotherOrder
+	&quot;Two URLs with the same query fields are equal, in each order of the fields.&quot;
+
+	| url |
+	url := &#x27;&#x27;https://example.com/pets?start=3&amp;limit=2&#x27;&#x27; asZnUrl.
+	self assert: url equals: &#x27;&#x27;https://example.com/pets?limit=2&amp;start=3&#x27;&#x27; asZnUrl.
+	self assert: url hash equals: &#x27;&#x27;https://example.com/pets?limit=2&amp;start=3&#x27;&#x27; asZnUrl hash.
+	self assert: url equals: &#x27;&#x27;https://example.com/pets?start=3&amp;limit=2&#x27;&#x27; asZnUrl.
+	self deny: url equals: &#x27;&#x27;https://example.com/pets?start=3&amp;limit=5&#x27;&#x27; asZnUrl.
+	self deny: url equals: &#x27;&#x27;https://example.com/pets?start=3&#x27;&#x27; asZnUrl.
+	self deny: url equals: &#x27;&#x27;https://example.com/pets?start=3&amp;limit=2&amp;sort=name&#x27;&#x27; asZnUrl.
+	self deny: url equals: &#x27;&#x27;https://example.com/pets&#x27;&#x27; asZnUrl.
+	self deny: &#x27;&#x27;https://example.com/pets&#x27;&#x27; asZnUrl equals: url.
+	&quot;A field that is there two times: its values keep their order.&quot;
+	self assert: &#x27;&#x27;https://example.com/pets?tag=a&amp;tag=b&amp;limit=2&#x27;&#x27; asZnUrl equals: &#x27;&#x27;https://example.com/pets?limit=2&amp;tag=a&amp;tag=b&#x27;&#x27; asZnUrl.
+	self deny: &#x27;&#x27;https://example.com/pets?tag=a&amp;tag=b&#x27;&#x27; asZnUrl equals: &#x27;&#x27;https://example.com/pets?tag=b&amp;tag=a&#x27;&#x27; asZnUrl&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

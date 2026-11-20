@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: segmentation fault in the garbage collector after the PharoMisc socket tests - Pharo test defects</title><meta name="description" content="Cog: segmentation fault in the garbage collector after the PharoMisc socket tests: Open: cause not known">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: segmentation fault in the garbage collector after the PharoMisc socket tests</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: cause not known</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>none</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Summary</h2><p>Stock Cog stops in 2 of 6 runs of the PharoMisc package row (<code>TkThreadTest&gt;&gt;testFinalization</code>, after the multicast tests bind three sockets to one port).  The mark phase of a full GC follows a field of an old object that names an address in new space.  The cause is not known.  (A different GC crash in the same row, in <code>Cogit&gt;&gt;indexForSelector:in:at:</code>, has a patch: see the store-check page.)</p><h2>Test</h2><p>Load the PharoMisc package (package row 6, <code>bouraqadi/PharoMisc</code>) and run its tests; stock Cog stopped in 2 of 6 runs.</p><h2>Fix</h2><p>None yet.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

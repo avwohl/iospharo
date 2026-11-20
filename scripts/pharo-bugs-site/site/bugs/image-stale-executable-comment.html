@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A stale comment of Context class&gt;&gt;tallyInstructions: - Pharo test defects</title><meta name="description" content="A stale comment of Context class&gt;&gt;tallyInstructions:: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>A stale comment of Context class&gt;&gt;tallyInstructions:</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 24-stale-executable-comment.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Summary</h2><pre class="code">A stale executable comment (2026-11-17).
+
+ DocCommentsReleaseTest builds one test for each executable comment of the
+ image (expression &gt;&gt;&gt; expected value).  The comment of
+ Context class&gt;&gt;tallyInstructions: says that the simulation of
+ `3.14159 printString` uses 120 different bytecodes.  The image gives 131 on
+ stock Cog with a pristine image and on our VM.  The number changes each time
+ the code of Float printing or the compiler changes, so an exact number in the
+ comment goes out of date.  The comment now shows the use of the method with
+ an expected value that does not depend on that code.
+
+ The runners before run_sunit.st did not show this failure: they ran one test
+ of the class, not the test of each comment.</pre><h2>Test</h2><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((DocCommentsReleaseTest selector: #testExecutableCommentsAreValid) run) printString.</pre><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>24-stale-executable-comment.st (<a href="../files/image-fixes/24-stale-executable-comment.st">download</a>)</summary><pre class="code">&quot;A stale executable comment (2026-11-17).
+
+ DocCommentsReleaseTest builds one test for each executable comment of the
+ image (expression &gt;&gt;&gt; expected value).  The comment of
+ Context class&gt;&gt;tallyInstructions: says that the simulation of
+ `3.14159 printString` uses 120 different bytecodes.  The image gives 131 on
+ stock Cog with a pristine image and on our VM.  The number changes each time
+ the code of Float printing or the compiler changes, so an exact number in the
+ comment goes out of date.  The comment now shows the use of the method with
+ an expected value that does not depend on that code.
+
+ The runners before run_sunit.st did not show this failure: they ran one test
+ of the class, not the test of each comment.&quot;
+
+fix value: #&#x27;Context class&#x27; value: #tallyInstructions:
+	value: [ :source | source includesSubstring: &#x27;[3.14159 printString]) size &gt;&gt;&gt; 120&#x27; ]
+	value: ((Context class &gt;&gt; #tallyInstructions:) sourceCode
+		copyReplaceAll: &#x27;[3.14159 printString]) size &gt;&gt;&gt; 120&#x27;
+		with: &#x27;[3.14159 printString]) notEmpty &gt;&gt;&gt; true&#x27;).
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

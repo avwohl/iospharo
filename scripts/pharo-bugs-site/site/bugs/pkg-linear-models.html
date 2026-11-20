@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: linear-models (pharo-ai/linear-models, row 41) - Pharo test defects</title><meta name="description" content="Package: linear-models (pharo-ai/linear-models, row 41): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: linear-models (pharo-ai/linear-models, row 41)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-ai-linear-models.st</dd><dt>Upstream repository</dt><dd>pharo-ai/linear-models</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 52 tests, 49 pass, 1 error, 2 skip on the two VMs.</li>
+<li>The error (<code>Cannot locate any of #('liblapack.dylib')</code>):
+<code>LapackLibrary&gt;&gt;macLibraryName</code> of the dependency <code>pharo-ai/lapack</code> asks
+<code>FFIMacLibraryFinder</code>, which accepts a path only when a file is there.
+Since macOS 11 the system libraries are in the shared cache of the dynamic
+loader and have no file.  The loader opens <code>/usr/lib/liblapack.dylib</code> on
+the two VMs.  <code>fixes/pharo-ai-linear-models.st</code> makes the method answer
+that path when the finder finds no file.</li>
+<li>The 2 skips: the two tests of <code>AILinearRegressionLeastSquaresVanillaTest</code>
+start with <code>self skip</code> (&quot;least squares vanilla is still broken&quot;).  The
+fixes file gives the tests their bodies back, and the two tests pass.</li>
+<li>Result: 52 of 52 pass on the two VMs.</li>
+<li>For the Pharo image: <code>FFILibraryFinder&gt;&gt;findAnyLibrary:</code> has the same file
+test for each system library on macOS 11 and later.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 41&quot;
+Metacello new baseline: &#x27;AILinearModels&#x27;; repository: &#x27;github://pharo-ai/linear-models:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>41</td><td><code>pharo-ai-linear-models</code></td><td>ok</td><td>tests=52 P=52 F=0 E=0 S=0 T=0 X=0</td><td>tests=52 P=52 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-ai-linear-models.st (<a href="../files/packages/fixes/pharo-ai-linear-models.st">download</a>)</summary><pre class="code">&quot;pharo-ai/linear-models (with pharo-ai/lapack): three defects.
+
+1. AILinearRegressionLeastSquaresTest&gt;&gt;testExactFitSingleVariable errors with
+&#x27;Cannot locate any of #(liblapack.dylib)&#x27;.  LapackLibrary&gt;&gt;macLibraryName asks
+FFIMacLibraryFinder&gt;&gt;findAnyLibrary:, and that method tests each candidate path
+with FileReference&gt;&gt;exists.  Since macOS 11 the system libraries are in the
+dyld shared cache and have no file on disk (macOS 27 here), so /usr/lib/liblapack.dylib
+is not found, but dlopen of that path works (Accelerate: its LAPACK exports
+dgelsd_ and dgesvd_, the two symbols that LapackDgelsd and LapackDgesvd call).
+The same error comes from stock Cog, because the lookup is in the image.
+The repair: keep the search of the finder first (Homebrew, user paths), and
+when the finder finds no file, answer the system path.  If the library is truly
+absent, the first call then fails in dlopen with the error of the loader.
+
+2. and 3. AILinearRegressionLeastSquaresVanillaTest&gt;&gt;testExactFitSingleVariable and
+testExactFitDoubleVariable start with &#x27;self skip&#x27; (upstream commit 8bab733:
+&#x27;least squares vanilla is still broken so its tests are skipped&#x27;).  The
+skip hides a defect of the package or of PolyMath; the tests get their real
+bodies back.  The single-variable body is the one of the superclass test.  The
+double-variable body is the commented-out test of the same method.  If the two
+tests then fail, see docs/upstream/package-repairs.md.&quot;
+
+fix value: #LapackLibrary value: #macLibraryName
+	value: [ :source | (source includesSubstring: &#x27;/usr/lib/liblapack.dylib&#x27;) not ]
+	value:
+&#x27;macLibraryName
+	&quot;The system LAPACK of macOS (Accelerate) is in the dyld shared cache: there is no file on disk, so the finder cannot see it, but dlopen of the path works.&quot;
+
+	^ [ FFIMacLibraryFinder new
+		userPaths: { &#x27;&#x27;/usr/local/opt/lapack/lib/&#x27;&#x27;. &#x27;&#x27;/opt/homebrew/opt/lapack/lib/&#x27;&#x27; };
+		findAnyLibrary: #(&#x27;&#x27;liblapack.dylib&#x27;&#x27;) ]
+			on: Error
+			do: [ :error | &#x27;&#x27;/usr/lib/liblapack.dylib&#x27;&#x27; ]&#x27;.
+
+fix value: #AILinearRegressionLeastSquaresVanillaTest value: #testExactFitSingleVariable
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testExactFitSingleVariable
+
+	| newInput expectedOutput actualOutput |
+	newInput := #( #( 4 ) #( 1 ) #( 7 ) #( 0 ) ).
+	expectedOutput := #( 11 5 17 3 ).
+
+	model fitX: self fixtureInput y: self fixtureOutput.
+	actualOutput := model predict: newInput.
+
+	actualOutput with: expectedOutput do: [ :actual :expected | self assert: actual closeTo: expected precision: 0.001 ]&#x27;.
+
+fix value: #AILinearRegressionLeastSquaresVanillaTest value: #testExactFitDoubleVariable
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testExactFitDoubleVariable
+
+	| newInput expectedOutput actualOutput initialInput initialOutput |
+	initialInput := #( #( 2 4 ) #( 3 2 ) #( 1 2 ) #( 5 1 ) #( 2 6 ) #( 6 3 ) ).
+	initialOutput := initialInput collect: [ :x | 2 + (x first * 3) + x second ].
+	newInput := #( #( 4 3 ) #( 1 2 ) #( 7 3 ) #( 0 4 ) ).
+	expectedOutput := #( 17 7 26 6 ).
+
+	model fitX: (PMMatrix rows: initialInput) y: initialOutput.
+	actualOutput := model predict: newInput.
+
+	actualOutput with: expectedOutput do: [ :actual :expected | self assert: actual closeTo: expected precision: 0.001 ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: Spur: low space before the old-space limit - Pharo test defects</title><meta name="description" content="Cog: Spur: low space before the old-space limit: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: Spur: low space before the old-space limit</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>cog-low-space-before-old-space-limit.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>
+<p>Defect: with an old-space limit (<code>--maxOldSpaceSize</code>, or when the system
+refuses a new segment), a process that allocates with no end stops the VM
+with &quot;Could not allocate new object in the old space&quot;.  The image gets no
+low-space signal, so the low space watcher of the image cannot stop the
+process.</p>
+</li>
+<li>
+<p>Cause: <code>SpurMemoryManager&gt;&gt;sufficientSpaceAfterGC:</code> reports low space only
+when the free old space is below the threshold of the image
+(<code>lowSpaceThreshold</code>, 400000 bytes in Pharo).  One scavenge can tenure
+more than that, and <code>SpurGenerationScavenger&gt;&gt;copyToOldSpace:bytes:format:</code>
+then stops the VM.</p>
+</li>
+<li>
+<p>Change (one method): when old space cannot grow, space is low as soon as
+the free old space is less than two new spaces.  One new space is for the
+next scavenge.  The other is for the low space watcher and for the unwind
+of the process that the watcher stops.  Before that answer the method runs
+one full GC if old space has grown by more than a new space since the last
+one.</p>
+</li>
+<li>
+<p>The change is in Slang, so the build runs the code generation again.  On
+this Mac: file the method into the code generation image
+(<code>build/vmmaker/image/VMMaker.image</code> of the build tree), then build.  The
+generation runs because the image is newer than the generated sources.</p>
+</li>
+<li>
+<p>Test (2026-11-17, macOS 27, arm64): <code>scripts/cogdiff/lowspace_recursion.st</code>
+with an old space of 1024 MB (a recursion with no end, in an image with
+the low space watcher).</p>
+<table>
+<thead>
+<tr>
+<th>VM</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>stock Cog</td>
+<td>none: the VM stops, and then gets a segmentation fault in the code that prints the report</td>
+</tr>
+<tr>
+<td>Cog with the change</td>
+<td><code>OutOfMemory</code> (the recursion ends, and the image goes on)</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>A full sweep of the Pharo 14 tests on the Cog with the change
+(<code>sweepcogp14-new7</code>, 39461 tests) has the same result as the sweep before
+the change: 39373 pass, and no batch stopped.</p>
+</li>
+<li>
+<p>Not tested: Windows, Linux, and a run with no old-space limit where the
+system refuses memory.</p>
+</li>
+</ul>
+<h2>Test</h2><p>A probe that prints the same lines on a correct VM.  Run it with <code>Pharo.image eval</code> or file it in:</p><details open><summary>lowspace_recursion.st (<a href="../files/cogdiff/lowspace_recursion.st">download</a>)</summary><pre class="code">&quot;lowspace_recursion.st -- a recursion with no end, in an image with the low
+ space watcher.  The answer is the class and the text of the error that ends
+ the recursion.
+
+   scripts/vmrun.sh eval --old-space 1024 cog  scripts/cogdiff/lowspace_recursion.st
+   scripts/vmrun.sh eval --old-space 1024 cogp scripts/cogdiff/lowspace_recursion.st
+   scripts/vmrun.sh eval --old-space 1024 ours scripts/cogdiff/lowspace_recursion.st
+
+ Measured 2026-11-17 with the three commands above:
+   stock Cog   no answer: the VM stops with &#x27;Could not allocate new object in
+               the old space&#x27; when the old space reaches its limit, and then
+               with a segmentation fault in the code that prints the report.
+   patched Cog &#x27;OutOfMemory: &#x27; (cogp with the change of
+               docs/upstream/cog-low-space-before-old-space-limit.patch;
+               before that change cogp did the same as stock Cog)
+   our VM      before the change &#x27;Error: stack overflow: recursion deeper than
+               56000 frames&#x27; (a limit that Cog does not have,
+               the iospharo defect list); after the change &#x27;OutOfMemory: &#x27;
+ The answer that the image is made for: OutOfMemory, from the low space
+ watcher.&quot;
+| recurse |
+Smalltalk installLowSpaceWatcher.
+recurse := nil.
+recurse := [ :n | (recurse value: n + 1) + 1 ].
+[ recurse value: 1. &#x27;the recursion returned&#x27; ]
+	on: Error
+	do: [ :e | e class name , &#x27;: &#x27; , ((e messageText ifNil: [ &#x27;&#x27; ]) asString first: (((e messageText ifNil: [ &#x27;&#x27; ]) asString size) min: 80)) ]
+</pre></details><p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/low-space-signal-before-old-space-limit</code>.  State: committed on the branch, tested.  Not sent upstream.</p><details open><summary>cog-low-space-before-old-space-limit.patch (<a href="../files/cog/cog-low-space-before-old-space-limit.patch">download</a>)</summary><pre class="code">From 39104295636e8ebdbc53dba7b2c3fd7e1355d8f1 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 12:56:27 -0500
+Subject: [PATCH] Spur: signal low space before old space reaches its limit
+
+With --maxOldSpaceSize (or when the OS refuses a new segment), a process that
+allocates with no end stops the VM with &#x27;Could not allocate new object in the
+old space&#x27;, and the image gets no low space signal.
+
+sufficientSpaceAfterGC: reported low space only when the free old space was
+below the threshold of the image (lowSpaceThreshold, 400000 bytes in Pharo).
+One scavenge can tenure more than that, and copyToOldSpace:bytes:format: then
+stops the VM.
+
+Now, when old space cannot grow, space is low as soon as the free old space is
+less than two new spaces: one for the next scavenge, and one for the low space
+watcher of the image and the unwind of the process that the watcher stops.
+Before that answer the method runs one full GC if old space has grown by more
+than a new space since the last one, so that garbage does not count as use.
+
+Co-Authored-By: Claude Fable 5.2 &lt;noreply@anthropic.com&gt;
+---
+ .../VMMaker/SpurMemoryManager.class.st        | 27 ++++++++++++++-----
+ 1 file changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/SpurMemoryManager.class.st b/smalltalksrc/VMMaker/SpurMemoryManager.class.st
+index 3c5ab99d6..abe149566 100644
+--- a/smalltalksrc/VMMaker/SpurMemoryManager.class.st
++++ b/smalltalksrc/VMMaker/SpurMemoryManager.class.st
+@@ -13006,7 +13006,7 @@ SpurMemoryManager &gt;&gt; sufficientSpaceAfterGC: numBytes [
+ 	 which is a stop-the-world a young generation reclaimer.  In Spur
+ 	 we run the scavenger.  Answer if space is not low.&quot;
+ 
+-	| heapSizePostGC |
++	| heapSizePostGC cannotGrow lowMark |
+ 	self assert: numBytes = 0.
+ 	self scavengingGCTenuringIf: TenureByAge.
+ 	heapSizePostGC := segmentManager totalOldSpaceCapacity
+@@ -13014,12 +13014,25 @@ SpurMemoryManager &gt;&gt; sufficientSpaceAfterGC: numBytes [
+ 	(heapSizePostGC - heapSizeAtPreviousGC) asFloat
+ 	/ heapSizeAtPreviousGC &gt;= heapGrowthToSizeGCRatio ifTrue: [
+ 		self fullGC ].
+-	[
+-	totalFreeOldSpace &lt; growHeadroom and: [
+-		(self growOldSpaceByAtLeast: 0 callingOperation: &#x27;ensuring sufficient space after GC&#x27;)
+-			notNil ] ] whileTrue: [
+-		totalFreeOldSpace &gt;= growHeadroom ifTrue: [ ^ true ] ].
+-	lowSpaceThreshold &gt; totalFreeOldSpace ifTrue: [ &quot;space is low&quot;
++	&quot;When old space cannot grow (maxOldSpaceSize, or the OS refuses a segment), the
++	 scavenger stops the VM (copyToOldSpace:bytes:format:) as soon as one scavenge
++	 tenures more than the free old space.  So space is low when old space cannot
++	 take two new spaces: one for the next scavenge, and one for the low space
++	 watcher and the unwind of the process that the watcher stops.&quot;
++	lowMark := scavenger newSpaceCapacity * 2.
++	cannotGrow := false.
++	[ totalFreeOldSpace &lt; (growHeadroom max: lowMark) and: [ cannotGrow not ] ] whileTrue: [
++		(self growOldSpaceByAtLeast: 0 callingOperation: &#x27;ensuring sufficient space after GC&#x27;) isNil
++			ifTrue: [ cannotGrow := true ] ].
++	(cannotGrow and: [ lowSpaceThreshold &gt; 0 and: [ totalFreeOldSpace &lt; lowMark ] ]) ifTrue: [
++		&quot;Old space can hold garbage that no full GC has seen: the test of the ratio
++		 above is relative to the last GC.  Collect one time before the answer that
++		 space is low.&quot;
++		heapSizePostGC := segmentManager totalOldSpaceCapacity - totalFreeOldSpace.
++		heapSizePostGC &gt; (heapSizeAtPreviousGC + scavenger newSpaceCapacity) ifTrue: [
++			self fullGC ] ].
++	(lowSpaceThreshold &gt; totalFreeOldSpace or: [
++		 cannotGrow and: [ lowSpaceThreshold &gt; 0 and: [ totalFreeOldSpace &lt; lowMark ] ] ]) ifTrue: [ &quot;space is low&quot;
+ 		lowSpaceThreshold := 0. &quot;avoid signalling low space twice&quot;
+ 		^ false ].
+ 	^ true
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

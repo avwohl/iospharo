@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RunnerLongDurationTest - Pharo test defects</title><meta name="description" content="RunnerLongDurationTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>RunnerLongDurationTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-RunnerLongDurationTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-RunnerLongDurationTest.st</code></li>
+<li>Methods: <code>RunnerLongDurationTest&gt;&gt;testRunningFromAClass</code>, <code>RunnerLongDurationTest&gt;&gt;testRunningFromACollectionOfClasses</code></li>
+</ul>
+<p>Both tests began with an unconditional <code>self skip</code>, left in the upstream test source. The code under test (NewTestRunner runClass: and runClasses: with the LongTest fixture) works. With the <code>self skip</code> line removed, both tests pass on our VM and on Cog. The fix is to remove that line from each test method and keep all the assertions.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RunnerLongDurationTest&gt;&gt;testRunningFromAClass</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional <code>self skip</code> as the first statement of the test method. No VM or image defect.</td>
+</tr>
+<tr>
+<td><code>RunnerLongDurationTest&gt;&gt;testRunningFromACollectionOfClasses</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional <code>self skip</code> as the first statement of the test method. No VM or image defect.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only the two test methods changed. No non-test method changed. I ran the whole owning class RunnerLongDurationTest on both VMs: before the fix 2 SKIP on each VM, after the fix 2 PASS on each VM (3 runs each). I did not run the other TestRunner-Tests classes, because no code they test was changed. I did not run ours-nojit.</p>
+<p>Upstream note: Title: Re-enable RunnerLongDurationTest tests (remove the leftover <code>self skip</code>). Description: testRunningFromAClass and testRunningFromACollectionOfClasses in RunnerLongDurationTest begin with <code>self skip</code>, so they never run. With the skip removed they pass on Pharo 14 build 791 on stock Cog and on a second VM, in 3 s and 9 s. This is a pharo repository change (TestRunner-Tests); the owner reviews it before anything is sent to Cog or Pharo.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>RunnerLongDurationTest&gt;&gt;testRunningFromAClass</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>RunnerLongDurationTest&gt;&gt;testRunningFromACollectionOfClasses</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((RunnerLongDurationTest selector: #testRunningFromAClass) run) printString.
+((RunnerLongDurationTest selector: #testRunningFromACollectionOfClasses) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>RunnerLongDurationTest&gt;&gt;testRunningFromAClass before the fix (Pharo 14 build 791)</summary><pre class="code">testRunningFromAClass
+
+	self skip.
+	runner runClass: self longTestClass.
+	self assert: runner runCount equals: 1.
+	self assert: runner passedCount equals: 1</pre></details><details><summary>RunnerLongDurationTest&gt;&gt;testRunningFromACollectionOfClasses before the fix (Pharo 14 build 791)</summary><pre class="code">testRunningFromACollectionOfClasses
+
+	self skip.
+	runner runClasses: { LongTest . LongTest . LongTest }.
+	self assert: runner runCount equals: 3.
+	self assert: runner passedCount equals: 3</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-RunnerLongDurationTest.st (<a href="../files/image-fixes/20-RunnerLongDurationTest.st">download</a>)</summary><pre class="code">fix value: #RunnerLongDurationTest value: #testRunningFromAClass value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testRunningFromAClass
+
+	runner runClass: self longTestClass.
+	self assert: runner runCount equals: 1.
+	self assert: runner passedCount equals: 1&#x27;.
+fix value: #RunnerLongDurationTest value: #testRunningFromACollectionOfClasses value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testRunningFromACollectionOfClasses
+
+	runner runClasses: { LongTest . LongTest . LongTest }.
+	self assert: runner runCount equals: 3.
+	self assert: runner passedCount equals: 3&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

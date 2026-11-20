@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Microdown (pillar-markup/Microdown, row 72) - Pharo test defects</title><meta name="description" content="Package: Microdown (pillar-markup/Microdown, row 72): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Microdown (pillar-markup/Microdown, row 72)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pillar-markup-microdown.st</dd><dt>Upstream repository</dt><dd>pillar-markup/Microdown</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 1605 tests, 1584 pass, 1 failure, 3 errors, 17 skips on the
+two VMs.</li>
+<li>Causes and repairs (<code>fixes/pillar-markup-microdown.st</code>):
+<ul>
+<li><code>MicMetaDataBlockTest</code>: our image fix 20 used <code>at:</code>, which the newer
+Microdown of the repository does not have.  The image fix uses <code>atKey:</code>
+now, which the two versions have.</li>
+<li>2 errors: <code>MicSyncTesterStrategy&gt;&gt;verify:</code> sends
+<code>Smalltalk image lastUpdateString</code>, which Pharo 14 does not have.</li>
+<li>1 failure: a test expects the text of an old compiler error for an
+empty source.</li>
+<li>8 skips of <code>MicBlogCreatorTest</code> &quot;for the CI server&quot;: the tests copy CSS
+files from the clone of the repository, which the package run has.  The
+skips go.</li>
+<li>5 skips of <code>MicReferenceCheckerTest</code>: two tests use an old API.
+<code>MicAnalysisReportWriter&gt;&gt;buildReportSTONFormatOn:</code> wrote each result
+under each group and put file objects into the STON text.
+<code>MicUnreferencedFigureResult</code> had no <code>errorType</code> and no
+<code>stonFormatExplanation</code>, which its sibling classes have.  One test was a
+copy of another test with no figure in its document.</li>
+<li><code>MicDumperTest&gt;&gt;testTable</code>: <code>MicRealDumper&gt;&gt;visitTable:</code> was a stub.</li>
+<li><code>MicHTMLConfigurationTest&gt;&gt;testWriteDocumentCSS</code> had no body.</li>
+<li><code>MicParsesAndRendersAllCommentsTest&gt;&gt;testSmokeSignalAndChoke</code> renders
+the comment of each class and needs more than the 10 s of SUnit.  The
+class has a time limit of 15 minutes now.</li>
+</ul>
+</li>
+<li>Result: 1605 of 1605 pass on the two VMs, in a run from a new load.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 72&quot;
+Metacello new baseline: &#x27;Microdown&#x27;; repository: &#x27;github://pillar-markup/Microdown:Pharo13/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>72</td><td><code>pillar-markup-microdown</code></td><td>ok</td><td>tests=1605 P=1605 F=0 E=0 S=0 T=0 X=0</td><td>tests=1605 P=1605 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pillar-markup-microdown.st (<a href="../files/packages/fixes/pillar-markup-microdown.st">download</a>)</summary><pre class="code">&quot;pillar-markup-microdown: repairs for the 21 tests that do not pass
+(1 failure, 3 errors, 17 skips; 1605 tests; same on Cog and on our VM).
+The record of the repair: docs/upstream/package-repairs.md
+
+Cause of each entry, in plain words:
+
+A. MicMetaDataBlockTest&gt;&gt;testCreatingAnInstanceInitializeTheMetadatDictionary
+   (error &#x27;only integers should be used as indices&#x27;).  The entry 20 of
+   scripts/image-fixes (our own repair of the upstream &#x27;self skip&#x27; test) calls
+   &#x27;metadata at: &#x27;&#x27;authors&#x27;&#x27;&#x27; on a MicMetaDataBlock.  The block has no #at:
+   (Object&gt;&gt;#at: is the indexed access); the accessor is #atKey:.  The
+   repair of the repair.  The coordinator should also correct
+   scripts/image-fixes/20-MicMetaDataBlockTest.st.
+
+B. MicSyncTesterStrategy&gt;&gt;verify: (2 errors, MicMethodBodySyncTest
+   testCodeblockIsNotInSyncCheckingResultAttributes and
+   testReportsCodeblockIsNotInSync).  The package calls
+   &#x27;Smalltalk image lastUpdateString&#x27;.  That method was removed from the
+   Pharo image (no implementor in Pharo 14; MicDesynchronizedCodeResult
+   already has the default &#x27;&gt;12&#x27; for this field).  The repair writes the
+   version of the running image with &#x27;SystemVersion current printString&#x27;.
+
+C. MicBookTesterVisitorTest&gt;&gt;testExampleEmptyCodeblockWithTwoBrackets
+   (failure).  The test expects the message &#x27;#key was sent to nil&#x27;, which the
+   old compiler gave for an empty source.  The Pharo 14 compiler
+   (Behavior&gt;&gt;compile:methodInstaller: / OCInteractiveAPI) signals
+   &#x27;The source code should not be empty&#x27; first.  The test pinned an accident
+   of an older image.  The repair makes the test expect the message of the
+   image that runs.
+
+D. Skips that only say &#x27;self skip&#x27; with a reason that is true on the Github
+   build server and false here (MicBlogCreatorTest, 8 tests: the CSS files
+   are copied from FileSystem workingDirectory / pharo-local / iceberg / ...;
+   on the server the working directory has no such clone; the pkg driver
+   copies pharo-local to the working directory of the test run) and
+   MicTextualMicrodownExporterTest&gt;&gt;testEnvironmentWithInnerBlock (the
+   comment says the environment does not parse inner blocks; the package
+   parses them now, MicEnvironmentBlock&gt;&gt;bodyFromLine:).  The repair removes
+   the skip.
+
+E. MicReferenceCheckerTest, 5 skips.
+   testDuplicatedAnchorDir and testReportingUnknownAnchorDir: the tests do
+   &#x27;self deny: (visitor checkDirectory: dir)&#x27; but checkDirectory: answers
+   the checker, not a Boolean (the comment of the method says it answers
+   &#x27;visitor is ok&#x27;: the API changed), and the tests write to a real
+   directory &#x27;myDirectory&#x27; of the OS working directory and leave it behind.
+   The repair uses the memory directory &#x27;dir&#x27; of the test class and asks
+   &#x27;checker isOkay&#x27; and the result labels.
+   testReportingSTONFormat*: MicAnalysisReportWriter&gt;&gt;buildReportSTONFormatOn:
+   (1) writes all results under each group header (the loop variable v is
+   not used), (2) puts the FileReference of the source into the STON text
+   (STON has no string form for it: FileReference{...}), (3) has a dead
+   &#x27;String streamContents:&#x27; expression.  The repair writes one STON array
+   for each group with the full name of the file as a String.
+   The test testReportingSTONFormatDuplicatedAnchors expects 2 entries for a
+   file with 3 duplicated anchors (testDuplicatedAnchors in the same class
+   says 3).  testReportingSTONFormatDuplicatedFigure is a copy of
+   testReportingSTONFormatUnknownAnchorDir (same body, same expectation, a
+   figure is never used).  The repair gives it two figures with one anchor.
+
+I. MicUnreferencedFigureResult (error SubclassResponsibility in
+   MicReferenceCheckerTest&gt;&gt;testReportingSTONFormatDuplicatedFigure).  The
+   class lacks the class-side #errorType and the instance-side
+   #stonFormatExplanation that its sister result classes have; MicResult
+   answers &#x27;subclassResponsibility&#x27; for both.  The STON report asks the
+   class for #errorType of each group, so any report with an unreferenced
+   figure signalled the error.  The repair adds the two methods (the entry is
+   a label and the source file, as for the anchor results).  The test
+   document in entry E now also refers to the figure (*@fig1@*), so the only
+   result is the duplicated anchor that the test is about.
+
+F. MicDumperTest&gt;&gt;testTable and MicRealDumper&gt;&gt;visitTable:.  The visitor
+   method was a stub (&#x27;aTable children first accept: self&#x27;: a table has no
+   children, its cells are in #rows) and the test expected the string
+   &#x27;MicTableBlock&#x27; from &#x27;accept:&#x27;.  The repair writes the dumper method in
+   the style of the other visit methods and makes the test compare the
+   contents of the dumper.
+
+G. MicHTMLConfigurationTest&gt;&gt;testWriteDocumentCSS.  The method has only
+   &#x27;self skip&#x27; and the old test in a comment (&#x27;Need to think about creating
+   referenced CSS files on the fly&#x27;).  The CSS files are in the repository
+   (ressource/), and a linked CSS needs no file: writeCssLinked only writes
+   a link tag.  The repair writes the test: the tag is there, and its href
+   is the cssPath of the framework.
+
+H. MicParsesAndRendersAllCommentsTest&gt;&gt;testSmokeSignalAndChoke.  Skipped
+   with &#x27;I take too long for normal circumstances&#x27;.  The default limit of
+   a test is 10 s.  The repair removes the skip and gives the test class a
+   limit of 15 minutes (class-side #defaultTimeLimit).  The test is a
+   robustness test of the parser: a class whose comment breaks the parser
+   or the renderer is a defect to repair after the run shows the list.&quot;
+
+&quot;--- A ---&quot;
+fix value: #MicMetaDataBlockTest value: #testCreatingAnInstanceInitializeTheMetadatDictionary
+	value: [ :s | (s includesSubstring: &#x27;metadata at: &#x27;) or: [ s includesSubstring: &#x27;self skip&#x27; ] ]
+	value:
+&#x27;testCreatingAnInstanceInitializeTheMetadatDictionary
+
+	&quot;MicStartStopMarkupBlock&gt;&gt;bodyFromLine: collects the lines of the block in body, starting from nil (the initialization to a SmallDictionary is commented out in MicMetaDataBlock&gt;&gt;initialize).  closeMe turns the collected text into the metadata dictionary.  So the dictionary exists after closeMe, not after new.  The accessor of the dictionary is #atKey:, the block has no #at:.&quot;
+
+	| metadata |
+	metadata := MicMetaDataBlock new.
+	metadata bodyFromLine: &#x27;&#x27;&quot;authors&quot; : &quot;S. Ducasse&quot;&#x27;&#x27;.
+	metadata closeMe.
+	self assert: metadata body isNotNil.
+	self assert: (metadata atKey: &#x27;&#x27;authors&#x27;&#x27;) equals: &#x27;&#x27;S. Ducasse&#x27;&#x27;.
+	self deny: metadata bogusParsing&#x27;.
+
+&quot;--- B, C, D: replace one piece of the source of a method ---
+Each entry is { class. selector. old text. new text }.  The guard is that the
+old text is in the current source, so a second file-in changes nothing.&quot;
+{
+	{ #MicSyncTesterStrategy. #verify:.
+		&#x27;Smalltalk image lastUpdateString&#x27;. &#x27;SystemVersion current printString&#x27; }.
+	{ #MicBookTesterVisitorTest. #testExampleEmptyCodeblockWithTwoBrackets.
+		&#x27;#key was sent to nil&#x27;. &#x27;Error: The source code should not be empty&#x27; }.
+	{ #MicBlogCreatorTest. #testCreateAllHtmlFile. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testCreateFromTo. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testCreateHtmlFileToReplace. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testCreateHtmlGroupFileAt. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testCreateHtmlSummarize. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testDownloadCSS. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testInitializeMonthList. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicBlogCreatorTest. #testWriteTo. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicTextualMicrodownExporterTest. #testEnvironmentWithInnerBlock. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+	{ #MicTextualMicrodownExporterTest. #testEnvironmentWithInnerBlock.
+		&#x27;&quot;The parsing of environment is plain wrong. It should recursively parse subelements&quot;&#x27;. &#x27;&#x27; }.
+	{ #MicParsesAndRendersAllCommentsTest. #testSmokeSignalAndChoke.
+		&#x27;self skip. &quot;I take too long for normal circumstances&quot;&#x27;. &#x27;&#x27; }.
+	{ #MicReferenceCheckerTest. #testReportingSTONFormatUnknownAnchorDir. &#x27;self skip.&#x27;. &#x27;&#x27; }.
+} do: [ :entry | | cls selector |
+	cls := Smalltalk globals at: entry first ifAbsent: [ nil ].
+	selector := entry at: 2.
+	(cls notNil and: [ cls includesSelector: selector ])
+		ifTrue: [
+			fix value: entry first value: selector
+				value: [ :source | source includesSubstring: (entry at: 3) ]
+				value: ((cls &gt;&gt; selector) sourceCode copyReplaceAll: (entry at: 3) with: (entry at: 4)) ]
+		ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, entry first, &#x27;&gt;&gt;&#x27;, selector, &#x27; (absent)&#x27;; lf; flush ] ].
+
+&quot;--- E: reference checker tests ---&quot;
+fix value: #MicReferenceCheckerTest value: #testDuplicatedAnchorDir
+	value: [ :s | s includesSubstring: &#x27;self deny: ( visitor checkDirectory: dir )&#x27; ]
+	value:
+&#x27;testDuplicatedAnchorDir
+
+	| file1 file2 checker |
+	file1 := dir / &#x27;&#x27;file1.txt&#x27;&#x27;.
+	file1 writeStreamDo: [ :stream | stream nextPutAll: &#x27;&#x27;# Section
+@anchorSection0
+
+# Section 1
+@anchorSection1
+
+
+&#x27;&#x27; ].
+	file1 ensureCreateFile.
+
+	file2 := dir / &#x27;&#x27;file2.txt&#x27;&#x27;.
+	file2 writeStreamDo: [ :stream | stream nextPutAll: &#x27;&#x27;# Section
+@anchorSection3
+
+# Section 4
+@anchorSection1
+
+
+&#x27;&#x27; ].
+	file2 ensureCreateFile.
+
+	checker := MicReferenceChecker new.
+	checker checkDirectory: dir.
+	self deny: checker isOkay.
+	self assert: (self anchorNames: checker) asArray equals: #( &#x27;&#x27;anchorSection1&#x27;&#x27; &#x27;&#x27;anchorSection1&#x27;&#x27; )&#x27;.
+
+fix value: #MicReferenceCheckerTest value: #testReportingUnknownAnchorDir
+	value: [ :s | s includesSubstring: &#x27;self deny: (visitor checkDirectory: dir)&#x27; ]
+	value:
+&#x27;testReportingUnknownAnchorDir
+
+	| file1 file2 checker |
+	file1 := dir / &#x27;&#x27;file1.txt&#x27;&#x27;.
+	file1 writeStreamDo: [ :stream | stream nextPutAll: &#x27;&#x27;# Section
+@anchorSection0
+
+# Section 1
+@anchorSection1
+
+
+&#x27;&#x27; ].
+	file1 ensureCreateFile.
+
+	file2 := dir / &#x27;&#x27;file2.txt&#x27;&#x27;.
+	file2 writeStreamDo: [ :stream | stream nextPutAll: &#x27;&#x27; See *@anchorSection1@* and *@anchorSection2@*&#x27;&#x27; ].
+	file2 ensureCreateFile.
+
+	checker := MicReferenceChecker new.
+	checker checkDirectory: dir.
+	self deny: checker isOkay.
+	self assert: (self anchorNames: checker) asArray equals: #( &#x27;&#x27;anchorSection2&#x27;&#x27; )&#x27;.
+
+fix value: #MicReferenceCheckerTest value: #testReportingSTONFormatDuplicatedAnchors
+	value: [ :s | s includesSubstring: &#x27;self skip.&#x27; ]
+	value:
+&#x27;testReportingSTONFormatDuplicatedAnchors
+
+	| defAncS0TripleAncS1RefAncS1AncS0 checker |
+	defAncS0TripleAncS1RefAncS1AncS0 := self defAncS0TripleAncS1RefAncS1AncS0.
+	checker := MicReferenceChecker new.
+	checker checkList: { defAncS0TripleAncS1RefAncS1AncS0 }.
+
+	&quot;three definitions of ancS1: see testDuplicatedAnchors&quot;
+	self
+		assert: checker reportSTONFormat
+		equals: &#x27;&#x27;[&#x27;&#x27;&#x27;&#x27;type&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;DuplicatedAnchor&#x27;&#x27;&#x27;&#x27;,[&#x27;&#x27;&#x27;&#x27;ancS1&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;/myDirectory/defAncS0TripleAncS1RefAncS1AncS0.md&#x27;&#x27;&#x27;&#x27;,&#x27;&#x27;&#x27;&#x27;ancS1&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;/myDirectory/defAncS0TripleAncS1RefAncS1AncS0.md&#x27;&#x27;&#x27;&#x27;,&#x27;&#x27;&#x27;&#x27;ancS1&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;/myDirectory/defAncS0TripleAncS1RefAncS1AncS0.md&#x27;&#x27;&#x27;&#x27;]]&#x27;&#x27;
+&#x27;.
+
+fix value: #MicReferenceCheckerTest value: #testReportingSTONFormatDuplicatedFigure
+	value: [ :s | s includesSubstring: &#x27;self skip.&#x27; ]
+	value:
+&#x27;testReportingSTONFormatDuplicatedFigure
+
+	| doubleFigure checker |
+	(dir / &#x27;&#x27;figures&#x27;&#x27; / &#x27;&#x27;f.png&#x27;&#x27;) ensureCreateFile.
+	doubleFigure := dir / &#x27;&#x27;doubleFigure.md&#x27;&#x27;.
+	doubleFigure writeStreamDo: [ :stream |
+		stream nextPutAll: &#x27;&#x27;# Section
+@ancS0
+
+![a caption 1](figures/f.png anchor=fig1)
+
+![a caption 2](figures/f.png anchor=fig1)
+
+See *@fig1@*.
+&#x27;&#x27; ].
+	doubleFigure ensureCreateFile.
+	checker := MicReferenceChecker new.
+	checker rootDirectory: dir.
+	checker checkList: { doubleFigure }.
+
+	self
+		assert: checker reportSTONFormat
+		equals: &#x27;&#x27;[&#x27;&#x27;&#x27;&#x27;type&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;DuplicatedAnchor&#x27;&#x27;&#x27;&#x27;,[&#x27;&#x27;&#x27;&#x27;fig1&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;/myDirectory/doubleFigure.md&#x27;&#x27;&#x27;&#x27;,&#x27;&#x27;&#x27;&#x27;fig1&#x27;&#x27;&#x27;&#x27;:&#x27;&#x27;&#x27;&#x27;/myDirectory/doubleFigure.md&#x27;&#x27;&#x27;&#x27;]]&#x27;&#x27;
+&#x27;.
+
+fix value: #MicAnalysisReportWriter value: #buildReportSTONFormatOn:
+	value: [ :s | s includesSubstring: &#x27;Association new key:&#x27; ]
+	value:
+&#x27;buildReportSTONFormatOn: str
+	&quot;One STON array for each kind of result: the type, then the entries of that kind.  Groups are on separate lines.&quot;
+
+	| dict isFirst |
+	dict := results groupedBy: [ :each | each class ].
+	isFirst := true.
+	dict keysAndValuesDo: [ :kind :ofKind |
+		isFirst ifFalse: [ str cr ].
+		isFirst := false.
+		STON
+			put: { (&#x27;&#x27;type&#x27;&#x27; -&gt; kind errorType). (ofKind collect: [ :each | self stonEntryFor: each ]) asArray }
+			onStream: str ]&#x27;.
+
+add value: #MicAnalysisReportWriter value: #stonEntryFor: value: &#x27;reporting&#x27; value:
+&#x27;stonEntryFor: aResult
+	&quot;The entry of a result for the STON report.  An anchor result answers label -&gt; file reference.  STON writes a file reference as an object (FileReference{...}), so the report holds the full name of the file.&quot;
+
+	| entry |
+	entry := aResult stonFormatExplanation.
+	^ (entry isKindOf: Association)
+		ifTrue: [ entry key -&gt; (entry value isString ifTrue: [ entry value ] ifFalse: [ entry value fullName ]) ]
+		ifFalse: [ entry ]&#x27;.
+
+&quot;--- F: dumper ---&quot;
+fix value: #MicRealDumper value: #visitTable:
+	value: [ :s | s includesSubstring: &#x27;children first&#x27; ]
+	value:
+&#x27;visitTable: aTable
+
+	self
+		element: aTable
+		during: [
+			stream nextPutAll: &#x27;&#x27;rows: { &#x27;&#x27;.
+			aTable rows
+				do: [ :row |
+					stream nextPutAll: &#x27;&#x27;{ &#x27;&#x27;.
+					row
+						do: [ :cell |
+							stream nextPutAll: &#x27;&#x27;{ &#x27;&#x27;.
+							cell
+								do: [ :each | each accept: self ]
+								separatedBy: [ stream nextPutAll: &#x27;&#x27; . &#x27;&#x27; ].
+							stream nextPutAll: &#x27;&#x27; }&#x27;&#x27; ]
+						separatedBy: [ stream nextPutAll: &#x27;&#x27; . &#x27;&#x27; ].
+					stream nextPutAll: &#x27;&#x27; }&#x27;&#x27; ]
+				separatedBy: [ stream nextPutAll: &#x27;&#x27; . &#x27;&#x27; ].
+			stream nextPutAll: &#x27;&#x27; }; hasHeader: &#x27;&#x27;.
+			stream nextPutAll: aTable hasHeader printString.
+			stream nextPutAll: &#x27;&#x27;; yourself&#x27;&#x27; ]&#x27;.
+
+fix value: #MicDumperTest value: #testTable
+	value: [ :s | s includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testTable
+
+	| micTable |
+	micTable := (parser parse: factory tableSample) children first.
+	visitor visit: micTable.
+	self
+		assert: visitor contents
+		equals: &#x27;&#x27;(MicTableBlock new rows: { { { (MicTextBlock new substring: &#x27;&#x27;&#x27;&#x27;aaab&#x27;&#x27;&#x27;&#x27;) } . { (MicTextBlock new substring: &#x27;&#x27;&#x27;&#x27;jkhjh&#x27;&#x27;&#x27;&#x27;) } } . { { (MicTextBlock new substring: &#x27;&#x27;&#x27;&#x27;bar&#x27;&#x27;&#x27;&#x27;) } . { (MicTextBlock new substring: &#x27;&#x27;&#x27;&#x27;rab&#x27;&#x27;&#x27;&#x27;) } } }; hasHeader: true; yourself)&#x27;&#x27;
+&#x27;.
+
+&quot;--- G: HTML configuration CSS ---&quot;
+fix value: #MicHTMLConfigurationTest value: #testWriteDocumentCSS
+	value: [ :s | s includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testWriteDocumentCSS
+
+	| framework parsedContents linkElements link |
+	framework := doc addCSSNamed: self sampleMicCSSName.
+	configuration writeDocumentCSS.
+	self deny: doc contents isEmpty.
+	parsedContents := (XMLHTMLParser on: doc contents) parseDocument.
+	linkElements := parsedContents descendantElementsNamed: &#x27;&#x27;link&#x27;&#x27;.
+	self assert: linkElements size equals: 1.
+	link := linkElements first.
+	self assert: (link attributeAt: &#x27;&#x27;rel&#x27;&#x27;) equals: &#x27;&#x27;stylesheet&#x27;&#x27;.
+	self assert: (link attributeAt: &#x27;&#x27;href&#x27;&#x27;) equals: framework cssPath&#x27;.
+
+&quot;--- H: time limit for the smoke test over all class comments ---&quot;
+add value: #&#x27;MicParsesAndRendersAllCommentsTest class&#x27; value: #defaultTimeLimit value: &#x27;timeouts&#x27; value:
+&#x27;defaultTimeLimit
+	&quot;The test renders the comment of each class of the image: more than the 10 seconds of the default.&quot;
+
+	^ 15 minutes&#x27;.
+
+&quot;--- I: the result of an unreferenced figure in the STON report ---&quot;
+add value: #&#x27;MicUnreferencedFigureResult class&#x27; value: #errorType value: &#x27;kinds&#x27; value:
+&#x27;errorType
+
+	^ &#x27;&#x27;UnreferencedFigure&#x27;&#x27;&#x27;.
+
+add value: #MicUnreferencedFigureResult value: #stonFormatExplanation value: &#x27;accessing&#x27; value:
+&#x27;stonFormatExplanation
+	&quot;As the other results: a label and the file that holds the figure.&quot;
+
+	^ Association new key: anchorLabel value: source&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

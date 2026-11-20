@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package row 146: jordanmontt-pharo-instrumentation - Pharo test defects</title><meta name="description" content="Package row 146: jordanmontt-pharo-instrumentation: Open: 5 tests (the first repair ran; a second draft is not in the repository)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package row 146: jordanmontt-pharo-instrumentation</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: 5 tests (the first repair ran; a second draft is not in the repository)</span></dd><dt>Defect in</dt><dd>the package (cause not proven for each test)</dd><dt>Tests</dt><dd>5</dd><dt>Fix</dt><dd>jordanmontt-pharo-instrumentation.st</dd><dt>Upstream repository</dt><dd>jordanmontt/pharo-instrumentation</dd></dl><h2>Summary</h2><p>The first repair (action source from block, onProfiler:, unproxifiedMethod) took 13 away. The 5 heavy GraphCallerTest tests give a count of 1. A round-2 draft (&lt;work directory&gt;, adds resetSharedState to clear the Microdown resource cache and a warm-up run) is not in the repo and has no report .md; cause is a draft, not proven.</p><p><b>Next step:</b> Validate the round-2 draft: copy it to scripts/pkg-jit-test/fixes/jordanmontt-pharo-instrumentation.st, rerun row 146 on both VMs; if the VMs differ, treat as a VM defect.</p><h2>Results</h2><table><tr><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>ok</td><td>tests=17 P=12 F=5 E=0 S=0 T=0 X=0</td><td>tests=17 P=12 F=5 E=0 S=0 T=0 X=0</td></tr></table><h2>Test</h2><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>GraphCallerTest&gt;&gt;testFuzzyMatcher</code></td><td>FAIL</td><td>FAIL</td></tr><tr><td><code>GraphCallerTest&gt;&gt;testGraphAlgos</code></td><td>FAIL</td><td>FAIL</td></tr><tr><td><code>GraphCallerTest&gt;&gt;testMicrodown</code></td><td>FAIL</td><td>FAIL</td></tr><tr><td><code>GraphCallerTest&gt;&gt;testProfStef</code></td><td>FAIL</td><td>FAIL</td></tr><tr><td><code>GraphCallerTest&gt;&gt;testRewriteTool</code></td><td>FAIL</td><td>FAIL</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): jordanmontt-pharo-instrumentation.st (<a href="../files/packages/fixes/jordanmontt-pharo-instrumentation.st">download</a>)</summary><pre class="code">&quot;jordanmontt/pharo-instrumentation: three defects of the package (the two VMs
+fail the same 17 - 4 tests the same way; the defects are in the package code
+and in its test, not in a VM).
+
+1. SourceCodeInstrumentator builds the source text of an instrumented method
+from the two action blocks with &#x27;aBlock asString&#x27;.  In Pharo 14
+BlockClosure&gt;&gt;printOn: prints &#x27;[ ] in Class&gt;&gt;selector&#x27;, not the source of the
+block.  The compiled method then holds the text &#x27;runInMetaLevel: [ ] in
+Class&gt;&gt;setUp ]&#x27;: the empty block [ ] (a ConstantBlockClosure) gets the unary
+message #in, and every call of an instrumented method fails with
+&#x27;ConstantBlockClosure does not understand #in&#x27;.  This gives the 6 errors
+(testInstrument, testProfile, testProfileMethodWithTempVariables,
+testProfileSeveralMethods, testProfileSeveralMethodsAndClasses,
+testAfterHasLocalReturn) and the 2 failures with a counter of 0
+(testAfterRaisesError, testProfileWithException: the test only asks for
+&#x27;raise: Error&#x27;, and the DNU is an Error, so the call of the method fails
+before any action ran).  The repair adds SourceCodeInstrumentator&gt;&gt;actionSource:
+(a String stays as it is; a block gives the source text of its AST node) and
+uses it in instrument: and wrapBeforeActionFor:.  The tests that give strings
+(the prototype trap tests) get the same text as before.
+
+2. GraphCallerTest&gt;&gt;setUp calls MpCallGraphInstrumentator new and
+RwiCallGraphInstrumentator new.  Both classes refuse new with &#x27;Use
+onProfiler: instead of new&#x27; since the refactoring of the package; the test
+was not changed.  The repair makes the two profilers first and gives each
+profiler an instrumentator made with onProfiler:.
+
+3. The instrumentators send #unproxifiedMethod to each CompiledMethod of the
+set of methods.  No loaded package and no method of the image defines
+CompiledMethod&gt;&gt;unproxifiedMethod (the MethodProxies of the baseline, master,
+has no such method).  The repair adds CompiledMethod&gt;&gt;unproxifiedMethod
+(answers the receiver: an ordinary method is not a proxy).
+
+4. The five GraphCallerTest tests run whole test packages two times, with a
+proxy on each method of a package.  The time limit of SUnit is 10 s a test.
+GraphCallerTest class&gt;&gt;defaultTimeLimit gives 10 minutes.  Only a run shows
+whether the limit is needed.&quot;
+
+add value: #SourceCodeInstrumentator value: #actionSource: value: &#x27;profiling&#x27; value:
+&#x27;actionSource: anAction
+	&quot;Answer the Smalltalk source text of anAction.  A String is the text already.
+	 A block gives the source of its AST node: BlockClosure&gt;&gt;asString prints
+	 &#x27;&#x27;[ ] in Class&gt;&gt;selector&#x27;&#x27; in Pharo 14, which is not code.&quot;
+
+	^ anAction isString
+		  ifTrue: [ anAction ]
+		  ifFalse: [ anAction sourceNode sourceCode ]&#x27;.
+
+fix value: #SourceCodeInstrumentator value: #instrument:
+	value: [ :source | source includesSubstring: &#x27;afterAction asString&#x27; ]
+	value:
+&#x27;instrument: aMethod
+
+	| beforeActionString afterActionString pragmasString originalCodeString instrumentedMethodCode |
+	beforeActionString := self wrapBeforeActionFor: aMethod.
+	afterActionString := self wrapWithMetaSafeMechanism: (self actionSource: afterAction).
+	originalCodeString := &#x27;&#x27;[ &#x27;&#x27; , aMethod methodNode body sourceCode , &#x27;&#x27; ]&#x27;&#x27;.
+	pragmasString := aMethod pragmas inject: &#x27;&#x27;&#x27;&#x27; into: [ :sum :node | sum , node asString , String cr].
+
+	instrumentedMethodCode := String streamContents: [ :stream |
+		stream &lt;&lt; pragmasString &lt;&lt;
+			beforeActionString &lt;&lt; String cr
+			&lt;&lt; &#x27;&#x27;    &#x27;&#x27; &lt;&lt; originalCodeString &lt;&lt; &#x27;&#x27; ensure: [&#x27;&#x27; &lt;&lt; String cr &lt;&lt;
+			&#x27;&#x27;    &#x27;&#x27; &lt;&lt; afterActionString &lt;&lt; &#x27;&#x27; ]&#x27;&#x27; ].
+	
+	instrumentedMethodCode := aMethod sourceNode selectorAndArgumentNames , String cr , instrumentedMethodCode.
+	
+	aMethod methodClass compile: instrumentedMethodCode&#x27;.
+
+fix value: #SourceCodeInstrumentator value: #wrapBeforeActionFor:
+	value: [ :source | source includesSubstring: &#x27;beforeAction asString&#x27; ]
+	value:
+&#x27;wrapBeforeActionFor: aMethod
+
+	^ self wrapWithMetaSafeMechanism:
+		  &#x27;&#x27;[ &#x27;&#x27; , (self actionSource: beforeAction) , &#x27;&#x27; cull: &#x27;&#x27; , aMethod nameForProfiler , &#x27;&#x27; ]&#x27;&#x27;&#x27;.
+
+fix value: #GraphCallerTest value: #setUp
+	value: [ :source | source includesSubstring: &#x27;MpCallGraphInstrumentator new&#x27; ]
+	value:
+&#x27;setUp
+
+	super setUp.
+	mpProfiler := CallGraphProfiler new.
+	mpProfiler instrumentator: (MpCallGraphInstrumentator onProfiler: mpProfiler).
+	rwiProfiler := CallGraphProfiler new.
+	rwiProfiler instrumentator: (RwiCallGraphInstrumentator onProfiler: rwiProfiler)&#x27;.
+
+add value: #CompiledMethod value: #unproxifiedMethod value: &#x27;*InstrumentationProfilers&#x27; value:
+&#x27;unproxifiedMethod
+	&quot;An ordinary method is not a proxy: it is the unproxified method.&quot;
+
+	^ self&#x27;.
+
+add value: #&#x27;GraphCallerTest class&#x27; value: #defaultTimeLimit value: &#x27;accessing&#x27; value:
+&#x27;defaultTimeLimit
+	&quot;A test runs whole test packages twice, with a method proxy on each method of a package.&quot;
+
+	^ 10 minutes&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

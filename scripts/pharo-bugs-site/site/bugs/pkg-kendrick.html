@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Kendrick (KendrickOrg/kendrick, row 83) - Pharo test defects</title><meta name="description" content="Package: Kendrick (KendrickOrg/kendrick, row 83): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Kendrick (KendrickOrg/kendrick, row 83)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>kendrickorg-kendrick.st, kendrickorg-kendrick.patch</dd><dt>Upstream repository</dt><dd>KendrickOrg/kendrick</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: <code>LOAD-FAIL</code> (<code>Conflicting repositories!</code>).</li>
+<li>Causes of the load failure, in the baseline: the baseline names its own
+repository with another address than the load expression, and it gives
+the dependencies of <code>Kendrick-Core</code> only for Pharo 8 to 10.
+<code>patches/kendrickorg-kendrick.patch</code> removes the repository line and names
+PolyMath, DataFrame, PetitParser and the AI graph algorithms for each
+Pharo version.</li>
+<li>State after the load: 240 tests, 219 pass, 1 failure, 16 errors, 4
+expected failures on the two VMs.</li>
+<li>Causes, each found with a probe (<code>fixes/kendrickorg-kendrick.st</code>):
+<ul>
+<li>The chart code sends <code>RSChart&gt;&gt;addPlot:</code>.  Roassal of Pharo 14 has
+<code>add:</code>.</li>
+<li><code>Composition&gt;&gt;doesNotUnderstand:</code> looks for a parameter in its own
+parameters, which are empty.  The parameters are in the model of the
+composition.</li>
+<li><code>KEComponent&gt;&gt;attributes:</code> did not refuse two attributes with one name
+(1 failure), and did not take a Dictionary.</li>
+<li>Four defects behind the four marks of an expected failure: a model made
+from transitions had its equations in the wrong kind of collection;
+<code>KEUnaryExpression&gt;&gt;removeVariable:</code> changed the receiver; a compartment
+that only a transition names had no key; and one test asked a model of
+transitions for events, which only exist between equations and
+transitions.  That test now asks for the transitions and keeps its
+expected value of 4.  The four marks are gone.</li>
+<li><code>KendrickEquations</code> reads the print text of an Array of symbols.  Pharo
+14 prints <code>#'S:t'</code> with quotes, so the text was cut.</li>
+<li>Tests: <code>contents max</code> on a DataFrame (the value is <code>max first</code>);
+<code>asArray</code> on a number; tests that compared data frames of another
+shape; a class name that the last commit of the repository changed.</li>
+</ul>
+</li>
+<li>10 simulation tests need 3 to 25 s, and SUnit gives a test 10 s.  The
+profile is flat (the work is the steps of the simulation, no slow lookup).
+The test classes of the simulations have a time limit of 3 minutes of
+their own, with the measured times in the comment.</li>
+<li>Result: 240 of 240 pass on the two VMs, in a run from a new load.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 83&quot;
+Metacello new baseline: &#x27;Kendrick&#x27;; repository: &#x27;github://KendrickOrg/kendrick:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;DSL&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>83</td><td><code>kendrickorg-kendrick</code></td><td>ok</td><td>tests=240 P=240 F=0 E=0 S=0 T=0 X=0</td><td>tests=240 P=240 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): kendrickorg-kendrick.st (<a href="../files/packages/fixes/kendrickorg-kendrick.st">download</a>)</summary><pre class="code">&quot;KendrickOrg/kendrick.  Entries for the tests of the packages Kendrick-Core,
+Kendrick-DSL and Kendrick-Tests.  The load itself is repaired by the patch of
+the baseline (patches/kendrickorg-kendrick.patch); this file repairs the tests
+and the code that the tests call.  Every entry has a guard on the old source:
+the guard is true for the source as the package has it, and false after the
+repair, so the file can be filed in again with no change.
+
+CAUSES, in plain words.  The letters are the letters of the sections below.
+
+A. testEquivalence of eight DSL test classes.  In January 2020 the class
+KETimeSeries was removed and the data frames of DataFrame took its place.  The
+tests still send #data to a KEChart (a KEChart has #dataFrames) and
+#peakOfEpidemic to a time series (nothing implements the selector any more).
+The tests that were moved half way compare the collections of data frames one to
+one, but the chart before the DSL has one data frame with a column for each
+compartment, and the chart after the DSL has one data frame for each
+compartment.  Each test now compares the sorted peaks (the largest value of a
+column, rounded down) of all columns of all data frames of the two charts.  This
+is what the old test compared: one peak for each time series.  The calls that
+open an inspector on the models have no assertion and are not in the new bodies.
+
+B. Code of the part before that gives KEChart&gt;&gt;addDataFrame: a block, an
+OrderedCollection or an Array instead of a data frame (TestOneSpeciesSpatialScripts,
+TestDependantConcern, TestMultiSpeciesSpatial): the chart then sends #columnNames
+to the collection.  And three tests whose chart before holds one data frame with
+a column for each patch, where the DSL chart after holds the sum over the patches
+for each species or strain (TestMultiSpeciesSpatialDependant, TestsModel5, and
+TestMultiSpeciesSpatial above).  The code before now adds the sum, as the DSL does.
+TestsModel5&gt;&gt;before had no ^ and answered the test, not the three results.
+
+C. Visualization&gt;&gt;sumOverTimeSeries: says in its own comment that it does not
+work (it sends #name: to a number).  KESimulator gets #sumOfTimeSeriesOutputsAt:
+(a data frame with one column that is the sum of the columns of
+#timeSeriesOutputsAt:), Simulation delegates to the simulator, and the
+visualization uses the method.
+
+D. KEMapBuilder builds the picture with Roassal 2 (RTMapBuilder and others) that
+Pharo 14 does not have, and the class has no #plot that Visualization&gt;&gt;canvas
+sends.  The picture is now a Roassal 3 canvas: a labelled box for each country, a
+grid layout (the data has no geography), a line for each route.  The test
+TestsModel6SpatialMap took the first row of the series where the other test and
+the DSL take the peak; it takes the peak now.  Both map tests asked a map for
+#dataFrames; a map has #data (numbers).
+
+E. TestsIST is the root of the DSL tests and its testScript skips for the root
+class itself.  TestsIST is an abstract test class now (no test instance), and
+shouldInheritSelectors keeps the old rule for the subclasses.
+
+F. KEChart sends RSChart&gt;&gt;addPlot:.  In Roassal 3 of Pharo 14 RSChart is a
+deprecated subclass of RSCompositeChart, and the selector is add:.
+
+G. Composition&gt;&gt;doesNotUnderstand: looks for a parameter (lambda: #(beta*I/N sum))
+in the parameters of the Composition, which stay empty.  The parameters that the
+concerns bring are in the ModelComponent of the Composition (its #model).  The
+method looks in both.
+
+H. KEComponent&gt;&gt;attributes: did not look at the names of the attributes, only at
+the values, so two attributes with the same name replaced each other with no
+error.  It also answers for the Dictionary that KEModelPart class&gt;&gt;dependOn: gives.
+KEComponent&gt;&gt;transitions turned any non-empty #equations into transitions, but
+after #transitionsToEquations the instance variable holds a Dictionary of
+transitions, not a list of equations, and #generateEvents then sent
+#generateEvents to an OrderedCollection.  KEComponent&gt;&gt;transitionsToEquations
+dropped every transition from or to the empty compartment (births and deaths) and
+stopped with KeyNotFound for a compartment that no attribute names (a model built
+from transitions only).
+
+I. KEUnaryExpression&gt;&gt;removeVariable: changed the receiver (it set the expression
+of the receiver) instead of answering a copy.
+
+J. KEModel&gt;&gt;equations2 builds the symbolic equations from the probabilities of the
+transitions, and a probability may be a block or a number (KETransition accepts a
+block).  A block in a binary expression has no #normalize.  A KEBlockExpression
+wraps the block, and a number becomes a KENumerical.
+
+K. Four tests have the mark expectedFailure.  Each hides one of the defects of
+H, I and J, or the wrong number of the test below.  The marks go.
+KEEventTest&gt;&gt;testVerifyNumberOfEventOfSumOfTwoConcerns asked a model built from
+transitions for its events.  Events exist only as the step between equations and
+transitions (equationsToTransitions makes one transition for each event), so a
+model built from transitions has its events as transitions: the count is 4
+transitions (2 transitions of the first concern, 2 species of the second).
+
+L. KESimulatorTest&gt;&gt;testKEDeterministicSimulationGiveAlwaysSameMax sent #max to
+the #contents of a data frame.  #contents of DataFrame answers an internal object
+that is not a collection.  The peak of the data frame is its #max (one value for
+each column), and the frame has one column.
+
+M. KEPopulation&gt;&gt;initialSize: was removed in January 2020 (the commit says that
+only KEPopulation class&gt;&gt;size: stays, for the DSL) but that class method, and so
+ModelComponent&gt;&gt;population:, sends #initialSize:.
+
+N. KEDeterministicSimulator&gt;&gt;executeOnWithKEEquations: evaluated the equations at
+the compartments of the start of the step for each stage of the solver, whatever
+the stage vector was: the Runge-Kutta solver was the method of Euler.  The
+compartments now take the values of the stage vector before the equations are
+evaluated, as executeOnWithTransitions: does.  Proof: the maxima of a measles
+model with the old code are the maxima of a hand written Euler method, and with
+the new code they are the maxima of a hand written fourth order Runge-Kutta method.
+
+O. Simulation&gt;&gt;forModel: sent #doesNotUnderstand: with a String to the class
+Composition (the class side method of KendrickInternalDSLEntities reads #selector
+of its argument).  The simulation of a stand-alone model takes the ModelComponent
+of that name, and a ModelComponent answers itself to #model, as the Simulation
+and the Visualization expect of a Composition.
+
+P. Test code that the DSL changes of 2020 to 2022 left behind.
+TestMeaslesScripts&gt;&gt;after defines the stand-alone model as a KModel (a concern
+that has no population); it is a ModelComponent.  TestDependantConcern and
+TestMosquitoScripts send #asArray to one value (a number, a symbol) to make an
+Array of one element: Object has no #asArray, and the symbol would give an Array
+of characters.  They send Array with: instead.  TestsModel5, TestsModel6SpatialMap,
+TestsModel6SpatialMapWithEntity and TestMosquitoScripts look for the
+ModelComponent &#x27;Influenza&#x27; or &#x27;Mosquito&#x27; by name, and no such entity exists; they
+ask the simulation for its model.  TestMosquitoScripts&gt;&gt;after defines the mosquito
+model as a ModelComponent that the composition does not integrate (Composition&gt;&gt;model:
+takes a KModel); it is a KModel integrated by the composition, without the population:
+line that a KModel does not understand.
+
+Q. KendrickEquations&gt;&gt;convertToCompatibleBackendRepresentation read the equations
+from the print string of the Array of tokens.  In Pharo 14 a symbol like S:t prints
+with quotes, and the tokens were cut at the quotes into pieces that are not
+equations (PPFailure).  The tokens are now joined one by one, and a period token
+ends an equation.
+
+R. Scenario&gt;&gt;addCompositeParameter:value: has two gaps in the DSL syntax that the
+tests use.  A value of an attribute after the underscore (rho_species_Q: #(0.03 0.1
+0)) adds one more value to the array, for the compartments that have that attribute
+value (the quarantine status Q has no migration); the method ignored it, so the
+quarantined individuals moved.  The word next after an attribute key
+(sigma_species_status_next) selects the value of the compartment that the
+transition goes to; the method has no code for it (Composition and an older
+method have), so the rate E to I1 was zero and no epidemic started.
+
+S. The simulation tests need more time than the SUnit limit (10 s for a test).
+No defect makes them slow.  Each test runs a Runge-Kutta or a Gillespie
+simulation twice (the model before the DSL and the model after the DSL), and the
+time is the work of the simulation: 500 steps, four stages for each step, 50
+compartments, and for each transition a call of the probability block and a sum
+over the compartments.  A sample of the running process (every 10 ms, 445 samples
+of the model of TestsModel5 before the DSL) shows no hot spot and no time in
+Dictionary&gt;&gt;scanFor:, so the hash of a Dictionary as a key is not the cause: the
+time is spread over the copy of the key dictionaries, the sums, the probability
+blocks and, for Gillespie, Random&gt;&gt;nextInteger:.  The tests need 3 s to 21 s on
+the machine of the run, so the classes of the simulation tests get a class-side
+defaultTimeLimit of 3 minutes (room for a machine that is 3 times slower).  The
+limit of the other tests of the image does not change.&quot;
+
+
+&quot;Two helpers live in globals for the time of the file-in: the entries file is one
+chunk, and a line of temporaries in the middle of a chunk is a syntax error.  The
+globals are removed at the end of the file.
+
+KendrickRangeFix has one argument, an Array of class name, selector, start text,
+end text and new text; the text from the start text to the end text is replaced.
+KendrickEdit has one argument, an Array of class name, selector, a text that the
+old source has, a text that the new source has (empty when the first text goes away),
+and an Array of old text and new text, in pairs; each old text is replaced.  A block
+has no value:value:value:value:value: (five arguments), so each call gives one Array.&quot;
+Smalltalk globals at: #KendrickRangeFix put: [ :args | | clsName sel startText endText newText cls source i j |
+	clsName := args at: 1.
+	sel := args at: 2.
+	startText := args at: 3.
+	endText := args at: 4.
+	newText := args at: 5.
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifTrue: [
+			source := (cls &gt;&gt; sel) sourceCode.
+			i := source indexOfSubCollection: startText.
+			j := i = 0 ifTrue: [ 0 ] ifFalse: [ source indexOfSubCollection: endText startingAt: i ].
+			fix value: clsName value: sel
+				value: [ :each | i &gt; 0 and: [ j &gt; 0 ] ]
+				value: ((i &gt; 0 and: [ j &gt; 0 ])
+					ifTrue: [ (source copyFrom: 1 to: i - 1) , newText , (source copyFrom: j + endText size to: source size) ]
+					ifFalse: [ &#x27;&#x27; ]) ]
+		ifFalse: [ fix value: clsName value: sel value: [ :each | false ] value: &#x27;&#x27; ] ].
+
+Smalltalk globals at: #KendrickEdit put: [ :args | | clsName sel guardText doneText pairs cls source ok |
+	clsName := args at: 1.
+	sel := args at: 2.
+	guardText := args at: 3.
+	doneText := args at: 4.
+	pairs := args at: 5.
+	cls := resolve value: clsName.
+	source := (cls notNil and: [ cls includesSelector: sel ])
+		ifTrue: [ (cls &gt;&gt; sel) sourceCode ]
+		ifFalse: [ &#x27;&#x27; ].
+	ok := (source includesSubstring: guardText) and: [ doneText isEmpty or: [ (source includesSubstring: doneText) not ] ].
+	pairs pairsDo: [ :old :new | (source includesSubstring: old) ifFalse: [ ok := false ] ].
+	ok ifTrue: [ pairs pairsDo: [ :old :new | source := source copyReplaceAll: old with: new ] ].
+	fix value: clsName value: sel value: [ :each | ok ] value: source ].
+
+&quot;=== A. testEquivalence of the DSL tests ===&quot;
+
+#(#TestMeaslesScripts #TestMeaslesScriptsBMC #TestMeaslesScriptsODEsBMC #TestDependantConcern
+  #TestMultiSpeciesSpatial #TestMultiSpeciesSpatialDependant #TestOneSpeciesSpatialScripts #TestsModel5)
+	do: [ :name |
+		add value: name value: #peaksOf: value: &#x27;private&#x27; value:
+&#x27;peaksOf: aChart
+	&quot;The peak of every time series of the chart, rounded down, in ascending order.  A data frame of the chart has one column for each time series.&quot;
+	^ (aChart dataFrames gather: [ :frame | frame max values collect: [ :peak | peak floor ] ]) asSortedCollection asOrderedCollection&#x27;.
+		fix value: name value: #testEquivalence
+			value: [ :source | (source includesSubstring: &#x27;peaksOf:&#x27;) not and: [ source includesSubstring: &#x27;Diagram&#x27; ] ]
+			value:
+&#x27;testEquivalence
+	| resultsBefore resultsAfter |
+	self createModels.
+	resultsBefore := self peaksOf: beforeDiagram.
+	resultsAfter := self peaksOf: afterDiagram.
+	self assert: resultsBefore equals: resultsAfter&#x27; ].
+
+&quot;=== B. chart code of the part before ===&quot;
+
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestOneSpeciesSpatialScripts. #before.
+	&#x27;chart addDataFrame: [|tmp| tmp := OrderedCollection new.&#x27;.
+	&#x27;tmp] value.&#x27;.
+	&#x27;(1 to: 5) do: [ :patch |
+		chart addDataFrame: (simulator timeSeriesOutputsAt: { #status -&gt; #I. #patch -&gt; patch }) ].&#x27; }.
+
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestDependantConcern. #before.
+	&#x27;chart addDataFrame: [|tmp| tmp := DataFrame new.&#x27;.
+	&#x27;tmp] value.&#x27;.
+	&#x27;(1 to: 5) do: [ :patch |
+		chart addDataFrame: (simulator timeSeriesOutputsAt: { #status -&gt; #I. #patch -&gt; patch }) ].&#x27; }.
+
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestMultiSpeciesSpatial. #before.
+	&#x27;f := [:name| |df ds|&#x27;.
+	&#x27;#human}) }.&#x27;.
+	&#x27;chart
+		addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I. #species -&gt; #bird });
+		addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I. #species -&gt; #human }).&#x27; }.
+
+&quot;=== C. sum of time series ===&quot;
+
+add value: #KESimulator value: #sumOfTimeSeriesOutputsAt: value: &#x27;public&#x27; value:
+&#x27;sumOfTimeSeriesOutputsAt: aCompartmentName
+	&quot;A data frame with one column.  The column has, for each time, the sum of the columns that #timeSeriesOutputsAt: answers for aCompartmentName.  The column is named aCompartmentName, the rows are the times.&quot;
+	| frame sums |
+	frame := self timeSeriesOutputsAt: aCompartmentName.
+	sums := frame rowNames collect: [ :time |
+		(frame row: time) values inject: 0 into: [ :sum :each | sum + each ] ].
+	^ DataFrame
+		withColumns: { sums asArray }
+		rowNames: frame rowNames asArray
+		columnNames: { aCompartmentName }&#x27;.
+
+add value: #Simulation value: #sumOfTimeSeriesOutputsAt: value: &#x27;protected&#x27; value:
+&#x27;sumOfTimeSeriesOutputsAt: anIdentifier
+	^ simulator sumOfTimeSeriesOutputsAt: anIdentifier&#x27;.
+
+fix value: #Visualization value: #sumOverTimeSeries:
+	value: [ :source | source includesSubstring: &#x27;df column: each&#x27; ]
+	value:
+&#x27;sumOverTimeSeries: name
+	&quot;Answer a data frame with one column: the sum over the time series of name&quot;
+	^ simulation sumOfTimeSeriesOutputsAt: name asArray&#x27;.
+
+&quot;=== D. KEMapBuilder in Roassal 3, and the two map tests ===&quot;
+
+fix value: #KEMapBuilder value: #build
+	value: [ :source | source includesSubstring: &#x27;RTMapBuilder&#x27; ]
+	value:
+&#x27;build
+	&quot;A Roassal 3 canvas of the map: a labelled box for each country, white to red by the value of the country relative to the largest value, a grid layout, and a line for each route.&quot;
+	| canvas values max shapes |
+	canvas := RSCanvas new.
+	values := countries withIndexCollect: [ :country :i | data at: i ifAbsent: [ 0 ] ].
+	max := values inject: 1 into: [ :largest :each | largest max: each ].
+	shapes := RSGroup withAll: (countries withIndexCollect: [ :country :i | | box label |
+		box := RSBox new size: 60; color: (Color white mixed: ((values at: i) / max) with: Color red); yourself.
+		label := RSLabel new text: country asString; color: Color black; yourself.
+		RSComposite new shapes: (RSGroup withAll: { box. label }); model: country; yourself ]).
+	canvas addAll: shapes.
+	RSGridLayout on: shapes.
+	routes do: [ :route | | from to |
+		from := shapes detect: [ :each | each model = route key ] ifNone: [ nil ].
+		to := shapes detect: [ :each | each model = route value ] ifNone: [ nil ].
+		(from notNil and: [ to notNil ])
+			ifTrue: [ canvas add: (RSLine new color: Color gray; from: from; to: to; yourself) ] ].
+	canvas @ RSCanvasController.
+	^ canvas&#x27;.
+
+fix value: #KEMapBuilder value: #open
+	value: [ :source | source includesSubstring: &#x27;b build&#x27; ]
+	value:
+&#x27;open
+	^ self build open&#x27;.
+
+fix value: #KEMapBuilder value: #view
+	value: [ :source | source includesSubstring: &#x27;b build&#x27; ]
+	value:
+&#x27;view
+	^ self build&#x27;.
+
+add value: #KEMapBuilder value: #plot value: &#x27;as yet unclassified&#x27; value:
+&#x27;plot
+	^ self open&#x27;.
+
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestsModel6SpatialMap. #before.
+	&#x27;rowAt:1) max&#x27;.
+	&#x27;rowAt:1) max&#x27;.
+	&#x27;columnAt: 1) max&#x27; }.
+
+#(#TestsModel6SpatialMap #TestsModel6SpatialMapWithEntity) do: [ :name |
+	fix value: name value: #testEquivalence
+		value: [ :source | source includesSubstring: &#x27;dataFrames sorted&#x27; ]
+		value:
+&#x27;testEquivalence
+	| beforeResults afterResults |
+	self createModels.
+	beforeResults := (beforeDiagram data collect: [ :val | val roundDownTo: 0.001 ]) asSortedCollection asOrderedCollection.
+	afterResults := (afterDiagram data collect: [ :val | val roundDownTo: 0.001 ]) asSortedCollection asOrderedCollection.
+	self assert: beforeResults equals: afterResults&#x27; ].
+
+&quot;=== E. TestsIST ===&quot;
+
+add value: #&#x27;TestsIST class&#x27; value: #isAbstract value: &#x27;testing&#x27; value:
+&#x27;isAbstract
+	^ self == TestsIST&#x27;.
+
+&quot;The subclasses of TestsIST that have tests of their own must NOT inherit the
+tests of TestsIST (testScript) because TestsIST is abstract now: TestCase class&gt;&gt;
+shouldInheritSelectors is true for the subclass of an abstract class.  This keeps the
+old rule (a subclass inherits only when it has no test of its own).&quot;
+add value: #&#x27;TestsIST class&#x27; value: #shouldInheritSelectors value: &#x27;testing&#x27; value:
+&#x27;shouldInheritSelectors
+	^ self ~~ TestsIST and: [ self testSelectors isEmpty ]&#x27;.
+
+
+&quot;=== B (more). the chart before holds the sum over the patches, as the chart after does ===&quot;
+
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestMultiSpeciesSpatialDependant. #before.
+	&#x27;addDataFrame: (simulator timeSeriesOutputsAt: {#status -&gt; #I. #species -&gt; #bird});&#x27;.
+	&#x27;#species -&gt;#human}).&#x27;.
+	&#x27;addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I. #species -&gt; #bird });
+		addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I. #species -&gt; #human }).&#x27; }.
+
+(Smalltalk globals at: #KendrickRangeFix) value: { #TestsModel5. #before.
+	&#x27;addDataFrame: (simulator timeSeriesOutputsAt: {#status -&gt; #I1.#species -&gt; #bird})&#x27;.
+	&#x27;#I2. #species -&gt; #human}).&#x27;.
+	&#x27;addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I1. #species -&gt; #bird });
+		addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I1. #species -&gt; #human });
+		addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I2. #species -&gt; #bird });
+		addDataFrame: (simulator sumOfTimeSeriesOutputsAt: { #status -&gt; #I2. #species -&gt; #human }).&#x27; }.
+
+(Smalltalk globals at: #KendrickEdit) value: { #TestsModel5. #before. &#x27;chart plot&#x27;. &#x27;^ { simulator . model . chart }&#x27;.
+	#( &#x27;chart plot&#x27; &#x27;chart plot.
+	^ { simulator . model . chart }&#x27; ) }.
+
+&quot;=== F. KEChart: RSChart&gt;&gt;addPlot: is RSCompositeChart&gt;&gt;add: ===&quot;
+#(#plot #plotHistogram #plotLog #plotScatter #plotSqrt) do: [ :sel |
+	(Smalltalk globals at: #KendrickEdit) value: { #KEChart. sel. &#x27;c addPlot: p&#x27;. &#x27;c add: p&#x27;.
+		#( &#x27;c addPlot: p&#x27; &#x27;c add: p&#x27; ) } ].
+
+&quot;=== G. Composition: a parameter that an integrated model has ===&quot;
+(Smalltalk globals at: #KendrickEdit) value: { #Composition. #doesNotUnderstand:.
+	&#x27;(self parameters keys includes: variable)&#x27;. &#x27;self model parameters keys includes: variable&#x27;.
+	#( &#x27;(self parameters keys includes: variable)&#x27;
+		&#x27;((self parameters keys includes: variable) or: [ self model parameters keys includes: variable ])&#x27; ) }.
+
+&quot;=== H. KEComponent: attribute names, transitions and equations ===&quot;
+fix value: #KEComponent value: #attributes:
+	value: [ :source | (source includesSubstring: &#x27;duplicateValues:&#x27;) and: [ (source includesSubstring: &#x27;asSet size&#x27;) not ] ]
+	value:
+&#x27;attributes: attributesArray
+
+	&quot;attributesArray is an array of associations like {#status-&gt;#(#S #I #R). #age-&gt;#(#child #adult)}, or a Dictionary.  The names of the attributes must be different, and no value may be in two attributes.&quot;
+
+	(attributesArray isDictionary not
+		and: [ (attributesArray collect: [ :each | each key ]) asSet size ~= attributesArray size ])
+		ifTrue: [ self error: &#x27;&#x27;Attribute names are duplicated.&#x27;&#x27; ].
+	(self duplicateValues: attributesArray)
+		ifTrue: [ self error: &#x27;&#x27;Attributes are duplicated.&#x27;&#x27; ]
+		ifFalse: [ attributes := Dictionary newFrom: attributesArray ]&#x27;.
+
+(Smalltalk globals at: #KendrickEdit) value: { #KEComponent. #transitions.
+	&#x27;equations isNotEmpty ifTrue:&#x27;. &#x27;&#x27; .
+	#( &#x27;equations isNotEmpty ifTrue:&#x27; &#x27;(equations isNotEmpty and: [ equations isDictionary not ]) ifTrue:&#x27; ) }.
+
+fix value: #KEComponent value: #transitionsToEquations
+	value: [ :source | (source includesSubstring: &#x27;(eq at: tr from) add:&#x27;) and: [ (source includesSubstring: &#x27;ifAbsentPut:&#x27;) not ] ]
+	value:
+&#x27;transitionsToEquations
+
+	&quot;Return the suitable Dictionary for KESimulatorDeterministic in order to solve the equations.
+	This method should be merged with equations method in the same class: issue #40
+	The Dictionary has, for each compartment, the list of the transitions that leave the compartment (with the sign -1) or enter the compartment (with the sign 1).  A transition that comes from the empty compartment (a birth) or goes to the empty compartment (a death) belongs to the equation of the compartment at its other end.  A compartment that is not in the attributes of the model, because the model is built from transitions only, gets an equation when a transition names the compartment.&quot;
+
+	| eq |
+	eq := Dictionary new.
+	self finestCompartmentNames do: [ :k | eq at: k put: OrderedCollection new ].
+	self transitions do: [ :tr |
+		(tr from at: #status) ~= #empty ifTrue: [
+			(eq at: tr from ifAbsentPut: [ OrderedCollection new ])
+				add: (Array with: tr with: -1) ].
+		(tr to at: #status) ~= #empty ifTrue: [
+			(eq at: tr to ifAbsentPut: [ OrderedCollection new ])
+				add: (Array with: tr with: 1) ] ].
+	equations := eq&#x27;.
+
+&quot;=== I. KEUnaryExpression&gt;&gt;removeVariable: changed the receiver ===&quot;
+fix value: #KEUnaryExpression value: #removeVariable:
+	value: [ :source | source includesSubstring: &#x27;(self op: #-) expression:&#x27; ]
+	value:
+&#x27;removeVariable: aVariable
+	&quot;This function is reserved for the reformulation of rate expression to probability of contact of an event generated from an equation.  The receiver does not change: the answer is a copy.&quot;
+
+	| new |
+	new := self copy.
+	new op: #-.
+	new expression: (expression removeVariable: aVariable).
+	^ new&#x27;.
+
+&quot;=== J. equations2 of a model whose probabilities are blocks or numbers ===&quot;
+(Smalltalk globals includesKey: #KEBlockExpression)
+	ifFalse: [
+		(KEExpression &lt;&lt; #KEBlockExpression)
+			slots: { #block };
+			package: &#x27;Kendrick-Core-MM1&#x27;;
+			install.
+		Stdio stdout nextPutAll: &#x27;ADDED class KEBlockExpression&#x27;; lf; flush ].
+
+add value: #&#x27;KEBlockExpression class&#x27; value: #block: value: &#x27;instance creation&#x27; value:
+&#x27;block: aBlock
+	^ self new block: aBlock&#x27;.
+add value: #KEBlockExpression value: #block value: &#x27;accessing&#x27; value: &#x27;block
+	^ block&#x27;.
+add value: #KEBlockExpression value: #block: value: &#x27;accessing&#x27; value: &#x27;block: aBlock
+	block := aBlock&#x27;.
+add value: #KEBlockExpression value: #evaluateWithModel: value: &#x27;evaluating&#x27; value:
+&#x27;evaluateWithModel: aModel
+	^ block value: aModel&#x27;.
+add value: #KEBlockExpression value: #isSimple value: &#x27;testing&#x27; value: &#x27;isSimple
+	^ true&#x27;.
+add value: #KEBlockExpression value: #normalize value: &#x27;converting&#x27; value: &#x27;normalize
+	^ self&#x27;.
+add value: #KEBlockExpression value: #removeIndexedVariable value: &#x27;evaluating&#x27; value: &#x27;removeIndexedVariable
+	^ self&#x27;.
+add value: #KEBlockExpression value: #removeVariable: value: &#x27;removing&#x27; value: &#x27;removeVariable: aVariable
+	^ self&#x27;.
+add value: #KEBlockExpression value: #sign value: &#x27;testing&#x27; value: &#x27;sign
+	^ 1&#x27;.
+add value: #KEBlockExpression value: #= value: &#x27;comparing&#x27; value: &#x27;= anExpression
+	^ anExpression class == self class and: [ anExpression block == block ]&#x27;.
+add value: #KEBlockExpression value: #hash value: &#x27;comparing&#x27; value: &#x27;hash
+	^ block hash&#x27;.
+add value: #KEBlockExpression value: #printOn: value: &#x27;printing&#x27; value: &#x27;printOn: aStream
+	aStream nextPutAll: &#x27;&#x27;[:aModel | ... ]&#x27;&#x27;&#x27;.
+
+add value: #KEModel value: #probabilityExpressionOf: value: &#x27;as yet unclassified&#x27; value:
+&#x27;probabilityExpressionOf: aTransition
+	&quot;The probability of a transition is a KEExpression, a number or a block.  A number or a block becomes an expression, so that the equations can be built from it.&quot;
+
+	| probability |
+	probability := aTransition probability.
+	probability isBlock ifTrue: [ ^ KEBlockExpression block: probability ].
+	probability isNumber ifTrue: [ ^ KENumerical new number: probability ].
+	^ probability&#x27;.
+
+(Smalltalk globals at: #KendrickEdit) value: { #KEModel. #equations2.
+	&#x27;leftHandSide: tr probability;&#x27;. &#x27;&#x27;.
+	#( &#x27;leftHandSide: tr probability;&#x27; &#x27;leftHandSide: (self probabilityExpressionOf: tr);&#x27; ) }.
+
+&quot;=== K. the marks expectedFailure of four tests: the defects are repaired ===&quot;
+#( #(#KEEquationTest #testNumberOfEquationsOfSIRModelWithTransitions)
+   #(#KEModelTest #testSIRModelBasedOnTransitionsHasThreeEquations)
+   #(#KEExpressionTest #testRemoveAVariableShouldNotModifyTheExpression) ) do: [ :pair |
+	(Smalltalk globals at: #KendrickEdit) value: { pair first. pair second.
+		&#x27;&lt;expectedFailure&gt;&#x27;. &#x27;&#x27;. #( &#x27;&lt;expectedFailure&gt;&#x27; &#x27;&#x27; ) } ].
+
+(Smalltalk globals at: #KendrickEdit) value: { #KEEventTest. #testVerifyNumberOfEventOfSumOfTwoConcerns.
+	&#x27;&lt;expectedFailure&gt;&#x27;. &#x27;&#x27;.
+	#( &#x27;&lt;expectedFailure&gt;&#x27; &#x27;&#x27; &#x27;model generateEvents size equals: 4&#x27; &#x27;model transitions size equals: 4&#x27; ) }.
+
+&quot;=== L. KESimulatorTest: the peak of a data frame ===&quot;
+(Smalltalk globals at: #KendrickEdit) value: { #KESimulatorTest. #testKEDeterministicSimulationGiveAlwaysSameMax.
+	&#x27;contents max closeTo:&#x27;. &#x27;&#x27;.
+	#( &#x27;contents max closeTo:&#x27; &#x27;max first closeTo:&#x27; ) }.
+
+&quot;=== M. KEPopulation&gt;&gt;initialSize: ===&quot;
+add value: #KEPopulation value: #initialSize value: &#x27;accessing&#x27; value:
+&#x27;initialSize
+	^ initialSize&#x27;.
+add value: #KEPopulation value: #initialSize: value: &#x27;accessing&#x27; value:
+&#x27;initialSize: aNumber
+	initialSize := aNumber&#x27;.
+
+&quot;=== N. the stage vector of the ODE solver ===&quot;
+fix value: #KEDeterministicSimulator value: #executeOnWithKEEquations:
+	value: [ :source | (source includesSubstring: &#x27;system := PMExplicitSystem block:&#x27;) and: [ (source includesSubstring: &#x27;put: (v at: i)&#x27;) not ] ]
+	value:
+&#x27;executeOnWithKEEquations: aModel
+
+	&quot;Suppose that aModel is built from equations
+	Ask a model its equations then solve them with an ODE solver.  The solver calls the block of the system with its own intermediate states (the argument v).  The compartments of the model must hold the values of v before the equations are evaluated: if they do not, the solver evaluates every stage at the start of the step, and the method is the method of Euler.&quot;
+
+	| keys values system |
+	super executeOn: aModel.
+	equations := model equations.
+	keys := equations collect: [ :each | #status -&gt; each variable symbol ].
+	system := PMExplicitSystem block: [ :v :t |
+		keys doWithIndex: [ :each :i |
+			model population compartments
+				at: (Dictionary with: each)
+				put: (v at: i) ].
+		equations collect: [ :each |
+			each evaluateWithModel: aModel ] ].
+	self stepper: (self algorithm onSystem: system).
+	values := keys collect: [ :each |
+		model population compartments at: (Dictionary with: each) ].
+	(tMin to: tMax by: step) do: [ :t |
+		self saveCompartmentsValueAtTime: t.
+		model t: t.
+		values := stepper doStep: values time: t stepSize: step.
+		keys doWithIndex: [ :each :i |
+			model population compartments
+				at: (Dictionary with: each)
+				put: (values at: i) ] ]&#x27;.
+
+&quot;=== O. Simulation&gt;&gt;forModel: and ModelComponent&gt;&gt;model ===&quot;
+(Smalltalk globals at: #KendrickEdit) value: { #Simulation. #forModel:.
+	&#x27;Composition doesNotUnderstand: aModelID&#x27;. &#x27;ModelComponent withId: aModelID&#x27;.
+	#( &#x27;Composition doesNotUnderstand: aModelID&#x27; &#x27;ModelComponent withId: aModelID&#x27; ) }.
+
+add value: #ModelComponent value: #model value: &#x27;protected&#x27; value:
+&#x27;model
+	&quot;A model that is simulated by itself is its own model.  A Composition answers the ModelComponent that it integrates.&quot;
+
+	^ self&#x27;.
+
+&quot;=== P. test code that the changes of the DSL left behind ===&quot;
+(Smalltalk globals at: #KendrickEdit) value: { #TestMeaslesScripts. #after.
+	&#x27;KModel&#x27;. &#x27;ModelComponent&#x27;. #( &#x27;KModel&#x27; &#x27;ModelComponent&#x27; ) }.
+
+#( #TestDependantConcern #TestMosquitoScripts ) do: [ :name |
+	(Smalltalk globals at: #KendrickEdit) value: { name. #before.
+		&#x27;sizeOfPopulation: c asArray&#x27;. &#x27;(Array with: c)&#x27;.
+		#( &#x27;sizeOfPopulation: c asArray&#x27; &#x27;sizeOfPopulation: (Array with: c)&#x27; ) } ].
+
+#( #TestsModel5 #TestsModel6SpatialMap #TestsModel6SpatialMapWithEntity #TestMosquitoScripts ) do: [ :name |
+	(Smalltalk globals at: #KendrickEdit) value: { name. #createModels.
+		&#x27;afterModel := ModelComponent withId:&#x27;. &#x27;afterSimulator model&#x27;.
+		(name = #TestMosquitoScripts
+			ifTrue: [ #( &#x27;ModelComponent withId: &#x27;&#x27;Mosquito&#x27;&#x27;&#x27; &#x27;afterSimulator model&#x27; ) ]
+			ifFalse: [ #( &#x27;ModelComponent withId: &#x27;&#x27;Influenza&#x27;&#x27;&#x27; &#x27;afterSimulator model&#x27; ) ]) } ].
+
+(Smalltalk globals at: #KendrickEdit) value: { #TestMosquitoScripts. #after.
+	&#x27;ModelComponent Mosquito&#x27;. &#x27;KModel Mosquito&#x27;.
+	#( &#x27;ModelComponent Mosquito&#x27; &#x27;KModel Mosquito&#x27; &#x27;population: 13000;&#x27; &#x27;&#x27;
+		&#x27;model: &#x27;&#x27;SpeciesConcern&#x27;&#x27;;&#x27; &#x27;model: &#x27;&#x27;Mosquito&#x27;&#x27;;
+	model: &#x27;&#x27;SpeciesConcern&#x27;&#x27;;&#x27; ) }.
+
+&quot;=== Q. KendrickEquations: the tokens of an equation are joined, not read from the print string ===&quot;
+fix value: #KendrickEquations value: #convertToCompatibleBackendRepresentation
+	value: [ :source | source includesSubstring: &#x27;findTokens:&#x27; ]
+	value:
+&#x27;convertToCompatibleBackendRepresentation
+	&quot;The equations are an Array of tokens like #(S:t = mu * N - beta * S * I - mu * S . E:t = ...).  A token that is a period ends one equation.  Answer the equations, each one as a String.  The tokens are used one by one: the print string of an Array of symbols differs between versions of Pharo (a symbol like #S:t has quotes in the print string of Pharo 14), so the print string must not be used.&quot;
+
+	| equations current |
+	equations := OrderedCollection new.
+	current := WriteStream on: String new.
+	eqAsSymExpr do: [ :token |
+		token asString = &#x27;&#x27;.&#x27;&#x27;
+			ifTrue: [
+				current contents trimBoth ifNotEmpty: [ :each | equations add: each ].
+				current := WriteStream on: String new ]
+			ifFalse: [ current nextPutAll: token asString; space ] ].
+	current contents trimBoth ifNotEmpty: [ :each | equations add: each ].
+	^ equations&#x27;.
+
+&quot;=== R. Scenario&gt;&gt;addCompositeParameter:value: ===&quot;
+(Smalltalk globals at: #KendrickEdit) value: { #Scenario. #addCompositeParameter:value:.
+	&#x27;secondOccInd|&#x27;. &#x27;&#x27;.
+	#( &#x27;secondOccInd|&#x27; &#x27;secondOccInd valueOverrides nextKeys|&#x27;
+		&#x27;ind := (aModel attributes at: k) indexOf: (aModel currentCompartment at: k).&#x27;
+		&#x27;ind := (aModel attributes at: k) indexOf: (((nextKeys includes: k) ifTrue: [ aModel nextCompartment ] ifFalse: [ aModel currentCompartment ]) at: k).&#x27;
+		&#x27;&quot;translate from underscore syntax to back end&quot;&#x27;
+		&#x27;&quot;The word next after an attribute key (sigma_species_status_next) means that the value of that attribute is the one of the compartment that the transition goes to, not the one that it leaves.  A value of an attribute after the underscore (rho_species_Q: #(0.03 0.1 0)) adds one more value to the array: the value for the compartments that have that attribute value, here the compartments with the status Q.  The position of the value in the array is after the values of the first attribute key.&quot;
+	nextKeys := Set new.
+	variablePlusAttributes doWithIndex: [ :token :position |
+		(token = #next and: [ position &gt; 1 ]) ifTrue: [ nextKeys add: (variablePlusAttributes at: position - 1) ] ].
+	valueOverrides := OrderedCollection new.
+	variablePlusAttributes allButFirst doWithIndex: [ :attrValue :position | | owner |
+		owner := backEndEntity attributes keys
+			detect: [ :k | (backEndEntity attributes at: k) includes: attrValue ]
+			ifNone: [ nil ].
+		(owner notNil and: [ (attrKeys includes: attrValue) not ])
+			ifTrue: [ valueOverrides add: { owner. attrValue. (backEndEntity attributes at: attrKeys first) size + valueOverrides size + 1 } ] ].
+	&quot;translate from underscore syntax to back end&quot;&#x27;
+		&#x27;res ].&#x27; &#x27;valueOverrides do: [ :each |
+				(aModel currentCompartment at: each first) = each second
+					ifTrue: [ res := value at: each third ] ].
+			res ].&#x27; ) }.
+
+&quot;=== S. a time limit for the simulation tests ===&quot;
+
+add value: #&#x27;TestsIST class&#x27; value: #defaultTimeLimit value: &#x27;accessing&#x27; value:
+&#x27;defaultTimeLimit
+	&quot;The tests of the DSL scripts run a simulation twice (before and after the DSL).  Measured on one machine (arm64, 2026-11-17), the time of one test: TestsModel3 3.4 s, TestsModel4 4.1 to 5.8 s, TestsModel5 9.6 s and more than 10 s on stock Cog, TestsModel6SpatialMap 7.3 s, TestsModel6SpatialMapWithEntity 7.4 s.  The time is the work of the simulation, not a defect.  3 minutes leave room for a machine that is 3 times slower.&quot;
+
+	^ 3 minutes&#x27;.
+
+#( #TestMosquitoScripts #TestMultiSpeciesSpatial #TestMultiSpeciesSpatialDependant #TestOneSpeciesSpatialScripts #TestDependantConcern ) do: [ :name |
+	add value: (name , &#x27; class&#x27;) asSymbol value: #defaultTimeLimit value: &#x27;accessing&#x27; value:
+&#x27;defaultTimeLimit
+	&quot;The test runs a simulation twice (before and after the DSL).  Measured on one machine (arm64, 2026-11-17), testEquivalence: TestMosquitoScripts 20.9 s (Gillespie), TestMultiSpeciesSpatial 5.3 s, TestMultiSpeciesSpatialDependant 5.1 s, TestOneSpeciesSpatialScripts 2.0 s, TestDependantConcern 1.9 s.  The time is the work of the simulation, not a defect.  3 minutes leave room for a machine that is 3 times slower.&quot;
+
+	^ 3 minutes&#x27; ].
+
+Smalltalk globals removeKey: #KendrickRangeFix ifAbsent: [ nil ].
+Smalltalk globals removeKey: #KendrickEdit ifAbsent: [ nil ].
+</pre></details><details open><summary>Patch of the package source: kendrickorg-kendrick.patch (<a href="../files/packages/patches/kendrickorg-kendrick.patch">download</a>)</summary><pre class="code">diff --git a/src/BaselineOfKendrick/BaselineOfKendrick.class.st b/src/BaselineOfKendrick/BaselineOfKendrick.class.st
+index f6e1fbc..2a88220 100644
+--- a/src/BaselineOfKendrick/BaselineOfKendrick.class.st
++++ b/src/BaselineOfKendrick/BaselineOfKendrick.class.st
+@@ -17,14 +17,30 @@ BaselineOfKendrick &gt;&gt; baseline: spec [
+ 	&lt;baseline&gt;
+ 	spec for: #common do: [ 
+ 		spec blessing: #baseline.
+-		spec repository: &#x27;https://github.com/KendrickOrg/kendrick&#x27;.
+ 		spec
+ 			baseline: &#x27;PolyMath&#x27; with: [ 
+ 				spec
+-					repository: &#x27;github://PolyMathOrg/PolyMath:v1.0.5&#x27;;
++					repository: &#x27;github://PolyMathOrg/PolyMath:master&#x27;;
+ 					loads: &#x27;Core&#x27; ];
+ 			baseline: &#x27;DataFrame&#x27;
+-			with: [ spec repository: &#x27;github://PolyMathOrg/DataFrame:v2.0&#x27; ].
++			with: [ spec repository: &#x27;github://PolyMathOrg/DataFrame/src&#x27; ];
++			baseline: &#x27;PetitParser&#x27;
++			with: [ 
++				spec
++					repository: &#x27;github://moosetechnology/PetitParser:v3.x.x/src&#x27;;
++					loads: &#x27;Core&#x27; ];
++			baseline: &#x27;CollectionExtensions&#x27;
++			with: [ 
++				spec
++					repository: &#x27;github://pharo-contributions/CollectionExtensions:v1.x.x/src&#x27;;
++					loads: &#x27;Core&#x27; ];
++			baseline: &#x27;AIGraphAlgorithms&#x27; with: [ 
++				spec
++					repository: &#x27;github://pharo-ai/graph-algorithms:master/src&#x27;;
++					loads: &#x27;GraphGenerators&#x27; ].
++		spec package: &#x27;Kendrick-Core&#x27; with: [ 
++			spec requires:
++					#( &#x27;DataFrame&#x27; &#x27;PolyMath&#x27; &#x27;PetitParser&#x27; &#x27;CollectionExtensions&#x27; &#x27;AIGraphAlgorithms&#x27; ) ].
+ 
+ 		spec
+ 			group: &#x27;Core&#x27; with: #( &#x27;Kendrick-Core&#x27; );
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

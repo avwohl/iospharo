@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpTree-selection-skips - Pharo test defects</title><meta name="description" content="SpTree-selection-skips: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>SpTree-selection-skips</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>6</dd><dt>Fix</dt><dd>image fix 20-SpTree-selection-skips.st</dd><dt>Upstream repository</dt><dd>pharo-spec/Spec</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-SpTree-selection-skips.st</code></li>
+<li>Methods: <code>SpTreeAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code>, <code>SpTreeAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget</code>, <code>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code>, <code>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget</code>, <code>SpTreeAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code>, <code>SpTreeTableAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></li>
+</ul>
+<p>The 6 tests were stubs: each called &quot;self skip&quot; with the comment &quot;No selectItem for the moment&quot;, or (the two multiple-selection ones) skipped because &quot;there is no selectedIndex in trees&quot;. That is stale. SpTreePresenter and SpTreeTablePresenter (via SpAbstractTreePresenter) have selectItem: and unselectItem:, backed by SpAbstractTreeSelectionMode&gt;&gt;selectItem: and unselectItem:, and the test adapters have selectedPaths. The fix replaces each skip with a real test: selectItem: 20 then assert the widget's selectedPaths includes #(2), and selectItem: 20 followed by unselectItem: 20 then assert selectedPaths is empty. These are the tree equivalents of the list tests in the superclass. The multiple-selection classes only had the select test skipped; the unselect test is inherited from the superclass, which is not in this cluster. Only test methods are changed, no code under test, and the VMs behave identically.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SpTreeAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>self skip stub; selectItem: now exists on the tree presenter</td>
+</tr>
+<tr>
+<td><code>SpTreeAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>self skip stub; unselectItem: now exists on the tree presenter</td>
+</tr>
+<tr>
+<td><code>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>self skip stub</td>
+</tr>
+<tr>
+<td><code>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>self skip stub</td>
+</tr>
+<tr>
+<td><code>SpTreeAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>self skip with the obsolete comment that trees have no selectedIndex; selectItem: with selectedPaths is the tree equivalent</td>
+</tr>
+<tr>
+<td><code>SpTreeTableAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>same as the tree multiple-selection test</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran all four owning test classes (SpTreeAdapterSingleSelectionTest, SpTreeTableAdapterSingleSelectionTest, SpTreeAdapterMultipleSelectionTest, SpTreeTableAdapterMultipleSelectionTest) on both our VM and Cog. Only test methods changed, so no other class covers them. Before the fix: 79 pass and 6 skip on each VM. With the fix: 85 pass, 0 skip, 0 fail or error on each VM. I ran the fixed image 3 times on each VM; the first run was 85/85, and the other two were 85 pass each. Method sources were read through our VM only.</p>
+<p>Upstream note: Spec2: run the tree &quot;selectItem:&quot; tests instead of skipping them. In SpTreeAdapterSingleSelectionTest, SpTreeTableAdapterSingleSelectionTest, SpTreeAdapterMultipleSelectionTest and SpTreeTableAdapterMultipleSelectionTest, six tests skip themselves (&quot;No selectItem for the moment&quot;, &quot;no selectedIndex in trees&quot;). SpTreePresenter and SpTreeTablePresenter now implement selectItem: and unselectItem:. The six tests now call them and check adapter selectedPaths: selectItem: 20 gives #(2) selected, and selectItem: 20 then unselectItem: 20 gives an empty selection. This is a Pharo/Spec2 change that has to be reviewed by the owner before any PR.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>SpTreeAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpTreeAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpTreeAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpTreeTableAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((SpTreeAdapterMultipleSelectionTest selector: #testSelectPresenterItemSetsSelectedIndexInWidget) run) printString.
+((SpTreeAdapterSingleSelectionTest selector: #testSelectPresenterItemSetsSelectedIndexInWidget) run) printString.
+((SpTreeAdapterSingleSelectionTest selector: #testUnselectPresenterItemUnselectsIndexInWidget) run) printString.
+((SpTreeTableAdapterMultipleSelectionTest selector: #testSelectPresenterItemSetsSelectedIndexInWidget) run) printString.
+((SpTreeTableAdapterSingleSelectionTest selector: #testSelectPresenterItemSetsSelectedIndexInWidget) run) printString.
+((SpTreeTableAdapterSingleSelectionTest selector: #testUnselectPresenterItemUnselectsIndexInWidget) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>SpTreeAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget before the fix (Pharo 14 build 791)</summary><pre class="code">testSelectPresenterItemSetsSelectedIndexInWidget
+	&quot;There is no selectedIndex in trees (but selectedPath).
+	 This cancels superclass method&quot;
+	
+	self skip</pre></details><details><summary>SpTreeAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget before the fix (Pharo 14 build 791)</summary><pre class="code">testSelectPresenterItemSetsSelectedIndexInWidget
+	
+	self skip. &quot;No selectItem for the moment&quot;</pre></details><details><summary>SpTreeAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget before the fix (Pharo 14 build 791)</summary><pre class="code">testUnselectPresenterItemUnselectsIndexInWidget
+	
+	self skip. &quot;No selectItem for the moment&quot;</pre></details><details><summary>SpTreeTableAdapterMultipleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget before the fix (Pharo 14 build 791)</summary><pre class="code">testSelectPresenterItemSetsSelectedIndexInWidget
+	&quot;There is no selectedIndex in trees (but selectedPath).
+	 This cancels superclass method&quot;
+	
+	self skip</pre></details><details><summary>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testSelectPresenterItemSetsSelectedIndexInWidget before the fix (Pharo 14 build 791)</summary><pre class="code">testSelectPresenterItemSetsSelectedIndexInWidget
+	
+	self skip. &quot;No selectItem for the moment&quot;</pre></details><details><summary>SpTreeTableAdapterSingleSelectionTest&gt;&gt;testUnselectPresenterItemUnselectsIndexInWidget before the fix (Pharo 14 build 791)</summary><pre class="code">testUnselectPresenterItemUnselectsIndexInWidget
+	
+	self skip. &quot;No selectItem for the moment&quot;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-SpTree-selection-skips.st (<a href="../files/image-fixes/20-SpTree-selection-skips.st">download</a>)</summary><pre class="code">fix value: #SpTreeAdapterSingleSelectionTest value: #testSelectPresenterItemSetsSelectedIndexInWidget value: [ :source | source includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testSelectPresenterItemSetsSelectedIndexInWidget
+
+	presenter selectItem: 20.
+	self assert: (self adapter selectedPaths includes: #(2))&#x27;.
+fix value: #SpTreeAdapterSingleSelectionTest value: #testUnselectPresenterItemUnselectsIndexInWidget value: [ :source | source includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testUnselectPresenterItemUnselectsIndexInWidget
+
+	presenter
+		selectItem: 20;
+		unselectItem: 20.
+	self assert: self adapter selectedPaths isEmpty&#x27;.
+fix value: #SpTreeTableAdapterSingleSelectionTest value: #testSelectPresenterItemSetsSelectedIndexInWidget value: [ :source | source includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testSelectPresenterItemSetsSelectedIndexInWidget
+
+	presenter selectItem: 20.
+	self assert: (self adapter selectedPaths includes: #(2))&#x27;.
+fix value: #SpTreeTableAdapterSingleSelectionTest value: #testUnselectPresenterItemUnselectsIndexInWidget value: [ :source | source includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testUnselectPresenterItemUnselectsIndexInWidget
+
+	presenter
+		selectItem: 20;
+		unselectItem: 20.
+	self assert: self adapter selectedPaths isEmpty&#x27;.
+fix value: #SpTreeAdapterMultipleSelectionTest value: #testSelectPresenterItemSetsSelectedIndexInWidget value: [ :source | source includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testSelectPresenterItemSetsSelectedIndexInWidget
+
+	presenter selectItem: 20.
+	self assert: (self adapter selectedPaths includes: #(2))&#x27;.
+fix value: #SpTreeTableAdapterMultipleSelectionTest value: #testSelectPresenterItemSetsSelectedIndexInWidget value: [ :source | source includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testSelectPresenterItemSetsSelectedIndexInWidget
+
+	presenter selectItem: 20.
+	self assert: (self adapter selectedPaths includes: #(2))&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

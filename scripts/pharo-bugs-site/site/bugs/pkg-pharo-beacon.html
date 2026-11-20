@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: pharo-beacon (pharo-project/pharo-beacon, row 29) - Pharo test defects</title><meta name="description" content="Package: pharo-beacon (pharo-project/pharo-beacon, row 29): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: pharo-beacon (pharo-project/pharo-beacon, row 29)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-project-pharo-beacon.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-beacon</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 20 tests, 17 pass, 3 errors on the two VMs
+(<code>CompiledBlock&gt;&gt;#asRingDefinition</code> not understood).</li>
+<li>Cause: <code>MethodStackSignal&gt;&gt;currentStack</code> sends <code>method asRingDefinition</code>
+to each context.  <code>Context&gt;&gt;method</code> of Pharo 14 answers the <code>CompiledBlock</code>
+for a block context, and only <code>CompiledMethod</code> has <code>asRingDefinition</code>.</li>
+<li>Repair here: <code>fixes/pharo-project-pharo-beacon.st</code> uses
+<code>Context&gt;&gt;homeMethod</code>.</li>
+<li>Result: 20 of 20 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 29&quot;
+Metacello new baseline: &#x27;Beacon&#x27;; repository: &#x27;github://pharo-project/pharo-beacon:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>29</td><td><code>pharo-project-pharo-beacon</code></td><td>ok</td><td>tests=20 P=20 F=0 E=0 S=0 T=0 X=0</td><td>tests=20 P=20 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-project-pharo-beacon.st (<a href="../files/packages/fixes/pharo-project-pharo-beacon.st">download</a>)</summary><pre class="code">&quot;Beacon (pharo-project/pharo-beacon): MethodStackSignal&gt;&gt;currentStack calls
+&#x27;each method asRingDefinition&#x27; on every context of the stack.  In Pharo 14
+Context&gt;&gt;method answers the CompiledBlock for a block context (Context&gt;&gt;method
+comment: use compiledCode, &#x27;it can be CompiledMethod or a CompiledBlock&#x27;), and
+CompiledBlock does not understand #asRingDefinition (only CompiledMethod has it,
+Ring-Definitions-Core/CompiledMethod.extension.st).  Every stack that contains a
+block frame (all test runs: TestCase&gt;&gt;runCase blocks) fails with
+&#x27;CompiledBlock &gt;&gt; #asRingDefinition&#x27; DNU.  The signal documents that it stores
+the method definitions of the stack, so a block frame maps to its home method:
+CompiledBlock&gt;&gt;method (outerCode method) answers the CompiledMethod, and
+CompiledMethod&gt;&gt;method answers self.&quot;
+
+fix value: #MethodStackSignal value: #currentStack
+	value: [ :source | source includesSubstring: &#x27;each method asRingDefinition&#x27; ]
+	value:
+&#x27;currentStack
+	^ self relevantStackWithoutSelf collect: [ :each | each homeMethod asRingDefinition ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

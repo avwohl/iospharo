@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code-importer-snippets - Pharo test defects</title><meta name="description" content="Code-importer-snippets: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Code-importer-snippets</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 29-code-importer-snippets.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/29-code-importer-snippets.st</code></li>
+<li>Methods: <code>CodeImporterCodeSnippetTest&gt;&gt;testCodeImporter</code>,
+<code>OCCodeSnippet class&gt;&gt;badExpressions</code></li>
+</ul>
+<p><code>testCodeImporter</code> skipped for a source with separators only (2 snippets),
+with the remark that the code importer needs a plain expression, and the
+snippet <code> ]</code> had a skip mark with a FIXME.  CodeImporter handles the three
+sources: for the empty source it makes no declaration, for a method chunk
+with no source the compiler signals the error that the test expects, and
+<code>]</code> has no meaning in the chunk format.  The two skips go, and the checks of
+the test apply.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CodeImporterCodeSnippetTest&gt;&gt;testCodeImporter</code> (3 snippets)</td>
+<td>test</td>
+<td>repaired</td>
+<td>A skip that the code under test did not need.</td>
+</tr>
+</tbody>
+</table>
+<p>State on our VM: all tests of <code>CodeImporterCodeSnippetTest</code> pass.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>CodeImporterCodeSnippetTest&gt;&gt;testCodeImporter</code></td><td></td><td>repaired</td><td>PASS 353x</td><td>PASS 353x</td><td>-</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Some of these tests are new: the entries file adds them, so file in the entries file first, then run them.  </p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((CodeImporterCodeSnippetTest selector: #testCodeImporter) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>CodeImporterCodeSnippetTest&gt;&gt;testCodeImporter before the fix (Pharo 14 build 791)</summary><pre class="code">testCodeImporter
+
+	| string importer class runBlock |
+	&quot;Code importer meed a plain expression or use a custom format&quot;
+	snippet source isAllSeparators ifTrue: [ ^ self skip ].
+	[
+	string := snippet isScripting
+		          ifFalse: [
+			          class := ChunkImportTestCase new importAClass.
+			          &#x27;!{1} methodsFor: &#x27;&#x27;some protocol&#x27;&#x27;!{2}&#x27; format: {
+					          class name asString.
+					          snippet source } ]
+		          ifTrue: [ snippet source ].
+
+	&quot;Note: it might be possible that the snipped messes with the chuck format... to investigate&quot;
+	importer := CodeImporter fromString: string.
+	importer parseChunks.
+
+	self skipIf: #exec.
+
+	&quot;Importer should fail when faulty&quot;
+	snippet isFaulty ifTrue: [
+		self should: [ importer evaluate ] raise: OCCompilationError, OCCodeError.
+		snippet isScripting ifFalse: [ class removeFromSystem ].
+		^ self ].
+
+	&quot;When not faulty, it&#x27;s more complicated...&quot;
+	runBlock := [
+	            | value |
+	            value := importer evaluate.
+
+	            snippet isScripting ifFalse: [
+		            | method phonyArgs |
+		            self assert: value isSymbol.
+		            &quot;Need to call the method, the importer added it to `class`, so retrieve it&quot;
+		            method := class &gt;&gt; value.
+		            class removeFromSystem. &quot;No more needed&quot;
+		            phonyArgs := (1 to: method numArgs) asArray.
+		            value := nil withArgs: phonyArgs executeMethod: method ].
+
+	            value ].
+
+	self testExecuteBlock: runBlock ] ensure: [ self packageOrganizer removePackage: ChunkImportTestCase new packageNameForTests ]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>29-code-importer-snippets.st (<a href="../files/image-fixes/29-code-importer-snippets.st">download</a>)</summary><pre class="code">&quot;CodeImporterCodeSnippetTest&gt;&gt;testCodeImporter skipped for three code snippets
+(2026-11-17).  The skips are the same on stock Cog and on our VM.
+
+C1. The test started with &#x27;snippet source isAllSeparators ifTrue: [ ^ self
+skip ]&#x27;, with the remark that the code importer needs a plain expression.  An
+empty chunk and a chunk of separators are legal input of a chunk file, and
+CodeImporter has code for them: for the empty source it makes no declaration,
+and for a method chunk with no source the compiler signals an error, which is
+what the test expects for a snippet with a fault.  The skip goes, and the
+checks of the test apply to the two snippets.
+
+C2. The snippet &#x27; ]&#x27; had the mark &#x27;skip: #testCodeImporter&#x27; with the remark
+&#x27;FIXME. code importer do not like rogue starting ]&#x27;.  The chunk format gives
+&#x27;]&#x27; no meaning, and the parser handles &#x27;)&#x27;, &#x27;]&#x27; and &#x27;}&#x27; at the start of a
+statement with the same code.  The snippets &#x27; )&#x27; and &#x27; }&#x27; pass the same test.
+The mark goes.&quot;
+
+fix value: #CodeImporterCodeSnippetTest value: #testCodeImporter
+	value: [ :source | source includesSubstring: &#x27;isAllSeparators ifTrue: [ ^ self skip ]&#x27; ]
+	value: (((CodeImporterCodeSnippetTest &gt;&gt; #testCodeImporter) sourceCode
+		copyReplaceAll: &#x27;snippet source isAllSeparators ifTrue: [ ^ self skip ].&#x27; with: &#x27;&#x27;)
+		copyReplaceAll: &#x27;&quot;Code importer meed a plain expression or use a custom format&quot;&#x27;
+		with: &#x27;&quot;An empty source and a source of separators are legal chunk input. The checks below apply to them as to each other snippet.&quot;&#x27;).
+
+fix value: #&#x27;OCCodeSnippet class&#x27; value: #badExpressions
+	value: [ :source | source includesSubstring: &#x27;skip: #testCodeImporter&#x27; ]
+	value: ((OCCodeSnippet class &gt;&gt; #badExpressions) sourceCode
+		copyReplaceAll: &#x27;skip: #testCodeImporter). &quot;FIXME. code importer do not like rogue starting `]`&quot;&#x27;
+		with: &#x27;yourself).&#x27;).
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

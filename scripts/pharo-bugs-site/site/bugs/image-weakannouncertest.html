@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WeakAnnouncerTest - Pharo test defects</title><meta name="description" content="WeakAnnouncerTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>WeakAnnouncerTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-WeakAnnouncerTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-WeakAnnouncerTest.st</code></li>
+<li>Methods: <code>AnnouncementSubscription&gt;&gt;makeWeak</code>, <code>WeakAnnouncerTest&gt;&gt;testNoWeakBlock</code></li>
+</ul>
+<p>testNoWeakBlock was an expected failure. AnnouncementSubscription&gt;&gt;makeWeak raised 'Not currently available due to missing ephemerons support' for block actions. The test comment states the intended behaviour: there is no weak block, a block subscription never goes away. The fix makes makeWeak return self (stay strong) when the action is a block, and removes the &lt;expectedFailure&gt; pragma from the test. The test body is unchanged. The same defect is in image code, not in either VM. No other code or test in pharo/src depends on the old error.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WeakAnnouncerTest&gt;&gt;testNoWeakBlock</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>AnnouncementSubscription&gt;&gt;makeWeak raised an error for block actions instead of keeping the subscription strong, and the test was marked expectedFailure to record that.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Measured with runtest.sh, PASS counts before the fix and after the fix, on both ours and cog. WeakAnnouncerTest: 33 before, 34 after, on both VMs. AnnouncerTest: 29 before, 29 after, on both VMs. SubscriptionRegistryTest does not exist (0 and 0). AnnouncementSetTest was not run. makeWeak is called only from WeakAnnouncerTest in the pharo sources.</p>
+<p>Upstream note: Title: Announcements: makeWeak on a block subscription stays strong instead of raising an error. Description: AnnouncementSubscription&gt;&gt;makeWeak raised an error for block actions because of missing ephemerons, and WeakAnnouncerTest&gt;&gt;testNoWeakBlock was marked &lt;expectedFailure&gt; although its comment says &quot;there is no such thing as a weak block, these things never go away&quot;. makeWeak now returns self for a block action, and the expectedFailure mark is removed. Project: pharo (Announcements-Core, Announcements-Core-Tests). This note is a draft; the owner must review it before any PR is made.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>WeakAnnouncerTest&gt;&gt;testNoWeakBlock</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((WeakAnnouncerTest selector: #testNoWeakBlock) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>WeakAnnouncerTest&gt;&gt;testNoWeakBlock before the fix (Pharo 14 build 791)</summary><pre class="code">testNoWeakBlock
+	&quot;There is no such thing as a weak block, these things never go away.&quot;
+
+	&lt;expectedFailure&gt;
+
+	| counter |
+
+	self longTestCase.
+
+	counter := 0.
+
+	(announcer when: AnnouncementMockA do: [ :ann | counter := counter + 1 ] for: self) makeWeak.
+
+	Smalltalk garbageCollect.
+	announcer announce: AnnouncementMockA.
+	self assert: counter equals: 1.
+
+	Smalltalk garbageCollect.
+	announcer announce: AnnouncementMockA.
+	self assert: counter equals: 2</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-WeakAnnouncerTest.st (<a href="../files/image-fixes/20-WeakAnnouncerTest.st">download</a>)</summary><pre class="code">&quot;A block action holds its receiver strongly and there are no ephemerons, so a
+ block subscription cannot be weak.  makeWeak keeps the subscription strong
+ instead of raising an error, as testNoWeakBlock states.&quot;
+fix value: #AnnouncementSubscription value: #makeWeak
+	value: [ :s | s includesSubstring: &#x27;missing ephemerons support&#x27; ]
+	value: &#x27;makeWeak
+
+	&quot;A block holds its receiver strongly and there are no ephemerons, so there is no weak block subscription: stay strong.&quot;
+	action isBlock ifTrue: [ ^ self ].
+
+	^ announcer replace: self with:
+		(WeakAnnouncementSubscription new
+			announcer: announcer;
+			action: action asWeakMessageSend;
+			subscriber: subscriber;
+			announcementClass: announcementClass)&#x27;.
+fix value: #WeakAnnouncerTest value: #testNoWeakBlock
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testNoWeakBlock
+	&quot;There is no such thing as a weak block, these things never go away.&quot;
+
+	| counter |
+
+	self longTestCase.
+
+	counter := 0.
+
+	(announcer when: AnnouncementMockA do: [ :ann | counter := counter + 1 ] for: self) makeWeak.
+
+	Smalltalk garbageCollect.
+	announcer announce: AnnouncementMockA.
+	self assert: counter equals: 1.
+
+	Smalltalk garbageCollect.
+	announcer announce: AnnouncementMockA.
+	self assert: counter equals: 2&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

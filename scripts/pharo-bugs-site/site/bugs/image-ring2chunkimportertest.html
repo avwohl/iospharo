@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ring2ChunkImporterTest - Pharo test defects</title><meta name="description" content="Ring2ChunkImporterTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Ring2ChunkImporterTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-Ring2ChunkImporterTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Ring2ChunkImporterTest.st</code></li>
+<li>Methods: <code>BehaviorOwnedChunk (new instance variable isMetaclassTrait, added with addInstVarNamed:)</code>, <code>BehaviorOwnedChunk&gt;&gt;isMetaclassTrait</code>, <code>BehaviorOwnedChunk&gt;&gt;isMetaclassTrait:</code>, <code>ChunkFileFormatParserV100&gt;&gt;parseMethodDeclarations:</code>, <code>RGChunkImporter&gt;&gt;visitMethodChunk:</code>, <code>Ring2ChunkImporterTest&gt;&gt;testStandardMethodInNewMetaclassTrait</code>, <code>Ring2ChunkImporterTest&gt;&gt;testMultipleMixedChunksInStrangeOrderWithMetaclassTrait</code></li>
+</ul>
+<p>Both tests were expected failures because the chunk parser (ChunkFileFormatParserV100&gt;&gt;parseMethodDeclarations:) turned '!Foo classTrait methodsFor:' into only isMeta=true, so RGChunkImporter&gt;&gt;visitMethodChunk: could not tell a classTrait from a class-side method and created an RGClass where a trait was meant (test 1 then died in convertToMetaclassTrait with 'This class cannot be converted to trait'; test 2 got a class instead of a trait). The fix adds an instance variable isMetaclassTrait (with accessors) to BehaviorOwnedChunk, sets it in the parser, and makes the importer use environment ensureMetaclassTraitNamed: for such chunks. Real code import is unaffected (isMeta and behaviorName are unchanged). Test 2 also had three obsolete expectations that I changed: it read the method from 'trait metaclass' (the Ring trait metaclass is a separate unresolved object; the class side of a trait is classTrait, as the test's own next assertion and testStandardMethodInExistingMetaclassTrait use), it used the old-format stamp '5/2/2012 13:35' that RGStampParser cannot read (DateAndTime asDateAndTime raises DateError on both VMs; RGStampParser&gt;&gt;timeForStamp: falls back to epoch; the sibling tests use ISO stamps), and it checked 'protocol' as a resolved property and 'protocol name' although RGMethod&gt;&gt;protocol returns a Symbol stored in tags (siblings use #tags and 'protocol equals:'). Test 1 had a copy-paste assertion (trait isMetaclassTrait not on the 'TEmpty classTrait' behavior) which is changed to isMetaclassTrait, plus a check that TEmpty itself is a trait. Both tests had the expectedFailure pragma and its comment removed.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ring2ChunkImporterTest&gt;&gt;testMultipleMixedChunksInStrangeOrderWithMetaclassTrait</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>Chunk parser drops the 'classTrait' marker; importer creates a class for 'TEmpty classTrait methodsFor:' and later fails converting it. Test also asserted isMetaclassTrait not on a classTrait (copy-paste from the non-classTrait sibling test).</td>
+</tr>
+<tr>
+<td><code>Ring2ChunkImporterTest&gt;&gt;testStandardMethodInNewMetaclassTrait</code></td>
+<td>both-vms</td>
+<td>repaired</td>
+<td>Same importer defect (classTrait marker lost), plus obsolete test expectations: trait metaclass instead of classTrait, old-format stamp unreadable by RGStampParser, protocol/protocol name instead of tags/protocol Symbol. The 'defectIn' value both-vms is not right: the defect is in image code and the test, identical on both VMs; no VM difference was found.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Fix applied with mkimage.sh (image dir &lt;work directory&gt;), whole classes run on both VMs, base image vs fixed image. Ring2ChunkImporterTest: ours 32 pass/1 fail/1 error before, 34 pass after; Cog same (32/1/1 before, 34 after). ChunkFileFormatParserV100Test 6/6 both VMs before and after. CodeImportTest 12/12, CodeImporterCodeSnippetTest 1/1, MCFileInTest 1/1, RGEnvironmentTest 18/18, all on both VMs, before and after. Our VM run with the default JIT setting ('ours'); I did not run ours-nojit. The fix file was only ever applied on top of the base images; I did not test applying it twice (the entries are guarded by instVar/includes/source checks and print SKIP when the defect is absent, but the second apply was not run). Not run: Ring-Core-Tests beyond RGEnvironmentTest, Monticello tests other than MCFileInTest.</p>
+<p>Upstream note: Pharo (CodeImport + Ring-ChunkImporter): Ring chunk importer creates a class for 'Foo classTrait methodsFor:' chunks. Title: &quot;RGChunkImporter: import classTrait method chunks into the metaclass trait&quot;. The V100 chunk parser keeps only isMeta for '!TFoo classTrait methodsFor:'. Add BehaviorOwnedChunk&gt;&gt;isMetaclassTrait (set by ChunkFileFormatParserV100&gt;&gt;parseMethodDeclarations:), and let RGChunkImporter&gt;&gt;visitMethodChunk: use RGEnvironment&gt;&gt;ensureMetaclassTraitNamed: for such chunks. This lets the two Ring2ChunkImporterTest tests, which were marked expectedFailure, pass; their obsolete expectations (trait metaclass vs classTrait, d/m/y stamp, protocol as resolved property) were updated to match the sibling tests. Upstream: pharo-project/pharo. This is only a draft; the owner must review it before anything goes to Pharo or Cog.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>Ring2ChunkImporterTest&gt;&gt;testMultipleMixedChunksInStrangeOrderWithMetaclassTrait</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>Ring2ChunkImporterTest&gt;&gt;testStandardMethodInNewMetaclassTrait</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((Ring2ChunkImporterTest selector: #testMultipleMixedChunksInStrangeOrderWithMetaclassTrait) run) printString.
+((Ring2ChunkImporterTest selector: #testStandardMethodInNewMetaclassTrait) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>Ring2ChunkImporterTest&gt;&gt;testMultipleMixedChunksInStrangeOrderWithMetaclassTrait before the fix (Pharo 14 build 791)</summary><pre class="code">testMultipleMixedChunksInStrangeOrderWithMetaclassTrait
+
+	| importer trait method |
+
+	&lt;expectedFailure&gt;
+	&quot;This test currently needs to fail because the CodeImporter gives only original behavior name and #isMata.
+	We do not know that the behavior was supposed to be classTrait.&quot;
+
+	importer := RGChunkImporter new.
+
+	importer fileInFrom: &#x27;!TEmpty classTrait methodsFor: &#x27;&#x27;some protocol&#x27;&#x27; stamp: &#x27;&#x27;GuillermoPolito 5/2/2012 13:35&#x27;&#x27;!
+someMethod
+	^true! !
+Trait named: #TEmpty
+	uses: {}
+	package: &#x27;&#x27;Traits-Kernel-Traits&#x27;&#x27;!&#x27; readStream.
+
+	trait := importer environment ask behaviorNamed: #&#x27;TEmpty classTrait&#x27;.
+	self assert: trait isNotNil.
+	self assert: (trait isTrait and: [ trait isMetaclassTrait not ]).
+	method := trait methodNamed: #someMethod.
+	self assert: method isNotNil.
+	self assert: (method sourceCode endsWith: &#x27;^true&#x27;)</pre></details><details><summary>Ring2ChunkImporterTest&gt;&gt;testStandardMethodInNewMetaclassTrait before the fix (Pharo 14 build 791)</summary><pre class="code">testStandardMethodInNewMetaclassTrait
+
+	| importer trait method code |
+
+	&lt;expectedFailure&gt;
+	&quot;This test currently needs to fail because the CodeImporter gives only original behavior name and #isMata.
+	We do not know that the behavior was supposed to be classTrait.&quot;
+
+	importer := RGChunkImporter new.
+
+	code := &#x27;!SomeTrait classTrait methodsFor: &#x27;&#x27;some protocol&#x27;&#x27; stamp: &#x27;&#x27;GuillermoPolito 5/2/2012 13:35&#x27;&#x27;!someMethod
+	^true&#x27;.
+
+	importer fileInFrom: code readStream.
+
+	trait := importer environment ask behaviorNamed: #SomeTrait.
+	method := trait metaclass methodNamed: #someMethod.
+
+	self assert: trait isTrait.
+	self assert: trait classTrait isMetaclassTrait.
+	self assert: method isNotNil.
+	self assert: method isRingResolved.
+	self assert: (method hasResolvedAll: #(name protocol sourceCode author time)).
+
+	self assert: method name equals: #someMethod.
+	self assert: method protocol name equals: &#x27;some protocol&#x27;.
+	self assert: method author equals: &#x27;GuillermoPolito&#x27;.
+	self assert: method time equals: (&#x27;5/2/2012 13:35&#x27; asDateAndTime).
+	self assert: method sourceCode equals: &#x27;someMethod
+	^true&#x27;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Ring2ChunkImporterTest.st (<a href="../files/image-fixes/20-Ring2ChunkImporterTest.st">download</a>)</summary><pre class="code">
+&quot;The chunk parser reads &#x27;!Foo classTrait methodsFor: ...&#x27; but stores only isMeta,
+ so the importer cannot tell a class-side method from a classTrait method and
+ creates a class where a trait is meant.  Keep the distinction in the chunk.&quot;
+(BehaviorOwnedChunk instVarNames includes: #isMetaclassTrait)
+	ifFalse: [
+		BehaviorOwnedChunk addInstVarNamed: &#x27;isMetaclassTrait&#x27;.
+		Stdio stdout nextPutAll: &#x27;ADDED BehaviorOwnedChunk instVar isMetaclassTrait&#x27;; lf; flush ]
+	ifTrue: [ Stdio stdout nextPutAll: &#x27;SKIP BehaviorOwnedChunk instVar (already present)&#x27;; lf; flush ].
+add value: #BehaviorOwnedChunk value: #isMetaclassTrait value: &#x27;accessing&#x27;
+	value: &#x27;isMetaclassTrait
+	&quot;True when the chunk was declared as &#x27;&#x27;Foo classTrait methodsFor: ...&#x27;&#x27; (the class side of a trait).&quot;
+
+	^ isMetaclassTrait ifNil: [ false ]&#x27;.
+add value: #BehaviorOwnedChunk value: #isMetaclassTrait: value: &#x27;accessing&#x27;
+	value: &#x27;isMetaclassTrait: aBoolean
+
+	isMetaclassTrait := aBoolean&#x27;.
+fix value: #ChunkFileFormatParserV100 value: #parseMethodDeclarations:
+	value: [ :s | (s includesSubstring: &#x27;isMetaclassTrait&#x27;) not ]
+	value: &#x27;parseMethodDeclarations: methodsPreamble
+
+	| behaviorName isMeta isMetaclassTrait protocol stamp methodSource methodMetadata |
+	&quot;The method preable is an array with the following structure:
+	If instance side method:
+
+	#(#CodeImportTestCaseTestClass #methodsFor: &#x27;&#x27;some protocol&#x27;&#x27; #stamp: &#x27;&#x27;GuillermoPolito 5/2/2012 13:35&#x27;&#x27;)
+
+	if class side:
+
+	#(#CodeImportTestCaseTestClass #class #methodsFor: &#x27;&#x27;some protocol&#x27;&#x27; #stamp: &#x27;&#x27;GuillermoPolito 5/2/2012 13:35&#x27;&#x27;)
+
+	if class side of a trait:
+
+	#(#TSomeTrait #classTrait #methodsFor: &#x27;&#x27;some protocol&#x27;&#x27; #stamp: &#x27;&#x27;GuillermoPolito 5/2/2012 13:35&#x27;&#x27;)
+
+	Sometimes there is no timestamp: 
+
+	#(#CodeImportTestCaseTestClass #methodsFor: &#x27;&#x27;some protocol&#x27;&#x27;)
+
+	&quot;
+	behaviorName := methodsPreamble first.
+	isMetaclassTrait := methodsPreamble second = #classTrait.
+	isMeta := methodsPreamble second = #class or: [ isMetaclassTrait ].
+	protocol := isMeta
+		            ifTrue: [ methodsPreamble at: 4 ]
+		            ifFalse: [ methodsPreamble at: 3 ].
+	stamp := &#x27;&#x27;&#x27;&#x27;.
+	methodsPreamble size &gt; 4 ifTrue: [
+			stamp := isMeta
+				         ifTrue: [ methodsPreamble at: 6 ]
+				         ifFalse: [ methodsPreamble at: 5 ] ].
+
+	methodSource := readStream next.
+	methodMetadata := readStream next.
+	self addDeclaration: ((self methodChunkClass
+			  contents: methodSource
+			  behaviorName: behaviorName asSymbol
+			  isMeta: isMeta
+			  protocol: protocol
+			  stamp: stamp)
+			 isMetaclassTrait: isMetaclassTrait;
+			 metadata: methodMetadata;
+			 yourself)&#x27;.
+fix value: #RGChunkImporter value: #visitMethodChunk:
+	value: [ :s | (s includesSubstring: &#x27;isMetaclassTrait&#x27;) not ]
+	value: &#x27;visitMethodChunk: aChunk
+
+	| theClass theMethod theProtocol |
+	theClass := aChunk isMetaclassTrait
+		ifTrue: [ self environment ensureMetaclassTraitNamed: (aChunk behaviorName , &#x27;&#x27; classTrait&#x27;&#x27;) asSymbol ]
+		ifFalse: [ self classNamed: aChunk behaviorName ].
+	(aChunk isMeta and: [ aChunk isMetaclassTrait not ]) ifTrue: [ theClass := theClass classSide makeResolved ].
+
+	theMethod := theClass ensureLocalMethodNamed: aChunk methodSelector asSymbol.
+	theProtocol := theClass ensureProtocolNamed: aChunk protocol asSymbol.
+	theMethod protocol: theProtocol.
+	theMethod sourceCode: aChunk contents.
+	theMethod author: (RGStampParser authorForStamp: aChunk stamp).
+	theMethod time: (RGStampParser timeForStamp: aChunk stamp)&#x27;.
+fix value: #Ring2ChunkImporterTest value: #testStandardMethodInNewMetaclassTrait
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testStandardMethodInNewMetaclassTrait
+
+	| importer trait method code |
+	importer := RGChunkImporter new.
+
+	code := &#x27;&#x27;!SomeTrait classTrait methodsFor: &#x27;&#x27;&#x27;&#x27;some protocol&#x27;&#x27;&#x27;&#x27; stamp: &#x27;&#x27;&#x27;&#x27;GuillermoPolito 2012-05-02T13:35&#x27;&#x27;&#x27;&#x27;!someMethod
+	^true&#x27;&#x27;.
+
+	importer fileInFrom: code readStream.
+
+	trait := importer environment ask behaviorNamed: #SomeTrait.
+	method := trait classTrait methodNamed: #someMethod.
+
+	self assert: trait isTrait.
+	self assert: trait classTrait isMetaclassTrait.
+	self assert: method isNotNil.
+	self assert: method isRingResolved.
+	self assert: (method hasResolvedAll: #(name tags sourceCode author time)).
+
+	self assert: method name equals: #someMethod.
+	self assert: method protocol equals: &#x27;&#x27;some protocol&#x27;&#x27;.
+	self assert: method author equals: &#x27;&#x27;GuillermoPolito&#x27;&#x27;.
+	self assert: method time equals: (DateAndTime fromString: &#x27;&#x27;2012-05-02T13:35&#x27;&#x27;).
+	self assert: method sourceCode equals: &#x27;&#x27;someMethod
+	^true&#x27;&#x27;&#x27;.
+fix value: #Ring2ChunkImporterTest value: #testMultipleMixedChunksInStrangeOrderWithMetaclassTrait
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testMultipleMixedChunksInStrangeOrderWithMetaclassTrait
+
+	| importer trait method |
+	importer := RGChunkImporter new.
+
+	importer fileInFrom: &#x27;&#x27;!TEmpty classTrait methodsFor: &#x27;&#x27;&#x27;&#x27;some protocol&#x27;&#x27;&#x27;&#x27; stamp: &#x27;&#x27;&#x27;&#x27;GuillermoPolito 5/2/2012 13:35&#x27;&#x27;&#x27;&#x27;!
+someMethod
+	^true! !
+Trait named: #TEmpty
+	uses: {}
+	package: &#x27;&#x27;&#x27;&#x27;Traits-Kernel-Traits&#x27;&#x27;&#x27;&#x27;!&#x27;&#x27; readStream.
+
+	trait := importer environment ask behaviorNamed: #&#x27;&#x27;TEmpty classTrait&#x27;&#x27;.
+	self assert: trait isNotNil.
+	self assert: trait isMetaclassTrait.
+	self assert: (importer environment ask behaviorNamed: #TEmpty) isTrait.
+	method := trait methodNamed: #someMethod.
+	self assert: method isNotNil.
+	self assert: (method sourceCode endsWith: &#x27;&#x27;^true&#x27;&#x27;)&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

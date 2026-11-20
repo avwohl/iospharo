@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: CSSParser (pharo-contributions/CSSParser, row 20) - Pharo test defects</title><meta name="description" content="Package: CSSParser (pharo-contributions/CSSParser, row 20): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: CSSParser (pharo-contributions/CSSParser, row 20)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-contributions-cssparser.st</dd><dt>Upstream repository</dt><dd>pharo-contributions/CSSParser</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 80 tests, 78 pass, 2 skip on the two VMs.  Two tests of
+<code>CSSFontFormatterTest</code> start with <code>self skip:</code> (&quot;probably due to use of a
+non existing font in the CI&quot;).</li>
+<li>Cause: the two tests compare the font family with <code>TextStyle named:</code> for
+the fonts Verdana and NimbusRomanNo9L.  <code>TextStyle named:</code> answers nil on a
+machine that does not have the font, and the formatter then keeps
+<code>CSSFontFormatter defaultStyle</code>.  One test also compares a Float size with
+the Integer that the formatter stores.</li>
+<li>Repair here: <code>fixes/pharo-contributions-cssparser.st</code>.  The expected value
+is the font, or the default style of the package when the machine does not
+have the font.  The expected size is an Integer, as in the formatter.</li>
+<li>Result: 80 of 80 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 20&quot;
+Metacello new baseline: &#x27;CSSParser&#x27;; repository: &#x27;github://pharo-contributions/CSSParser:main&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>20</td><td><code>pharo-contributions-cssparser</code></td><td>ok</td><td>tests=80 P=80 F=0 E=0 S=0 T=0 X=0</td><td>tests=80 P=80 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-contributions-cssparser.st (<a href="../files/packages/fixes/pharo-contributions-cssparser.st">download</a>)</summary><pre class="code">&quot;CSSParser (pharo-contributions/CSSParser, main): CSSFontFormatterTest
+&gt;&gt;test04ComplexFontValueShouldBeParsedCorrectly and &gt;&gt;test05FontFamilyShouldBeParsedCorrectly
+start with &#x27;self skip:&#x27; (&#x27;probably due to use of a non existing font in the CI
+(Source Sans Pro)&#x27;).  The skip is unconditional: the two tests never run on any machine.
+
+The two tests compare the parsed font family with (TextStyle named: &#x27;Verdana&#x27;)
+and (TextStyle named: &#x27;NimbusRomanNo9L&#x27;).  Those fonts are installed only on
+the machine of the author; on a machine without them TextStyle named: answers
+nil, while CSSFontFormatter class&gt;&gt;defaultStyle answers TextStyle default.  The
+tests are repaired so that the expected value is what the package itself
+specifies when the font is absent: the fallback CSSFontFormatter defaultStyle.
+
+Test04 also compares 3 * defaultSize (a Float, because TextStyle
+pointsToPixels: divides by 72.0) with the value of readFontSizeAttribute:,
+which truncates with asInteger.  The expected value is truncated the same way.&quot;
+
+fix value: #CSSFontFormatterTest value: #test04ComplexFontValueShouldBeParsedCorrectly
+	value: [ :source | source includesSubstring: &#x27;self skip:&#x27; ]
+	value:
+&#x27;test04ComplexFontValueShouldBeParsedCorrectly
+	| prop result |
+	result := Dictionary new.
+	prop := CSSProperty new
+				propertyName: &#x27;&#x27;font&#x27;&#x27;;
+				propertyString: &#x27;&#x27;bold xx-large/180% Verdana&#x27;&#x27;;
+				yourself.
+	self fontFormatter parseTextAttributesFrom: prop into: result.
+	self assert: false equals: (result at: #italic).
+	self assert: true equals: (result at: #bold).
+	&quot;readFontSizeAttribute: truncates the scaled size with asInteger&quot;
+	self assert: (3 * CSSFontFormatter defaultSize) asInteger equals: (result at: #fontSize).
+	&quot;Verdana, or the package fallback when the font is not installed&quot;
+	self assert: CSSFontFormatter defaultStyle equals: (result at: #fontFamily).
+&#x27;.
+
+fix value: #CSSFontFormatterTest value: #test05FontFamilyShouldBeParsedCorrectly
+	value: [ :source | source includesSubstring: &#x27;self skip:&#x27; ]
+	value:
+&#x27;test05FontFamilyShouldBeParsedCorrectly
+	| prop result |
+	result := Dictionary new.
+	prop := CSSProperty new
+				propertyName: &#x27;&#x27;font-family&#x27;&#x27;;
+				propertyString: &#x27;&#x27;non-existent, serif, sans-serif&#x27;&#x27;;
+				yourself.
+	self fontFormatter parseTextAttributesFrom: prop into: result.
+	&quot;serif maps to NimbusRomanNo9L; when that font is not installed the package falls back to the default style&quot;
+	self
+		assert: ((TextStyle named: &#x27;&#x27;NimbusRomanNo9L&#x27;&#x27;) ifNil: [ CSSFontFormatter defaultStyle ])
+		equals: (result at: #fontFamily).
+&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Defects that the standard SUnit runner shows - Pharo test defects</title><meta name="description" content="Defects that the standard SUnit runner shows: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Defects that the standard SUnit runner shows</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>image fix 23-defects-the-standard-runner-shows.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Summary</h2><p><code>OutOfMemoryTest&gt;&gt;setUp</code> installs the Low Space Watcher, and the manifest of <code>Collections-Unordered</code> names a dependency that is out of date.  The two defects show with the standard SUnit runner (<code>runCaseManaged</code>).  The comment of the entries file has the detail.</p><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>23-defects-the-standard-runner-shows.st (<a href="../files/image-fixes/23-defects-the-standard-runner-shows.st">download</a>)</summary><pre class="code">&quot;Two image defects that show when the tests run with the plain SUnit rules
+ (run_sunit.st: no change of the image, SUnit time limits, a Warning is a
+ failure).  Measured 2026-11-17 on stock Cog and on our VM.
+
+ R1. OutOfMemoryTest&gt;&gt;testSignalOfTheLowSpaceFromTheVM needs the Low Space
+ Watcher process to wait on the low-space semaphore.  Another test can end that
+ process for the rest of the run: OupsDebuggerSelectorTest&gt;&gt;tearDown sends
+ DebugSession&gt;&gt;terminate, which installs a NEW watcher (Smalltalk
+ installLowSpaceWatcher), and the SUnit process monitor terminates that new
+ process at the end of the test as a process the test left behind.  The next
+ test that needs the watcher then waits until its time limit (TIMEOUT,
+ TestTookTooMuchTime, 10 s).  The same two classes in this order give the
+ timeout on the two VMs.  Fix: the test class prepares its own precondition, as
+ every other test of the class prepares its own heap limit.
+
+ R2. The package Collections-Unordered declares System-Support as a manually
+ resolved dependency, and the dependency analyser does not find that dependency
+ any more.  The analyser then signals StPotentialOutDatedDependencyWarning, and
+ SUnit counts a Warning in a test as a failure
+ (StTarjanAlgorithmTest&gt;&gt;testNoOutgoingDependenciesAfterTarjan).  Stock Cog
+ fails the same way with the same image.  The older runner resumed the Warning,
+ so the failure did not show.  The manifest entry is out of date; remove it.&quot;
+
+fix value: #OutOfMemoryTest value: #setUp
+	value: [ :source | (source includesSubstring: &#x27;installLowSpaceWatcher&#x27;) not ]
+	value:
+&#x27;setUp
+
+	super setUp.
+	oldValue := Smalltalk vm maxOldSpaceSize: 2 * 1024 * 1024 * 1024.
+	&quot;The test needs a running Low Space Watcher process.  An earlier test can
+	 leave none (see the process monitor of SUnit).&quot;
+	Smalltalk installLowSpaceWatcher&#x27;.
+
+fix value: #&#x27;ManifestCollectionsUnordered class&#x27; value: #manuallyResolvedDependencies
+	value: [ :source | source includesSubstring: &#x27;System-Support&#x27; ]
+	value:
+&#x27;manuallyResolvedDependencies
+	^ #(#&#x27;&#x27;Collections-Streams&#x27;&#x27; #&#x27;&#x27;Math-Operations-Extensions&#x27;&#x27;)&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

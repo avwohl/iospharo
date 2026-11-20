@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Ficus (tinchodias/ficus, row 17) - Pharo test defects</title><meta name="description" content="Package: Ficus (tinchodias/ficus, row 17): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Ficus (tinchodias/ficus, row 17)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>tinchodias-ficus.st</dd><dt>Upstream repository</dt><dd>tinchodias/ficus</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 77 tests, 75 pass, 1 skip, 1 expected failure on the two
+VMs.</li>
+<li>Result with <code>fixes/tinchodias-ficus.st</code>: 77 of 77 pass on the two VMs.</li>
+<li><code>FiSetSimpleChangesTest&gt;&gt;testUpdate</code> (expected failure):
+<code>FiSet&gt;&gt;editFromSimpleChange:</code> answers a <code>FiSubEdit</code> for an update, and
+<code>FiSetUpdate&gt;&gt;edit</code> answers a <code>FiInclude</code>.  The test
+<code>FiSetChangesTest&gt;&gt;testUpdate</code> passes and needs the <code>FiInclude</code>.  The
+converter now
+answers the same edit, and the mark <code>&lt;expectedFailure&gt;</code> goes.</li>
+<li><code>FiBuilderTest&gt;&gt;testErrorWhenSettingAnExcludedVariable</code> (skip, &quot;Decided to
+optimize and remove this validation&quot;): the check of the excluded instance
+variable names is back in <code>FiFixedObject&gt;&gt;initializeFromStepsAndValues:</code>,
+and the skip goes.  The owner of the package can delete the test in place
+of that.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 17&quot;
+Metacello new baseline: &#x27;Ficus&#x27;; repository: &#x27;github://tinchodias/Ficus:mini/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>17</td><td><code>tinchodias-ficus</code></td><td>ok</td><td>tests=77 P=77 F=0 E=0 S=0 T=0 X=0</td><td>tests=77 P=77 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): tinchodias-ficus.st (<a href="../files/packages/fixes/tinchodias-ficus.st">download</a>)</summary><pre class="code">&quot;Ficus (tinchodias/Ficus, mini): two tests that do not pass on both VMs.
+See docs/upstream/package-repairs.md.
+
+1. FiSetSimpleChangesTest&gt;&gt;testUpdate is marked &lt;expectedFailure&gt;.  The
+   conversion FiSet&gt;&gt;editFromSimpleChange: answers a FiSubEdit for an update
+   with children, while FiSetUpdate&gt;&gt;edit (pinned by the passing test
+   FiSetChangesTest&gt;&gt;testUpdate) answers FiInclude value: newValue.  The
+   converter now answers the same FiInclude, and the mark goes.
+
+2. FiBuilderTest&gt;&gt;testErrorWhenSettingAnExcludedVariable is skipped by the
+   author because the validation was removed.  The validation is back in
+   FiFixedObject&gt;&gt;initializeFromStepsAndValues: (one membership test for each
+   step), and the skip goes.&quot;
+
+fix value: #FiSet value: #editFromSimpleChange:
+	value: [ :source | source includesSubstring: &#x27;ifUpdate: [ ].&#x27; ]
+	value:
+&#x27;editFromSimpleChange: aSimpleChange
+	&quot;Convert as edit, assuming the FiSimpleChange applies to myself.&quot;
+	
+	aSimpleChange
+		ifAdd: [ ^ self editInclude: aSimpleChange newValue ] 
+		ifRemove: [ ^ self editExclude: aSimpleChange oldValue ] 
+		ifUpdate: [ ].
+	
+	&quot;An update of an element is the edit that FiSetUpdate&gt;&gt;edit answers: include the new value.&quot;
+	^ self editInclude: aSimpleChange newValue&#x27;.
+
+fix value: #FiSetSimpleChangesTest value: #testUpdate
+	value: [ :source | source includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value:
+&#x27;testUpdate
+	| shot otherShot edit source intermediate change simpleChanges |
+	source := FiSet new.
+	shot := FiChef nickname: #A.
+	otherShot := shot resultOf: (shot editAt: #shortBio equal: &#x27;&#x27;42&#x27;&#x27;).
+
+	edit := source editInclude: shot.
+	intermediate := source resultOf: edit.
+
+	edit := intermediate editInclude: otherShot.
+	change := intermediate changeOf: edit.
+
+	simpleChanges := change asSimpleChanges.
+
+	self 
+		assert: (intermediate editFromSimpleChanges: simpleChanges) 
+		equals: change edit.
+	
+	self assert: simpleChanges equals: 
+		(FiSet withValues: {
+			(FiUpdate builder
+				path: FiPath root / #A;
+				children: (FiSet withValues: {
+					(FiUpdate builder
+						path: FiPath root / #A / #shortBio;
+						children: FiSet new;
+						newValue: &#x27;&#x27;42&#x27;&#x27;;
+						oldValue: &#x27;&#x27;&#x27;&#x27;;
+						new).
+					});
+				newValue: (FiChef nickname: #A shortBio: &#x27;&#x27;42&#x27;&#x27;);
+				oldValue: (FiChef nickname: #A);
+				new).
+			})&#x27;.
+
+fix value: #FiFixedObject value: #initializeFromStepsAndValues:
+	value: [ :source | (source includesSubstring: &#x27;excludedInstanceVariableNamesForSteps&#x27;) not ]
+	value:
+&#x27;initializeFromStepsAndValues: aDictionary
+	| selector excluded |
+	excluded := self class excludedInstanceVariableNamesForSteps.
+	self initialize.
+	aDictionary
+		keysAndValuesDo: [ :slotName :value | 
+			(excluded includes: slotName asSymbol)
+				ifTrue: [ self error: slotName asString , &#x27;&#x27; is not a step of &#x27;&#x27; , self class name ].
+			selector := (slotName , &#x27;&#x27;:&#x27;&#x27;) asSymbol.
+			
+			(self respondsTo: selector)
+				ifTrue: [ self perform: selector with: value ]
+				ifFalse: [ [ self instVarNamed: slotName put: value ]
+						on: Error
+						do: [ :e | self error: slotName asString , &#x27;&#x27; not found in &#x27;&#x27; , self asString ] ] ]&#x27;.
+
+fix value: #FiBuilderTest value: #testErrorWhenSettingAnExcludedVariable
+	value: [ :source | source includesSubstring: &#x27;self skip:&#x27; ]
+	value:
+&#x27;testErrorWhenSettingAnExcludedVariable
+
+	self 
+		assert: (FiRecipe excludedInstanceVariableNamesForSteps includes: #cachedHash)
+		description: &#x27;&#x27;This is an assumption of this test&#x27;&#x27;.
+	
+	self 
+		should: [ 
+			FiRecipe builder
+				cachedHash: 123; &quot;&lt;- this is invalid&quot;
+				new ]
+		raise: Error&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

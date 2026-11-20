@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: pharo-gsoc2025 (Pakarati/pharo-gsoc2025, row 97) - Pharo test defects</title><meta name="description" content="Package: pharo-gsoc2025 (Pakarati/pharo-gsoc2025, row 97): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: pharo-gsoc2025 (Pakarati/pharo-gsoc2025, row 97)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pakarati-pharo-gsoc2025.st</dd><dt>Upstream repository</dt><dd>Pakarati/pharo-gsoc2025</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 1456 tests, 1455 pass, 1 failure on the two VMs
+(<code>DTTestCoverageTest&gt;&gt;testDTTestCoverageResultHas2Nodes</code>, &quot;Got 2 instead
+of 3&quot;).</li>
+<li>Cause: <code>DTTestCoverageResult&gt;&gt;buildTreeForUI</code> of the package makes 2
+nodes, and the name of the test says 2.  The assertion says 3.  The first
+commit of the repository has the same code and the same assertion.</li>
+<li>Repair here: <code>fixes/pakarati-pharo-gsoc2025.st</code> corrects the assertion.</li>
+<li>Result: 1456 of 1456 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 97&quot;
+Metacello new baseline: &#x27;DrTest20&#x27;; repository: &#x27;github://Pakarati/pharo-gsoc2025:main&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>97</td><td><code>pakarati-pharo-gsoc2025</code></td><td>ok</td><td>tests=1456 P=1456 F=0 E=0 S=0 T=0 X=0</td><td>tests=1456 P=1456 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pakarati-pharo-gsoc2025.st (<a href="../files/packages/fixes/pakarati-pharo-gsoc2025.st">download</a>)</summary><pre class="code">&quot;Pakarati/pharo-gsoc2025: DTTestCoverageTest&gt;&gt;testDTTestCoverageResultHas2Nodes
+asserted three sub results of DTTestCoverageResult&gt;&gt;buildTreeForUI.  That
+method builds two nodes (the percent node and the &#x27;Uncovered methods&#x27; node);
+the &#x27;Covered&#x27; and &#x27;Partially covered&#x27; trees are separate methods
+(buildTreeForUICovered, buildTreeForUIPartiallyCovered) with their own tree
+pragmas.  The code had two nodes in the first commit of the package, the test
+name says 2, and the sibling tests read node 1 (percent) and node 2 (leaves).
+So the number 3 in the assertion is the defect, on every VM and every Pharo
+version.  The repair makes the assertion say 2.&quot;
+
+fix value: #DTTestCoverageTest value: #testDTTestCoverageResultHas2Nodes
+	value: [ :source | source includesSubstring: &#x27;equals: 3&#x27; ]
+	value:
+&#x27;testDTTestCoverageResultHas2Nodes
+
+	| resultTree |
+	resultTree := (plugin runForConfiguration: pluginConfiguration) buildTreeForUI.
+	self assert: resultTree subResults size equals: 2&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

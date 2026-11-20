@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpCodePresenterTest - Pharo test defects</title><meta name="description" content="SpCodePresenterTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>SpCodePresenterTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>3</dd><dt>Fix</dt><dd>image fix 20-SpCodePresenterTest.st</dd><dt>Upstream repository</dt><dd>pharo-spec/Spec</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-SpCodePresenterTest.st</code></li>
+<li>Methods: <code>SpCodePresenter&gt;&gt;evaluate:onCompileError:onError:permitUndeclared: (added)</code>, <code>SpCodePresenter&gt;&gt;evaluate:onCompileError:onError:</code>, <code>SpCodePresenter&gt;&gt;doBrowseClass</code>, <code>SpCodePresenterTest&gt;&gt;testDoBrowseClassNotFound</code>, <code>SpCodePresenterTest&gt;&gt;testDoBrowseMethodReferences</code>, <code>SpCodePresenterTest&gt;&gt;testEnvironment</code></li>
+</ul>
+<p>All three tests skipped themselves. Removing the skip showed three different causes. (1) testDoBrowseMethodReferences: the skip comment claims a blocking dialogue, but the test passes without the skip on both VMs (about 0.2 to 0.6 s), so the skip is only removed. (2) testDoBrowseClassNotFound: SpCodePresenter&gt;&gt;doBrowseClass evaluates the selected text with the interactive compiler, and an unknown class name makes OCCodeReparator open a modal &quot;Unknown variable&quot; menu (Define new class, ...). In the headless fake-GUI world the menu construction (PopupChoiceDialogWindow&gt;&gt;newChoicesMorph) spins for about 10 s on both VMs, because the world is 240x120 and maxLines evaluates to 0, so &quot;str next: 0&quot; never advances the stream; the test only &quot;passed&quot; after that timeout. On a real display the menu would wait for the user. Fix: add SpCodePresenter&gt;&gt;evaluate:onCompileError:onError:permitUndeclared: (the old selector delegates with false) and make doBrowseClass use it with true and return on OCUndeclaredVariableWarning, so browsing a class never offers to define one. The test now runs in 0.2 to 0.5 s and I added an assertion that browseClass is nil. (3) testEnvironment: doBrowseClass ignored the presenter environment. The environment only reaches Opal as a fallback behind the scope lookup, so 'OrderedCollection' still resolved and was browsed. The Symbol branch also asked &quot;self class environment&quot; instead of &quot;self environment&quot;. Fix: doBrowseClass uses self environment, and browses a class value only if the presenter environment holds that class (anonymous classes are exempt). The skip and its comment are removed and the original assertions are unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SpCodePresenterTest&gt;&gt;testDoBrowseClassNotFound</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>doBrowseClass opened the interactive undeclared-variable menu of OCCodeReparator for an unknown class name; the test skipped itself because of that dialog. Same behaviour on both VMs. The menu also hangs about 10 s in the fake-GUI world, where the 240x120 world makes maxLines 0 and newChoicesMorph loops.</td>
+</tr>
+<tr>
+<td><code>SpCodePresenterTest&gt;&gt;testDoBrowseMethodReferences</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete skip: the comment claims that doBrowseMethodReferences opens a blocking dialogue. Measured with the skip removed: no dialogue, the test passes on both VMs.</td>
+</tr>
+<tr>
+<td><code>SpCodePresenterTest&gt;&gt;testEnvironment</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SpCodePresenter&gt;&gt;doBrowseClass ignored the presenter environment: the compiler environment is only a fallback after the scope lookup, so OrderedCollection was found and browsed, and the Symbol branch asked 'self class environment'. Without the skip the test failed with Assertion failed on both VMs (measured with a copy of the test).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran 16 test classes on both VMs, once on the base image and once on the fixed image. The classes were SpCodePresenterTest, SpCodeAdapterTest, SpCodeCommandTest, SpCodeEditorPresenterTest, five SpCode<em>InteractionModelTest classes (Behavior, Method, Null, Object, Scripting) plus SpCodeInteractionModelTest, SpTextPresenterTest and five StPlayground</em> classes (Presenter, InteractionModel, BindingAdd, BindingModification, BindingsPresenter). Result on our VM and on Cog is the same: SpCodePresenterTest goes from 62 pass / 6 skip to 65 pass / 3 skip (the 3 remaining skips are other tests, outside this cluster). Every other class has identical counts before and after, with no new failure. SpCodeInteractionModelTest has 4 errors both before and after, on both VMs, and I did not look into them. Ran on the JIT-on default of our VM only; I did not run ours-nojit.</p>
+<p>Upstream note: Spec2 / Pharo: (a) SpCodePresenter&gt;&gt;doBrowseClass must not open the interactive &quot;Unknown variable&quot; menu. Add SpCodePresenter&gt;&gt;evaluate:onCompileError:onError:permitUndeclared:, and have doBrowseClass use it with true and return on OCUndeclaredVariableWarning. (b) doBrowseClass should use the presenter environment (self environment) and browse a class only if that environment holds it. This lets SpCodePresenterTest unskip testDoBrowseClassNotFound and testEnvironment, and unskip testDoBrowseMethodReferences, which already passes. Pharo (not Spec2, separate small bug): PopupChoiceDialogWindow&gt;&gt;newChoicesMorph loops forever when &quot;currentWorld height - 100 // 2 // button height&quot; is 0 (a small world), because &quot;str next: 0&quot; does not advance the stream. It needs a &quot;max: 1&quot;. This is not part of the fix file. Nothing was sent upstream; the owner must review it first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>SpCodePresenterTest&gt;&gt;testDoBrowseClassNotFound</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpCodePresenterTest&gt;&gt;testDoBrowseMethodReferences</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>SpCodePresenterTest&gt;&gt;testEnvironment</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((SpCodePresenterTest selector: #testDoBrowseClassNotFound) run) printString.
+((SpCodePresenterTest selector: #testDoBrowseMethodReferences) run) printString.
+((SpCodePresenterTest selector: #testEnvironment) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>SpCodePresenterTest&gt;&gt;testDoBrowseClassNotFound before the fix (Pharo 14 build 791)</summary><pre class="code">testDoBrowseClassNotFound
+	| navigation |
+	
+	&quot;in fact, compiling a non existing class is popping a a dialog to choose what 
+	 to do (I hate that). Until that is fixed, this test is useless.&quot;
+	self skip.
+	
+	navigation := SpCodeSystemNavigationMock new.
+	presenter systemNavigation: navigation.
+	self openInstance.
+	
+	presenter text: &#x27;ClassThatDoesNotExits&#x27;.
+	presenter doBrowseClass.
+	
+	self assert: navigation messageList isNil</pre></details><details><summary>SpCodePresenterTest&gt;&gt;testDoBrowseMethodReferences before the fix (Pharo 14 build 791)</summary><pre class="code">testDoBrowseMethodReferences
+
+	| navigation |
+	navigation := SpCodeSystemNavigationMock new.
+	presenter systemNavigation: navigation.
+	presenter environment add: SpCodePresenterTest binding.
+	presenter environment add: SpCodeSystemNavigationMock binding.
+	self openInstance.
+
+
+	presenter text: &#x27;Object&#x27;.
+	self skip:
+		&#x27;This next line is currently opening a dialogue that is blocking the test. We skip it for now but we should be able to bring it back soon becaue the informations should be changed from a dialogue to a growl morph that does not block the UI thread.&#x27;.
+	presenter doBrowseMethodReferences.
+
+	self assert: navigation messageList isNil.
+
+	navigation reset.
+	presenter text: &#x27;SpCodeSystemNavigationMock&#x27;.
+	presenter doBrowseMethodReferences.
+
+	self assert: navigation messageList notEmpty.
+	self assert: (navigation messageList includes: SpCodePresenterTest &gt;&gt; #testDoBrowseMethodReferences)</pre></details><details><summary>SpCodePresenterTest&gt;&gt;testEnvironment before the fix (Pharo 14 build 791)</summary><pre class="code">testEnvironment
+	| environment navigation |
+	
+	&quot;Since the environment is not actually working, this is hard to test for now&quot;
+	self skip.
+
+	environment := self newEnvironment.
+	navigation := SpCodeSystemNavigationMock new.
+	
+	presenter environment: environment.
+	presenter systemNavigation: navigation.
+	
+	self openInstance.
+	
+	&quot;we will find Object but not OrderedCollection&quot;
+	presenter text: &#x27;Object&#x27;.
+	presenter doBrowseClass.
+	
+	self assert: navigation browseClass equals: Object.
+	
+	navigation reset.
+ 	presenter text: &#x27;OrderedCollection&#x27;.
+	presenter doBrowseClass.
+	
+	self assert: navigation browseClass isNil</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-SpCodePresenterTest.st (<a href="../files/image-fixes/20-SpCodePresenterTest.st">download</a>)</summary><pre class="code">&quot;SpCodePresenterTest cluster: three tests that skip themselves.
+
+ 1. testDoBrowseClassNotFound: doBrowseClass evaluated the selected text with
+    the interactive compiler.  An unknown class name made OCCodeReparator open
+    a modal &#x27;Unknown variable&#x27; choice menu (&#x27;Define new class&#x27;, ...).  Browsing a
+    class must never offer to define one.  Fix: SpCodePresenter gets
+    evaluate:onCompileError:onError:permitUndeclared:, and doBrowseClass uses it
+    and returns when the text names an undeclared variable.
+ 2. testEnvironment: doBrowseClass ignored the presenter environment (it only
+    asked the class environment for Symbols; a class value was browsed whatever
+    the environment).  Fix: doBrowseClass browses a class only when the
+    presenter environment holds it.
+ 3. testDoBrowseMethodReferences: the skip said a dialogue blocks the test.  The
+    test passes without the skip (measured on both VMs), so the skip is only
+    removed.&quot;
+
+(Smalltalk globals includesKey: #SpCodePresenter) ifTrue: [
+
+&quot;--- code under test ---&quot;
+add value: #SpCodePresenter value: #&#x27;evaluate:onCompileError:onError:permitUndeclared:&#x27; value: &#x27;evaluating&#x27;
+	value: (((SpCodePresenter &gt;&gt; #evaluate:onCompileError:onError:) sourceCode
+		copyReplaceAll: &#x27;evaluate: aString onCompileError: compileErrorBlock onError: errorBlock &#x27;
+		with: &#x27;evaluate: aString onCompileError: compileErrorBlock onError: errorBlock permitUndeclared: aBoolean&#x27;)
+		copyReplaceAll: &#x27;source: aString;&#x27;
+		with: &#x27;source: aString;
+			permitUndeclared: aBoolean;&#x27;).
+
+fix value: #SpCodePresenter value: #&#x27;evaluate:onCompileError:onError:&#x27;
+	value: [ :src | (src includesSubstring: &#x27;permitUndeclared&#x27;) not ]
+	value: &#x27;evaluate: aString onCompileError: compileErrorBlock onError: errorBlock 
+	&quot;evaluate aString. 
+	 evaluate compileErrorBlock if there are compilation errors. 
+	 evaluate errorBlock is anything happens *during* evaluation (code compiled, but it does not 
+	 executes.).  See #evaluate:onCompileError:onError:permitUndeclared: for the details.&quot;
+
+	^ self
+		evaluate: aString
+		onCompileError: compileErrorBlock
+		onError: errorBlock
+		permitUndeclared: false&#x27;.
+
+fix value: #SpCodePresenter value: #doBrowseClass
+	value: [ :src | (src includesSubstring: &#x27;permitUndeclared&#x27;) not ]
+	value: &#x27;doBrowseClass
+	| result |
+
+	&quot;An unknown name must not open the interactive menu of the compiler (it offers to define a class): there is nothing to browse.&quot;
+	result := [ self 
+		evaluate: self selectedTextOrLine
+		onCompileError: [ ^ self ]
+		onError: [ :e | ^ self ]
+		permitUndeclared: true ]
+			on: OCUndeclaredVariableWarning
+			do: [ :warning | ^ self ].
+	(result isKindOf: Symbol)
+		ifTrue: [ 
+				| classToBrowse |
+				classToBrowse := self environment at: result ifAbsent: [ nil ].	
+					classToBrowse ifNotNil: [ ^ self systemNavigation browse: classToBrowse ] ].
+	&quot;Only the classes of the environment of the presenter can be browsed&quot;
+	(result isKindOf: Behavior) ifTrue: [ | instanceSide |
+		instanceSide := result instanceSide.
+		(instanceSide isAnonymous not 
+			and: [ (self environment at: instanceSide name ifAbsent: [ nil ]) ~~ instanceSide ])
+				ifTrue: [ ^ self ] ].
+	self systemNavigation browse: result&#x27;.
+
+&quot;--- tests ---&quot;
+fix value: #SpCodePresenterTest value: #testDoBrowseClassNotFound
+	value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testDoBrowseClassNotFound
+	| navigation |
+	
+	navigation := SpCodeSystemNavigationMock new.
+	presenter systemNavigation: navigation.
+	self openInstance.
+	
+	presenter text: &#x27;&#x27;ClassThatDoesNotExits&#x27;&#x27;.
+	presenter doBrowseClass.
+	
+	self assert: navigation browseClass isNil.
+	self assert: navigation messageList isNil&#x27;.
+
+fix value: #SpCodePresenterTest value: #testDoBrowseMethodReferences
+	value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testDoBrowseMethodReferences
+
+	| navigation |
+	navigation := SpCodeSystemNavigationMock new.
+	presenter systemNavigation: navigation.
+	presenter environment add: SpCodePresenterTest binding.
+	presenter environment add: SpCodeSystemNavigationMock binding.
+	self openInstance.
+
+
+	presenter text: &#x27;&#x27;Object&#x27;&#x27;.
+	presenter doBrowseMethodReferences.
+
+	self assert: navigation messageList isNil.
+
+	navigation reset.
+	presenter text: &#x27;&#x27;SpCodeSystemNavigationMock&#x27;&#x27;.
+	presenter doBrowseMethodReferences.
+
+	self assert: navigation messageList notEmpty.
+	self assert: (navigation messageList includes: SpCodePresenterTest &gt;&gt; #testDoBrowseMethodReferences)&#x27;.
+
+fix value: #SpCodePresenterTest value: #testEnvironment
+	value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testEnvironment
+	| environment navigation |
+	
+	environment := self newEnvironment.
+	navigation := SpCodeSystemNavigationMock new.
+	
+	presenter environment: environment.
+	presenter systemNavigation: navigation.
+	
+	self openInstance.
+	
+	&quot;we will find Object but not OrderedCollection&quot;
+	presenter text: &#x27;&#x27;Object&#x27;&#x27;.
+	presenter doBrowseClass.
+	
+	self assert: navigation browseClass equals: Object.
+	
+	navigation reset.
+ 	presenter text: &#x27;&#x27;OrderedCollection&#x27;&#x27;.
+	presenter doBrowseClass.
+	
+	self assert: navigation browseClass isNil&#x27;.
+].
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

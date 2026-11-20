@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TaskIt-first-complete-tests - Pharo test defects</title><meta name="description" content="TaskIt-first-complete-tests: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>TaskIt-first-complete-tests</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>image fix 26-taskit-first-complete-tests.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Entries: <code>scripts/image-fixes/26-taskit-first-complete-tests.st</code></li>
+<li>Methods: <code>TKTFutureTest&gt;&gt;testFutureFirstCompleteOfSuccessIfFirstSuccessFaster</code>,
+<code>testFutureFirstCompleteOfSuccessIfSecondSuccessFaster</code>,
+<code>testFutureFirstCompleteOfFailsIfFirstFailsFaster</code>,
+<code>testFutureFirstCompleteOfFailsIfSecondFailsFaster</code></li>
+</ul>
+<p><code>TKTFuture&gt;&gt;firstCompleteOf:</code> gives each of the two futures a callback, and
+the callback that runs first decides the result.  The callbacks are tasks of
+a pool with 4 workers, so they have no fixed order.  Each test gave the two
+futures their results one after the other and expected the result of the
+first.  Each test now waits for the result of the combined future before the
+second future gets its result.  The assertions are the same.</p>
+<p>Not changed, from the review: each of about 40 tests of <code>TKTFutureTest</code>
+waits a fixed 50 ms for a callback before its assertion.  No loop showed a
+failure from that wait.</p>
+<p>Upstream note: Title: TKTFutureTest: the firstCompleteOf: tests depend on
+the order of two callbacks.  Project: pharo (TaskIt-Tests).</p>
+<h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>26-taskit-first-complete-tests.st (<a href="../files/image-fixes/26-taskit-first-complete-tests.st">download</a>)</summary><pre class="code">&quot;TaskIt: the tests of firstCompleteOf: depend on the order of two callbacks
+(2026-11-17).
+
+TKTFuture&gt;&gt;firstCompleteOf: gives each of the two futures a callback, and the
+callback that runs first decides the result.  A callback is a task of the
+runner, and the runner of the test profile is a pool of 4 workers.  The four
+tests give the first future its result and give the second future its result
+at once.  They then expect the result of the first.  When a process of a
+higher priority runs between the two callbacks, the VM puts the worker of the
+first callback behind the worker of the second (preemptionYields), and the
+second callback decides.  The tests then fail with &#x27;Got nil instead of 5&#x27;
+(one failure in the Pharo 14 sweep of 2026-11-17 on our VM; 7 of 900 runs in
+scripts/cogdiff/taskit_pool_stress.st before the repair).
+
+&#x27;The first future is faster&#x27; means that its callback ran before the second
+future has a result.  Each test now waits for the result of the combined
+future (at most 1 second) before the second future gets its result.  The
+assertions are the same.&quot;
+
+fix value: #TKTFutureTest value: #testFutureFirstCompleteOfSuccessIfFirstSuccessFaster
+	value: [ :source | (source includesSubstring: &#x27;waitForCompletion&#x27;) not ]
+	value:
+&#x27;testFutureFirstCompleteOfSuccessIfFirstSuccessFaster
+	| future got secondFuture error first |
+	future := TKTFuture new.
+	secondFuture := TKTFuture new.
+	first := future firstCompleteOf: secondFuture.
+	first onSuccessDo: [ :v | got := v ].
+	future deploySuccess: 5.
+	&quot;The callbacks of the two futures are tasks of a worker pool, with no fixed order. The first future is faster when its callback ran before the second future has a result.&quot;
+	first waitForCompletion: 1 second.
+	error := Error new.
+	[ error signal ]
+		on: Error
+		do: [ :e | secondFuture deployFailure: e ].
+	50 milliSecond wait.
+	self assert: got equals: 5&#x27;.
+
+fix value: #TKTFutureTest value: #testFutureFirstCompleteOfSuccessIfSecondSuccessFaster
+	value: [ :source | (source includesSubstring: &#x27;waitForCompletion&#x27;) not ]
+	value:
+&#x27;testFutureFirstCompleteOfSuccessIfSecondSuccessFaster
+
+	| future got secondFuture first |
+	future := TKTFuture new.
+	secondFuture := TKTFuture new.
+
+	first := future firstCompleteOf: secondFuture.
+	first onSuccessDo: [ :v | got := v ].
+
+	secondFuture deploySuccess: 5.
+	&quot;The callbacks of the two futures are tasks of a worker pool, with no fixed order. The second future is faster when its callback ran before the first future has a result.&quot;
+	first waitForCompletion: 1 second.
+	future deployFailure: Error new.
+	50 milliSecond wait.
+
+	self assert: got equals: 5&#x27;.
+
+fix value: #TKTFutureTest value: #testFutureFirstCompleteOfFailsIfFirstFailsFaster
+	value: [ :source | (source includesSubstring: &#x27;waitForCompletion&#x27;) not ]
+	value:
+&#x27;testFutureFirstCompleteOfFailsIfFirstFailsFaster
+
+	| future got secondFuture error first |
+	future := TKTFuture new.
+	secondFuture := TKTFuture new.
+
+	first := future firstCompleteOf: secondFuture.
+	first onFailureDo: [ :v | got := v ].
+
+	error := Error new.
+	[ error signal ]
+		on: Error
+		do: [ :e | future deployFailure: e ].
+	&quot;The callbacks of the two futures are tasks of a worker pool, with no fixed order. The first future is faster when its callback ran before the second future has a result.&quot;
+	first waitForCompletion: 1 second.
+	secondFuture deploySuccess: 1.
+	50 milliSecond wait.
+
+	self assert: got equals: error&#x27;.
+
+fix value: #TKTFutureTest value: #testFutureFirstCompleteOfFailsIfSecondFailsFaster
+	value: [ :source | (source includesSubstring: &#x27;waitForCompletion&#x27;) not ]
+	value:
+&#x27;testFutureFirstCompleteOfFailsIfSecondFailsFaster
+
+	| future got secondFuture error first |
+	future := TKTFuture new.
+	secondFuture := TKTFuture new.
+
+	first := future firstCompleteOf: secondFuture.
+	first onFailureDo: [ :v | got := v ].
+
+	error := Error new.
+	[ error signal ]
+		on: Error
+		do: [ :e | secondFuture deployFailure: e ].
+	&quot;The callbacks of the two futures are tasks of a worker pool, with no fixed order. The second future is faster when its callback ran before the first future has a result.&quot;
+	first waitForCompletion: 1 second.
+	future deploySuccess: 1.
+	50 milliSecond wait.
+
+	self assert: got equals: error&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

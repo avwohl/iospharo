@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cly-misc-queries - Pharo test defects</title><meta name="description" content="Cly-misc-queries: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cly-misc-queries</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>5</dd><dt>Fix</dt><dd>image fix 20-Cly-misc-queries.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-Cly-misc-queries.st</code></li>
+<li>Methods: <code>ClyConstantMethodQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope</code>, <code>ClyUnknownQueryTest&gt;&gt;testIsBoundToEnvironmentWhenScopeIs</code>, <code>ClyRestUntaggedClassesQueryTest&gt;&gt;testIsEmptyFromEmptyClassScope</code>, <code>ClyUnimplementedMethodsQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope</code>, <code>ClyExtendingPackagesQueryTest&gt;&gt;testFromClassWhichTraitIsExtendedButNotItself</code></li>
+</ul>
+<p>All five tests were Pharo tests marked as expected failures, and all five failed identically on our VM and Cog. In four of them the test override is a case where the inherited test does not apply to that query, and the author marked it as expected failure instead of testing the real contract. The fifth (ClyExtendingPackagesQueryTest) has an outdated expectation, from before traits-as-multiple-inheritance was removed. The fix replaces each of the five test methods and removes the mark. Constant query: with an empty method scope the result is still not empty (deny checkEmptyResult). Unknown query: scope and query are not bound to the environment (deny both). RestUntagged and Unimplemented queries: the empty scope is the package scope they support (ClyPackageScope emptyIn:), and checkEmptyResult is true. Extending packages: a class scope uses Behavior&gt;&gt;methods, which includes trait methods (ClyLocalClassScope&gt;&gt;methodsDo:). ClyClassWithTraits uses ClyTraitRoot1, which the PExtendingTrait package extends, so that package is the correct single result. Only test methods changed; no image code under test and no VM code changed.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClyConstantMethodQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Override marked expectedFailure because a constant query ignores scope; no real check was made.</td>
+</tr>
+<tr>
+<td><code>ClyExtendingPackagesQueryTest&gt;&gt;testFromClassWhichTraitIsExtendedButNotItself</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Expectation of 0 dates from before trait methods became part of Behavior&gt;&gt;methods; class scope now includes the trait extension method from package PExtendingTrait, so the result is that one package.</td>
+</tr>
+<tr>
+<td><code>ClyRestUntaggedClassesQueryTest&gt;&gt;testIsEmptyFromEmptyClassScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Query supports only package scope; inherited test used a class scope (DNU packagesDo:). Now uses an empty package scope.</td>
+</tr>
+<tr>
+<td><code>ClyUnimplementedMethodsQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Query supports only class, package and global scopes; inherited test used a method scope (DNU classesDo:). Now uses an empty package scope.</td>
+</tr>
+<tr>
+<td><code>ClyUnknownQueryTest&gt;&gt;testIsBoundToEnvironmentWhenScopeIs</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Inherited test asserts binding; unknown query is never bound by design. Override now asserts the opposite (deny) for scope and query.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: With the fix, the five owning test classes were run 3 times on each VM (ours and Cog): all tests pass, class counts 40, 20, 38, 44 and 36 passes, no fail, error or skip. Only test methods changed, so no other class covers a changed method. I did not run a no-fix baseline of the full classes. The first fix attempt, which ran the query in the Constant test, gave 39 of 41 on both VMs (Got 0 instead of 2); I removed that part.</p>
+<p>Upstream note: Calypso tests: replace the five expectedFailure overrides in ClyConstantMethodQueryTest, ClyUnknownQueryTest, ClyRestUntaggedClassesQueryTest, ClyUnimplementedMethodsQueryTest and the Traits extension of ClyExtendingPackagesQueryTest with real checks. Each override marked &quot;does not apply to this query&quot; as expected failure. Each one now tests the real contract of the query: an empty supported scope gives an empty result, an unknown query is not bound, and a constant query is not empty from an empty scope. For the traits test, the class scope includes trait methods, so the extending package is expected. This is a Pharo (Calypso) change, not a VM change. Per the owner's rule I have not opened a PR.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ClyConstantMethodQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyExtendingPackagesQueryTest&gt;&gt;testFromClassWhichTraitIsExtendedButNotItself</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyRestUntaggedClassesQueryTest&gt;&gt;testIsEmptyFromEmptyClassScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyUnimplementedMethodsQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>ClyUnknownQueryTest&gt;&gt;testIsBoundToEnvironmentWhenScopeIs</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ClyConstantMethodQueryTest selector: #testIsEmptyFromEmptyMethodScope) run) printString.
+((ClyExtendingPackagesQueryTest selector: #testFromClassWhichTraitIsExtendedButNotItself) run) printString.
+((ClyRestUntaggedClassesQueryTest selector: #testIsEmptyFromEmptyClassScope) run) printString.
+((ClyUnimplementedMethodsQueryTest selector: #testIsEmptyFromEmptyMethodScope) run) printString.
+((ClyUnknownQueryTest selector: #testIsBoundToEnvironmentWhenScopeIs) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>ClyConstantMethodQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope before the fix (Pharo 14 build 791)</summary><pre class="code">testIsEmptyFromEmptyMethodScope
+	&quot;Constant query do not depends on scope. So we redefine this method&quot;
+	&lt;expectedFailure&gt;
+	super testIsEmptyFromEmptyMethodScope</pre></details><details><summary>ClyExtendingPackagesQueryTest&gt;&gt;testFromClassWhichTraitIsExtendedButNotItself before the fix (Pharo 14 build 791)</summary><pre class="code">testFromClassWhichTraitIsExtendedButNotItself
+	&quot;I&#x27;m tagging this expected failure because I&#x27;m not sure now if it is appropriate to keep
+	 or not with the removal of the &#x27;traits-as-multiple-inheritance&#x27; stuff.&quot;
+	&lt;expectedFailure&gt;
+
+	self queryFromScope: ClyClassScope of: ClyClassWithTraits.
+	self assert: resultItems size equals: 0</pre></details><details><summary>ClyRestUntaggedClassesQueryTest&gt;&gt;testIsEmptyFromEmptyClassScope before the fix (Pharo 14 build 791)</summary><pre class="code">testIsEmptyFromEmptyClassScope
+	&quot;This query supports only package scope&quot;
+	&lt;expectedFailure&gt;
+
+	super testIsEmptyFromEmptyClassScope</pre></details><details><summary>ClyUnimplementedMethodsQueryTest&gt;&gt;testIsEmptyFromEmptyMethodScope before the fix (Pharo 14 build 791)</summary><pre class="code">testIsEmptyFromEmptyMethodScope
+	&quot;This query only supports class, package and global scopes
+	because it analyses classes and only then methods&quot;
+	&lt;expectedFailure&gt;
+	super testIsEmptyFromEmptyMethodScope</pre></details><details><summary>ClyUnknownQueryTest&gt;&gt;testIsBoundToEnvironmentWhenScopeIs before the fix (Pharo 14 build 791)</summary><pre class="code">testIsBoundToEnvironmentWhenScopeIs
+	&lt;expectedFailure&gt;
+	&quot;Unknown query is never bound to the environment&quot;
+	super testIsBoundToEnvironmentWhenScopeIs</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Cly-misc-queries.st (<a href="../files/image-fixes/20-Cly-misc-queries.st">download</a>)</summary><pre class="code">fix value: #ClyConstantMethodQueryTest value: #testIsEmptyFromEmptyMethodScope
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testIsEmptyFromEmptyMethodScope
+	&quot;Constant query does not depend on the scope. The inherited test expects an empty result from an empty method scope; this query always returns its own methods, so the result is not empty.&quot;
+	query scope: (ClyMethodScope emptyIn: environment).
+
+	self deny: query checkEmptyResult&#x27;.
+
+fix value: #ClyUnknownQueryTest value: #testIsBoundToEnvironmentWhenScopeIs
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testIsBoundToEnvironmentWhenScopeIs
+	&quot;Unknown query is never bound to the environment&quot;
+	self deny: query scope isBoundToEnvironment.
+	self deny: query isBoundToEnvironment&#x27;.
+
+fix value: #ClyRestUntaggedClassesQueryTest value: #testIsEmptyFromEmptyClassScope
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testIsEmptyFromEmptyClassScope
+	&quot;This query supports only package scope, so the empty scope is a package scope&quot;
+	query scope: (ClyPackageScope emptyIn: environment).
+
+	self assert: query checkEmptyResult&#x27;.
+
+fix value: #ClyUnimplementedMethodsQueryTest value: #testIsEmptyFromEmptyMethodScope
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testIsEmptyFromEmptyMethodScope
+	&quot;This query only supports class, package and global scopes
+	because it analyses classes and only then methods.
+	So the empty scope is a package scope&quot;
+	query scope: (ClyPackageScope emptyIn: environment).
+
+	self assert: query checkEmptyResult&#x27;.
+
+fix value: #ClyExtendingPackagesQueryTest value: #testFromClassWhichTraitIsExtendedButNotItself
+	value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ]
+	value: &#x27;testFromClassWhichTraitIsExtendedButNotItself
+	&quot;The methods of a class include the methods that come from its traits (ClyLocalClassScope&gt;&gt;methodsDo: uses Behavior&gt;&gt;methods).
+	ClyClassWithTraits uses ClyTraitRoot1, which another package extends, so that package extends the methods of the class.&quot;
+
+	self queryFromScope: ClyClassScope of: ClyClassWithTraits.
+	self assert: resultItems asSet equals: { (ClyTraitRoot1 &gt;&gt; #extensionMethodFromRoot1Trait) package } asSet&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

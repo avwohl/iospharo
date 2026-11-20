@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: mongotalk (pharo-nosql/mongotalk, row 88) - Pharo test defects</title><meta name="description" content="Package: mongotalk (pharo-nosql/mongotalk, row 88): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: mongotalk (pharo-nosql/mongotalk, row 88)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-nosql-mongotalk.st</dd><dt>Upstream repository</dt><dd>pharo-nosql/mongotalk</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 88 tests, 23 pass, 65 errors on the two VMs.</li>
+<li>Cause: the 65 tests need a MongoDB server on <code>127.0.0.1:27017</code>.  41 tests
+stop in <code>setUp</code> with <code>ConnectionClosed</code>.  24 tests stop in <code>tearDown</code>,
+because <code>setUp</code> did not make the database object.  The test machine runs
+no MongoDB, and we install none.</li>
+<li>Repair here: <code>fixes/pharo-nosql-mongotalk.st</code> adds a stand-in for the
+server in the image (the classes <code>MongoServerDouble</code>,
+<code>MongoDoubleCollection</code>, <code>MongoDoubleMatcher</code>, <code>MongoDoubleBSON</code> and
+<code>MongoDoubleError</code>).  The stand-in listens on <code>127.0.0.1:27017</code>, reads the
+wire messages <code>OP_MSG</code> that the client sends, and keeps databases and
+collections in memory.  The <code>setUp</code> of the five test classes starts the
+stand-in first.  No assertion has a change.</li>
+<li>Three test defects that the missing server hid:
+<ul>
+<li><code>MongoTest&gt;&gt;testAddExistingCollection</code> and
+<code>MongoAuthTest&gt;&gt;testSCRAMSHA1AuthMechanism</code> start with <code>self skip</code>.  The
+two tests run now.  The stand-in answers the error for a collection that
+exists, and has the server side of the login <code>SCRAM-SHA-1</code>.</li>
+<li><code>MQQueryTest&gt;&gt;testWhere</code> sends the JavaScript text <code>this.key1 = &quot;value1&quot;</code>.  A single <code>=</code> is an assignment, so a real server matches each
+document.  The repair writes <code>==</code>.</li>
+</ul>
+</li>
+<li>Limits: the tests are a check of the client of the package against a
+server in the image, and not against MongoDB.  The stand-in has only the
+commands and the query operators that the tests use.  It has no
+JavaScript, no aggregation, no transactions and no check of access rights.</li>
+<li>Result: 88 of 88 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 88&quot;
+Metacello new baseline: &#x27;MongoTalk&#x27;; repository: &#x27;github://pharo-nosql/mongotalk:master/mc&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>88</td><td><code>pharo-nosql-mongotalk</code></td><td>ok</td><td>tests=88 P=88 F=0 E=0 S=0 T=0 X=0</td><td>tests=88 P=88 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-nosql-mongotalk.st (<a href="../files/packages/fixes/pharo-nosql-mongotalk.st">download</a>)</summary><pre class="code">&quot;pharo-nosql-mongotalk: the tests need a MongoDB server on 127.0.0.1:27017, and this machine has none.
+No MongoDB may be installed or downloaded, so the class MongoServerDouble is a stand-in server inside the
+image. It listens on 127.0.0.1:27017 and speaks the OP_MSG wire protocol that the client (MongoDriverV5)
+uses, with the BSON classes of the package. It keeps databases and collections in memory. The classes:
+MongoServerDouble (sockets, commands, cursors, SCRAM-SHA-1), MongoDoubleCollection (documents and unique
+indexes), MongoDoubleMatcher (query operators, sort, projection, update), MongoDoubleBSON (a BSON reader
+that keeps the order of the fields), MongoDoubleError (a command error with a code).
+The five setUp methods that open a connection (MongoTest, MongoWholeDatabaseTest, MongoCommandCursorTest,
+MongoAuthTest, MQQueryTest) start the stand-in first. No assertion changes. The limits of the stand-in
+are in docs/upstream/package-repairs.md.
+
+Three entries change a test, each for a defect of the test and not of the server:
+- MongoTest&gt;&gt;testAddExistingCollection starts with self skip, and the comment says that the server
+  answers OK for a collection that exists. The driver has code for the answer of MongoDB to create
+  on an existing collection, error 48 (NamespaceExists): MongoDatabase&gt;&gt;addCollection:capped:size:max:
+  and MongoCollection&gt;&gt;ensureAdded. The stand-in answers error 48, so the entry removes the skip.
+- MongoAuthTest&gt;&gt;testSCRAMSHA1AuthMechanism starts with self skip, because it needs a user that a person
+  creates by hand. The stand-in has the user pharounittest with the password test in the database test.
+  The entry removes the skip.
+- MQQueryTest&gt;&gt;testWhere sends the JavaScript this.key1 = &quot;&quot;value1&quot;&quot;. In JavaScript = is an assignment
+  and gives a true value, so a real server matches every document, and the test passes only because
+  the wanted document is the first one. The entry writes == so that the query tests the equality.&quot;
+
+(Smalltalk globals includesKey: #MongoDoubleError) ifFalse: [
+	(Error &lt;&lt; #MongoDoubleError
+		slots: { #code. #codeName };
+		package: &#x27;MongoTalk-ServerDouble&#x27;;
+		yourself) install ].
+
+(Smalltalk globals includesKey: #MongoDoubleBSON) ifFalse: [
+	(BSON &lt;&lt; #MongoDoubleBSON
+		package: &#x27;MongoTalk-ServerDouble&#x27;;
+		yourself) install ].
+
+(Smalltalk globals includesKey: #MongoDoubleMatcher) ifFalse: [
+	(Object &lt;&lt; #MongoDoubleMatcher
+		package: &#x27;MongoTalk-ServerDouble&#x27;;
+		yourself) install ].
+
+(Smalltalk globals includesKey: #MongoDoubleCollection) ifFalse: [
+	(Object &lt;&lt; #MongoDoubleCollection
+		slots: { #name. #namespace. #documents. #indexes. #ids };
+		package: &#x27;MongoTalk-ServerDouble&#x27;;
+		yourself) install ].
+
+(Smalltalk globals includesKey: #MongoServerDouble) ifFalse: [
+	(Object &lt;&lt; #MongoServerDouble
+		slots: { #listener. #acceptor. #databases. #cursors. #connections. #conversations. #users. #nextCursorId. #nextRequestId };
+		sharedVariables: { #Current };
+		package: &#x27;MongoTalk-ServerDouble&#x27;;
+		yourself) install ].
+
+add value: #&#x27;MongoDoubleError class&#x27; value: #&#x27;signalCode:name:message:&#x27; value: &#x27;signalling&#x27; value:
+&#x27;signalCode: aCode name: aName message: aString
+	^ self new
+		code: aCode;
+		codeName: aName;
+		signal: aString&#x27;.
+
+add value: #&#x27;MongoDoubleError&#x27; value: #&#x27;code&#x27; value: &#x27;accessing&#x27; value:
+&#x27;code
+	^ code&#x27;.
+
+add value: #&#x27;MongoDoubleError&#x27; value: #&#x27;code:&#x27; value: &#x27;accessing&#x27; value:
+&#x27;code: anInteger
+	code := anInteger&#x27;.
+
+add value: #&#x27;MongoDoubleError&#x27; value: #&#x27;codeName&#x27; value: &#x27;accessing&#x27; value:
+&#x27;codeName
+	^ codeName&#x27;.
+
+add value: #&#x27;MongoDoubleError&#x27; value: #&#x27;codeName:&#x27; value: &#x27;accessing&#x27; value:
+&#x27;codeName: aString
+	codeName := aString&#x27;.
+
+add value: #&#x27;MongoDoubleBSON&#x27; value: #&#x27;nextDictionary&#x27; value: &#x27;reading&#x27; value:
+&#x27;nextDictionary
+	&quot;Like BSON&gt;&gt;nextDictionary, but the answer keeps the order of the fields:
+	 the first field of a command is the name of the command.&quot;
+	| result |
+	result := OrderedDictionary new.
+	stream nextUInt32.
+	[ | type |
+	type := stream nextByte.
+	type = 0 ifTrue: [ ^ result ].
+	self addObjectType: type to: result ] repeat&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;bsonTypeOf:&#x27; value: &#x27;types&#x27; value:
+&#x27;bsonTypeOf: aValue
+	&quot;The BSON type number that the value gets when the client writes it.&quot;
+	aValue isNil ifTrue: [ ^ 10 ].
+	(aValue == true or: [ aValue == false ]) ifTrue: [ ^ 8 ].
+	aValue isString ifTrue: [ ^ 2 ].
+	aValue isFloat ifTrue: [ ^ 1 ].
+	aValue isInteger ifTrue: [
+		^ (aValue between: -2147483648 and: 2147483647)
+			ifTrue: [ 16 ]
+			ifFalse: [ 18 ] ].
+	aValue isDictionary ifTrue: [ ^ 3 ].
+	(aValue isKindOf: ByteArray) ifTrue: [ ^ 5 ].
+	aValue class == OID ifTrue: [ ^ 7 ].
+	(aValue isKindOf: DateAndTime) ifTrue: [ ^ 9 ].
+	aValue class == BSONRegex ifTrue: [ ^ 11 ].
+	aValue class == MongoTimeStamp ifTrue: [ ^ 17 ].
+	aValue isCollection ifTrue: [ ^ 4 ].
+	^ 0&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;isArrayValue:&#x27; value: &#x27;types&#x27; value:
+&#x27;isArrayValue: aValue
+	^ (self bsonTypeOf: aValue) = 4&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;bracketOf:&#x27; value: &#x27;types&#x27; value:
+&#x27;bracketOf: aValue
+	&quot;The comparison order of MongoDB: null, numbers, strings, documents, arrays, binary data, object ids, booleans, dates.&quot;
+	| code |
+	code := self bsonTypeOf: aValue.
+	code = 10 ifTrue: [ ^ 0 ].
+	(code = 1 or: [ code = 16 or: [ code = 18 ] ]) ifTrue: [ ^ 1 ].
+	code = 2 ifTrue: [ ^ 2 ].
+	code = 3 ifTrue: [ ^ 3 ].
+	code = 4 ifTrue: [ ^ 4 ].
+	code = 5 ifTrue: [ ^ 5 ].
+	code = 7 ifTrue: [ ^ 6 ].
+	code = 8 ifTrue: [ ^ 7 ].
+	code = 9 ifTrue: [ ^ 8 ].
+	^ 9 + code&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;compare:to:&#x27; value: &#x27;types&#x27; value:
+&#x27;compare: a to: b
+	&quot;Answer -1, 0 or 1 for two values of the same bracket.&quot;
+	| bracket |
+	bracket := self bracketOf: a.
+	bracket = 0 ifTrue: [ ^ 0 ].
+	bracket = 7 ifTrue: [
+		^ a = b
+			ifTrue: [ 0 ]
+			ifFalse: [ a ifTrue: [ 1 ] ifFalse: [ -1 ] ] ].
+	bracket = 6 ifTrue: [ ^ self compare: a value to: b value ].
+	(bracket = 1 or: [ bracket = 2 or: [ bracket = 8 ] ]) ifTrue: [
+		^ a &lt; b
+			ifTrue: [ -1 ]
+			ifFalse: [ a &gt; b ifTrue: [ 1 ] ifFalse: [ 0 ] ] ].
+	^ (self valuesEqual: a to: b) ifTrue: [ 0 ] ifFalse: [ 1 ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;sortCompare:to:&#x27; value: &#x27;types&#x27; value:
+&#x27;sortCompare: a to: b
+	| bracketA bracketB |
+	bracketA := self bracketOf: a.
+	bracketB := self bracketOf: b.
+	bracketA = bracketB ifFalse: [
+		^ bracketA &lt; bracketB ifTrue: [ -1 ] ifFalse: [ 1 ] ].
+	^ self compare: a to: b&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;valuesEqual:to:&#x27; value: &#x27;types&#x27; value:
+&#x27;valuesEqual: a to: b
+	| bracket |
+	bracket := self bracketOf: a.
+	bracket = (self bracketOf: b) ifFalse: [ ^ false ].
+	bracket = 3 ifTrue: [ ^ self documentsEqual: a to: b ].
+	bracket = 4 ifTrue: [
+		^ a size = b size and: [
+			(1 to: a size) allSatisfy: [ :i | self valuesEqual: (a at: i) to: (b at: i) ] ] ].
+	bracket = 5 ifTrue: [ ^ a asByteArray = b asByteArray ].
+	^ a = b&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;documentsEqual:to:&#x27; value: &#x27;types&#x27; value:
+&#x27;documentsEqual: a to: b
+	| keysA keysB |
+	keysA := a keys.
+	keysB := b keys.
+	keysA size = keysB size ifFalse: [ ^ false ].
+	1 to: keysA size do: [ :i |
+		(keysA at: i) = (keysB at: i) ifFalse: [ ^ false ].
+		(self valuesEqual: (a at: (keysA at: i)) to: (b at: (keysB at: i)))
+			ifFalse: [ ^ false ] ].
+	^ true&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;isTruthy:&#x27; value: &#x27;types&#x27; value:
+&#x27;isTruthy: aValue
+	(aValue == true or: [ aValue == false ]) ifTrue: [ ^ aValue ].
+	aValue isNumber ifTrue: [ ^ aValue ~= 0 ].
+	^ aValue notNil&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;valuesAt:in:&#x27; value: &#x27;paths&#x27; value:
+&#x27;valuesAt: aPath in: aDocument
+	&quot;The values that the dotted path reaches. Arrays are traversed. A missing field gives an empty collection.&quot;
+	| result |
+	result := OrderedCollection new.
+	self resolve: (aPath substrings: &#x27;&#x27;.&#x27;&#x27;) from: 1 in: aDocument into: result.
+	^ result&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;resolve:from:in:into:&#x27; value: &#x27;paths&#x27; value:
+&#x27;resolve: parts from: index in: aValue into: result
+	| part |
+	index &gt; parts size ifTrue: [
+		result add: aValue.
+		^ self ].
+	part := parts at: index.
+	aValue isDictionary ifTrue: [
+		(aValue includesKey: part) ifTrue: [
+			self resolve: parts from: index + 1 in: (aValue at: part) into: result ].
+		^ self ].
+	(self isArrayValue: aValue) ifTrue: [
+		part isAllDigits ifTrue: [
+			(part asInteger + 1 between: 1 and: aValue size) ifTrue: [
+				self resolve: parts from: index + 1 in: (aValue at: part asInteger + 1) into: result ] ].
+		aValue do: [ :each |
+			(each isDictionary and: [ each includesKey: part ]) ifTrue: [
+				self resolve: parts from: index + 1 in: (each at: part) into: result ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;document:matches:&#x27; value: &#x27;matching&#x27; value:
+&#x27;document: aDocument matches: aQuery
+	aQuery keysAndValuesDo: [ :key :condition |
+		(self document: aDocument matchesKey: key condition: condition)
+			ifFalse: [ ^ false ] ].
+	^ true&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;document:matchesKey:condition:&#x27; value: &#x27;matching&#x27; value:
+&#x27;document: aDocument matchesKey: aKey condition: aCondition
+	aKey = &#x27;&#x27;$and&#x27;&#x27; ifTrue: [
+		^ aCondition allSatisfy: [ :each | self document: aDocument matches: each ] ].
+	aKey = &#x27;&#x27;$or&#x27;&#x27; ifTrue: [
+		^ aCondition anySatisfy: [ :each | self document: aDocument matches: each ] ].
+	aKey = &#x27;&#x27;$nor&#x27;&#x27; ifTrue: [
+		^ (aCondition anySatisfy: [ :each | self document: aDocument matches: each ]) not ].
+	aKey = &#x27;&#x27;$where&#x27;&#x27; ifTrue: [ ^ self document: aDocument satisfiesWhere: aCondition ].
+	aKey = &#x27;&#x27;$comment&#x27;&#x27; ifTrue: [ ^ true ].
+	(aKey beginsWith: &#x27;&#x27;$&#x27;&#x27;) ifTrue: [
+		^ MongoDoubleError signalCode: 2 name: &#x27;&#x27;BadValue&#x27;&#x27; message: &#x27;&#x27;unknown top level operator: &#x27;&#x27;, aKey ].
+	^ self values: (self valuesAt: aKey in: aDocument) matchCondition: aCondition&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;isOperatorDocument:&#x27; value: &#x27;matching&#x27; value:
+&#x27;isOperatorDocument: aValue
+	^ aValue isDictionary and: [
+		aValue notEmpty and: [
+			aValue keys allSatisfy: [ :each | each beginsWith: &#x27;&#x27;$&#x27;&#x27; ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:matchCondition:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList matchCondition: aCondition
+	(self isOperatorDocument: aCondition) ifTrue: [
+		^ self values: aValueList matchOperators: aCondition ].
+	^ self values: aValueList equalTo: aCondition&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:equalTo:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList equalTo: aLiteral
+	&quot;A missing field is equal to null. An array field is equal to a value that one of the elements equals.&quot;
+	aValueList isEmpty ifTrue: [ ^ aLiteral isNil ].
+	^ aValueList anySatisfy: [ :each |
+		(self valuesEqual: each to: aLiteral) or: [
+			(self isArrayValue: each) and: [
+				each anySatisfy: [ :element | self valuesEqual: element to: aLiteral ] ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:matchOperators:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList matchOperators: anOperatorDocument
+	anOperatorDocument keysAndValuesDo: [ :operator :operand |
+		(self values: aValueList operator: operator operand: operand options: anOperatorDocument)
+			ifFalse: [ ^ false ] ].
+	^ true&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:operator:operand:options:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList operator: anOperator operand: anOperand options: aDocument
+	anOperator = &#x27;&#x27;$eq&#x27;&#x27; ifTrue: [ ^ self values: aValueList equalTo: anOperand ].
+	anOperator = &#x27;&#x27;$ne&#x27;&#x27; ifTrue: [ ^ (self values: aValueList equalTo: anOperand) not ].
+	anOperator = &#x27;&#x27;$gt&#x27;&#x27; ifTrue: [
+		^ self values: aValueList compare: anOperand satisfying: [ :order | order &gt; 0 ] ].
+	anOperator = &#x27;&#x27;$gte&#x27;&#x27; ifTrue: [
+		^ self values: aValueList compare: anOperand satisfying: [ :order | order &gt;= 0 ] ].
+	anOperator = &#x27;&#x27;$lt&#x27;&#x27; ifTrue: [
+		^ self values: aValueList compare: anOperand satisfying: [ :order | order &lt; 0 ] ].
+	anOperator = &#x27;&#x27;$lte&#x27;&#x27; ifTrue: [
+		^ self values: aValueList compare: anOperand satisfying: [ :order | order &lt;= 0 ] ].
+	anOperator = &#x27;&#x27;$in&#x27;&#x27; ifTrue: [
+		^ anOperand anySatisfy: [ :each | self values: aValueList equalTo: each ] ].
+	anOperator = &#x27;&#x27;$nin&#x27;&#x27; ifTrue: [
+		^ (anOperand anySatisfy: [ :each | self values: aValueList equalTo: each ]) not ].
+	anOperator = &#x27;&#x27;$exists&#x27;&#x27; ifTrue: [
+		^ aValueList notEmpty = (self isTruthy: anOperand) ].
+	anOperator = &#x27;&#x27;$type&#x27;&#x27; ifTrue: [ ^ self values: aValueList haveType: anOperand ].
+	anOperator = &#x27;&#x27;$size&#x27;&#x27; ifTrue: [
+		^ aValueList anySatisfy: [ :each | (self isArrayValue: each) and: [ each size = anOperand ] ] ].
+	anOperator = &#x27;&#x27;$regex&#x27;&#x27; ifTrue: [
+		^ self values: aValueList matchRegex: anOperand options: (aDocument at: &#x27;&#x27;$options&#x27;&#x27; ifAbsent: [ &#x27;&#x27;&#x27;&#x27; ]) ].
+	anOperator = &#x27;&#x27;$options&#x27;&#x27; ifTrue: [ ^ true ].
+	anOperator = &#x27;&#x27;$not&#x27;&#x27; ifTrue: [ ^ (self values: aValueList matchCondition: anOperand) not ].
+	anOperator = &#x27;&#x27;$all&#x27;&#x27; ifTrue: [
+		^ anOperand allSatisfy: [ :each | self values: aValueList equalTo: each ] ].
+	anOperator = &#x27;&#x27;$elemMatch&#x27;&#x27; ifTrue: [ ^ self values: aValueList matchElement: anOperand ].
+	^ MongoDoubleError signalCode: 2 name: &#x27;&#x27;BadValue&#x27;&#x27; message: &#x27;&#x27;unknown operator: &#x27;&#x27;, anOperator&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:compare:satisfying:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList compare: anOperand satisfying: aBlock
+	^ aValueList anySatisfy: [ :each |
+		(self item: each compare: anOperand satisfying: aBlock) or: [
+			(self isArrayValue: each) and: [
+				each anySatisfy: [ :element | self item: element compare: anOperand satisfying: aBlock ] ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;item:compare:satisfying:&#x27; value: &#x27;matching&#x27; value:
+&#x27;item: aValue compare: anOperand satisfying: aBlock
+	^ (self bracketOf: aValue) = (self bracketOf: anOperand) and: [
+		aBlock value: (self compare: aValue to: anOperand) ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;typeCodesFor:&#x27; value: &#x27;matching&#x27; value:
+&#x27;typeCodesFor: aType
+	| table |
+	aType isNumber ifTrue: [ ^ Array with: aType asInteger ].
+	aType = &#x27;&#x27;number&#x27;&#x27; ifTrue: [ ^ #(1 16 18) ].
+	table := Dictionary new
+		at: &#x27;&#x27;double&#x27;&#x27; put: 1;
+		at: &#x27;&#x27;string&#x27;&#x27; put: 2;
+		at: &#x27;&#x27;object&#x27;&#x27; put: 3;
+		at: &#x27;&#x27;array&#x27;&#x27; put: 4;
+		at: &#x27;&#x27;binData&#x27;&#x27; put: 5;
+		at: &#x27;&#x27;objectId&#x27;&#x27; put: 7;
+		at: &#x27;&#x27;bool&#x27;&#x27; put: 8;
+		at: &#x27;&#x27;date&#x27;&#x27; put: 9;
+		at: &#x27;&#x27;null&#x27;&#x27; put: 10;
+		at: &#x27;&#x27;regex&#x27;&#x27; put: 11;
+		at: &#x27;&#x27;timestamp&#x27;&#x27; put: 17;
+		at: &#x27;&#x27;int&#x27;&#x27; put: 16;
+		at: &#x27;&#x27;long&#x27;&#x27; put: 18;
+		yourself.
+	^ Array with: (table
+		at: aType
+		ifAbsent: [ MongoDoubleError signalCode: 2 name: &#x27;&#x27;BadValue&#x27;&#x27; message: &#x27;&#x27;Unknown type name alias: &#x27;&#x27;, aType printString ])&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:haveType:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList haveType: aType
+	| codes |
+	codes := self typeCodesFor: aType.
+	^ aValueList anySatisfy: [ :each |
+		(codes includes: (self bsonTypeOf: each)) or: [
+			(self isArrayValue: each) and: [
+				each anySatisfy: [ :element | codes includes: (self bsonTypeOf: element) ] ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:matchRegex:options:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList matchRegex: aPattern options: anOptionString
+	| matcher |
+	matcher := (anOptionString includes: $i)
+		ifTrue: [ aPattern asRegexIgnoringCase ]
+		ifFalse: [ aPattern asRegex ].
+	^ aValueList anySatisfy: [ :each |
+		(self string: each matches: matcher) or: [
+			(self isArrayValue: each) and: [
+				each anySatisfy: [ :element | self string: element matches: matcher ] ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;string:matches:&#x27; value: &#x27;matching&#x27; value:
+&#x27;string: aValue matches: aMatcher
+	^ aValue isString and: [ (aMatcher matchesIn: aValue) notEmpty ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;values:matchElement:&#x27; value: &#x27;matching&#x27; value:
+&#x27;values: aValueList matchElement: aCondition
+	^ aValueList anySatisfy: [ :each |
+		(self isArrayValue: each) and: [
+			each anySatisfy: [ :element |
+				(self isOperatorDocument: aCondition)
+					ifTrue: [ self values: (OrderedCollection with: element) matchOperators: aCondition ]
+					ifFalse: [ element isDictionary and: [ self document: element matches: aCondition ] ] ] ] ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;document:satisfiesWhere:&#x27; value: &#x27;javascript&#x27; value:
+&#x27;document: aDocument satisfiesWhere: aScript
+	&quot;The stand-in does not run JavaScript. It reads comparisons of this.field with a literal, joined with &amp;&amp; and ||.&quot;
+	(aScript includesSubstring: &#x27;&#x27;||&#x27;&#x27;) ifTrue: [
+		^ (aScript splitOn: &#x27;&#x27;||&#x27;&#x27;) anySatisfy: [ :part | self document: aDocument satisfiesWhere: part ] ].
+	(aScript includesSubstring: &#x27;&#x27;&amp;&amp;&#x27;&#x27;) ifTrue: [
+		^ (aScript splitOn: &#x27;&#x27;&amp;&amp;&#x27;&#x27;) allSatisfy: [ :part | self document: aDocument satisfiesWhere: part ] ].
+	^ self document: aDocument satisfiesComparison: aScript trimmed&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;document:satisfiesComparison:&#x27; value: &#x27;javascript&#x27; value:
+&#x27;document: aDocument satisfiesComparison: aText
+	| operator index left right values literal |
+	operator := #(&#x27;&#x27;===&#x27;&#x27; &#x27;&#x27;!==&#x27;&#x27; &#x27;&#x27;==&#x27;&#x27; &#x27;&#x27;!=&#x27;&#x27; &#x27;&#x27;&lt;=&#x27;&#x27; &#x27;&#x27;&gt;=&#x27;&#x27; &#x27;&#x27;&lt;&#x27;&#x27; &#x27;&#x27;&gt;&#x27;&#x27; &#x27;&#x27;=&#x27;&#x27;)
+		detect: [ :each | aText includesSubstring: each ]
+		ifNone: [ nil ].
+	operator ifNil: [ ^ self unsupportedScript: aText ].
+	index := aText indexOfSubCollection: operator.
+	left := (aText copyFrom: 1 to: index - 1) trimmed.
+	right := (aText copyFrom: index + operator size to: aText size) trimmed.
+	((left beginsWith: &#x27;&#x27;this.&#x27;&#x27;) and: [ right notEmpty ]) ifFalse: [ ^ self unsupportedScript: aText ].
+	values := self valuesAt: (left allButFirst: 5) in: aDocument.
+	literal := self literalFromJavaScript: right.
+	operator = &#x27;&#x27;=&#x27;&#x27; ifTrue: [ ^ self isTruthy: literal ].
+	(operator = &#x27;&#x27;==&#x27;&#x27; or: [ operator = &#x27;&#x27;===&#x27;&#x27; ]) ifTrue: [ ^ self values: values equalTo: literal ].
+	(operator = &#x27;&#x27;!=&#x27;&#x27; or: [ operator = &#x27;&#x27;!==&#x27;&#x27; ]) ifTrue: [ ^ (self values: values equalTo: literal) not ].
+	operator = &#x27;&#x27;&lt;&#x27;&#x27; ifTrue: [
+		^ self values: values compare: literal satisfying: [ :order | order &lt; 0 ] ].
+	operator = &#x27;&#x27;&lt;=&#x27;&#x27; ifTrue: [
+		^ self values: values compare: literal satisfying: [ :order | order &lt;= 0 ] ].
+	operator = &#x27;&#x27;&gt;&#x27;&#x27; ifTrue: [
+		^ self values: values compare: literal satisfying: [ :order | order &gt; 0 ] ].
+	^ self values: values compare: literal satisfying: [ :order | order &gt;= 0 ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;literalFromJavaScript:&#x27; value: &#x27;javascript&#x27; value:
+&#x27;literalFromJavaScript: aText
+	| first |
+	first := aText first.
+	((first = $&quot;) or: [ first = $&#x27;&#x27; ]) ifTrue: [ ^ aText copyFrom: 2 to: aText size - 1 ].
+	aText = &#x27;&#x27;true&#x27;&#x27; ifTrue: [ ^ true ].
+	aText = &#x27;&#x27;false&#x27;&#x27; ifTrue: [ ^ false ].
+	aText = &#x27;&#x27;null&#x27;&#x27; ifTrue: [ ^ nil ].
+	(aText allSatisfy: [ :each | each isDigit or: [ &#x27;&#x27;.-+eE&#x27;&#x27; includes: each ] ])
+		ifFalse: [ ^ self unsupportedScript: aText ].
+	^ aText asNumber&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;unsupportedScript:&#x27; value: &#x27;javascript&#x27; value:
+&#x27;unsupportedScript: aText
+	^ MongoDoubleError
+		signalCode: 139
+		name: &#x27;&#x27;JSInterpreterFailure&#x27;&#x27;
+		message: &#x27;&#x27;The stand-in server runs only comparisons of this.field with a literal, not: &#x27;&#x27;, aText&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;sort:by:&#x27; value: &#x27;sorting&#x27; value:
+&#x27;sort: aCollection by: aSpecification
+	&quot;A stable sort of the documents by the fields of the specification (field -&gt; 1 or -1).&quot;
+	| indexed |
+	indexed := aCollection withIndexCollect: [ :each :index | each -&gt; index ].
+	^ (indexed asSortedCollection: [ :a :b |
+		| order |
+		order := self compareDocument: a key to: b key by: aSpecification.
+		order = 0
+			ifTrue: [ a value &lt;= b value ]
+			ifFalse: [ order &lt; 0 ] ]) asOrderedCollection collect: [ :each | each key ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;compareDocument:to:by:&#x27; value: &#x27;sorting&#x27; value:
+&#x27;compareDocument: a to: b by: aSpecification
+	aSpecification keysAndValuesDo: [ :field :direction |
+		| order |
+		order := self
+			sortCompare: (self firstValueAt: field in: a)
+			to: (self firstValueAt: field in: b).
+		order ~= 0 ifTrue: [
+			^ direction &lt; 0 ifTrue: [ order negated ] ifFalse: [ order ] ] ].
+	^ 0&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;firstValueAt:in:&#x27; value: &#x27;sorting&#x27; value:
+&#x27;firstValueAt: aField in: aDocument
+	| values |
+	values := self valuesAt: aField in: aDocument.
+	^ values isEmpty ifTrue: [ nil ] ifFalse: [ values first ]&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;project:with:&#x27; value: &#x27;projection&#x27; value:
+&#x27;project: aDocument with: aSpecification
+	&quot;Top-level fields only: either a list of fields to keep or a list of fields to drop.&quot;
+	| keeps result |
+	aSpecification isEmpty ifTrue: [ ^ aDocument ].
+	aSpecification keys do: [ :each |
+		(each includes: $.) ifTrue: [
+			^ MongoDoubleError signalCode: 2 name: &#x27;&#x27;BadValue&#x27;&#x27; message: &#x27;&#x27;The stand-in server projects only top-level fields, not: &#x27;&#x27;, each ] ].
+	keeps := aSpecification associations anySatisfy: [ :each |
+		each key ~= &#x27;&#x27;_id&#x27;&#x27; and: [ self isTruthy: each value ] ].
+	result := OrderedDictionary new.
+	keeps
+		ifTrue: [
+			(self isTruthy: (aSpecification at: &#x27;&#x27;_id&#x27;&#x27; ifAbsent: [ 1 ])) ifTrue: [
+				aDocument at: &#x27;&#x27;_id&#x27;&#x27; ifPresent: [ :id | result at: &#x27;&#x27;_id&#x27;&#x27; put: id ] ].
+			aSpecification keysAndValuesDo: [ :field :flag |
+				(field ~= &#x27;&#x27;_id&#x27;&#x27; and: [ self isTruthy: flag ]) ifTrue: [
+					aDocument at: field ifPresent: [ :value | result at: field put: value ] ] ] ]
+		ifFalse: [
+			aDocument keysAndValuesDo: [ :field :value |
+				(aSpecification includesKey: field) ifFalse: [ result at: field put: value ] ] ].
+	^ result&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;applyUpdate:to:&#x27; value: &#x27;updating&#x27; value:
+&#x27;applyUpdate: anUpdate to: aDocument
+	&quot;A document without operators replaces the document, and keeps the _id. Else $set, $unset and $inc change the fields.&quot;
+	| result |
+	result := OrderedDictionary new.
+	(self isOperatorDocument: anUpdate) ifFalse: [
+		aDocument at: &#x27;&#x27;_id&#x27;&#x27; ifPresent: [ :id | result at: &#x27;&#x27;_id&#x27;&#x27; put: id ].
+		anUpdate keysAndValuesDo: [ :field :value |
+			field = &#x27;&#x27;_id&#x27;&#x27; ifFalse: [ result at: field put: value ] ].
+		^ result ].
+	aDocument keysAndValuesDo: [ :field :value | result at: field put: value ].
+	anUpdate keysAndValuesDo: [ :operator :fields |
+		self applyOperator: operator fields: fields to: result ].
+	^ result&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;applyOperator:fields:to:&#x27; value: &#x27;updating&#x27; value:
+&#x27;applyOperator: anOperator fields: aDocument to: aResult
+	anOperator = &#x27;&#x27;$setOnInsert&#x27;&#x27; ifTrue: [ ^ self ].
+	aDocument keysDo: [ :each |
+		(each includes: $.) ifTrue: [
+			^ MongoDoubleError signalCode: 2 name: &#x27;&#x27;BadValue&#x27;&#x27; message: &#x27;&#x27;The stand-in server updates only top-level fields, not: &#x27;&#x27;, each ] ].
+	anOperator = &#x27;&#x27;$set&#x27;&#x27; ifTrue: [
+		aDocument keysAndValuesDo: [ :field :value | aResult at: field put: value ].
+		^ self ].
+	anOperator = &#x27;&#x27;$unset&#x27;&#x27; ifTrue: [
+		aDocument keysDo: [ :field | aResult removeKey: field ifAbsent: [ nil ] ].
+		^ self ].
+	anOperator = &#x27;&#x27;$inc&#x27;&#x27; ifTrue: [
+		aDocument keysAndValuesDo: [ :field :value |
+			aResult at: field put: (aResult at: field ifAbsent: [ 0 ]) + value ].
+		^ self ].
+	^ MongoDoubleError signalCode: 9 name: &#x27;&#x27;FailedToParse&#x27;&#x27; message: &#x27;&#x27;Unknown modifier: &#x27;&#x27;, anOperator&#x27;.
+
+add value: #&#x27;MongoDoubleMatcher class&#x27; value: #&#x27;upsertDocumentFor:update:&#x27; value: &#x27;updating&#x27; value:
+&#x27;upsertDocumentFor: aQuery update: anUpdate
+	&quot;The document that an upsert inserts: the equality fields of the query, changed by the update.&quot;
+	| base result |
+	base := OrderedDictionary new.
+	aQuery keysAndValuesDo: [ :field :value |
+		((field beginsWith: &#x27;&#x27;$&#x27;&#x27;) or: [ self isOperatorDocument: value ]) ifFalse: [
+			base at: field put: value ] ].
+	(self isOperatorDocument: anUpdate) ifFalse: [
+		result := OrderedDictionary new.
+		(base includesKey: &#x27;&#x27;_id&#x27;&#x27;) ifTrue: [ result at: &#x27;&#x27;_id&#x27;&#x27; put: (base at: &#x27;&#x27;_id&#x27;&#x27;) ].
+		anUpdate keysAndValuesDo: [ :field :value | result at: field put: value ].
+		^ result ].
+	result := self applyUpdate: anUpdate to: base.
+	anUpdate at: &#x27;&#x27;$setOnInsert&#x27;&#x27; ifPresent: [ :fields |
+		fields keysAndValuesDo: [ :field :value | result at: field put: value ] ].
+	^ result&#x27;.
+
+add value: #&#x27;MongoDoubleCollection class&#x27; value: #&#x27;named:namespace:&#x27; value: &#x27;instance creation&#x27; value:
+&#x27;named: aString namespace: aNamespace
+	^ self new setName: aString namespace: aNamespace&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;setName:namespace:&#x27; value: &#x27;initialization&#x27; value:
+&#x27;setName: aString namespace: aNamespace
+	name := aString.
+	namespace := aNamespace.
+	documents := OrderedCollection new.
+	ids := Dictionary new.
+	indexes := OrderedCollection new.
+	indexes add: (OrderedDictionary new
+		at: &#x27;&#x27;name&#x27;&#x27; put: &#x27;&#x27;_id_&#x27;&#x27;;
+		at: &#x27;&#x27;key&#x27;&#x27; put: (OrderedDictionary new at: &#x27;&#x27;_id&#x27;&#x27; put: 1; yourself);
+		at: &#x27;&#x27;unique&#x27;&#x27; put: true;
+		yourself)&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;name&#x27; value: &#x27;accessing&#x27; value:
+&#x27;name
+	^ name&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;namespace&#x27; value: &#x27;accessing&#x27; value:
+&#x27;namespace
+	^ namespace&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;documents&#x27; value: &#x27;accessing&#x27; value:
+&#x27;documents
+	^ documents&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;indexes&#x27; value: &#x27;accessing&#x27; value:
+&#x27;indexes
+	^ indexes&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;tupleOf:index:&#x27; value: &#x27;indexing&#x27; value:
+&#x27;tupleOf: aDocument index: anIndex
+	^ (anIndex at: &#x27;&#x27;key&#x27;&#x27;) keys collect: [ :field |
+		MongoDoubleMatcher firstValueAt: field in: aDocument ]&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;tuple:equals:&#x27; value: &#x27;indexing&#x27; value:
+&#x27;tuple: a equals: b
+	^ (1 to: a size) allSatisfy: [ :i |
+		MongoDoubleMatcher valuesEqual: (a at: i) to: (b at: i) ]&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;violationMessageFor:index:&#x27; value: &#x27;indexing&#x27; value:
+&#x27;violationMessageFor: aDocument index: anIndex
+	^ &#x27;&#x27;E11000 duplicate key error collection: &#x27;&#x27;, namespace, &#x27;&#x27; index: &#x27;&#x27;, (anIndex at: &#x27;&#x27;name&#x27;&#x27;), &#x27;&#x27; dup key: &#x27;&#x27;, (self tupleOf: aDocument index: anIndex) printString&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;uniqueViolationFor:ignoring:&#x27; value: &#x27;indexing&#x27; value:
+&#x27;uniqueViolationFor: aDocument ignoring: anExistingDocument
+	&quot;Answer nil, or the message of the duplicate key error.&quot;
+	| tuple |
+	(ids at: (aDocument at: &#x27;&#x27;_id&#x27;&#x27;) ifAbsent: [ nil ]) ifNotNil: [ :other |
+		other == anExistingDocument ifFalse: [
+			^ self violationMessageFor: aDocument index: indexes first ] ].
+	indexes allButFirst do: [ :index |
+		(index at: &#x27;&#x27;unique&#x27;&#x27;) ifTrue: [
+			tuple := self tupleOf: aDocument index: index.
+			documents do: [ :other |
+				(other ~~ anExistingDocument and: [
+					self tuple: tuple equals: (self tupleOf: other index: index) ]) ifTrue: [
+					^ self violationMessageFor: aDocument index: index ] ] ] ].
+	^ nil&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;addIndexNamed:key:unique:&#x27; value: &#x27;indexing&#x27; value:
+&#x27;addIndexNamed: aName key: aKey unique: aBoolean
+	&quot;Answer true when the index is new.&quot;
+	| existing entry |
+	existing := indexes detect: [ :each | (each at: &#x27;&#x27;name&#x27;&#x27;) = aName ] ifNone: [ nil ].
+	existing ifNotNil: [
+		(MongoDoubleMatcher valuesEqual: (existing at: &#x27;&#x27;key&#x27;&#x27;) to: aKey) ifFalse: [
+			^ MongoDoubleError signalCode: 86 name: &#x27;&#x27;IndexKeySpecsConflict&#x27;&#x27; message: &#x27;&#x27;An index with the same name and a different key already exists: &#x27;&#x27;, aName ].
+		^ false ].
+	entry := OrderedDictionary new
+		at: &#x27;&#x27;name&#x27;&#x27; put: aName;
+		at: &#x27;&#x27;key&#x27;&#x27; put: aKey;
+		at: &#x27;&#x27;unique&#x27;&#x27; put: aBoolean;
+		yourself.
+	aBoolean ifTrue: [
+		documents do: [ :each |
+			| tuple |
+			tuple := self tupleOf: each index: entry.
+			(documents anySatisfy: [ :other |
+				other ~~ each and: [ self tuple: tuple equals: (self tupleOf: other index: entry) ] ]) ifTrue: [
+				^ MongoDoubleError signalCode: 11000 name: &#x27;&#x27;DuplicateKey&#x27;&#x27; message: (self violationMessageFor: each index: entry) ] ] ].
+	indexes add: entry.
+	^ true&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;withGeneratedIdFor:&#x27; value: &#x27;writing&#x27; value:
+&#x27;withGeneratedIdFor: aDocument
+	| result |
+	result := OrderedDictionary new.
+	result at: &#x27;&#x27;_id&#x27;&#x27; put: OID nextOID.
+	aDocument keysAndValuesDo: [ :field :value | result at: field put: value ].
+	^ result&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;insert:&#x27; value: &#x27;writing&#x27; value:
+&#x27;insert: aDocument
+	&quot;Add the document, with an _id when it has none. Answer the stored document.&quot;
+	| document |
+	document := (aDocument includesKey: &#x27;&#x27;_id&#x27;&#x27;)
+		ifTrue: [ aDocument ]
+		ifFalse: [ self withGeneratedIdFor: aDocument ].
+	(self uniqueViolationFor: document ignoring: nil) ifNotNil: [ :message |
+		^ MongoDoubleError signalCode: 11000 name: &#x27;&#x27;DuplicateKey&#x27;&#x27; message: message ].
+	documents add: document.
+	ids at: (document at: &#x27;&#x27;_id&#x27;&#x27;) put: document.
+	^ document&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;replace:with:&#x27; value: &#x27;writing&#x27; value:
+&#x27;replace: anOldDocument with: aNewDocument
+	&quot;Answer nothing. Signal the duplicate key error when the new document breaks a unique index.&quot;
+	(self uniqueViolationFor: aNewDocument ignoring: anOldDocument) ifNotNil: [ :message |
+		^ MongoDoubleError signalCode: 11000 name: &#x27;&#x27;DuplicateKey&#x27;&#x27; message: message ].
+	documents at: (documents identityIndexOf: anOldDocument) put: aNewDocument.
+	ids at: (aNewDocument at: &#x27;&#x27;_id&#x27;&#x27;) put: aNewDocument&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;removeDocuments:&#x27; value: &#x27;writing&#x27; value:
+&#x27;removeDocuments: aCollection
+	aCollection do: [ :each | ids removeKey: (each at: &#x27;&#x27;_id&#x27;&#x27;) ifAbsent: [ nil ] ].
+	documents := documents reject: [ :each | aCollection identityIncludes: each ]&#x27;.
+
+add value: #&#x27;MongoDoubleCollection&#x27; value: #&#x27;select:&#x27; value: &#x27;querying&#x27; value:
+&#x27;select: aQuery
+	^ documents select: [ :each | MongoDoubleMatcher document: each matches: aQuery ]&#x27;.
+
+add value: #&#x27;MongoServerDouble class&#x27; value: #&#x27;current&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;current
+	^ Current ifNil: [ Current := self new ]&#x27;.
+
+add value: #&#x27;MongoServerDouble class&#x27; value: #&#x27;ensureRunning&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;ensureRunning
+	&quot;Start the stand-in on 127.0.0.1:27017 when it does not run. Called by setUp of the tests.&quot;
+	^ self current ensureRunning&#x27;.
+
+add value: #&#x27;MongoServerDouble class&#x27; value: #&#x27;stop&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;stop
+	Current ifNotNil: [ :server | server stop ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;initialize&#x27; value: &#x27;initialization&#x27; value:
+&#x27;initialize
+	super initialize.
+	connections := Set new.
+	conversations := Dictionary new.
+	users := Dictionary new.
+	nextCursorId := 16r100000000.
+	nextRequestId := 1000.
+	self addUser: &#x27;&#x27;pharounittest&#x27;&#x27; password: &#x27;&#x27;test&#x27;&#x27; database: &#x27;&#x27;test&#x27;&#x27;.
+	self reset&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;reset&#x27; value: &#x27;initialization&#x27; value:
+&#x27;reset
+	&quot;Drop all data. The users stay.&quot;
+	databases := Dictionary new.
+	cursors := Dictionary new.
+	conversations := Dictionary new&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;addUser:password:database:&#x27; value: &#x27;initialization&#x27; value:
+&#x27;addUser: aName password: aPassword database: aDatabase
+	&quot;SCRAM-SHA-1 credentials, with the same derivation that the client uses (MongoPBKDF2).
+	 The iteration count is low so that the PBKDF2 of the client stays fast in Smalltalk.&quot;
+	| salt salted clientKey |
+	salt := #(12 34 56 78 90 123 45 67 89 10 111 22 33 44 55 66) asByteArray.
+	salted := MongoPBKDF2 new
+		hashFunction: SHA1;
+		password: (MD5 hashMessage: aName , &#x27;&#x27;:mongo:&#x27;&#x27; , aPassword) hex;
+		salt: salt;
+		iterations: 1000;
+		length: 20;
+		deriveKey.
+	clientKey := (HMAC on: SHA1 new) key: salted; digestMessage: &#x27;&#x27;Client Key&#x27;&#x27; asByteArray.
+	(users at: aDatabase ifAbsentPut: [ Dictionary new ])
+		at: aName
+		put: (OrderedDictionary new
+			at: &#x27;&#x27;salt&#x27;&#x27; put: salt;
+			at: &#x27;&#x27;iterations&#x27;&#x27; put: 1000;
+			at: &#x27;&#x27;storedKey&#x27;&#x27; put: (SHA1 hashMessage: clientKey);
+			at: &#x27;&#x27;serverKey&#x27;&#x27; put: ((HMAC on: SHA1 new) key: salted; digestMessage: &#x27;&#x27;Server Key&#x27;&#x27; asByteArray);
+			yourself)&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;port&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;port
+	^ 27017&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;isRunning&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;isRunning
+	^ listener notNil and: [
+		listener isValid and: [ acceptor notNil and: [ acceptor isTerminated not ] ] ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;ensureRunning&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;ensureRunning
+	&quot;Without an open connection the data of an earlier test is dropped, as a new server would have no data.&quot;
+	self isRunning ifTrue: [
+		connections isEmpty ifTrue: [ self reset ].
+		^ self ].
+	self start&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;start&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;start
+	self stop.
+	self reset.
+	listener := ZnNetworkingUtils serverSocketOn: self port interface: #[127 0 0 1].
+	acceptor := self forkOutsideTest: [ self acceptLoopOn: listener ] named: &#x27;&#x27;MongoServerDouble acceptor&#x27;&#x27;&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;forkOutsideTest:named:&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;forkOutsideTest: aBlock named: aName
+	&quot;The process runs in the default execution environment. A process that a test forks is in the test
+	 environment, and SUnit terminates it at the end of the test: the stand-in would stop after one test.&quot;
+	| process |
+	DefaultExecutionEnvironment beActiveDuring: [
+		process := aBlock forkAt: Processor userSchedulingPriority + 1 named: aName ].
+	^ process&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;stop&#x27; value: &#x27;lifecycle&#x27; value:
+&#x27;stop
+	acceptor ifNotNil: [ acceptor terminate ].
+	acceptor := nil.
+	listener ifNotNil: [ listener closeAndDestroy ].
+	listener := nil.
+	connections do: [ :each | [ each close ] on: NetworkError do: [ :error | nil ] ].
+	connections := Set new&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;acceptLoopOn:&#x27; value: &#x27;connections&#x27; value:
+&#x27;acceptLoopOn: aServerSocket
+	[ [ aServerSocket isValid ] whileTrue: [
+		| socket |
+		socket := aServerSocket waitForAcceptFor: 1.
+		socket ifNotNil: [
+			self forkOutsideTest: [ self handleConnection: socket ] named: &#x27;&#x27;MongoServerDouble connection&#x27;&#x27; ] ] ]
+		on: Error
+		do: [ :error | self logFailure: error ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;logFailure:&#x27; value: &#x27;connections&#x27; value:
+&#x27;logFailure: anError
+	Stdio stderr
+		nextPutAll: &#x27;&#x27;MongoServerDouble: &#x27;&#x27;, anError class name, &#x27;&#x27;: &#x27;&#x27;, (anError messageText ifNil: [ anError description ]);
+		lf;
+		flush&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;handleConnection:&#x27; value: &#x27;connections&#x27; value:
+&#x27;handleConnection: aSocket
+	| stream |
+	aSocket setOption: &#x27;&#x27;TCP_NODELAY&#x27;&#x27; value: 1.
+	stream := SocketStream on: aSocket.
+	stream binary.
+	stream timeout: 7200.
+	connections add: stream.
+	[ [ [ [ self serveRequestOn: stream ] whileTrue ]
+		on: NetworkError
+		do: [ :error | nil ] ]
+		on: Error
+		do: [ :error | self logFailure: error ] ]
+		ensure: [
+			connections remove: stream ifAbsent: [ nil ].
+			[ stream close ] on: NetworkError do: [ :error | nil ] ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;uint32:at:&#x27; value: &#x27;connections&#x27; value:
+&#x27;uint32: aByteArray at: anIndex
+	^ (aByteArray at: anIndex)
+		+ ((aByteArray at: anIndex + 1) bitShift: 8)
+		+ ((aByteArray at: anIndex + 2) bitShift: 16)
+		+ ((aByteArray at: anIndex + 3) bitShift: 24)&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;serveRequestOn:&#x27; value: &#x27;connections&#x27; value:
+&#x27;serveRequestOn: aStream
+	&quot;Read one message, answer it. Answer false when the connection ends or the message is not OP_MSG.&quot;
+	| header length body reply |
+	header := aStream next: 16.
+	header size &lt; 16 ifTrue: [ ^ false ].
+	length := self uint32: header at: 1.
+	body := aStream next: length - 16.
+	body size &lt; (length - 16) ifTrue: [ ^ false ].
+	(self uint32: header at: 13) = 2013 ifFalse: [ ^ false ].
+	reply := self replyForMessageBody: body.
+	self writeReply: reply responseTo: (self uint32: header at: 5) on: aStream.
+	^ true&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;encode:&#x27; value: &#x27;connections&#x27; value:
+&#x27;encode: aDocument
+	^ BSON writer nextOrderedDictionaryPut: aDocument; contents&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;writeReply:responseTo:on:&#x27; value: &#x27;connections&#x27; value:
+&#x27;writeReply: aDocument responseTo: anId on: aStream
+	| body out |
+	body := [ self encode: aDocument ]
+		on: Error
+		do: [ :error |
+			self encode: (self
+				errorDocument: 8000
+				name: &#x27;&#x27;StandInFailure&#x27;&#x27;
+				message: &#x27;&#x27;stand-in server cannot write the reply: &#x27;&#x27;, error class name, &#x27;&#x27;: &#x27;&#x27;, (error messageText ifNil: [ error description ])) ].
+	nextRequestId := nextRequestId + 1.
+	out := LittleEndianStream on: ByteArray new writeStream.
+	out
+		nextInt32Put: body size + 21;
+		nextInt32Put: nextRequestId;
+		nextInt32Put: anId;
+		nextInt32Put: 2013;
+		nextInt32Put: 0;
+		nextBytePut: 0;
+		nextBytesPut: body.
+	aStream nextPutAll: out contents.
+	aStream flush&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;commandFromBody:&#x27; value: &#x27;protocol&#x27; value:
+&#x27;commandFromBody: aBody
+	&quot;OP_MSG: flag bits, then sections. Section kind 0 is the command, kind 1 a sequence of documents of one field.&quot;
+	| flags stream reader command sequences |
+	flags := self uint32: aBody at: 1.
+	stream := ((flags bitAnd: 1) = 1 ifTrue: [ aBody allButLast: 4 ] ifFalse: [ aBody ]) readStream.
+	stream skip: 4.
+	reader := LittleEndianStream on: stream.
+	sequences := OrderedDictionary new.
+	[ stream atEnd ] whileFalse: [
+		| kind |
+		kind := stream next.
+		kind = 0 ifTrue: [ command := MongoDoubleBSON read: stream ].
+		kind = 1 ifTrue: [
+			| start size identifier documents |
+			start := stream position.
+			size := reader nextUInt32.
+			identifier := (stream upTo: 0) asString.
+			documents := OrderedCollection new.
+			[ stream position &lt; (start + size) ] whileTrue: [
+				documents add: (MongoDoubleBSON read: stream) ].
+			sequences at: identifier put: documents asArray ] ].
+	sequences keysAndValuesDo: [ :field :documents | command at: field put: documents ].
+	^ command&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;replyForMessageBody:&#x27; value: &#x27;protocol&#x27; value:
+&#x27;replyForMessageBody: aBody
+	| command name selector |
+	^ [ [
+		command := self commandFromBody: aBody.
+		name := command keys first.
+		selector := self commandTable at: name asLowercase ifAbsent: [ nil ].
+		selector isNil
+			ifTrue: [ self errorDocument: 59 name: &#x27;&#x27;CommandNotFound&#x27;&#x27; message: &#x27;&#x27;no such command: &#x27;&#x27;&#x27;&#x27;&#x27;&#x27;, name, &#x27;&#x27;&#x27;&#x27;&#x27;&#x27;&#x27;&#x27; ]
+			ifFalse: [ self perform: selector with: command with: (command at: &#x27;&#x27;$db&#x27;&#x27; ifAbsent: [ &#x27;&#x27;admin&#x27;&#x27; ]) ] ]
+			on: MongoDoubleError
+			do: [ :error | self errorDocument: error code name: error codeName message: error messageText ] ]
+		on: Error
+		do: [ :error |
+			self
+				errorDocument: 8000
+				name: &#x27;&#x27;StandInFailure&#x27;&#x27;
+				message: &#x27;&#x27;stand-in server failure: &#x27;&#x27;, error class name, &#x27;&#x27;: &#x27;&#x27;, (error messageText ifNil: [ error description ]) ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;commandTable&#x27; value: &#x27;protocol&#x27; value:
+&#x27;commandTable
+	^ Dictionary new
+		at: &#x27;&#x27;ismaster&#x27;&#x27; put: #cmdIsmaster:db:;
+		at: &#x27;&#x27;hello&#x27;&#x27; put: #cmdIsmaster:db:;
+		at: &#x27;&#x27;ping&#x27;&#x27; put: #cmdPing:db:;
+		at: &#x27;&#x27;buildinfo&#x27;&#x27; put: #cmdBuildinfo:db:;
+		at: &#x27;&#x27;listdatabases&#x27;&#x27; put: #cmdListdatabases:db:;
+		at: &#x27;&#x27;listcollections&#x27;&#x27; put: #cmdListcollections:db:;
+		at: &#x27;&#x27;create&#x27;&#x27; put: #cmdCreate:db:;
+		at: &#x27;&#x27;drop&#x27;&#x27; put: #cmdDrop:db:;
+		at: &#x27;&#x27;dropdatabase&#x27;&#x27; put: #cmdDropdatabase:db:;
+		at: &#x27;&#x27;insert&#x27;&#x27; put: #cmdInsert:db:;
+		at: &#x27;&#x27;find&#x27;&#x27; put: #cmdFind:db:;
+		at: &#x27;&#x27;getmore&#x27;&#x27; put: #cmdGetmore:db:;
+		at: &#x27;&#x27;killcursors&#x27;&#x27; put: #cmdKillcursors:db:;
+		at: &#x27;&#x27;update&#x27;&#x27; put: #cmdUpdate:db:;
+		at: &#x27;&#x27;delete&#x27;&#x27; put: #cmdDelete:db:;
+		at: &#x27;&#x27;count&#x27;&#x27; put: #cmdCount:db:;
+		at: &#x27;&#x27;createindexes&#x27;&#x27; put: #cmdCreateindexes:db:;
+		at: &#x27;&#x27;validate&#x27;&#x27; put: #cmdValidate:db:;
+		at: &#x27;&#x27;saslstart&#x27;&#x27; put: #cmdSaslstart:db:;
+		at: &#x27;&#x27;saslcontinue&#x27;&#x27; put: #cmdSaslcontinue:db:;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;errorDocument:name:message:&#x27; value: &#x27;protocol&#x27; value:
+&#x27;errorDocument: aCode name: aName message: aMessage
+	^ OrderedDictionary new
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 0.0;
+		at: &#x27;&#x27;errmsg&#x27;&#x27; put: aMessage;
+		at: &#x27;&#x27;code&#x27;&#x27; put: aCode;
+		at: &#x27;&#x27;codeName&#x27;&#x27; put: aName;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;okDocument&#x27; value: &#x27;protocol&#x27; value:
+&#x27;okDocument
+	^ OrderedDictionary new at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0; yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;checkFieldsOf:allowed:&#x27; value: &#x27;protocol&#x27; value:
+&#x27;checkFieldsOf: aCommand allowed: anArray
+	&quot;A field that the stand-in does not know is an error, as in the real server: a field that is ignored would hide a defect.&quot;
+	aCommand keysDo: [ :each |
+		(anArray includes: each) ifFalse: [
+			^ MongoDoubleError
+				signalCode: 40415
+				name: &#x27;&#x27;Location40415&#x27;&#x27;
+				message: &#x27;&#x27;BSON field &#x27;&#x27;&#x27;&#x27;&#x27;&#x27;, aCommand keys first, &#x27;&#x27;.&#x27;&#x27;, each, &#x27;&#x27;&#x27;&#x27;&#x27;&#x27; is an unknown field.&#x27;&#x27; ] ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;checkReadConcern:&#x27; value: &#x27;protocol&#x27; value:
+&#x27;checkReadConcern: aCommand
+	aCommand at: &#x27;&#x27;readConcern&#x27;&#x27; ifPresent: [ :concern |
+		(#(&#x27;&#x27;local&#x27;&#x27; &#x27;&#x27;available&#x27;&#x27; &#x27;&#x27;majority&#x27;&#x27; &#x27;&#x27;linearizable&#x27;&#x27; &#x27;&#x27;snapshot&#x27;&#x27; ) includes: (concern at: &#x27;&#x27;level&#x27;&#x27; ifAbsent: [ nil ])) ifFalse: [
+			^ MongoDoubleError signalCode: 9 name: &#x27;&#x27;FailedToParse&#x27;&#x27; message: &#x27;&#x27;unknown readConcern level: &#x27;&#x27;, (concern at: &#x27;&#x27;level&#x27;&#x27; ifAbsent: [ nil ]) printString ] ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;writeConcernErrorFor:&#x27; value: &#x27;protocol&#x27; value:
+&#x27;writeConcernErrorFor: aCommand
+	&quot;Nil, or the writeConcernError document that a standalone server answers.&quot;
+	| concern w |
+	concern := aCommand at: &#x27;&#x27;writeConcern&#x27;&#x27; ifAbsent: [ ^ nil ].
+	concern keysDo: [ :each |
+		(#(&#x27;&#x27;w&#x27;&#x27; &#x27;&#x27;j&#x27;&#x27; &#x27;&#x27;wtimeout&#x27;&#x27; &#x27;&#x27;fsync&#x27;&#x27; &#x27;&#x27;provenance&#x27;&#x27;) includes: each) ifFalse: [
+			^ MongoDoubleError signalCode: 72 name: &#x27;&#x27;InvalidOptions&#x27;&#x27; message: &#x27;&#x27;unrecognized write concern field: &#x27;&#x27;, each ] ].
+	w := concern at: &#x27;&#x27;w&#x27;&#x27; ifAbsent: [ 1 ].
+	(w isNumber and: [ w &gt; 1 ]) ifFalse: [ ^ nil ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;code&#x27;&#x27; put: 2;
+		at: &#x27;&#x27;codeName&#x27;&#x27; put: &#x27;&#x27;BadValue&#x27;&#x27;;
+		at: &#x27;&#x27;errmsg&#x27;&#x27; put: &#x27;&#x27;cannot use w &gt; 1 when a host is not replicated&#x27;&#x27;;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;existingCollection:in:&#x27; value: &#x27;storage&#x27; value:
+&#x27;existingCollection: aCollectionName in: aDatabaseName
+	^ (databases at: aDatabaseName ifAbsent: [ ^ nil ]) at: aCollectionName ifAbsent: [ nil ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;ensureCollection:in:&#x27; value: &#x27;storage&#x27; value:
+&#x27;ensureCollection: aCollectionName in: aDatabaseName
+	^ (databases at: aDatabaseName ifAbsentPut: [ Dictionary new ])
+		at: aCollectionName
+		ifAbsentPut: [ MongoDoubleCollection named: aCollectionName namespace: aDatabaseName, &#x27;&#x27;.&#x27;&#x27;, aCollectionName ]&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;dropCollection:in:&#x27; value: &#x27;storage&#x27; value:
+&#x27;dropCollection: aCollectionName in: aDatabaseName
+	&quot;Answer the dropped collection, or nil when there was none. A database without collections is gone.&quot;
+	| collections collection |
+	collections := databases at: aDatabaseName ifAbsent: [ ^ nil ].
+	collection := collections removeKey: aCollectionName ifAbsent: [ ^ nil ].
+	collections isEmpty ifTrue: [ databases removeKey: aDatabaseName ].
+	^ collection&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdIsmaster:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdIsmaster: aCommand db: aName
+	^ OrderedDictionary new
+		at: &#x27;&#x27;ismaster&#x27;&#x27; put: true;
+		at: &#x27;&#x27;isWritablePrimary&#x27;&#x27; put: true;
+		at: &#x27;&#x27;maxBsonObjectSize&#x27;&#x27; put: 16777216;
+		at: &#x27;&#x27;maxMessageSizeBytes&#x27;&#x27; put: 48000000;
+		at: &#x27;&#x27;maxWriteBatchSize&#x27;&#x27; put: 100000;
+		at: &#x27;&#x27;localTime&#x27;&#x27; put: DateAndTime now;
+		at: &#x27;&#x27;minWireVersion&#x27;&#x27; put: 0;
+		at: &#x27;&#x27;maxWireVersion&#x27;&#x27; put: 17;
+		at: &#x27;&#x27;readOnly&#x27;&#x27; put: false;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdPing:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdPing: aCommand db: aName
+	^ self okDocument&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdBuildinfo:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdBuildinfo: aCommand db: aName
+	^ OrderedDictionary new
+		at: &#x27;&#x27;version&#x27;&#x27; put: &#x27;&#x27;7.0.0&#x27;&#x27;;
+		at: &#x27;&#x27;versionArray&#x27;&#x27; put: #(7 0 0 0);
+		at: &#x27;&#x27;gitVersion&#x27;&#x27; put: &#x27;&#x27;in-image stand-in&#x27;&#x27;;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdListdatabases:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdListdatabases: aCommand db: aName
+	| names list |
+	names := (databases keys asSet addAll: #(&#x27;&#x27;admin&#x27;&#x27; &#x27;&#x27;config&#x27;&#x27; &#x27;&#x27;local&#x27;&#x27;); yourself) asSortedCollection asArray.
+	list := names collect: [ :each |
+		OrderedDictionary new
+			at: &#x27;&#x27;name&#x27;&#x27; put: each;
+			at: &#x27;&#x27;sizeOnDisk&#x27;&#x27; put: 8192;
+			at: &#x27;&#x27;empty&#x27;&#x27; put: (databases includesKey: each) not;
+			yourself ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;databases&#x27;&#x27; put: list;
+		at: &#x27;&#x27;totalSize&#x27;&#x27; put: 8192 * names size;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdListcollections:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdListcollections: aCommand db: aName
+	| collections names batch |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;listCollections&#x27;&#x27; &#x27;&#x27;nameOnly&#x27;&#x27; &#x27;&#x27;filter&#x27;&#x27; &#x27;&#x27;authorizedCollections&#x27;&#x27; &#x27;&#x27;cursor&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27;).
+	collections := databases at: aName ifAbsent: [ Dictionary new ].
+	names := collections keys asSortedCollection asArray.
+	batch := names collect: [ :each |
+		(aCommand at: &#x27;&#x27;nameOnly&#x27;&#x27; ifAbsent: [ false ])
+			ifTrue: [ OrderedDictionary new at: &#x27;&#x27;name&#x27;&#x27; put: each; at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;collection&#x27;&#x27;; yourself ]
+			ifFalse: [
+				OrderedDictionary new
+					at: &#x27;&#x27;name&#x27;&#x27; put: each;
+					at: &#x27;&#x27;type&#x27;&#x27; put: &#x27;&#x27;collection&#x27;&#x27;;
+					at: &#x27;&#x27;options&#x27;&#x27; put: OrderedDictionary new;
+					at: &#x27;&#x27;info&#x27;&#x27; put: (OrderedDictionary new at: &#x27;&#x27;readOnly&#x27;&#x27; put: false; yourself);
+					yourself ] ].
+	batch := batch select: [ :each |
+		MongoDoubleMatcher document: each matches: (aCommand at: &#x27;&#x27;filter&#x27;&#x27; ifAbsent: [ OrderedDictionary new ]) ].
+	^ self cursorReply: batch id: 0 namespace: aName, &#x27;&#x27;.$cmd.listCollections&#x27;&#x27; batchKey: &#x27;&#x27;firstBatch&#x27;&#x27;&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdCreate:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdCreate: aCommand db: aName
+	| collectionName |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;create&#x27;&#x27; &#x27;&#x27;capped&#x27;&#x27; &#x27;&#x27;size&#x27;&#x27; &#x27;&#x27;max&#x27;&#x27; &#x27;&#x27;autoIndexId&#x27;&#x27; &#x27;&#x27;validator&#x27;&#x27; &#x27;&#x27;writeConcern&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27;).
+	collectionName := aCommand at: &#x27;&#x27;create&#x27;&#x27;.
+	(self existingCollection: collectionName in: aName) ifNotNil: [
+		^ MongoDoubleError
+			signalCode: 48
+			name: &#x27;&#x27;NamespaceExists&#x27;&#x27;
+			message: &#x27;&#x27;Collection &#x27;&#x27;, aName, &#x27;&#x27;.&#x27;&#x27;, collectionName, &#x27;&#x27; already exists.&#x27;&#x27; ].
+	self ensureCollection: collectionName in: aName.
+	^ self okDocument&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdDrop:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdDrop: aCommand db: aName
+	| collectionName collection |
+	collectionName := aCommand at: &#x27;&#x27;drop&#x27;&#x27;.
+	collection := self dropCollection: collectionName in: aName.
+	collection ifNil: [
+		^ MongoDoubleError signalCode: 26 name: &#x27;&#x27;NamespaceNotFound&#x27;&#x27; message: &#x27;&#x27;ns not found&#x27;&#x27; ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;nIndexesWas&#x27;&#x27; put: collection indexes size;
+		at: &#x27;&#x27;ns&#x27;&#x27; put: collection namespace;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdDropdatabase:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdDropdatabase: aCommand db: aName
+	databases removeKey: aName ifAbsent: [ nil ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;dropped&#x27;&#x27; put: aName;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdInsert:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdInsert: aCommand db: aName
+	| collectionName documents collection inserted errors ordered concernError reply |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;insert&#x27;&#x27; &#x27;&#x27;documents&#x27;&#x27; &#x27;&#x27;ordered&#x27;&#x27; &#x27;&#x27;writeConcern&#x27;&#x27; &#x27;&#x27;bypassDocumentValidation&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27;).
+	collectionName := aCommand at: &#x27;&#x27;insert&#x27;&#x27;.
+	documents := aCommand at: &#x27;&#x27;documents&#x27;&#x27; ifAbsent: [
+		^ MongoDoubleError signalCode: 40414 name: &#x27;&#x27;Location40414&#x27;&#x27; message: &#x27;&#x27;BSON field &#x27;&#x27;&#x27;&#x27;insert.documents&#x27;&#x27;&#x27;&#x27; is missing but a required field&#x27;&#x27; ].
+	(documents isArray and: [ documents notEmpty ]) ifFalse: [
+		^ MongoDoubleError signalCode: 16 name: &#x27;&#x27;InvalidLength&#x27;&#x27; message: &#x27;&#x27;Write batch sizes must be between 1 and 100000.&#x27;&#x27; ].
+	concernError := self writeConcernErrorFor: aCommand.
+	ordered := self isOrdered: aCommand.
+	collection := self ensureCollection: collectionName in: aName.
+	inserted := 0.
+	errors := OrderedCollection new.
+	documents withIndexDo: [ :each :index |
+		(errors isEmpty or: [ ordered not ]) ifTrue: [
+			[ collection insert: each. inserted := inserted + 1 ]
+				on: MongoDoubleError
+				do: [ :error | errors add: (self writeErrorAt: index - 1 error: error) ] ] ].
+	reply := self writeResult: inserted errors: errors.
+	concernError ifNotNil: [ reply at: &#x27;&#x27;writeConcernError&#x27;&#x27; put: concernError ].
+	^ reply&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;isOrdered:&#x27; value: &#x27;commands&#x27; value:
+&#x27;isOrdered: aCommand
+	^ MongoDoubleMatcher isTruthy: (aCommand at: &#x27;&#x27;ordered&#x27;&#x27; ifAbsent: [ true ])&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;writeErrorAt:error:&#x27; value: &#x27;commands&#x27; value:
+&#x27;writeErrorAt: anIndex error: anError
+	^ OrderedDictionary new
+		at: &#x27;&#x27;index&#x27;&#x27; put: anIndex;
+		at: &#x27;&#x27;code&#x27;&#x27; put: anError code;
+		at: &#x27;&#x27;errmsg&#x27;&#x27; put: anError messageText;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;writeResult:errors:&#x27; value: &#x27;commands&#x27; value:
+&#x27;writeResult: aCount errors: anErrorList
+	| reply |
+	reply := OrderedDictionary new.
+	reply at: &#x27;&#x27;n&#x27;&#x27; put: aCount.
+	anErrorList isEmpty ifFalse: [ reply at: &#x27;&#x27;writeErrors&#x27;&#x27; put: anErrorList asArray ].
+	reply at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0.
+	^ reply&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cursorReply:id:namespace:batchKey:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cursorReply: aDocumentList id: anId namespace: aNamespace batchKey: aKey
+	^ OrderedDictionary new
+		at: &#x27;&#x27;cursor&#x27;&#x27; put: (OrderedDictionary new
+			at: aKey put: aDocumentList asArray;
+			at: &#x27;&#x27;id&#x27;&#x27; put: anId;
+			at: &#x27;&#x27;ns&#x27;&#x27; put: aNamespace;
+			yourself);
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdFind:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdFind: aCommand db: aName
+	&quot;The first batch has 101 documents, as in the real server, unless batchSize says another size.&quot;
+	| collectionName collection matched skip limit batchSize firstBatch rest id |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;find&#x27;&#x27; &#x27;&#x27;filter&#x27;&#x27; &#x27;&#x27;sort&#x27;&#x27; &#x27;&#x27;projection&#x27;&#x27; &#x27;&#x27;skip&#x27;&#x27; &#x27;&#x27;limit&#x27;&#x27; &#x27;&#x27;batchSize&#x27;&#x27; &#x27;&#x27;singleBatch&#x27;&#x27; &#x27;&#x27;readConcern&#x27;&#x27; &#x27;&#x27;maxTimeMS&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;hint&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27; &#x27;&#x27;$readPreference&#x27;&#x27;).
+	self checkReadConcern: aCommand.
+	collectionName := aCommand at: &#x27;&#x27;find&#x27;&#x27;.
+	collection := self existingCollection: collectionName in: aName.
+	collection ifNil: [
+		^ self cursorReply: #() id: 0 namespace: aName, &#x27;&#x27;.&#x27;&#x27;, collectionName batchKey: &#x27;&#x27;firstBatch&#x27;&#x27; ].
+	matched := collection select: (aCommand at: &#x27;&#x27;filter&#x27;&#x27; ifAbsent: [ OrderedDictionary new ]).
+	aCommand at: &#x27;&#x27;sort&#x27;&#x27; ifPresent: [ :specification |
+		matched := MongoDoubleMatcher sort: matched by: specification ].
+	skip := aCommand at: &#x27;&#x27;skip&#x27;&#x27; ifAbsent: [ 0 ].
+	matched := matched allButFirst: (skip min: matched size).
+	limit := aCommand at: &#x27;&#x27;limit&#x27;&#x27; ifAbsent: [ 0 ].
+	limit &gt; 0 ifTrue: [ matched := matched first: (limit min: matched size) ].
+	aCommand at: &#x27;&#x27;projection&#x27;&#x27; ifPresent: [ :specification |
+		matched := matched collect: [ :each | MongoDoubleMatcher project: each with: specification ] ].
+	batchSize := aCommand at: &#x27;&#x27;batchSize&#x27;&#x27; ifAbsent: [ 101 ].
+	firstBatch := matched first: (batchSize min: matched size).
+	rest := matched allButFirst: firstBatch size.
+	id := (rest isEmpty or: [ MongoDoubleMatcher isTruthy: (aCommand at: &#x27;&#x27;singleBatch&#x27;&#x27; ifAbsent: [ false ]) ])
+		ifTrue: [ 0 ]
+		ifFalse: [ self newCursorOn: collection namespace documents: rest ].
+	^ self cursorReply: firstBatch id: id namespace: collection namespace batchKey: &#x27;&#x27;firstBatch&#x27;&#x27;&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;newCursorOn:documents:&#x27; value: &#x27;commands&#x27; value:
+&#x27;newCursorOn: aNamespace documents: aDocumentList
+	| id |
+	nextCursorId := nextCursorId + 1.
+	id := nextCursorId.
+	cursors at: id put: (Array with: aNamespace with: aDocumentList).
+	^ id&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdGetmore:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdGetmore: aCommand db: aName
+	&quot;A batchSize of 0 or none means all the documents that remain. maxTimeMS is an error: the cursors of find are not awaitData cursors.&quot;
+	| id cursor batchSize remaining batch rest |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;getMore&#x27;&#x27; &#x27;&#x27;collection&#x27;&#x27; &#x27;&#x27;batchSize&#x27;&#x27; &#x27;&#x27;maxTimeMS&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27;).
+	id := aCommand at: &#x27;&#x27;getMore&#x27;&#x27;.
+	cursor := cursors at: id ifAbsent: [
+		^ MongoDoubleError signalCode: 43 name: &#x27;&#x27;CursorNotFound&#x27;&#x27; message: &#x27;&#x27;cursor id &#x27;&#x27;, id printString, &#x27;&#x27; not found&#x27;&#x27; ].
+	(aCommand includesKey: &#x27;&#x27;maxTimeMS&#x27;&#x27;) ifTrue: [
+		^ MongoDoubleError
+			signalCode: 2
+			name: &#x27;&#x27;BadValue&#x27;&#x27;
+			message: &#x27;&#x27;cannot set maxTimeMS on getMore command for a non-awaitData cursor&#x27;&#x27; ].
+	remaining := cursor last.
+	batchSize := aCommand at: &#x27;&#x27;batchSize&#x27;&#x27; ifAbsent: [ 0 ].
+	batchSize = 0 ifTrue: [ batchSize := remaining size ].
+	batch := remaining first: (batchSize min: remaining size).
+	rest := remaining allButFirst: batch size.
+	rest isEmpty
+		ifTrue: [ cursors removeKey: id. id := 0 ]
+		ifFalse: [ cursors at: id put: (Array with: cursor first with: rest) ].
+	^ self cursorReply: batch id: id namespace: cursor first batchKey: &#x27;&#x27;nextBatch&#x27;&#x27;&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdKillcursors:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdKillcursors: aCommand db: aName
+	| killed missing |
+	killed := OrderedCollection new.
+	missing := OrderedCollection new.
+	(aCommand at: &#x27;&#x27;cursors&#x27;&#x27; ifAbsent: [ #() ]) do: [ :each |
+		(cursors removeKey: each ifAbsent: [ nil ])
+			ifNil: [ missing add: each ]
+			ifNotNil: [ killed add: each ] ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;cursorsKilled&#x27;&#x27; put: killed asArray;
+		at: &#x27;&#x27;cursorsNotFound&#x27;&#x27; put: missing asArray;
+		at: &#x27;&#x27;cursorsAlive&#x27;&#x27; put: #();
+		at: &#x27;&#x27;cursorsUnknown&#x27;&#x27; put: #();
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdCount:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdCount: aCommand db: aName
+	| collection matched skip limit |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;count&#x27;&#x27; &#x27;&#x27;query&#x27;&#x27; &#x27;&#x27;limit&#x27;&#x27; &#x27;&#x27;skip&#x27;&#x27; &#x27;&#x27;hint&#x27;&#x27; &#x27;&#x27;readConcern&#x27;&#x27; &#x27;&#x27;maxTimeMS&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27; &#x27;&#x27;$readPreference&#x27;&#x27;).
+	self checkReadConcern: aCommand.
+	collection := self existingCollection: (aCommand at: &#x27;&#x27;count&#x27;&#x27;) in: aName.
+	collection ifNil: [ ^ OrderedDictionary new at: &#x27;&#x27;n&#x27;&#x27; put: 0; at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0; yourself ].
+	matched := collection select: (aCommand at: &#x27;&#x27;query&#x27;&#x27; ifAbsent: [ OrderedDictionary new ]).
+	skip := aCommand at: &#x27;&#x27;skip&#x27;&#x27; ifAbsent: [ 0 ].
+	matched := matched allButFirst: (skip min: matched size).
+	limit := aCommand at: &#x27;&#x27;limit&#x27;&#x27; ifAbsent: [ 0 ].
+	limit &gt; 0 ifTrue: [ matched := matched first: (limit min: matched size) ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;n&#x27;&#x27; put: matched size;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdUpdate:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdUpdate: aCommand db: aName
+	| collectionName updates collection matchedCount modifiedCount upserted errors ordered concernError reply |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;update&#x27;&#x27; &#x27;&#x27;updates&#x27;&#x27; &#x27;&#x27;ordered&#x27;&#x27; &#x27;&#x27;writeConcern&#x27;&#x27; &#x27;&#x27;bypassDocumentValidation&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27;).
+	collectionName := aCommand at: &#x27;&#x27;update&#x27;&#x27;.
+	updates := aCommand at: &#x27;&#x27;updates&#x27;&#x27;.
+	concernError := self writeConcernErrorFor: aCommand.
+	ordered := self isOrdered: aCommand.
+	collection := self existingCollection: collectionName in: aName.
+	matchedCount := 0.
+	modifiedCount := 0.
+	upserted := OrderedCollection new.
+	errors := OrderedCollection new.
+	updates withIndexDo: [ :spec :index |
+		(errors isEmpty or: [ ordered not ]) ifTrue: [
+			self checkFieldsOf: spec allowed: #(&#x27;&#x27;q&#x27;&#x27; &#x27;&#x27;u&#x27;&#x27; &#x27;&#x27;upsert&#x27;&#x27; &#x27;&#x27;multi&#x27;&#x27; &#x27;&#x27;collation&#x27;&#x27; &#x27;&#x27;arrayFilters&#x27;&#x27; &#x27;&#x27;hint&#x27;&#x27; &#x27;&#x27;c&#x27;&#x27;).
+			[ | matches query |
+			query := spec at: &#x27;&#x27;q&#x27;&#x27;.
+			matches := collection ifNil: [ OrderedCollection new ] ifNotNil: [ collection select: query ].
+			(MongoDoubleMatcher isTruthy: (spec at: &#x27;&#x27;multi&#x27;&#x27; ifAbsent: [ false ])) ifFalse: [
+				matches := matches first: (1 min: matches size) ].
+			matches isEmpty
+				ifTrue: [
+					(MongoDoubleMatcher isTruthy: (spec at: &#x27;&#x27;upsert&#x27;&#x27; ifAbsent: [ false ])) ifTrue: [
+						| document |
+						collection := self ensureCollection: collectionName in: aName.
+						document := collection insert: (MongoDoubleMatcher upsertDocumentFor: query update: (spec at: &#x27;&#x27;u&#x27;&#x27;)).
+						upserted add: (OrderedDictionary new
+							at: &#x27;&#x27;index&#x27;&#x27; put: index - 1;
+							at: &#x27;&#x27;_id&#x27;&#x27; put: (document at: &#x27;&#x27;_id&#x27;&#x27;);
+							yourself) ] ]
+				ifFalse: [
+					matches do: [ :each |
+						collection replace: each with: (MongoDoubleMatcher applyUpdate: (spec at: &#x27;&#x27;u&#x27;&#x27;) to: each).
+						matchedCount := matchedCount + 1.
+						modifiedCount := modifiedCount + 1 ] ] ]
+				on: MongoDoubleError
+				do: [ :error | errors add: (self writeErrorAt: index - 1 error: error) ] ] ].
+	reply := self writeResult: matchedCount + upserted size errors: errors.
+	reply removeKey: &#x27;&#x27;ok&#x27;&#x27;.
+	reply at: &#x27;&#x27;nModified&#x27;&#x27; put: modifiedCount.
+	upserted isEmpty ifFalse: [ reply at: &#x27;&#x27;upserted&#x27;&#x27; put: upserted asArray ].
+	concernError ifNotNil: [ reply at: &#x27;&#x27;writeConcernError&#x27;&#x27; put: concernError ].
+	reply at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0.
+	^ reply&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdDelete:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdDelete: aCommand db: aName
+	| collection deleted errors concernError reply |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;delete&#x27;&#x27; &#x27;&#x27;deletes&#x27;&#x27; &#x27;&#x27;ordered&#x27;&#x27; &#x27;&#x27;writeConcern&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27;).
+	concernError := self writeConcernErrorFor: aCommand.
+	collection := self existingCollection: (aCommand at: &#x27;&#x27;delete&#x27;&#x27;) in: aName.
+	deleted := 0.
+	errors := OrderedCollection new.
+	collection ifNotNil: [
+		(aCommand at: &#x27;&#x27;deletes&#x27;&#x27;) do: [ :spec | | matches |
+			self checkFieldsOf: spec allowed: #(&#x27;&#x27;q&#x27;&#x27; &#x27;&#x27;limit&#x27;&#x27; &#x27;&#x27;collation&#x27;&#x27; &#x27;&#x27;hint&#x27;&#x27;).
+			matches := collection select: (spec at: &#x27;&#x27;q&#x27;&#x27;).
+			(spec at: &#x27;&#x27;limit&#x27;&#x27;) = 1 ifTrue: [ matches := matches first: (1 min: matches size) ].
+			collection removeDocuments: matches.
+			deleted := deleted + matches size ] ].
+	reply := self writeResult: deleted errors: errors.
+	concernError ifNotNil: [ reply at: &#x27;&#x27;writeConcernError&#x27;&#x27; put: concernError ].
+	^ reply&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdCreateindexes:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdCreateindexes: aCommand db: aName
+	| collectionName created collection before |
+	self checkFieldsOf: aCommand allowed: #(&#x27;&#x27;createIndexes&#x27;&#x27; &#x27;&#x27;indexes&#x27;&#x27; &#x27;&#x27;writeConcern&#x27;&#x27; &#x27;&#x27;commitQuorum&#x27;&#x27; &#x27;&#x27;comment&#x27;&#x27; &#x27;&#x27;$db&#x27;&#x27; &#x27;&#x27;lsid&#x27;&#x27;).
+	collectionName := aCommand at: &#x27;&#x27;createIndexes&#x27;&#x27;.
+	created := (self existingCollection: collectionName in: aName) isNil.
+	collection := self ensureCollection: collectionName in: aName.
+	before := collection indexes size.
+	(aCommand at: &#x27;&#x27;indexes&#x27;&#x27;) do: [ :spec |
+		collection
+			addIndexNamed: (spec at: &#x27;&#x27;name&#x27;&#x27;)
+			key: (spec at: &#x27;&#x27;key&#x27;&#x27;)
+			unique: (MongoDoubleMatcher isTruthy: (spec at: &#x27;&#x27;unique&#x27;&#x27; ifAbsent: [ false ])) ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;createdCollectionAutomatically&#x27;&#x27; put: created;
+		at: &#x27;&#x27;numIndexesBefore&#x27;&#x27; put: before;
+		at: &#x27;&#x27;numIndexesAfter&#x27;&#x27; put: collection indexes size;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdValidate:db:&#x27; value: &#x27;commands&#x27; value:
+&#x27;cmdValidate: aCommand db: aName
+	| collection |
+	collection := self existingCollection: (aCommand at: &#x27;&#x27;validate&#x27;&#x27;) in: aName.
+	collection ifNil: [
+		^ MongoDoubleError signalCode: 26 name: &#x27;&#x27;NamespaceNotFound&#x27;&#x27; message: &#x27;&#x27;Collection &#x27;&#x27;&#x27;&#x27;&#x27;&#x27;, aName, &#x27;&#x27;.&#x27;&#x27;, (aCommand at: &#x27;&#x27;validate&#x27;&#x27;), &#x27;&#x27;&#x27;&#x27;&#x27;&#x27; does not exist to validate.&#x27;&#x27; ].
+	^ OrderedDictionary new
+		at: &#x27;&#x27;ns&#x27;&#x27; put: collection namespace;
+		at: &#x27;&#x27;nInvalidDocuments&#x27;&#x27; put: 0;
+		at: &#x27;&#x27;nrecords&#x27;&#x27; put: collection documents size;
+		at: &#x27;&#x27;nIndexes&#x27;&#x27; put: collection indexes size;
+		at: &#x27;&#x27;valid&#x27;&#x27; put: true;
+		at: &#x27;&#x27;warnings&#x27;&#x27; put: #();
+		at: &#x27;&#x27;errors&#x27;&#x27; put: #();
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;authenticationFailed&#x27; value: &#x27;authentication&#x27; value:
+&#x27;authenticationFailed
+	^ MongoDoubleError signalCode: 18 name: &#x27;&#x27;AuthenticationFailed&#x27;&#x27; message: &#x27;&#x27;Authentication failed.&#x27;&#x27;&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdSaslstart:db:&#x27; value: &#x27;authentication&#x27; value:
+&#x27;cmdSaslstart: aCommand db: aName
+	&quot;SCRAM-SHA-1, as in RFC 5802 with the MongoDB variants. The first message of the client is n,,n=&lt;user&gt;,r=&lt;nonce&gt;.&quot;
+	| payload bare fields user clientNonce credentials nonce serverFirst id |
+	(aCommand at: &#x27;&#x27;mechanism&#x27;&#x27;) = &#x27;&#x27;SCRAM-SHA-1&#x27;&#x27; ifFalse: [
+		^ MongoDoubleError signalCode: 2 name: &#x27;&#x27;BadValue&#x27;&#x27; message: &#x27;&#x27;The stand-in server supports only SCRAM-SHA-1.&#x27;&#x27; ].
+	payload := (aCommand at: &#x27;&#x27;payload&#x27;&#x27;) asString.
+	(payload beginsWith: &#x27;&#x27;n,,&#x27;&#x27;) ifFalse: [ ^ self authenticationFailed ].
+	bare := payload allButFirst: 3.
+	fields := bare substrings: &#x27;&#x27;,&#x27;&#x27;.
+	user := ((fields detect: [ :each | each beginsWith: &#x27;&#x27;n=&#x27;&#x27; ] ifNone: [ ^ self authenticationFailed ]) allButFirst: 2).
+	clientNonce := ((fields detect: [ :each | each beginsWith: &#x27;&#x27;r=&#x27;&#x27; ] ifNone: [ ^ self authenticationFailed ]) allButFirst: 2).
+	credentials := (users at: aName ifAbsent: [ Dictionary new ]) at: user ifAbsent: [ ^ self authenticationFailed ].
+	nonce := clientNonce, (UUID new asString copyWithout: $-).
+	serverFirst := &#x27;&#x27;r=&#x27;&#x27;, nonce, &#x27;&#x27;,s=&#x27;&#x27;, (credentials at: &#x27;&#x27;salt&#x27;&#x27;) base64Encoded, &#x27;&#x27;,i=&#x27;&#x27;, (credentials at: &#x27;&#x27;iterations&#x27;&#x27;) printString.
+	id := conversations size + 1.
+	[ conversations includesKey: id ] whileTrue: [ id := id + 1 ].
+	conversations at: id put: (OrderedDictionary new
+		at: &#x27;&#x27;stage&#x27;&#x27; put: 1;
+		at: &#x27;&#x27;bare&#x27;&#x27; put: bare;
+		at: &#x27;&#x27;serverFirst&#x27;&#x27; put: serverFirst;
+		at: &#x27;&#x27;nonce&#x27;&#x27; put: nonce;
+		at: &#x27;&#x27;credentials&#x27;&#x27; put: credentials;
+		yourself).
+	^ OrderedDictionary new
+		at: &#x27;&#x27;conversationId&#x27;&#x27; put: id;
+		at: &#x27;&#x27;done&#x27;&#x27; put: false;
+		at: &#x27;&#x27;payload&#x27;&#x27; put: serverFirst asByteArray;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;cmdSaslcontinue:db:&#x27; value: &#x27;authentication&#x27; value:
+&#x27;cmdSaslcontinue: aCommand db: aName
+	| id conversation payload |
+	id := aCommand at: &#x27;&#x27;conversationId&#x27;&#x27;.
+	conversation := conversations at: id ifAbsent: [
+		^ MongoDoubleError signalCode: 17 name: &#x27;&#x27;ProtocolError&#x27;&#x27; message: &#x27;&#x27;No SASL session state found&#x27;&#x27; ].
+	payload := (aCommand at: &#x27;&#x27;payload&#x27;&#x27;) asString.
+	(conversation at: &#x27;&#x27;stage&#x27;&#x27;) = 1 ifTrue: [ ^ self scramFinalOf: conversation id: id payload: payload ].
+	conversations removeKey: id.
+	^ OrderedDictionary new
+		at: &#x27;&#x27;conversationId&#x27;&#x27; put: id;
+		at: &#x27;&#x27;done&#x27;&#x27; put: true;
+		at: &#x27;&#x27;payload&#x27;&#x27; put: ByteArray new;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+add value: #&#x27;MongoServerDouble&#x27; value: #&#x27;scramFinalOf:id:payload:&#x27; value: &#x27;authentication&#x27; value:
+&#x27;scramFinalOf: aConversation id: anId payload: aPayload
+	&quot;The client final message is c=biws,r=&lt;nonce&gt;,p=&lt;proof&gt;.&quot;
+	| proofIndex withoutProof proof credentials authMessage clientSignature clientKey serverSignature |
+	proofIndex := aPayload indexOfSubCollection: &#x27;&#x27;,p=&#x27;&#x27;.
+	proofIndex = 0 ifTrue: [ ^ self authenticationFailed ].
+	withoutProof := aPayload copyFrom: 1 to: proofIndex - 1.
+	proof := (aPayload copyFrom: proofIndex + 3 to: aPayload size) base64Decoded.
+	(withoutProof endsWith: &#x27;&#x27;r=&#x27;&#x27;, (aConversation at: &#x27;&#x27;nonce&#x27;&#x27;)) ifFalse: [
+		conversations removeKey: anId.
+		^ self authenticationFailed ].
+	credentials := aConversation at: &#x27;&#x27;credentials&#x27;&#x27;.
+	authMessage := (aConversation at: &#x27;&#x27;bare&#x27;&#x27;), &#x27;&#x27;,&#x27;&#x27;, (aConversation at: &#x27;&#x27;serverFirst&#x27;&#x27;), &#x27;&#x27;,&#x27;&#x27;, withoutProof.
+	clientSignature := (HMAC on: SHA1 new) key: (credentials at: &#x27;&#x27;storedKey&#x27;&#x27;); digestMessage: authMessage asByteArray.
+	clientKey := proof bitXor: clientSignature.
+	(SHA1 hashMessage: clientKey) = (credentials at: &#x27;&#x27;storedKey&#x27;&#x27;) ifFalse: [
+		conversations removeKey: anId.
+		^ self authenticationFailed ].
+	serverSignature := ((HMAC on: SHA1 new) key: (credentials at: &#x27;&#x27;serverKey&#x27;&#x27;); digestMessage: authMessage asByteArray) base64Encoded.
+	aConversation at: &#x27;&#x27;stage&#x27;&#x27; put: 2.
+	^ OrderedDictionary new
+		at: &#x27;&#x27;conversationId&#x27;&#x27; put: anId;
+		at: &#x27;&#x27;done&#x27;&#x27; put: false;
+		at: &#x27;&#x27;payload&#x27;&#x27; put: (&#x27;&#x27;v=&#x27;&#x27;, serverSignature) asByteArray;
+		at: &#x27;&#x27;ok&#x27;&#x27; put: 1.0;
+		yourself&#x27;.
+
+&quot;The five setUp methods: setUp starts the stand-in, then runs the unchanged old setUp
+under the name setUpAgainstDouble. The guard is the name of the stand-in in the source.&quot;
+#(#MongoTest #MongoWholeDatabaseTest #MongoCommandCursorTest #MongoAuthTest #MQQueryTest) do: [ :className |
+	| cls oldSource |
+	cls := Smalltalk globals at: className ifAbsent: [ nil ].
+	(cls notNil and: [ cls includesSelector: #setUp ])
+		ifFalse: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, className, &#x27;&gt;&gt;setUp (absent)&#x27;; lf; flush ]
+		ifTrue: [
+			oldSource := (cls &gt;&gt; #setUp) sourceCode.
+			(oldSource includesSubstring: &#x27;MongoServerDouble&#x27;)
+				ifTrue: [ Stdio stdout nextPutAll: &#x27;SKIP &#x27;, className, &#x27;&gt;&gt;setUp (defect not present)&#x27;; lf; flush ]
+				ifFalse: [
+					cls compile: &#x27;setUpAgainstDouble&#x27;, (oldSource allButFirst: &#x27;setUp&#x27; size) classified: &#x27;running&#x27;.
+					cls compile: &#x27;setUp
+	MongoServerDouble ensureRunning.
+	self setUpAgainstDouble&#x27; classified: &#x27;running&#x27;.
+					Stdio stdout nextPutAll: &#x27;FIXED &#x27;, className, &#x27;&gt;&gt;setUp&#x27;; lf; flush ] ] ].
+
+fix value: #MongoTest value: #testAddExistingCollection
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testAddExistingCollection
+	&quot;The server answers error 48 (NamespaceExists) for a collection that exists, and the driver
+	 turns the error into MongoCollectionAlreadyExists.&quot;
+
+	self
+		should: [ database addCollection: &#x27;&#x27;testCollection&#x27;&#x27; ]
+		raise: MongoCollectionAlreadyExists&#x27;.
+
+fix value: #MongoAuthTest value: #testSCRAMSHA1AuthMechanism
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testSCRAMSHA1AuthMechanism
+	&quot;The server of the tests has the user pharounittest with the password test in the database
+	 test (the in-image MongoServerDouble). A real mongod needs the user, made by hand with
+	 db.createUser.&quot;
+
+	root authMechanism: (SCRAMSHA1AuthMechanism root: root).
+
+	self assert: (root authenticateUsername: &#x27;&#x27;pharounittest&#x27;&#x27; password: &#x27;&#x27;test&#x27;&#x27; database: database).
+	self assert: (root authenticateUsername: &#x27;&#x27;pharounittest&#x27;&#x27; password: &#x27;&#x27;invalid&#x27;&#x27; database: database) not&#x27;.
+
+fix value: #MQQueryTest value: #testWhere
+	value: [ :source | (source includesSubstring: &#x27;==&#x27;) not ]
+	value: &#x27;testWhere
+	| selected |
+	collection add: (Dictionary new at: &#x27;&#x27;key1&#x27;&#x27; put: &#x27;&#x27;value1&#x27;&#x27;; yourself).
+	collection add: (Dictionary new at: &#x27;&#x27;key2&#x27;&#x27; put: &#x27;&#x27;value2&#x27;&#x27;; yourself).
+	selected := collection detect: [ :each | each where: &#x27;&#x27;this.key1 == &quot;value1&quot;&#x27;&#x27;].
+	self assert: (selected at: &#x27;&#x27;key1&#x27;&#x27;) equals: &#x27;&#x27;value1&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

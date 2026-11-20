@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: MyPrecious (SmalltalkWeb/MyPrecious, row 101) - Pharo test defects</title><meta name="description" content="Package: MyPrecious (SmalltalkWeb/MyPrecious, row 101): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: MyPrecious (SmalltalkWeb/MyPrecious, row 101)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>smalltalkweb-myprecious.st</dd><dt>Upstream repository</dt><dd>SmalltalkWeb/MyPrecious</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: stock Cog stopped in the middle of the row (72 tests run, 1
+error).  Our VM ran the 109 tests: 108 pass, 1 error
+(<code>testReconnectsIfOtherSideIsDisconnected</code>, <code>TestFailedByForkedProcess</code>).</li>
+<li>Cause, one defect of the package: a connection that is closed makes the
+receive service of <code>MpConnection</code> loop with no end.
+<code>SocketStream&gt;&gt;next:</code> answers an empty ByteArray at the end of a stream,
+with no signal.  <code>MpConnection&gt;&gt;receiveObject</code> then makes a task for 0
+bytes.  The task fails in a TaskIt worker, the service has a step delay
+of 0 ms, and nothing stops it.
+<ul>
+<li>On our VM the failed tasks make the error of the test.</li>
+<li>On stock Cog the loop keeps the processor from the other processes of
+its priority, the queue of failed tasks grows, and old space reaches
+its limit.  Stock Cog then stops the VM (the low-space defect of Cog,
+<code>docs/upstream/cog-changes.md</code>).</li>
+</ul>
+</li>
+<li>Repair here (<code>fixes/smalltalkweb-myprecious.st</code>): a short read signals
+<code>MpConnectionFailed</code>, <code>receiveObject</code> stops the receive service when the
+connection is closed, and a new test
+(<code>testStopsReceivingWhenOtherSideClosesConnection</code>, in the two middleware
+test classes) checks that.</li>
+<li>Result: 111 of 111 pass on the two VMs, and stock Cog runs the full row.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 101&quot;
+Metacello new baseline: &#x27;MyPrecious&#x27;; repository: &#x27;github://SmalltalkWeb/MyPrecious:pharo12&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>101</td><td><code>smalltalkweb-myprecious</code></td><td>ok</td><td>tests=111 P=111 F=0 E=0 S=0 T=0 X=0</td><td>tests=111 P=111 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): smalltalkweb-myprecious.st (<a href="../files/packages/fixes/smalltalkweb-myprecious.st">download</a>)</summary><pre class="code">&quot;smalltalkweb-myprecious: one defect of MyPrecious, three symptoms.
+
+MpConnection&gt;&gt;startReceiving starts a TKTParameterizableService that runs
+&#x27;self receiveObject&#x27; with stepDelay 0 milliSecond.  When the other side
+closes a connection, SocketStream&gt;&gt;next: does not signal: its documented
+rule is that a short answer means a closed connection (SocketStream&gt;&gt;
+readInto:startingAt:count: swallows ConnectionClosed).  So receiveBytes
+answers an empty ByteArray, asInteger gives 0, and receiveObject schedules a
+task that tries to materialize 0 bytes.  That task fails in a TaskIt worker,
+and the default TaskIt handler (TKTExceptionHandler&gt;&gt;handleException:) sends
+&#x27;debug&#x27;.  The service then runs again with a 0 ms Delay, so it never ends:
+each round makes one more failing task.  Nothing stops the service,
+because a closed connection is not a reason to stop in receiveObject: the
+&#x27;on: Exception do: [ ^self ]&#x27; there is meant for the read timeout of an
+idle connection and also swallows the closed connection.
+
+  Our VM, testReconnectsIfOtherSideIsDisconnected in MpWebMiddlewareTest:
+  the failing tasks are unhandled in forked processes during the test, and
+  ProcessMonitorTestService makes the test fail with TestFailedByForkedProcess.
+  Stock Cog, same test in MpTcpMiddlewareTest, then MpWebMiddlewareTest: the
+  Delay of 0 ms does not wait and Cog has no time slicing, so the service at
+  priority 30 never lets the listener of the other middleware (priority 30)
+  run.  The retries fail (MpCouldNotDeliverMessageError after 20 s) and the
+  queue of failing tasks grows until old space is full.
+
+The first entry makes receiveBytes signal MpConnectionFailed when fewer
+bytes than asked come back.  The second entry makes receiveObject stop the
+reception service of a connection that is closed (the exception is
+ConnectionClosed or MpConnectionFailed, or the connection cannot send any
+more); a read timeout of an open connection still goes on.  The test
+checks that the reception service of B stops when A closes the connection.&quot;
+
+add value: #MpSocketStreamConnection value: #receiveExactly: value: &#x27;receiving&#x27; value:
+&#x27;receiveExactly: count
+	&quot;Read count bytes.  SocketStream&gt;&gt;next: answers fewer bytes, and does not signal, when the other side has closed the connection: that is the end of the connection.&quot;
+
+	| bytes |
+	bytes := socketStream next: count.
+	bytes size &lt; count ifTrue: [ ^ MpConnectionFailed signal: &#x27;&#x27;Connection closed by the other side&#x27;&#x27; ].
+	^ bytes&#x27;.
+
+fix value: #MpSocketStreamConnection value: #receiveBytes
+	value: [ :source | source includesSubstring: &#x27;socketStream next: self byteCountArraySize&#x27; ]
+	value:
+&#x27;receiveBytes
+	&quot;Read one message: the size of the size, the size, then the bytes.&quot;
+
+	| bytesCountSize bytesCount |
+	bytesCountSize := (self receiveExactly: self byteCountArraySize) asInteger.
+	bytesCount := (self receiveExactly: bytesCountSize) asInteger.
+	^ self receiveExactly: bytesCount&#x27;.
+
+fix value: #MpConnection value: #receiveObject
+	value: [ :source | source includesSubstring: &#x27;on: Exception do: [ ^self ]&#x27; ]
+	value:
+&#x27;receiveObject
+	| receivedBytes receivedObject |
+	receivedBytes := [ self receiveBytes ] on: Exception do: [ :exception |
+		&quot;A read timeout of an open connection goes on.  A closed connection can never receive again: stop the reception service, else it runs again at once and for ever.&quot;
+		((exception isKindOf: ConnectionClosed)
+			or: [ (exception isKindOf: MpConnectionFailed)
+			or: [ self isSendingPossible not ] ])
+				ifTrue: [ self stopReceiving ].
+		^ self ].
+	self schedule: [
+		receivedObject := self materializeAndUnmarshal: receivedBytes.
+		receivedObject deliverBy: self
+	]&#x27;.
+
+add value: #MpTcpMiddlewareTest value: #testStopsReceivingWhenOtherSideClosesConnection value: &#x27;tests&#x27; value:
+&#x27;testStopsReceivingWhenOtherSideClosesConnection
+	&quot;When A closes its end of a connection, the reception service of the connection in B must stop.  It used to run again at once and for ever.&quot;
+
+	| valueHolderA remoteReferenceA connectionA connectionB |
+	valueHolderA := self newValueHolder.
+	remoteReferenceA := middlewareA export: valueHolderA.
+	middlewareB send: #contents to: remoteReferenceA.
+	connectionA := middlewareA transporter connections first.
+	connectionB := middlewareB transporter connections first.
+	self assert: connectionB isReceptionStarted.
+	connectionA disconnect.
+	self waitWhile: [ connectionB isReceptionStarted ] timeout: 2 seconds.
+	self deny: connectionB isReceptionStarted&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

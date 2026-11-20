@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StSettingsBrowserTest - Pharo test defects</title><meta name="description" content="StSettingsBrowserTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>StSettingsBrowserTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-StSettingsBrowserTest.st</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-StSettingsBrowserTest.st</code></li>
+<li>Methods: <code>StSettingsBrowserTest&gt;&gt;testSimulateCategoryPopulation</code></li>
+</ul>
+<p>testSimulateCategoryPopulation began with &quot;self skip&quot;, and its body was stale. It called categoriesPresenter categoryListPresenter, which no longer exists: categoriesPresenter is now a SpEasyTreeListViewPresenter (a tree). It then looked up a presenter #settingsBox in the details presenter, and that name no longer exists either. Un-skipped, the original body fails with a MessageNotUnderstood for #categoryListPresenter on both VMs. The fix rewrites the test for the current API: it selects the first root category of the tree and asserts that the details presenter model is that category. It then asserts that the details presenter replaced its placeholder label with a presenter whose layout has children. The skip is removed and no assertion is weakened.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StSettingsBrowserTest&gt;&gt;testSimulateCategoryPopulation</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>The test body is stale after a Spec2 refactor (categoryListPresenter and #settingsBox are gone), and it was parked with self skip.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran the whole StSettingsBrowserTest class on both VMs, with and without the fix. Ours: 17 PASS before, 18 PASS with the fix. Cog: 17 PASS before, 18 PASS with the fix. No other test class was run, because the only method changed is this test method.</p>
+<p>Upstream note: Title: Repair StSettingsBrowserTest&gt;&gt;testSimulateCategoryPopulation (project: Pharo).
+Description: The test was disabled with self skip, and its body used presenters that no longer exist (categoryListPresenter, #settingsBox). The rewritten test selects the first root of the categories tree list and checks two things. First, the details presenter model is that category. Second, the placeholder label has been replaced by a presenter whose layout has children. This has not been submitted anywhere. The owner must review it first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>StSettingsBrowserTest&gt;&gt;testSimulateCategoryPopulation</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((StSettingsBrowserTest selector: #testSimulateCategoryPopulation) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>StSettingsBrowserTest&gt;&gt;testSimulateCategoryPopulation before the fix (Pharo 14 build 791)</summary><pre class="code">testSimulateCategoryPopulation
+
+	| childSettingsLayout |
+	
+	self skip.
+	categoriesPresenter categoryListPresenter clickItem: 1.
+	childSettingsLayout := detailsPresenter presenterAt: #settingsBox.
+		
+	&quot;(Delay forSeconds: 5) wait.&quot; 
+	self
+		assert: childSettingsLayout children notEmpty
+		description: &#x27;It tests that after a category selection has been made, the details presenter contains a title&#x27;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-StSettingsBrowserTest.st (<a href="../files/image-fixes/20-StSettingsBrowserTest.st">download</a>)</summary><pre class="code">fix value: #StSettingsBrowserTest value: #testSimulateCategoryPopulation
+	value: [ :s | s includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testSimulateCategoryPopulation
+
+	| firstCategory shownSettings |
+	firstCategory := categoriesPresenter roots first.
+	categoriesPresenter selectItem: firstCategory.
+	self
+		assert: detailsPresenter model
+		identicalTo: firstCategory.
+	&quot;the details presenter replaced its placeholder label by the presenter of the category&quot;
+	shownSettings := detailsPresenter presenters first.
+	self deny: (shownSettings isKindOf: SpLabelPresenter).
+	self
+		assert: shownSettings layout children notEmpty
+		description: &#x27;&#x27;It tests that after a category selection has been made, the details presenter contains the settings of the category&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

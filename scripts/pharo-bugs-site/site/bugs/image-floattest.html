@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FloatTest - Pharo test defects</title><meta name="description" content="FloatTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>FloatTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-FloatTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-FloatTest.st</code></li>
+<li>Methods: <code>FloatTest&gt;&gt;testNaNCompare</code></li>
+</ul>
+<p>FloatTest&gt;&gt;testNaNCompare began with an unconditional &quot;self skip&quot; as its first statement. The IEEE 754 NaN comparison rule it checks already holds: my probe of every comparison with NaN returned no violations on both VMs. The fix removes the skip and changes nothing else in the test; no assertion was touched.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FloatTest&gt;&gt;testNaNCompare</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional 'self skip' at the top of the test. All comparisons of NaN with the 12 comparands and with itself behave per IEEE 754 on both VMs (probe returned an empty violation list).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Whole FloatTest class run on ours (JIT) and Cog, before and after the fix. Ours: 60 PASS before, 61 PASS after. Cog: 60 PASS before, 61 PASS after. Only the changed method is touched; no non-test code changed, so no other classes were run.</p>
+<p>Upstream note: Pharo: FloatTest&gt;&gt;testNaNCompare: remove the leftover &quot;self skip&quot;. The test passes on current Pharo 14 and on both VMs. Not submitted anywhere; the owner must review it first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>FloatTest&gt;&gt;testNaNCompare</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((FloatTest selector: #testNaNCompare) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>FloatTest&gt;&gt;testNaNCompare before the fix (Pharo 14 build 791)</summary><pre class="code">testNaNCompare
+	&quot;IEEE 754 states that NaN cannot be ordered.
+	As a consequence, every arithmetic comparison involving a NaN SHOULD return false.
+	Except the is different test (~=).
+	This test does verify this rule&quot;
+
+	| compareSelectors theNaN anotherNaN comparand brokenMethods warningMessage |
+	self skip.
+	compareSelectors := #(#&lt; #&lt;= #&gt; #&gt;= #=).
+	theNaN := Float nan.
+	anotherNaN := Float infinity - Float infinity.
+	comparand := {1. 2.3. Float infinity. 2/3. 1.25s2. 2 raisedTo: 50}.
+	comparand := comparand , (comparand collect: [:e | e negated]).
+	comparand := comparand , {theNaN. anotherNaN}.
+
+&quot;do a first pass to collect all broken methods&quot;
+	brokenMethods := Set new.
+	comparand do: [:comp |
+		compareSelectors do: [:op |
+			(theNaN perform: op with: comp) ifTrue: [brokenMethods add: (theNaN class lookupSelector: op)].
+			(comp perform: op with: theNaN) ifTrue: [brokenMethods add: (comp class lookupSelector: op)]].
+		(theNaN ~= comp) ifFalse: [brokenMethods add: (theNaN class lookupSelector: #~=)].
+		(comp ~= theNaN) ifFalse: [brokenMethods add: (comp class lookupSelector: #~=)]].
+
+&quot;build a warning message to tell about all broken methods at once&quot;
+	warningMessage := String streamContents: [:s |
+			s nextPutAll: &#x27;According to IEEE 754 comparing with a NaN should always return false, except ~= that should return true.&#x27;; cr.
+			s nextPutAll: &#x27;All these methods failed to do so. They are either broken or call a broken one&#x27;.
+			brokenMethods do: [:e | s cr; print: e methodClass; nextPutAll: &#x27;&gt;&gt;&#x27;; print: e selector]].
+
+&quot;Redo the tests so as to eventually open a debugger on one of the failures&quot;
+	brokenMethods := Set new.
+	comparand do: [:comp2 |
+		compareSelectors do: [:op2 |
+			self deny: (theNaN perform: op2 with: comp2) description: warningMessage.
+			self deny: (comp2 perform: op2 with: theNaN) description: warningMessage].
+		self assert: (theNaN ~= comp2) description: warningMessage.
+		self assert: (comp2 ~= theNaN) description: warningMessage]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-FloatTest.st (<a href="../files/image-fixes/20-FloatTest.st">download</a>)</summary><pre class="code">fix value: #FloatTest value: #testNaNCompare
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testNaNCompare
+	&quot;IEEE 754 states that NaN cannot be ordered.
+	As a consequence, every arithmetic comparison involving a NaN SHOULD return false.
+	Except the is different test (~=).
+	This test does verify this rule&quot;
+
+	| compareSelectors theNaN anotherNaN comparand brokenMethods warningMessage |
+	compareSelectors := #(#&lt; #&lt;= #&gt; #&gt;= #=).
+	theNaN := Float nan.
+	anotherNaN := Float infinity - Float infinity.
+	comparand := {1. 2.3. Float infinity. 2/3. 1.25s2. 2 raisedTo: 50}.
+	comparand := comparand , (comparand collect: [:e | e negated]).
+	comparand := comparand , {theNaN. anotherNaN}.
+
+&quot;do a first pass to collect all broken methods&quot;
+	brokenMethods := Set new.
+	comparand do: [:comp |
+		compareSelectors do: [:op |
+			(theNaN perform: op with: comp) ifTrue: [brokenMethods add: (theNaN class lookupSelector: op)].
+			(comp perform: op with: theNaN) ifTrue: [brokenMethods add: (comp class lookupSelector: op)]].
+		(theNaN ~= comp) ifFalse: [brokenMethods add: (theNaN class lookupSelector: #~=)].
+		(comp ~= theNaN) ifFalse: [brokenMethods add: (comp class lookupSelector: #~=)]].
+
+&quot;build a warning message to tell about all broken methods at once&quot;
+	warningMessage := String streamContents: [:s |
+			s nextPutAll: &#x27;&#x27;According to IEEE 754 comparing with a NaN should always return false, except ~= that should return true.&#x27;&#x27;; cr.
+			s nextPutAll: &#x27;&#x27;All these methods failed to do so. They are either broken or call a broken one&#x27;&#x27;.
+			brokenMethods do: [:e | s cr; print: e methodClass; nextPutAll: &#x27;&#x27;&gt;&gt;&#x27;&#x27;; print: e selector]].
+
+&quot;Redo the tests so as to eventually open a debugger on one of the failures&quot;
+	brokenMethods := Set new.
+	comparand do: [:comp2 |
+		compareSelectors do: [:op2 |
+			self deny: (theNaN perform: op2 with: comp2) description: warningMessage.
+			self deny: (comp2 perform: op2 with: theNaN) description: warningMessage].
+		self assert: (theNaN ~= comp2) description: warningMessage.
+		self assert: (comp2 ~= theNaN) description: warningMessage]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

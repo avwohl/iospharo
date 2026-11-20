@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: PharoWiki (chicoary/PharoWiki, row 26) - Pharo test defects</title><meta name="description" content="Package: PharoWiki (chicoary/PharoWiki, row 26): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: PharoWiki (chicoary/PharoWiki, row 26)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>chicoary-pharowiki.st, chicoary-pharowiki.patch</dd><dt>Upstream repository</dt><dd>chicoary/PharoWiki</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>Defect: the directory <code>src</code> has the file <code>.filetree</code> and no file
+<code>.properties</code>.  The code is in Tonel format, and Iceberg finds no package.</li>
+<li>Effect: the load stops with <code>KeyNotFound: key 'BaselineOfPharoWiki'</code>.</li>
+<li>Repair: <code>patches/chicoary-pharowiki.patch</code> adds <code>src/.properties</code> with the
+Tonel format and removes <code>src/.filetree</code>.</li>
+<li>State with the patch: the load works.  77 tests, 70 pass, 7 skip on the two
+VMs.</li>
+<li>2 skips (<code>PWikiGeneratorRegistryTest</code>): the tests skip when the Epicea log
+of the session has no class addition, which is the state of a new image.
+The tests now install an Epicea monitor with one class addition for the
+time of the test.</li>
+<li>5 skips (<code>PWikiGeneratorTest</code>): each test starts with <code>self skip</code>, with
+no reason in the source.  The tests make the page of <code>Point</code> with a scan
+of the image for the senders and implementors of each selector.
+<code>fixes/chicoary-pharowiki.st</code> gives <code>PWikiGenerator</code> a setter for its
+extractor, the tests use an extractor with no scan, and the skips go.</li>
+<li>Result: 77 of 77 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 26&quot;
+Metacello new baseline: &#x27;PharoWiki&#x27;; repository: &#x27;github://chicoary/PharoWiki:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>26</td><td><code>chicoary-pharowiki</code></td><td>ok</td><td>tests=77 P=77 F=0 E=0 S=0 T=0 X=0</td><td>tests=77 P=77 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): chicoary-pharowiki.st (<a href="../files/packages/fixes/chicoary-pharowiki.st">download</a>)</summary><pre class="code">&quot;PharoWiki (chicoary/PharoWiki, main): seven tests skip, none for a machine reason.
+
+1. PWikiGeneratorRegistryTest&gt;&gt;testGeneratorForChangesClass and
+   testGeneratorForLibsClass skip when the Epicea log of the image has no
+   EpClassAddition entry.  Epicea does not log code that Metacello loads
+   (EpMonitor class&gt;&gt;shouldLogMetacelloLoading is false by default) and does not log
+   during a test (EpMonitor&gt;&gt;subscribeToSystemAnnouncer), so in a loaded image the log
+   is empty and both tests skip.  The tests become independent of the log of
+   the image: each one installs an EpMonitor with a memory log that holds one
+   EpClassAddition, and restores the monitor afterwards.
+
+2. PWikiGeneratorTest has five tests with an unconditional self skip.  The
+   tests work on Point and call the generator with the real
+   SystemNavigation scan for implementors and senders of each selector sent in
+   Point.  The tests use a stub extractor now (the scan is not under test), and
+   testGeneratePointExtensionsSection does not expect the *Geometry
+   extension asGVector of the machine of the author: it takes the last
+   extension method that Point has in the image.&quot;
+
+add value: #PWikiGeneratorRegistryTest value: #withEpiceaLogAdding:do: value: &#x27;private&#x27;
+	value:
+&#x27;withEpiceaLogAdding: aClass do: aBlock
+	&quot;Run aBlock with an Epicea monitor whose log holds one EpClassAddition for aClass.
+	 The log of the image is empty after a Metacello load, because Epicea does not log it.&quot;
+	| saved |
+	saved := EpMonitor hasCurrent ifTrue: [ EpMonitor current ].
+	EpMonitor current: (EpMonitor newWithLog: (EpLog newWithEvents: { EpClassAddition class: aClass })).
+	^ aBlock ensure: [ EpMonitor current: saved ]&#x27;.
+
+fix value: #PWikiGeneratorRegistryTest value: #testGeneratorForChangesClass
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGeneratorForChangesClass
+	&quot;generatorFor: returns changesGen for a project class registered in Epicea.&quot;
+	| registry |
+	registry := self buildRegistry.
+	self
+		withEpiceaLogAdding: PWikiClassPage
+		do: [ self assert: (registry generatorFor: PWikiClassPage) == registry changesGen ]&#x27;.
+
+fix value: #PWikiGeneratorRegistryTest value: #testGeneratorForLibsClass
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGeneratorForLibsClass
+	&quot;generatorFor: returns libsGen for a class registered in Epicea that is not in a project package.&quot;
+	| registry |
+	registry := self buildRegistry.
+	self
+		withEpiceaLogAdding: Point
+		do: [ self assert: (registry generatorFor: Point) == registry libsGen ]&#x27;.
+
+add value: #PWikiGenerator value: #extractor: value: &#x27;accessing&#x27;
+	value:
+&#x27;extractor: aDependencyExtractor
+	extractor := aDependencyExtractor&#x27;.
+
+add value: #PWikiGeneratorTest value: #stubExtractor value: &#x27;private&#x27;
+	value:
+&#x27;stubExtractor
+	&quot;An extractor without the scan of the whole image: the tests check the generated pages, not SystemNavigation.&quot;
+	| class |
+	class := PWikiDependencyExtractor newAnonymousSubclass.
+	class compile: &#x27;&#x27;implementorsOf: aSelector ^ #()&#x27;&#x27;.
+	class compile: &#x27;&#x27;sendersOf: aSelector ^ #()&#x27;&#x27;.
+	^ class new&#x27;.
+
+fix value: #PWikiGeneratorTest value: #setUp
+	value: [ :source | (source includesSubstring: &#x27;extractor:&#x27;) not ]
+	value:
+&#x27;setUp
+	outputDir := FileSystem memory root.
+	generator := PWikiSourcesGenerator outputDir: outputDir.
+	generator extractor: self stubExtractor&#x27;.
+
+fix value: #PWikiGeneratorTest value: #testExtensionsNotDuplicated
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testExtensionsNotDuplicated
+	&quot;Given a class with extension protocols (Point)
+	 When rendering its page
+	 Then the Extensions section appears exactly once&quot;
+	| page content occurrences |
+	page := PWikiClassPage forClass: Point.
+	self assert: page extensionProtocolNames isNotEmpty.
+	content := generator renderPage: page.
+	occurrences := 0.
+	content linesDo: [ :line |
+		(line trimmed = &#x27;&#x27;## Extensions&#x27;&#x27;) ifTrue: [ occurrences := occurrences + 1 ] ].
+	self assert: occurrences equals: 1&#x27;.
+
+fix value: #PWikiGeneratorTest value: #testGeneratePointExtensionsSection
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGeneratePointExtensionsSection
+	&quot;Given a PWikiSourcesGenerator writing to a memory filesystem
+	 When generating the Point class page
+	 Then the file ends with the Extensions section: the last method of the last extension protocol of Point&quot;
+	| page protocol method content expected |
+	page := PWikiClassPage forClass: Point.
+	protocol := page extensionProtocolNames reversed
+		detect: [ :each | (page methodsInProtocol: each) isNotEmpty ].
+	method := (page methodsInProtocol: protocol) last.
+	generator generateForClass: Point.
+	content := (outputDir / &#x27;&#x27;Kernel&#x27;&#x27; / &#x27;&#x27;Point.md&#x27;&#x27;) readStream contents.
+	expected := String streamContents: [ :s |
+		s
+			nextPutAll: method sourceCode; cr;
+			nextPutAll: &#x27;&#x27;```&#x27;&#x27;; cr ].
+	self assert: (content includesSubstring: &#x27;&#x27;## Extensions&#x27;&#x27;).
+	self assert: (content includesSubstring: &#x27;&#x27;### &#x27;&#x27;, protocol).
+	self assert: (content includesSubstring: &#x27;&#x27;#### &#x27;&#x27;, method selector).
+	self assert: (content last: expected size) equals: expected&#x27;.
+
+fix value: #PWikiGeneratorTest value: #testGeneratedFileContainsClassName
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGeneratedFileContainsClassName
+	&quot;Given the generator
+	 When generating for the class Point
+	 Then the file contains the class name&quot;
+	| content |
+	generator generateForClass: Point.
+	content := (outputDir / &#x27;&#x27;Kernel&#x27;&#x27; / &#x27;&#x27;Point.md&#x27;&#x27;) readStream contents.
+	self assert: (content includesSubstring: &#x27;&#x27;Point&#x27;&#x27;)&#x27;.
+
+fix value: #PWikiGeneratorTest value: #testGeneratedFileNotEmpty
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGeneratedFileNotEmpty
+	&quot;Given the generator
+	 When generating for the class Point
+	 Then the resulting file is not empty&quot;
+	| content |
+	generator generateForClass: Point.
+	content := (outputDir / &#x27;&#x27;Kernel&#x27;&#x27; / &#x27;&#x27;Point.md&#x27;&#x27;) readStream contents.
+	self assert: content isNotEmpty&#x27;.
+
+fix value: #PWikiGeneratorTest value: #testGeneratesFileForPoint
+	value: [ :source | source includesSubstring: &#x27;self skip&#x27; ]
+	value:
+&#x27;testGeneratesFileForPoint
+	&quot;Given the generator configured with an output dir
+	 When generating for the class Point
+	 Then a .md file exists for Point&quot;
+	generator generateForClass: Point.
+	self assert: (outputDir / &#x27;&#x27;Kernel&#x27;&#x27; / &#x27;&#x27;Point.md&#x27;&#x27;) exists&#x27;.
+
+</pre></details><details open><summary>Patch of the package source: chicoary-pharowiki.patch (<a href="../files/packages/patches/chicoary-pharowiki.patch">download</a>)</summary><pre class="code">diff --git a/src/.filetree b/src/.filetree
+deleted file mode 100644
+index 0737d8d..0000000
+--- a/src/.filetree
++++ /dev/null
+@@ -1 +0,0 @@
+-{&quot;monticello&quot; : false}
+diff --git a/src/.properties b/src/.properties
+new file mode 100644
+index 0000000..50adb58
+--- /dev/null
++++ b/src/.properties
+@@ -0,0 +1,3 @@
++{
++  #format : &#x27;tonel&#x27;
++}
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

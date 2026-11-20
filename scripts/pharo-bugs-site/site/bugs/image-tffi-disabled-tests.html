@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TFFI-disabled-tests - Pharo test defects</title><meta name="description" content="TFFI-disabled-tests: Fixed in the image; stock Cog needs a Cog change">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>TFFI-disabled-tests</h1><dl class="meta"><dt>State</dt><dd><span class="st st-part">Fixed in the image; stock Cog needs a Cog change</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>4</dd><dt>Fix</dt><dd>image fix 20-TFFI-disabled-tests.st, 30-ffi-callback-from-other-thread.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><p class="note">The record text below was written before entry 30.  Entry 20 fixes 3 of the 4 tests.  <code>TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread</code> is fixed by entry 30 together with the Cog change for a callback from another thread (see the Cog section); on stock Cog without the change the test still skips for the same-thread runner, because the VM would stop.</p><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-TFFI-disabled-tests.st</code></li>
+<li>Methods: <code>FFICallbackParametersTest&gt;&gt;testIdentityStruct</code>, <code>TFCallbacksTest&gt;&gt;testCallbackNotRespectingLIFOOrderFailsReturn</code>, <code>TFUFFIFunctionCallTest&gt;&gt;testLongCalloutDoesNotBlockImage</code></li>
+</ul>
+<p>Three of the four tests are repaired by a fix file. FFICallbackParametersTest&gt;&gt;testIdentityStruct and TFCallbacksTest&gt;&gt;testCallbackNotRespectingLIFOOrderFailsReturn were disabled by an unconditional <code>true ifTrue: [^self skip]</code> with an obsolete reason; with the skip removed both pass on our VM and Cog (3 of 3 runs each; LIFO in both runner variants). TFUFFIFunctionCallTest&gt;&gt;testLongCalloutDoesNotBlockImage skipped for TFTestLibraryUsingSameThreadRunner, but a same-thread callout blocks the whole image by design, so the test now expects #finishedCallout first for that runner and #waitingForCallout first for the worker runner. It also does a 0 second warm-up callout first, because the first call compiles the ffiCall method, and under load on our JIT VM a higher-priority process could preempt the callout process in that window (4 of 24 runs failed before; 0 of 60 after, with 6 parallel runs). TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread, same-thread variant, is NOT repaired: stock Cog segfaults in callbackFrontend when the callback arrives from a foreign thread with the same-thread runner (&quot;Not in VM thread&quot;; the VM aborts). Our VM passes that variant (5 of 5 runs). Because the Cog crash would kill a whole sweep batch, no entry is filed for that test and the skip stays. The worker variant of that test passes on both VMs. Everything is measured on the Pharo 14 build 791 base images; Cog is x86 under no translation (native arm64 Cog v12.0.6 as set up by the tools).</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FFICallbackParametersTest&gt;&gt;testIdentityStruct</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional <code>true ifTrue: [ ^ self skip. ]</code> with the comment 'the tests are not running with Alien callbacks'. That is obsolete: FFICallback&gt;&gt;invokeAsFunctionWithArguments: runs the callback and the struct round trip works on both VMs.</td>
+</tr>
+<tr>
+<td><code>TFCallbacksTest&gt;&gt;testCallbackNotRespectingLIFOOrderFailsReturn</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional <code>true ifTrue: [ ^ self skip ]</code>. With it removed the test passes in both runner variants (SameThread runner and TFWorker) on both VMs, so the skip hides nothing that still fails.</td>
+</tr>
+<tr>
+<td><code>TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread</code></td>
+<td>cog-vm</td>
+<td>needs a VM change</td>
+<td>The same-thread variant: the foreign thread calls the libffi closure, callbackFrontend calls sameThreadCallbackEnter, which calls ptEnterInterpreterFromCallback. Cog documents that function as 'Enter the interpreter from a callback in the VM thread', so a call from another thread segfaults (log: 'Not in VM thread', Segmentation fault: 11, rc=255, the VM dies). Our VM passes the variant. The worker variant passes on both VMs with the skip in place already.</td>
+</tr>
+<tr>
+<td><code>TFUFFIFunctionCallTest&gt;&gt;testLongCalloutDoesNotBlockImage</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>The same-thread variant was skipped because TFSameThreadRunner runs the callout in the VM thread and so blocks the image; that is the defined behaviour, not an error. Without the skip the original assertion fails on both VMs ('Got #finishedCallout instead of #waitingForCallout'). The test now expects #finishedCallout first for the same-thread library and #waitingForCallout first for the worker library. A warm-up call longCallout: 0 compiles the ffiCall method before the timed part: on our JIT VM under load the compile window (about 30 ms, measured with a timestamp probe: mainResumed at 31 ms while the callout was in progress) let a higher-priority process preempt the callout process, which put the test process first and made the same-thread run fail in 4 of 24 runs (0 of 24 on ours-nojit and on Cog).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only test methods were changed, so no other code is affected. The four owner classes (FFICallbackParametersTest, TFCallbacksTest, TFUFFICallbackTest, TFUFFIFunctionCallTest) were run with every parametrization (my runner &lt;local work directory&gt;, because the stock runtest.sh builds cases without the ParametrizedTestMatrix suite). Our VM (JIT on): base 37 PASS 5 SKIP, with fix 41 PASS 1 SKIP. Stock Cog: base 37 PASS 5 SKIP, with fix 41 PASS 1 SKIP. The remaining SKIP is the same-thread variant of testCallbacksInOtherThread. Our VM without JIT was used only for the flakiness check of testLongCalloutDoesNotBlockImage (24 of 24 PASS before the warm-up). Note: the tools/runtest.sh builds a case with <code>selector:</code> only, so ParametrizedTestCase options are missing; use the par_test.st variant to see both runner parametrizations.</p>
+<p>VM change: Cog (pharo-vm, branch pharo-12), file src/ffi/sameThread/sameThread.c, function sameThreadCallbackEnter (called from callbackFrontend in src/ffi/callbacks/callbacks.c). It calls ptEnterInterpreterFromCallback(vmcc) whatever thread the callback arrives on, but smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st ptEnterInterpreterFromCallback: says it must be entered 'in the VM thread'. A callback from a foreign thread (a C library thread that calls a callback created for the same-thread runner) therefore runs the interpreter on the wrong thread and the VM dies. Proposal for the review: in sameThreadCallbackEnter, when the calling thread is not the VM thread, do what the worker runner does (put the invocation on the callback queue with queue_add_pending_callback and wait until the image has run the callback and signalled the return) instead of entering the interpreter; or fail the callback with a clear message instead of a segfault. Minimal reproducer (Pharo 14 image with the ThreadedFFI test library, run with <code>arch</code>-native Cog v12.0.6 on arm64): TFUFFICallbackTest with the skip removed from testCallbacksInOtherThread, parametrization TFTestLibraryUsingSameThreadRunner: <code>callback := self newCallbackWithSignature: #(int (int a)) block: [ :a | a + 1 ]. self callbackFromAnotherThread: callback. 1 second wait.</code> (the C function callbackFromAnotherThread in ffiTestLibrary/src/callbacks.c starts a pthread that calls the callback after sleep(3)). Output on Cog: '[ERROR] ... scheduler could not find a runnable process', 'SameThreadCalloutSuspendedProcessStack is empty', 'Not in VM thread.', 'Segmentation fault: 11', exit 255 (log: &lt;local work directory&gt;). Output on our VM: PASS (getValue = 43). This is a proposal only; no Cog source was changed and no pull request was made. A separate observation about our VM (not needed for the fix): without the warm-up call, testLongCalloutDoesNotBlockImage failed on our JIT VM in about 17 percent of runs under load, and never on ours-nojit or Cog (0 of 24 each); the timestamp probe showed a process switch about 30 ms after the callout process started, before the callout blocked. A preemption by a higher-priority process with back-append (preemptionYields true, as in Cog) is the likely route, so the JIT build only takes the longer compile window; I did not prove the exact route.</p>
+<p>Open points: TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread (same-thread runner variant) cannot pass on stock Cog without a change in pharo-vm src/ffi/sameThread/sameThread.c (Cog segfaults). No entry is filed for it, so the skip stays; filing an entry that removes the skip would crash every stock-Cog sweep batch that reaches the test. The proposal is in vmChange and needs the owner's review before anything goes to the Cog project. Also: tools/runtest.sh and one_test.st run ParametrizedTestCase tests without the parametrization and therefore skip or mislead for these classes; I used my own copy (par_test.st / prt.sh in the ag directory).</p>
+<p>Upstream note: Pharo (UnifiedFFI-Tests, ThreadedFFI-Tests, ThreadedFFI-UFFI-Tests). Title: Re-enable three skipped FFI tests. Description: FFICallbackParametersTest&gt;&gt;testIdentityStruct and TFCallbacksTest&gt;&gt;testCallbackNotRespectingLIFOOrderFailsReturn were skipped with an unconditional <code>true ifTrue: [ ^ self skip ]</code>; both pass on Pharo 14 with Cog v12.0.6 and are re-enabled. TFUFFIFunctionCallTest&gt;&gt;testLongCalloutDoesNotBlockImage skipped for the same-thread runner; the test now expects the order that belongs to each runner (the same-thread callout blocks the image, so #finishedCallout comes first) and does a 0 second warm-up callout so that the compile of the ffiCall method does not fall in the timed part. Not included: TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread for the same-thread runner, which crashes stock Cog (callback from a foreign thread enters the interpreter in sameThread.c); that needs a pharo-vm change which the owner must review first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>FFICallbackParametersTest&gt;&gt;testIdentityStruct</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>TFCallbacksTest&gt;&gt;testCallbackNotRespectingLIFOOrderFailsReturn</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>TFUFFIFunctionCallTest&gt;&gt;testLongCalloutDoesNotBlockImage</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread</code></td><td>SKIP</td><td>needs a VM change</td><td>PASS 2x</td><td>PASS 2x</td><td>SKIP (the VM stops without the Cog change)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((FFICallbackParametersTest selector: #testIdentityStruct) run) printString.
+((TFCallbacksTest selector: #testCallbackNotRespectingLIFOOrderFailsReturn) run) printString.
+((TFUFFICallbackTest selector: #testCallbacksInOtherThread) run) printString.
+((TFUFFIFunctionCallTest selector: #testLongCalloutDoesNotBlockImage) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>FFICallbackParametersTest&gt;&gt;testIdentityStruct before the fix (Pharo 14 build 791)</summary><pre class="code">testIdentityStruct
+
+	| param result |
+
+	&quot;This is ugly, but the tests are not running with Alien callbacks&quot;
+	true ifTrue: [ ^ self skip. ].
+
+	callback := FFICallback
+		signature: #(FFITestStructureSmallIntFloatStructure (FFITestStructureSmallIntFloatStructure a))
+		block: [ :a |
+			self assert: a x equals: 2.0.
+			self assert: a y equals: 3.
+			self assert: a w equals: 5.0.
+			self assert: a z equals: 7.0.
+
+			a x: 3.0.
+			a y: 4.
+			a w: 6.0.
+			a z: 8.0.
+
+			a
+		].
+
+	param := FFITestStructureSmallIntFloatStructure new
+		x: 2.0;
+		y: 3;
+		w: 5.0;
+		z: 7;
+		yourself.
+
+	result := self callCallback: callback withArgs: { param }.
+
+	&quot;They are passed and returned by copy, so they should not be the same&quot;
+	self deny: param equals: result.
+
+	self assert: result x equals: 3.0.
+	self assert: result y equals: 4.
+	self assert: result w equals: 6.0.
+	self assert: result z equals: 8.0.</pre></details><details><summary>TFCallbacksTest&gt;&gt;testCallbackNotRespectingLIFOOrderFailsReturn before the fix (Pharo 14 build 791)</summary><pre class="code">testCallbackNotRespectingLIFOOrderFailsReturn
+
+	| smain s1 c1 s2 c2 returned |
+	smain := Semaphore new.
+
+	true ifTrue: [ 	^ self skip ].
+
+	returned := false.
+
+	s1 := Semaphore new.
+	c1 := self newTestCallbackDoing: [ smain signal. s1 wait ].
+
+	s2 := Semaphore new.
+	c2 := self newTestCallbackDoing: [ smain signal. s2 wait ].
+
+	[ self callCallback: c1. returned := true ] fork.
+	[ self callCallback: c2 ] fork.
+
+	&quot;wait until both callbacks arrive&quot;
+	smain wait; wait.
+
+	&quot;make callback 1 to finish while callback 2 is suspended&quot;
+	s1 signal.
+	&quot;Wait until C1 tries to return&quot;
+	100 milliSecond wait.
+	&quot;It should not return until C2 returns&quot;
+	self deny: returned.
+	&quot;Signal s2 to make c2 return&quot;
+	s2 signal.
+	&quot;Wait until C1 tries to return&quot;
+	100 milliSecond wait.
+
+	self assert: returned</pre></details><details><summary>TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread before the fix (Pharo 14 build 791)</summary><pre class="code">testCallbacksInOtherThread
+
+	| callback semaphore|
+
+	&quot;Using same thread runner with callbacks from other threads produce a segmentation fault&quot;
+	ffiLibrary = TFTestLibraryUsingSameThreadRunner ifTrue: [ ^ self skip ].
+
+	semaphore := Semaphore new.
+
+	callback := self newCallbackWithSignature: #(int (int a)) block: [ :a | semaphore signal. a + 1 ].
+	self callbackFromAnotherThread: callback.
+	semaphore wait.
+
+	1 second wait.
+	self assert: self getValue equals: 43</pre></details><details><summary>TFUFFIFunctionCallTest&gt;&gt;testLongCalloutDoesNotBlockImage before the fix (Pharo 14 build 791)</summary><pre class="code">testLongCalloutDoesNotBlockImage
+
+	&quot;Tricky test.
+	This tests checks that during a callout the image is not completely suspended.
+	To do that, we do a 1 second long callout in a separate Pharo process.
+	When that process starts executing (signals the calloutEnter semaphore), we wait for half a second to let the callback really start executing and then do something before the callback returns.&quot;
+	| calloutEnter calloutExit orderOfFinishing |
+
+	&quot;If we are running in the same thread execution, it will block the interpreter. So the test is skipped.&quot;
+	(self ffiLibrary = TFTestLibraryUsingSameThreadRunner)
+		ifTrue: [ ^ self skip ].
+
+	calloutEnter := Semaphore new.
+	calloutExit := Semaphore new.
+	orderOfFinishing := OrderedCollection new.
+	[
+		calloutEnter signal.
+		self longCallout: 1.
+		orderOfFinishing add: #finishedCallout.
+		calloutExit signal ] fork.
+	calloutEnter wait.
+	0.3 seconds wait.
+	orderOfFinishing add: #waitingForCallout.
+	calloutExit wait.
+
+	self assert: orderOfFinishing first equals: #waitingForCallout</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-TFFI-disabled-tests.st (<a href="../files/image-fixes/20-TFFI-disabled-tests.st">download</a>)</summary><pre class="code">fix value: #FFICallbackParametersTest value: #testIdentityStruct
+	value: [ :s | s includesSubstring: &#x27;true ifTrue: [ ^ self skip. ]&#x27; ]
+	value: &#x27;testIdentityStruct
+
+	| param result |
+	callback := FFICallback
+		signature: #(FFITestStructureSmallIntFloatStructure (FFITestStructureSmallIntFloatStructure a))
+		block: [ :a |
+			self assert: a x equals: 2.0.
+			self assert: a y equals: 3.
+			self assert: a w equals: 5.0.
+			self assert: a z equals: 7.0.
+			a x: 3.0.
+			a y: 4.
+			a w: 6.0.
+			a z: 8.0.
+			a
+		].
+	param := FFITestStructureSmallIntFloatStructure new
+		x: 2.0;
+		y: 3;
+		w: 5.0;
+		z: 7;
+		yourself.
+	result := self callCallback: callback withArgs: { param }.
+	self deny: param equals: result.
+	self assert: result x equals: 3.0.
+	self assert: result y equals: 4.
+	self assert: result w equals: 6.0.
+	self assert: result z equals: 8.0.&#x27;.
+fix value: #TFCallbacksTest value: #testCallbackNotRespectingLIFOOrderFailsReturn
+	value: [ :s | s includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testCallbackNotRespectingLIFOOrderFailsReturn
+
+	| smain s1 c1 s2 c2 returned |
+	smain := Semaphore new.
+	returned := false.
+	s1 := Semaphore new.
+	c1 := self newTestCallbackDoing: [ smain signal. s1 wait ].
+	s2 := Semaphore new.
+	c2 := self newTestCallbackDoing: [ smain signal. s2 wait ].
+	&quot;The second callout starts after the first callback is entered.  With two forks in a row, a preemption
+	 of the first process before its callout let the second callback enter first (1 of 40 runs on one VM),
+	 and the test then saw the first callout return early.&quot;
+	[ self callCallback: c1. returned := true ] fork.
+	smain wait.
+	[ self callCallback: c2 ] fork.
+	smain wait.
+	s1 signal.
+	100 milliSecond wait.
+	self deny: returned.
+	s2 signal.
+	100 milliSecond wait.
+	self assert: returned&#x27;.
+fix value: #TFUFFIFunctionCallTest value: #testLongCalloutDoesNotBlockImage
+	value: [ :s | s includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testLongCalloutDoesNotBlockImage
+
+	&quot;Tricky test.
+	This test checks what a callout does to the other Pharo processes.
+	A 1 second long callout runs in a separate Pharo process.  When that process starts (signals calloutEnter), the test process waits 0.3 seconds and then notes #waitingForCallout.
+	With a worker runner the callout runs in another thread, so the image is not suspended: #waitingForCallout comes before #finishedCallout.
+	TFSameThreadRunner runs the callout in the VM thread, so the whole image is suspended for the 1 second: #finishedCallout comes first.  The test checks the order that belongs to the runner.&quot;
+	| calloutEnter calloutExit orderOfFinishing expectedFirst |
+	expectedFirst := self ffiLibrary = TFTestLibraryUsingSameThreadRunner
+		ifTrue: [ #finishedCallout ]
+		ifFalse: [ #waitingForCallout ].
+	&quot;The first call of an ffiCall: method compiles the callout.  That takes tens of milliseconds, during which a higher priority process can preempt the callout process and let the test process run first.  Call once with 0 seconds, so the compile is done before the timed part.&quot;
+	self longCallout: 0.
+	calloutEnter := Semaphore new.
+	calloutExit := Semaphore new.
+	orderOfFinishing := OrderedCollection new.
+	[
+		calloutEnter signal.
+		self longCallout: 1.
+		orderOfFinishing add: #finishedCallout.
+		calloutExit signal ] fork.
+	calloutEnter wait.
+	0.3 seconds wait.
+	orderOfFinishing add: #waitingForCallout.
+	calloutExit wait.
+
+	self assert: orderOfFinishing first equals: expectedFirst&#x27;.
+</pre></details><details open><summary>30-ffi-callback-from-other-thread.st (<a href="../files/image-fixes/30-ffi-callback-from-other-thread.st">download</a>)</summary><pre class="code">&quot;TFUFFICallbackTest&gt;&gt;testCallbacksInOtherThread skips for the same-thread FFI
+runner (2026-11-17).  The remark in the test says why: &#x27;Using same thread
+runner with callbacks from other threads produce a segmentation fault&#x27;.  Stock
+Cog v12 enters the interpreter from the thread that made the callback, while
+the VM thread runs.
+
+Our VM runs such a callback in the VM thread.  docs/upstream has the change
+for Cog (cog-same-thread-runner-callback-from-other-thread.patch).  The test
+cannot run on a stock Cog without that change: the VM stops.  So the skip
+stays for a VM that does not have the repair, and goes for a VM that has it.
+The test asks the VM: our VM is known by its version text, and a Cog build
+with the change is known by the environment variable
+PHARO_FFI_CALLBACK_FROM_OTHER_THREAD, which scripts/vmrun.sh sets for the VM
+name cogp.&quot;
+
+add value: #TFUFFICallbackTest value: #sameThreadRunnerTakesCallbackFromOtherThread value: &#x27;private&#x27;
+	value:
+&#x27;sameThreadRunnerTakesCallbackFromOtherThread
+	&quot;Stock Cog v12 enters the interpreter from the thread of the callback and stops with a segmentation fault.  A VM that runs such a callback in the VM thread says so: the iospharo VM by its version text, a Cog build with the repair by an environment variable.&quot;
+
+	^ (Smalltalk vm interpreterSourceVersion includesSubstring: &#x27;&#x27;iospharo&#x27;&#x27;)
+		or: [ (OSEnvironment current at: &#x27;&#x27;PHARO_FFI_CALLBACK_FROM_OTHER_THREAD&#x27;&#x27; ifAbsent: [ nil ]) notNil ]&#x27;.
+
+fix value: #TFUFFICallbackTest value: #testCallbacksInOtherThread
+	value: [ :source | source includesSubstring: &#x27;ffiLibrary = TFTestLibraryUsingSameThreadRunner ifTrue: [ ^ self skip ].&#x27; ]
+	value: ((TFUFFICallbackTest &gt;&gt; #testCallbacksInOtherThread) sourceCode
+		copyReplaceAll: &#x27;ffiLibrary = TFTestLibraryUsingSameThreadRunner ifTrue: [ ^ self skip ].&#x27;
+		with: &#x27;(ffiLibrary = TFTestLibraryUsingSameThreadRunner and: [ self sameThreadRunnerTakesCallbackFromOtherThread not ]) ifTrue: [ ^ self skip ].&#x27;).
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

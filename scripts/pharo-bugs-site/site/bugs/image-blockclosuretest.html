@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BlockClosureTest - Pharo test defects</title><meta name="description" content="BlockClosureTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>BlockClosureTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-BlockClosureTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-BlockClosureTest.st</code></li>
+<li>Methods: <code>BlockClosureTest&gt;&gt;testOnForkErrorTakesLessThanOneSecond</code>, <code>BlockClosureTest&gt;&gt;testOnForkSplit</code></li>
+</ul>
+<p>Both tests called skip unconditionally ('too brittle on CI'). The code under test (on:fork:) works correctly on both VMs in 0-14 ms. The fix removes the skip and keeps all assertions and the flag text unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BlockClosureTest&gt;&gt;testOnForkErrorTakesLessThanOneSecond</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional skip left in the test method; on:fork: works and signals the semaphore in about 13 ms.</td>
+</tr>
+<tr>
+<td><code>BlockClosureTest&gt;&gt;testOnForkSplit</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional skip left in the test method; the forked and the caller context chains share no context on either VM.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Whole BlockClosureTest class run on both VMs. Ours without fix: 29 PASS, 2 SKIP; with fix: 31 PASS. Cog without fix: 29 PASS, 2 SKIP; with fix: 31 PASS. No other non-test method was changed, so no other class needs a run. I did not run the 3-run repeat for the whole class, only for the two repaired tests.</p>
+<p>Upstream note: Title: BlockClosureTest: re-enable testOnForkErrorTakesLessThanOneSecond and testOnForkSplit. Project: pharo. Description: both tests call skip unconditionally because they were &quot;too brittle on CI&quot;. They pass reliably (3 of 3 runs on stock Cog v12.0.6 arm64 and on a second VM, 0-14 ms each against a 1 s timeout). The patch removes the skip call. This is a measurement on headless macOS only; CI flakiness on Windows or Linux was not tested. Needs the owner's review before any upstream submission.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>BlockClosureTest&gt;&gt;testOnForkErrorTakesLessThanOneSecond</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>BlockClosureTest&gt;&gt;testOnForkSplit</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((BlockClosureTest selector: #testOnForkErrorTakesLessThanOneSecond) run) printString.
+((BlockClosureTest selector: #testOnForkSplit) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>BlockClosureTest&gt;&gt;testOnForkErrorTakesLessThanOneSecond before the fix (Pharo 14 build 791)</summary><pre class="code">testOnForkErrorTakesLessThanOneSecond
+	&quot;Test that if code runs with error, there is fork&quot;
+
+	| sema timeout |
+	self
+		flag: &#x27;This test is too brittle, failing often on Windows CI&#x27;;
+		skip.
+
+	self flag: &#x27;The following line makes the test pass under headless linux. Everywhere else this test works&#x27;.
+	OSPlatform current isUnix ifTrue: [ (Delay forMilliseconds: 1) wait ].
+
+	sema := Semaphore new.
+	[ 1 / 0 ] on: Exception fork: [ sema signal ].
+
+	timeout := sema waitTimeoutSeconds: 1.
+	self assert: timeout identicalTo: false</pre></details><details><summary>BlockClosureTest&gt;&gt;testOnForkSplit before the fix (Pharo 14 build 791)</summary><pre class="code">testOnForkSplit
+	&quot;Test that when forking, the stack are split correctly (there is no any contexts referenced by both processes)&quot;
+
+	| sema timeout forkedContexts myContexts c |
+
+	self flag: &#x27;This test is too brittle, failing often on CI&#x27;; skip.
+
+	sema := Semaphore new.
+
+	[ 1/0 ] on: Exception fork: [  | ctx |
+		forkedContexts := IdentitySet new.
+		ctx := thisContext.
+		[ ctx isNotNil ] whileTrue: [ forkedContexts add: ctx. ctx := ctx sender ].
+		sema signal ].
+
+	timeout := (sema waitTimeoutSeconds: 1).
+	self assert: timeout == false description: &#x27;fork lasted more than one second&#x27;.
+
+	myContexts := IdentitySet new.
+	c := thisContext.
+	[ c isNotNil ] whileTrue: [ myContexts add: c. c := c sender ].
+
+	self assert: (myContexts noneSatisfy: [:b | forkedContexts includes: b ]) description: &#x27;myContexts are not within forkedContexts&#x27;.
+	self assert: (forkedContexts noneSatisfy: [:b | myContexts includes: b ]) description: &#x27;forkedContexts are not within myContexts&#x27;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-BlockClosureTest.st (<a href="../files/image-fixes/20-BlockClosureTest.st">download</a>)</summary><pre class="code">&quot;BlockClosureTest: the two on:fork: tests skip themselves (&#x27;too brittle on CI&#x27;).
+ Remove the skip; keep every assertion.&quot;
+fix value: #BlockClosureTest value: #testOnForkErrorTakesLessThanOneSecond
+	value: [ :source | source includesSubstring: &#x27;skip&#x27; ]
+	value:
+&#x27;testOnForkErrorTakesLessThanOneSecond
+	&quot;Test that if code runs with error, there is fork&quot;
+
+	| sema timeout |
+	self flag: &#x27;&#x27;The following line makes the test pass under headless linux. Everywhere else this test works&#x27;&#x27;.
+	OSPlatform current isUnix ifTrue: [ (Delay forMilliseconds: 1) wait ].
+
+	sema := Semaphore new.
+	[ 1 / 0 ] on: Exception fork: [ sema signal ].
+
+	timeout := sema waitTimeoutSeconds: 1.
+	self assert: timeout identicalTo: false&#x27;.
+fix value: #BlockClosureTest value: #testOnForkSplit
+	value: [ :source | source includesSubstring: &#x27;skip&#x27; ]
+	value:
+&#x27;testOnForkSplit
+	&quot;Test that when forking, the stack are split correctly (there is no any contexts referenced by both processes)&quot;
+
+	| sema timeout forkedContexts myContexts c |
+	sema := Semaphore new.
+
+	[ 1/0 ] on: Exception fork: [  | ctx |
+		forkedContexts := IdentitySet new.
+		ctx := thisContext.
+		[ ctx isNotNil ] whileTrue: [ forkedContexts add: ctx. ctx := ctx sender ].
+		sema signal ].
+
+	timeout := (sema waitTimeoutSeconds: 1).
+	self assert: timeout == false description: &#x27;&#x27;fork lasted more than one second&#x27;&#x27;.
+
+	myContexts := IdentitySet new.
+	c := thisContext.
+	[ c isNotNil ] whileTrue: [ myContexts add: c. c := c sender ].
+
+	self assert: (myContexts noneSatisfy: [:b | forkedContexts includes: b ]) description: &#x27;&#x27;myContexts are not within forkedContexts&#x27;&#x27;.
+	self assert: (forkedContexts noneSatisfy: [:b | myContexts includes: b ]) description: &#x27;&#x27;forkedContexts are not within myContexts&#x27;&#x27;&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

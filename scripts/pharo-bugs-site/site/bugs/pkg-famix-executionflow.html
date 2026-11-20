@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Famix-ExecutionFlow (moosetechnology/Famix-ExecutionFlow, row 130) - Pharo test defects</title><meta name="description" content="Package: Famix-ExecutionFlow (moosetechnology/Famix-ExecutionFlow, row 130): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Famix-ExecutionFlow (moosetechnology/Famix-ExecutionFlow, row 130)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>moosetechnology/Famix-ExecutionFlow</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 8 tests, 8 errors on the two VMs (<code>UndeclaredVariableRead</code>
+of <code>FamixEFDirectMethodCall</code>).</li>
+<li>Cause: the baseline of the package does not name Famix.  The load gives
+only warnings (&quot;depends on the following classes&quot;: <code>MooseModel</code>,
+<code>MooseEntity</code>, <code>FamixTMethod</code>), does not define the classes of three
+packages, and ends with success.  The CI of the package uses a Moose
+image, which has Famix.</li>
+<li>Repair: the manifest row loads Famix (<code>Core</code>, <code>Basic</code>,
+<code>EntitiesSmalltalk</code>) first.  For the owner of the package: the baseline
+must name Famix.</li>
+<li>Result: 8 of 8 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 130&quot;
+Metacello new baseline: &#x27;Famix&#x27;; repository: &#x27;github://moosetechnology/Famix:development/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;Basic&#x27; &#x27;EntitiesSmalltalk&#x27;). Metacello new baseline: &#x27;FamixExecutionFlow&#x27;; repository: &#x27;github://moosetechnology/Famix-ExecutionFlow:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>130</td><td><code>moosetechnology-famix-executionflow</code></td><td>ok</td><td>tests=8 P=8 F=0 E=0 S=0 T=0 X=0</td><td>tests=8 P=8 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><p>No fixes file; the record above says what changed.</p>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

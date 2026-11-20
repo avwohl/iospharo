@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SlotErrorsTest - Pharo test defects</title><meta name="description" content="SlotErrorsTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>SlotErrorsTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-SlotErrorsTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-SlotErrorsTest.st</code></li>
+<li>Methods: <code>SlotErrorsTest&gt;&gt;testCannotBeRecompiled</code></li>
+</ul>
+<p>testCannotBeRecompiled was marked expectedFailure and asserted that the class builder raises an Error (&quot;X cannot be recompiled&quot;) when the layout of a class that has a subclass changes to VariableLayout. That was the behaviour of the old ClassBuilder. The current builder (Smalltalk classInstaller) rebuilds the subclass with the new layout and raises nothing. The code under test works as designed, so the test expectation is obsolete on both VMs. The fix rewrites the test to check what the new builder does: the recompile succeeds, the superclass gets VariableLayout, the subclass is still a subclass of the rebuilt superclass, and the subclass has VariableLayout and isVariable. The expectedFailure pragma is removed. The assertions check the real behaviour and are not trivial.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SlotErrorsTest&gt;&gt;testCannotBeRecompiled</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Obsolete expectation: it expected the old class builder's 'cannot be recompiled' Error. The new builder rebuilds subclasses with the changed layout, so no Error is raised (should:raise: failed with 'Old class builder raises: X cannot be recompiled' on both VMs). Same behaviour on both VMs, so no VM defect.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Ran the whole SlotErrorsTest class on both VMs with the fix image and the base image. Ours: base 11 PASS 1 FAIL, with fix 12 PASS. Cog: base 11 PASS 1 FAIL, with fix 12 PASS. Only a test method changed, so no other class covers it. SlotClassBuilderTest is abstract and ran no tests (0 lines) in all four runs.</p>
+<p>Upstream note: Title: SlotErrorsTest&gt;&gt;testCannotBeRecompiled: replace the obsolete expected failure with a check of the current behaviour. Description: The test expected the old class builder's &quot;X cannot be recompiled&quot; error, and was marked expectedFailure. The current class installer rebuilds subclasses when the superclass layout changes (here to VariableLayout) and raises nothing. The test now asserts that the recompile succeeds, that the superclass and the subclass have VariableLayout, and that the subclass is still attached to the rebuilt superclass. The pragma is removed. Project: pharo (Slot-Tests). This is a proposal only; the owner should review it before any upstream submission.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>SlotErrorsTest&gt;&gt;testCannotBeRecompiled</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((SlotErrorsTest selector: #testCannotBeRecompiled) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>SlotErrorsTest&gt;&gt;testCannotBeRecompiled before the fix (Pharo 14 build 791)</summary><pre class="code">testCannotBeRecompiled
+	| superclass |
+	&lt;expectedFailure&gt;
+	superclass := self make: [ :builder |
+		builder
+			superclass: Object;
+			name: self aClassName ].
+
+	self make: [ :builder |
+		builder
+			superclass: superclass;
+			name: self anotherClassName ].
+
+	self
+		should: [
+			self make: [ :builder |
+				builder
+					layoutClass: VariableLayout;
+					name: self aClassName ] ]
+		raise: Error
+		description: &#x27;Old class builder raises: X cannot be recompiled&#x27;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-SlotErrorsTest.st (<a href="../files/image-fixes/20-SlotErrorsTest.st">download</a>)</summary><pre class="code">fix value: #SlotErrorsTest value: #testCannotBeRecompiled value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testCannotBeRecompiled
+	&quot;The new class builder (ClassBuilder replacement, Pharo 9+) can change the layout of a class that has subclasses: the subclasses are rebuilt with the new layout.  The old builder raised &#x27;&#x27;X cannot be recompiled&#x27;&#x27;.  The test records that the new builder rebuilds the hierarchy and keeps the subclass in step.&quot;
+
+	| superclass subclass |
+	superclass := self make: [ :builder |
+		builder
+			superclass: Object;
+			name: self aClassName ].
+
+	self make: [ :builder |
+		builder
+			superclass: superclass;
+			name: self anotherClassName ].
+
+	superclass := self make: [ :builder |
+		builder
+			layoutClass: VariableLayout;
+			name: self aClassName ].
+
+	subclass := superclass subclasses detect: [ :each | each name = self anotherClassName ].
+	self assert: superclass classLayout class equals: VariableLayout.
+	self assert: subclass superclass equals: superclass.
+	self assert: subclass classLayout class equals: VariableLayout.
+	self assert: subclass isVariable&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

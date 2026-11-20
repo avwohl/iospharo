@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Turbo (pavel-krivanek/turbo, row 91) - Pharo test defects</title><meta name="description" content="Package: Turbo (pavel-krivanek/turbo, row 91): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Turbo (pavel-krivanek/turbo, row 91)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pavel-krivanek-turbo.st</dd><dt>Upstream repository</dt><dd>pavel-krivanek/turbo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 270 tests, 265 pass, 5 expected failures on the two VMs.</li>
+<li>Causes:
+<ul>
+<li>The 5 expected pictures of <code>TbFlowLayoutTest</code> (two children in a
+vertical flow, in the centre) are one cell off.  The free space is odd,
+so the layout gives a position with a half cell.  <code>TbCanvas&gt;&gt;at:write:</code>
+rounds a half up.  The pictures were drawn for a half that is cut off.
+The layout code is right, and the other tests of the class agree with
+it.</li>
+<li><code>TbBounds&gt;&gt;atRandom</code> could answer a point on the right or bottom edge,
+which <code>containsPoint:</code> does not count as inside.  <code>TbBoundsTest&gt;&gt;testAtRandom</code>
+failed in about 1 run of 10 (372 of 4000 points outside on stock Cog
+before the repair, 0 after).</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/pavel-krivanek-turbo.st</code>: the 5 pictures, with the
+line ends of the package (CR), no mark of an expected failure, and
+<code>atRandom</code> with an offset from 0.</li>
+<li>Result: 270 of 270 pass on the two VMs, in a run from a new load.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 91&quot;
+Metacello new baseline: &#x27;Turbo&#x27;; repository: &#x27;github://pavel-krivanek/Turbo:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>91</td><td><code>pavel-krivanek-turbo</code></td><td>ok</td><td>tests=270 P=270 F=0 E=0 S=0 T=0 X=0</td><td>tests=270 P=270 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pavel-krivanek-turbo.st (<a href="../files/packages/fixes/pavel-krivanek-turbo.st">download</a>)</summary><pre class="code">&quot;pavel-krivanek/Turbo: five tests of TbFlowLayoutTest were marked
+&lt;expectedFailure&gt; TODO: testContentTwoChildrenVerticalBottomCenter, ...Center,
+...CenterLeft, ...CenterRight, ...TopCenter.  Each one prints the elements on a
+50 by 13 character grid and compares with a picture.  The layout is right: the
+vertical flow layout aligns the column of 23 by 4 and 20 by 6 elements in the
+free space with (free / 2.0), that is 13.5 cells across (50 - 23) and 1.5 cells
+down (13 - 10).  TbCanvas&gt;&gt;at:write: rounds a cell position with #rounded, and
+Pharo rounds a half up, so the column starts in cell 14 across and row 2 down.
+The pictures in the test had been drawn for a half that is cut off (cell 13,
+row 1) and so every one of them was one cell off.  Rounding a half up is the
+documented behaviour of Float&gt;&gt;rounded and is the same on every VM; no other
+test depends on the choice.  The repair draws the five pictures for a half that
+rounds up, and removes the expectedFailure marks.  The pictures of the other
+alignments have no half cell and stay as they are.
+The class that loads from Tonel files holds the lines of each picture with the
+carriage return (Cr) as line end, and the canvas text has the same line end.
+A picture that is compiled from this file has the line feed, so each new
+picture changes the line feed to the carriage return when the method runs.
+TbBoundsTest&gt;&gt;testAtRandom failed in about one run in ten: TbBounds&gt;&gt;atRandom
+adds (width atRandom) and (height atRandom), each from 1 to the size, to the top
+left corner, so a point can lie on the right or bottom edge.  The edge is outside
+the bounds, because TbBounds&gt;&gt;containsPoint: takes the corner as exclusive.  The
+repair takes a random offset from 0 to size - 1.&quot;
+
+
+fix value: #TbFlowLayoutTest value: #expectedContentTestContentTwoChildrenVerticalBottomCenter
+	value: [ :source | (source includesSubstring: &#x27;String cr&#x27;) not ]
+	value:
+&#x27;expectedContentTestContentTwoChildrenVerticalBottomCenter
+
+	&quot;The element column uses #alignBottomCenter. The free cells are odd (27 wide, 3 high), so the layout gives a half cell and TbCanvas&gt;&gt;at:write: rounds a cell position half up: the column starts one cell further right and one row further down than a rounding down would give.&quot;
+	^ (&#x27;&#x27;
+..................................................
+..................................................
+..................................................
+..............*---------------------*.............
+..............|                     |.............
+..............|                     |.............
+..............*---------------------*.............
+..............*------------------*................
+..............|                  |................
+..............| Hello Turbo      |................
+..............|                  |................
+..............|                  |................
+..............*------------------*................
+&#x27;&#x27; copyReplaceAll: String lf with: String cr) allButFirst&#x27;.
+
+fix value: #TbFlowLayoutTest value: #testContentTwoChildrenVerticalBottomCenter
+	value: [ :source | source includesSubstring: &#x27;expectedFailure&#x27; ]
+	value:
+&#x27;testContentTwoChildrenVerticalBottomCenter
+
+	space root layout: TbFlowLayout vertical.
+	space root layout alignBottomCenter.
+	space root addChild: e1.
+	space root addChild: e2.
+	e2 addChild: e3.
+
+	self firePulse.
+	self assert: self content equals: self expectedContentTestContentTwoChildrenVerticalBottomCenter.
+&#x27;.
+
+fix value: #TbFlowLayoutTest value: #expectedContentTestContentTwoChildrenVerticalCenter
+	value: [ :source | (source includesSubstring: &#x27;String cr&#x27;) not ]
+	value:
+&#x27;expectedContentTestContentTwoChildrenVerticalCenter
+
+	&quot;The element column uses #alignCenter. The free cells are odd (27 wide, 3 high), so the layout gives a half cell and TbCanvas&gt;&gt;at:write: rounds a cell position half up: the column starts one cell further right and one row further down than a rounding down would give.&quot;
+	^ (&#x27;&#x27;
+..................................................
+..................................................
+..............*---------------------*.............
+..............|                     |.............
+..............|                     |.............
+..............*---------------------*.............
+..............*------------------*................
+..............|                  |................
+..............| Hello Turbo      |................
+..............|                  |................
+..............|                  |................
+..............*------------------*................
+..................................................
+&#x27;&#x27; copyReplaceAll: String lf with: String cr) allButFirst&#x27;.
+
+fix value: #TbFlowLayoutTest value: #testContentTwoChildrenVerticalCenter
+	value: [ :source | source includesSubstring: &#x27;expectedFailure&#x27; ]
+	value:
+&#x27;testContentTwoChildrenVerticalCenter
+
+	space root layout: TbFlowLayout vertical.
+	space root layout alignCenter.
+	space root addChild: e1.
+	space root addChild: e2.
+	e2 addChild: e3.
+
+	self firePulse.
+	self assert: self content equals: self expectedContentTestContentTwoChildrenVerticalCenter.
+&#x27;.
+
+fix value: #TbFlowLayoutTest value: #expectedContentTestContentTwoChildrenVerticalCenterLeft
+	value: [ :source | (source includesSubstring: &#x27;String cr&#x27;) not ]
+	value:
+&#x27;expectedContentTestContentTwoChildrenVerticalCenterLeft
+
+	&quot;The element column uses #alignCenterLeft. The free cells are odd (27 wide, 3 high), so the layout gives a half cell and TbCanvas&gt;&gt;at:write: rounds a cell position half up: the column starts one cell further right and one row further down than a rounding down would give.&quot;
+	^ (&#x27;&#x27;
+..................................................
+..................................................
+*---------------------*...........................
+|                     |...........................
+|                     |...........................
+*---------------------*...........................
+*------------------*..............................
+|                  |..............................
+| Hello Turbo      |..............................
+|                  |..............................
+|                  |..............................
+*------------------*..............................
+..................................................
+&#x27;&#x27; copyReplaceAll: String lf with: String cr) allButFirst&#x27;.
+
+fix value: #TbFlowLayoutTest value: #testContentTwoChildrenVerticalCenterLeft
+	value: [ :source | source includesSubstring: &#x27;expectedFailure&#x27; ]
+	value:
+&#x27;testContentTwoChildrenVerticalCenterLeft
+
+	space root layout: TbFlowLayout vertical.
+	space root layout alignCenterLeft.
+	space root addChild: e1.
+	space root addChild: e2.
+	e2 addChild: e3.
+
+	self firePulse.
+	self assert: self content equals: self expectedContentTestContentTwoChildrenVerticalCenterLeft.
+&#x27;.
+
+fix value: #TbFlowLayoutTest value: #expectedContentTestContentTwoChildrenVerticalCenterRight
+	value: [ :source | (source includesSubstring: &#x27;String cr&#x27;) not ]
+	value:
+&#x27;expectedContentTestContentTwoChildrenVerticalCenterRight
+
+	&quot;The element column uses #alignCenterRight. The free cells are odd (27 wide, 3 high), so the layout gives a half cell and TbCanvas&gt;&gt;at:write: rounds a cell position half up: the column starts one cell further right and one row further down than a rounding down would give.&quot;
+	^ (&#x27;&#x27;
+..................................................
+..................................................
+...........................*---------------------*
+...........................|                     |
+...........................|                     |
+...........................*---------------------*
+...........................*------------------*...
+...........................|                  |...
+...........................| Hello Turbo      |...
+...........................|                  |...
+...........................|                  |...
+...........................*------------------*...
+..................................................
+&#x27;&#x27; copyReplaceAll: String lf with: String cr) allButFirst&#x27;.
+
+fix value: #TbFlowLayoutTest value: #testContentTwoChildrenVerticalCenterRight
+	value: [ :source | source includesSubstring: &#x27;expectedFailure&#x27; ]
+	value:
+&#x27;testContentTwoChildrenVerticalCenterRight
+
+	space root layout: TbFlowLayout vertical.
+	space root layout alignCenterRight.
+	space root addChild: e1.
+	space root addChild: e2.
+	e2 addChild: e3.
+
+	self firePulse.
+	self assert: self content equals: self expectedContentTestContentTwoChildrenVerticalCenterRight.
+&#x27;.
+
+fix value: #TbFlowLayoutTest value: #expectedContentTestContentTwoChildrenVerticalTopCenter
+	value: [ :source | (source includesSubstring: &#x27;String cr&#x27;) not ]
+	value:
+&#x27;expectedContentTestContentTwoChildrenVerticalTopCenter
+
+	&quot;The element column uses #alignTopCenter. The free cells are odd (27 wide, 3 high), so the layout gives a half cell and TbCanvas&gt;&gt;at:write: rounds a cell position half up: the column starts one cell further right and one row further down than a rounding down would give.&quot;
+	^ (&#x27;&#x27;
+..............*---------------------*.............
+..............|                     |.............
+..............|                     |.............
+..............*---------------------*.............
+..............*------------------*................
+..............|                  |................
+..............| Hello Turbo      |................
+..............|                  |................
+..............|                  |................
+..............*------------------*................
+..................................................
+..................................................
+..................................................
+&#x27;&#x27; copyReplaceAll: String lf with: String cr) allButFirst&#x27;.
+
+fix value: #TbFlowLayoutTest value: #testContentTwoChildrenVerticalTopCenter
+	value: [ :source | source includesSubstring: &#x27;expectedFailure&#x27; ]
+	value:
+&#x27;testContentTwoChildrenVerticalTopCenter
+
+	space root layout: TbFlowLayout vertical.
+	space root layout alignTopCenter.
+	space root addChild: e1.
+	space root addChild: e2.
+	e2 addChild: e3.
+
+	self firePulse.
+	self assert: self content equals: self expectedContentTestContentTwoChildrenVerticalTopCenter.
+&#x27;.
+
+fix value: #TbBounds value: #atRandom
+	value: [ :source | (source includesSubstring: &#x27;atRandom - 1&#x27;) not ]
+	value:
+&#x27;atRandom
+	&quot;Return a random integer point within this bounds. The corner is not in the bounds, so each offset goes from 0 to size - 1.&quot;
+	&lt;return: #Point&gt;
+
+	^ (self topLeft + ((self width atRandom - 1) @ (self height atRandom - 1))) asIntegerPoint
+&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

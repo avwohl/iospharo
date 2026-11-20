@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StObjectTranscriptPresenterTest - Pharo test defects</title><meta name="description" content="StObjectTranscriptPresenterTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>StObjectTranscriptPresenterTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-StObjectTranscriptPresenterTest.st</dd><dt>Upstream repository</dt><dd>pharo-spec/NewTools</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-StObjectTranscriptPresenterTest.st</code></li>
+<li>Methods: <code>StObjectTranscriptPresenterTest&gt;&gt;testTrueShowInspectorShowsInspector</code></li>
+</ul>
+<p>The test called self skip because a remembered window extent could break it. SpPresenter class&gt;&gt;preferredExtent:/customExtent stores a resized window's extent per class, and a sibling test in the class run left 240@77 behind, so the unskipped test got 240@77 instead of 550@850 on both VMs. Run alone, the unskipped test already passed. The fix removes the skip, resets the remembered extent at the start (the author's own commented-out resetRememberedResizeExtent line), and restores the previous remembered extent and showInspector in the ensure block. The assertion is unchanged (initialExtent equals 550@850) and the window close is nil-safe.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StObjectTranscriptPresenterTest&gt;&gt;testTrueShowInspectorShowsInspector</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>self skip left in; the class-level remembered resize extent (customExtent) leaks between tests in the same run, so the test must reset it and restore it.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only a test method changed, no non-test method. Ran the whole StObjectTranscriptPresenterTest class on both VMs. Before the fix: 3 pass and 1 skip on ours and on Cog. After the fix, 3 runs on each VM: 4/4 pass every time. The other 3 tests are unchanged and still pass. I did not run other test classes.</p>
+<p>Upstream note: Pharo, StObjectTranscriptPresenterTest&gt;&gt;testTrueShowInspectorShowsInspector: remove the self skip. The test now resets the remembered resize extent (StObjectTranscriptPresenter resetRememberedResizeExtent) before opening the window and restores the previous value and showInspector afterwards, so it passes whether or not an earlier test or the user resized the window. The assertion (initialExtent equals 550@850) is unchanged.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>StObjectTranscriptPresenterTest&gt;&gt;testTrueShowInspectorShowsInspector</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((StObjectTranscriptPresenterTest selector: #testTrueShowInspectorShowsInspector) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>StObjectTranscriptPresenterTest&gt;&gt;testTrueShowInspectorShowsInspector before the fix (Pharo 14 build 791)</summary><pre class="code">testTrueShowInspectorShowsInspector
+	&quot;We wanted to show that the size of the window can dynamically be changed when the extend of the class presenter changes.
+	However, in the current version of spec this is not possible. 
+	A window can be resized using the resize: message but not the extent: on its presenter. 
+	So a defaultPreferredExtent cannot dynamically change once the window is open.&quot;
+	| st win current |
+
+	&quot;With the new changes that makes it so the window remembers its last state, this test will fail if the user has ever resized it.&quot;
+	self skip.
+	
+	[
+	current := StObjectTranscriptPresenter showInspector.
+	&quot;StObjectTranscriptPresenter resetRememberedResizeExtent.&quot;
+	StObjectTranscriptPresenter showInspector: true.
+	st := StObjectTranscriptPresenter new.
+	st logger: StObjectTranscriptLogger instance.
+	win := st asWindow.
+	win resizable: false.
+	win open.
+	
+	self assert: win initialExtent equals: 550 @ 850 ] ensure: [
+		win close.
+		StObjectTranscriptPresenter showInspector: current ]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-StObjectTranscriptPresenterTest.st (<a href="../files/image-fixes/20-StObjectTranscriptPresenterTest.st">download</a>)</summary><pre class="code">fix value: #StObjectTranscriptPresenterTest value: #testTrueShowInspectorShowsInspector value: [:s | s includesSubstring: &#x27;self skip&#x27;] value: &#x27;testTrueShowInspectorShowsInspector
+	&quot;The window extent is remembered per class when a window is resized (SpPresenter class&gt;&gt;preferredExtent:). Other tests open windows and can leave a remembered extent behind, so this test starts from the default extent and puts the remembered extent back afterwards.&quot;
+	| st win current remembered |
+	current := StObjectTranscriptPresenter showInspector.
+	remembered := StObjectTranscriptPresenter instVarNamed: #customExtent.
+	[
+	StObjectTranscriptPresenter resetRememberedResizeExtent.
+	StObjectTranscriptPresenter showInspector: true.
+	st := StObjectTranscriptPresenter new.
+	st logger: StObjectTranscriptLogger instance.
+	win := st asWindow.
+	win resizable: false.
+	win open.
+	self assert: win initialExtent equals: 550 @ 850 ] ensure: [
+		win ifNotNil: [ win close ].
+		StObjectTranscriptPresenter showInspector: current.
+		StObjectTranscriptPresenter instVarNamed: #customExtent put: remembered ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

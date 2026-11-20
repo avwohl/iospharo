@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: Cogit: a followed literal goes back into the method with no store check - Pharo test defects</title><meta name="description" content="Cog: Cogit: a followed literal goes back into the method with no store check: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: Cogit: a followed literal goes back into the method with no store check</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>cog-indexforselector-store-check.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>
+<p>Defect: stock Cog (v12.0.6, macOS arm64) stops with a segmentation fault
+in a full GC (<code>markAndTrace</code>, <code>fixFollowedField:ofObject:withInitialValue:</code>)
+in some runs of the tests of the package PharoMisc: 2 of 5 runs with the
+stock VM, 5 of 9 runs with a build of the same source and the stock
+plugins.</p>
+</li>
+<li>
+<p>Cause: <code>Cogit&gt;&gt;indexForSelector:in:at:</code> looks at each literal of a method.
+It follows a literal that is a forwarder and writes the followed object
+back into the method with <code>objectMemory longAt:put:</code>.  That store has no
+store check.  When the method is old and the followed object is young,
+the method is not in the remembered set.  The scavenges that come after do
+not update the literal, and the object moves or dies.  The literal then
+has an address that holds another object or zeros.  The next full GC reads
+that address.</p>
+</li>
+<li>
+<p>The way to the state:</p>
+<ul>
+<li>A test does <code>become:</code> on a literal Array of its method, with a new
+object (<code>LoArrayAutomaticEventGenerationTest&gt;&gt;testReset</code> of PharoMisc:
+<code>subject collection: #(a b c)</code>).  The old Array is then a forwarder to a
+young object.</li>
+<li>A compaction of the machine code zone frees the target of a linked send
+of that method before the next scavenge.  The compaction unlinks the
+send and calls <code>indexForSelector:in:at:</code>
+(<code>relocateIfCallOrMethodReference:mcpc:delta:</code>).</li>
+<li>A later test calls <code>Smalltalk garbageCollect</code>.</li>
+</ul>
+</li>
+<li>
+<p>Evidence: a diagnostic print of the method at each GC shows that literal
+0 changes from the old Array to the address of a young object.  The
+method has no remembered bit, and the value stays for about 40 scavenges.
+A watch on the literal slot by page protection named the writer:
+<code>indexForSelector:in:at:</code>, called from <code>compactCogCompiledCode</code>.  The
+diagnostics were local and are not in the change.</p>
+</li>
+<li>
+<p>Change (one statement): the method writes the followed literal with
+<code>storePointer:ofObject:withValue:</code>, which remembers an old method that
+gets a young value.  No other Slang source of the Cogit has this pattern.</p>
+</li>
+<li>
+<p>The change is in Slang, so the build runs the code generation again.</p>
+</li>
+<li>
+<p>Test (2026-11-17, macOS 27, arm64): the tests of PharoMisc with the
+package repairs of our run.</p>
+<table>
+<thead>
+<tr>
+<th>VM</th>
+<th>Runs</th>
+<th>Runs with a segmentation fault</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>build of the stock source, stock plugins</td>
+<td>9</td>
+<td>5</td>
+</tr>
+<tr>
+<td>the same build with the change</td>
+<td>10</td>
+<td>0 (361 tests, 360 pass, 1 failure, as on our VM)</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>No small script shows the defect.  Three scripts made the forwarder and
+the compaction, and in each a store with the check repaired the literal
+first.  The reproduction is the package row
+(<code>PKG_FIXES_FILE=&lt;work directory&gt;</code> with
+<code>scripts/vmrun.sh pkgs --reuse</code>, row 6).</p>
+</li>
+<li>
+<p>Not tested: Linux, Windows, x86_64.  A full sweep of the Pharo 14 tests on
+the Cog with the change is in work.</p>
+</li>
+</ul>
+<p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/indexforselector-store-check</code>.  State: committed on the branch, tested with the package row that showed the crash.  Not sent upstream.</p><details open><summary>cog-indexforselector-store-check.patch (<a href="../files/cog/cog-indexforselector-store-check.patch">download</a>)</summary><pre class="code">From 2a914dff12c466f40143845f7865efc8b988db96 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 17:07:40 -0500
+Subject: [PATCH] Cogit&gt;&gt;indexForSelector:in:at: stores a followed literal
+ without the store check
+
+Defect: when a Cog compaction of the machine code zone frees the target of a
+linked send, relocateIfCallOrMethodReference:mcpc:delta: unlinks the send and
+calls indexForSelector:in:at:, which scans the literal frame of the sending
+method.  A literal that is a forwarder (left by become:) is followed, and the
+followed object is written back into the method with objectMemory longAt:put:.
+That store skips the store check.  The sending method is usually old.  When
+the become: made an old literal into a young object (the old object becomes a
+forwarder to a young copy), the old method now refers to a young object, is not
+in the remembered set and has no remembered bit.
+
+How it shows (stock Cog v12.0.6, macOS arm64, found in the PharoMisc package
+tests): the next scavenge neither updates nor traces the young literal.  The
+young object moves or dies, and the literal of the method keeps the old address,
+which later holds another object or zeros.  The next full GC finds the method
+slot (markAndTrace), takes the stale value for a forwarder, and stops with a
+segmentation fault in fixFollowedField:ofObject:withInitialValue: or in
+markAndTrace.  The test LoArrayAutomaticEventGenerationTest&gt;&gt;testReset does
+subject collection: #(a b c): the literal Array of the (old) test method is
+become:d into a young LoSubjectArray, and later TkThreadTest&gt;&gt;testFinalization
+calls Smalltalk garbageCollect.  A watch on the literal slot (page protection)
+named indexForSelector:in:at: as the writer, called from compactCogCompiledCode.
+
+Change: write the followed literal with storePointer:ofObject:withValue:, which
+remembers the method when it is old and the value is young.
+
+Co-Authored-By: Claude Fable 5.2 &lt;noreply@anthropic.com&gt;
+---
+ smalltalksrc/VMMaker/Cogit.class.st | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/Cogit.class.st b/smalltalksrc/VMMaker/Cogit.class.st
+index f6e70810e..5722ccba0 100644
+--- a/smalltalksrc/VMMaker/Cogit.class.st
++++ b/smalltalksrc/VMMaker/Cogit.class.st
+@@ -8092,8 +8092,11 @@ Cogit &gt;&gt; indexForSelector: selector in: cogMethod at: mcpc [
+ 				                 + objectMemory baseHeaderSize + methodOop.
+ 			(objectMemory isOopForwarded: methodLiteral) ifTrue: [ 
+ 				methodLiteral := objectMemory followForwarded: methodLiteral.
+-				objectMemory longAt: (i * objectMemory bytesPerOop
+-				                 + objectMemory baseHeaderSize + methodOop) put: methodLiteral].
++				&quot;The method is usually old and the followed literal can be young (a become
++				 of an old object into a young one).  Only storePointer:ofObject:withValue:
++				 adds the method to the remembered set; a plain longAt:put: leaves the method
++				 pointing at a young object that the next scavenge moves.&quot;
++				objectMemory storePointer: i ofObject: methodOop withValue: methodLiteral].
+ 
+ 			methodLiteral = selector ifTrue: [ 
+ 				self assert:
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

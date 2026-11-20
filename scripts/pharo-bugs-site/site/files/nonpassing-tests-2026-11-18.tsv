@@ -1,0 +1,530 @@
+part	class	selector	group	defect_in	state	ours_sweep14_new14	cogp_sweep14_new10	ours_interactive_pass	fix_entry	before_2026_11_17
+base-A1	BlockClosureTest	testOnForkErrorTakesLessThanOneSecond	BlockClosureTest	test	repaired	PASS	PASS	not run	20-BlockClosureTest.st	SKIP
+base-A1	BlockClosureTest	testOnForkSplit	BlockClosureTest	test	repaired	PASS	PASS	not run	20-BlockClosureTest.st	SKIP
+base-A1	CavWindowStrategyTest	testExactReplaceStrategyDoesNotChangeExtentAndPosition	CavWindowStrategyTest	test	repaired	PASS	PASS	not run	20-CavWindowStrategyTest.st	SKIP
+base-A1	ClapHelloTest	testHelloBothShoutingAndWhispering	ClapHelloTest	image-code	repaired	PASS	PASS	not run	20-ClapHelloTest.st	SKIP
+base-A1	ClyAsyncQueryResultTest	testItemsChangedNotificationShouldResetItems	Cly-async-results	test	repaired	PASS	PASS	not run	20-Cly-async-results.st	XFAIL
+base-A1	ClyAsyncQueryTest	testHasCompositeScopeFromSubqueries	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyAsyncQueryTest	testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyAsyncQueryTest	testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyAsyncQueryTest	testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyAsyncQueryTest	testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyAsyncQueryTest	testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyAsyncQueryTest	testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyConstantMethodQueryTest	testIsEmptyFromEmptyMethodScope	Cly-misc-queries	test	repaired	PASS	PASS	not run	20-Cly-misc-queries.st	XFAIL
+base-A1	ClyExtendingPackagesQueryTest	testFromClassWhichTraitIsExtendedButNotItself	Cly-misc-queries	test	repaired	PASS	PASS	not run	20-Cly-misc-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testHasCompositeScopeFromSubqueries	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyFilterQueryTest	testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	test	repaired	PASS	PASS	not run	20-Cly-wrapper-queries.st	XFAIL
+base-A1	ClyRestUntaggedClassesQueryTest	testIsEmptyFromEmptyClassScope	Cly-misc-queries	test	repaired	PASS	PASS	not run	20-Cly-misc-queries.st	XFAIL
+base-A1	ClySemiAsyncQueryResultTest	testItemsChangedNotificationShouldResetItems	Cly-async-results	test	repaired	PASS	PASS	not run	20-Cly-async-results.st	XFAIL
+base-A1	ClyUnimplementedMethodsQueryTest	testIsEmptyFromEmptyMethodScope	Cly-misc-queries	test	repaired	PASS	PASS	not run	20-Cly-misc-queries.st	XFAIL
+base-A1	ClyUnknownQueryTest	testIsBoundToEnvironmentWhenScopeIs	Cly-misc-queries	test	repaired	PASS	PASS	not run	20-Cly-misc-queries.st	XFAIL
+base-A1	DebugInfoTest	testNotStopAtAllButFirstBytecodeOfOptimizedSend	Debugger-kernel-skips	image-code	repaired	PASS 2x	PASS 2x	not run	20-Debugger-kernel-skips.st	SKIP
+base-A1	DebugInfoTest	testNotStopAtConstantBlockCreation	Debugger-kernel-skips	image-code	repaired	PASS 2x	PASS 2x	not run	20-Debugger-kernel-skips.st	SKIP
+base-A1	DebugInfoTest	testNotStopAtFullBlockCreation	Debugger-kernel-skips	image-code	repaired	PASS 2x	PASS 2x	not run	20-Debugger-kernel-skips.st	SKIP
+base-A1	FFICallbackParametersTest	testIdentityStruct	TFFI-disabled-tests	test	repaired	PASS	PASS	not run	20-TFFI-disabled-tests.st	SKIP
+base-A1	FLBinaryFileStreamBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLBinaryFileStreamBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLBinaryFileStreamBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	test	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLByteArrayBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLByteArrayBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLByteArrayBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	test	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFileReferenceStreamBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFileReferenceStreamBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFileReferenceStreamBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	test	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFullBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFullBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFullBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	test	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLFullHeaderSerializationTest	testPostMaterializationActions	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLFullHeaderSerializationTest	testPreMaterializationActions	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLGZippedBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLGZippedBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	image-code	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLGZippedBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	test	repaired	PASS	PASS	not run	20-Fuel-widestring-globals.st	XFAIL
+base-A1	FLGlobalEnvironmentTest	testCompiledMethodChanged	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLHeaderSerializationTest	testPostMaterializationActions	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLHeaderSerializationTest	testPreMaterializationActions	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLSortedCollectionSerializationTest	testSortedCollection	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLSortedCollectionSerializationTest	testSortedCollectionWithClassVariableChanges	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLSortedCollectionSerializationTest	testSortedCollectionWithClassVariableReference	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FLUserGuidesTest	testDemo	Fuel-cleanblock	test	repaired	PASS	PASS	not run	20-Fuel-cleanblock.st	SKIP
+base-A1	FloatTest	testNaNCompare	FloatTest	test	repaired	PASS	PASS	not run	20-FloatTest.st	SKIP
+base-A1	GArcTest	testIntersectionsWithArc	Geometry-intersections	image-code	repaired	PASS	PASS	not run	20-Geometry-intersections.st	XFAIL
+base-A1	GArcTest	testIntersectionsWithEllipse	Geometry-intersections	image-code	repaired	PASS	PASS	not run	20-Geometry-intersections.st	XFAIL
+base-A1	GEllipseTest	testIntersectionsWithArc	Geometry-intersections	image-code	repaired	PASS	PASS	not run	20-Geometry-intersections.st	XFAIL
+base-A1	MicMetaDataBlockTest	testCreatingAnInstanceInitializeTheMetadatDictionary	MicMetaDataBlockTest	test	repaired	PASS	PASS	not run	20-MicMetaDataBlockTest.st	SKIP
+base-A1	MicTextPresenterTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	MicrodownPresenterTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	NavigationInteractionTest	testBrowseMethodViaImplementorActuallyBrowseTheClass	NavigationInteractionTest	image-code	repaired	PASS	PASS	not run	20-NavigationInteractionTest.st	SKIP
+base-A1	NetNameResolverTest	testLocalHostAddress	network-tests	image-code	repaired	PASS	PASS	not run	20-network-tests.st	SKIP
+base-A1	OCArrayLiteralTest	testLiteralArrayLongHavingAnotherArrayLong	OCArrayLiteralTest	image-code	repaired	PASS	PASS	not run	20-OCArrayLiteralTest.st	SKIP
+base-A1	OCParserTest	testParseExpressionDontFreeze	OCParserTest	test	repaired	PASS	PASS	not run	20-OCParserTest.st	XFAIL
+base-A1	OCParserTest	testUnclosedTemporariesErrorNodeContainsRightValue	OCParserTest	test	repaired	PASS	PASS	not run	20-OCParserTest.st	SKIP
+base-A1	OCProgramNodeTest	testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart	OCProgramNodeTest	image-code	repaired	PASS	PASS	not run	20-OCProgramNodeTest.st	XFAIL
+base-A1	OCRengineTest	testWhichUNodesDefinesBlockArg	OCRengineTest	test	repaired	PASS	PASS	not run	20-OCRengineTest.st	SKIP
+base-A1	RGMCClassTest	testClassesWithTraits	RGMCClassTest	image-code	repaired	PASS	PASS	not run	20-RGMCClassTest.st	SKIP
+base-A1	ReflectivityOnStackTest	testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually	ReflectivityOnStackTest	image-code	repaired	PASS	PASS	not run	20-ReflectivityOnStackTest.st	SKIP
+base-A1	ReleaseTest	testRatioOfCommentedClasses	ReleaseTest	test	repaired	PASS	PASS	not run	20-ReleaseTest.st	SKIP
+base-A1	Ring2ChunkImporterTest	testMultipleMixedChunksInStrangeOrderWithMetaclassTrait	Ring2ChunkImporterTest	image-code	repaired	PASS	PASS	not run	20-Ring2ChunkImporterTest.st	XFAIL
+base-A1	Ring2ChunkImporterTest	testStandardMethodInNewMetaclassTrait	Ring2ChunkImporterTest	both-vms	repaired	PASS	PASS	not run	20-Ring2ChunkImporterTest.st	XFAIL
+base-A1	RubEditingAreaTest	testEmbeddedAnchorInTextAreDrawn	Rubric-anchors	test	repaired	PASS	PASS	not run	20-Rubric-anchors.st	SKIP
+base-A1	RubEditingAreaTest	testEmbeddedAnchorInTextAreDrawnAtRightPosition	Rubric-anchors	test	repaired	PASS	PASS	not run	20-Rubric-anchors.st	SKIP
+base-A1	RubScrolledTextMorphTest	testEmbeddedAnchorInTextAreDrawnAtRightPosition	Rubric-anchors	test	repaired	PASS	PASS	not run	20-Rubric-anchors.st	SKIP
+base-A1	RunnerLongDurationTest	testRunningFromAClass	RunnerLongDurationTest	test	repaired	PASS	PASS	not run	20-RunnerLongDurationTest.st	SKIP
+base-A1	RunnerLongDurationTest	testRunningFromACollectionOfClasses	RunnerLongDurationTest	test	repaired	PASS	PASS	not run	20-RunnerLongDurationTest.st	SKIP
+base-A1	SettingsStonReaderTest	testNonExistingStoredSettingVariable	SettingsStonReaderTest	image-code	repaired	PASS	PASS	not run	20-SettingsStonReaderTest.st	XFAIL
+base-A1	SlotErrorsTest	testCannotBeRecompiled	SlotErrorsTest	test	repaired	PASS	PASS	not run	20-SlotErrorsTest.st	XFAIL
+base-A1	SpCodeEditorPresenterTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	SpCodePresenterTest	testDoBrowseClassNotFound	SpCodePresenterTest	image-code	repaired	PASS	PASS	PASS	20-SpCodePresenterTest.st	SKIP
+base-A1	SpCodePresenterTest	testDoBrowseMethodReferences	SpCodePresenterTest	test	repaired	PASS	PASS	PASS	20-SpCodePresenterTest.st	SKIP
+base-A1	SpCodePresenterTest	testEnvironment	SpCodePresenterTest	image-code	repaired	PASS	PASS	PASS	20-SpCodePresenterTest.st	SKIP
+base-A1	SpDemoTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	SpEasyColumnViewPresenterTest	testDisableActivationDuring	SpEasy-skips	test	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyColumnViewPresenterTest	testSetSortingBlockBeforeItems	SpEasy-skips	image-code	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyColumnViewPresenterTest	testSortingBlock	SpEasy-skips	image-code	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyListViewPresenterTest	testDisableActivationDuring	SpEasy-skips	test	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyTreeColumnViewPresenterTest	testDisableActivationDuring	SpEasy-skips	test	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyTreeColumnViewPresenterTest	testPathIndexOf	SpEasy-skips	image-code	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyTreeColumnViewPresenterTest	testPathItemOf	SpEasy-skips	image-code	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyTreeListViewPresenterTest	testDisableActivationDuring	SpEasy-skips	test	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyTreeListViewPresenterTest	testPathIndexOf	SpEasy-skips	image-code	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpEasyTreeListViewPresenterTest	testPathItemOf	SpEasy-skips	image-code	repaired	PASS	PASS	not run	20-SpEasy-skips.st	SKIP
+base-A1	SpMenuItemPresenterTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	SpMenuPresenterTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	SpMorphPresenterTest	testChangingHelpAffectTheWidget	SpMorphPresenterTest	image-code	repaired	PASS 2x	PASS 2x	not run	20-SpMorphPresenterTest.st	SKIP
+base-A1	SpRadioButtonInteractionTest	testHidePresenterHidesWidget	SpRadioButtonInteractionTest	test	repaired	PASS 2x	PASS 2x	not run	20-SpRadioButtonInteractionTest.st	SKIP
+base-A1	SpRadioButtonInteractionTest	testShowPresenterShowsWidget	SpRadioButtonInteractionTest	test	repaired	PASS 2x	PASS 2x	not run	20-SpRadioButtonInteractionTest.st	SKIP
+base-A1	SpToolbarToggleButtonMorphTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	SpTransmissionWithComponentListTest	testExample	presenter-examples	image-code	repaired	PASS	PASS	not run	20-presenter-examples.st	SKIP
+base-A1	SpTreeAdapterMultipleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	test	repaired	PASS 2x	PASS 2x	not run	20-SpTree-selection-skips.st	SKIP
+base-A1	SpTreeAdapterSingleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	test	repaired	PASS 2x	PASS 2x	not run	20-SpTree-selection-skips.st	SKIP
+base-A1	SpTreeAdapterSingleSelectionTest	testUnselectPresenterItemUnselectsIndexInWidget	SpTree-selection-skips	test	repaired	PASS 2x	PASS 2x	not run	20-SpTree-selection-skips.st	SKIP
+base-A1	SpTreeTableAdapterMultipleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	test	repaired	PASS 2x	PASS 2x	not run	20-SpTree-selection-skips.st	SKIP
+base-A1	SpTreeTableAdapterSingleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	test	repaired	PASS 2x	PASS 2x	not run	20-SpTree-selection-skips.st	SKIP
+base-A1	SpTreeTableAdapterSingleSelectionTest	testUnselectPresenterItemUnselectsIndexInWidget	SpTree-selection-skips	test	repaired	PASS 2x	PASS 2x	not run	20-SpTree-selection-skips.st	SKIP
+base-A1	StDebuggerClientModelTest	testComputeInitialTopContext	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerContextPredicateTest	testPrintDescription	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerContextPredicateTest	testPrintPostMortemDescription	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerTest	testGenerateAndProceed	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerTest	testRestoreReceiverRawInspectionSelection	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerTest	testRestoreReceiverRawInspectionSelectionAfterContextChange	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerTest	testReturnEnteredValue	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerTest	testSaveReceiverRawInspectionSelection	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StDebuggerTest	testSaveReceiverRawInspectionSelectionAfterContextChange	StDebugger-skips	test	repaired	PASS	PASS	not run	20-StDebugger-skips.st	SKIP
+base-A1	StObjectContextPresenterTest	testDoEvaluateDeclareGlobal	St-evaluate-declare-global	test	repaired	PASS	PASS	not run	20-St-evaluate-declare-global.st	SKIP
+base-A1	StObjectTranscriptPresenterTest	testTrueShowInspectorShowsInspector	StObjectTranscriptPresenterTest	test	repaired	PASS	PASS	not run	20-StObjectTranscriptPresenterTest.st	SKIP
+base-A1	StPlaygroundPagePresenterTest	testDoEvaluateDeclareGlobal	St-evaluate-declare-global	test	repaired	PASS	PASS	not run	20-St-evaluate-declare-global.st	SKIP
+base-A1	StSettingsBrowserTest	testSimulateCategoryPopulation	StSettingsBrowserTest	test	repaired	PASS	PASS	not run	20-StSettingsBrowserTest.st	SKIP
+base-A1	TFCallbacksTest	testCallbackNotRespectingLIFOOrderFailsReturn	TFFI-disabled-tests	test	repaired	PASS 2x	PASS 2x	not run	20-TFFI-disabled-tests.st	SKIP
+base-A1	TFUFFIFunctionCallTest	testLongCalloutDoesNotBlockImage	TFFI-disabled-tests	test	repaired	PASS 2x	PASS 2x	not run	20-TFFI-disabled-tests.st	SKIP
+base-A1	UnixResolverTest	testGetTempFromTMPDIR	platform-unix-resolver	test	repaired	PASS	PASS	not run	20-platform-unix-resolver.st	SKIP
+base-A1	UnixResolverTest	testXdgParseUserDirLineDocuments	platform-unix-resolver	test	repaired	PASS	PASS	not run	20-platform-unix-resolver.st	SKIP
+base-A1	UnixResolverTest	testXdgParseUserDirLineNotRoot	platform-unix-resolver	test	repaired	PASS	PASS	not run	20-platform-unix-resolver.st	SKIP
+base-A1	WeakAnnouncerTest	testNoWeakBlock	WeakAnnouncerTest	image-code	repaired	PASS	PASS	not run	20-WeakAnnouncerTest.st	XFAIL
+base-A1	Win32EnvironmentTest	testExistingEnvironmentVariableLongerThanBufferShouldReturnValue	NA-platform-windows	test	repaired	PASS	PASS	not run	20-NA-platform-windows.st	SKIP
+base-A1	Win32EnvironmentTest	testExistingEnvironmentVariableShouldReturnValue	NA-platform-windows	test	repaired	PASS	PASS	not run	20-NA-platform-windows.st	SKIP
+base-A1	Win32EnvironmentTest	testNonExistingEnvironmentVariableShouldGenerateException	NA-platform-windows	test	repaired	PASS	PASS	not run	20-NA-platform-windows.st	SKIP
+base-A1	ZnClientTest	testQueryGoogle	network-tests	test	repaired	PASS	PASS	not run	20-network-tests.st	FAIL
+base-A1	ZnHTTPSTest	testGetPharoVersion	network-tests	test	repaired	PASS	PASS	not run	20-network-tests.st	SKIP
+base-A1	ZnHTTPSTest	testSNIPage	network-tests	test	repaired	PASS	PASS	not run	20-network-tests.st	SKIP
+base-A2	CodeSimulationTest	testErrorCodeNotFound	Debugger-kernel-skips	both-vms	needs a VM change	PASS	PASS	not run	20-Debugger-kernel-skips.st	SKIP
+base-A2	TFUFFICallbackTest	testCallbacksInOtherThread	TFFI-disabled-tests	cog-vm	needs a VM change	PASS 2x	PASS 2x	not run	20-TFFI-disabled-tests.st	SKIP
+base-A2	WriteBarrierTest	testMutateByteArrayUsingDoubleAtPut	WriteBarrierTest	cog-vm	our VM only	PASS	PASS	not run	20-WriteBarrierTest.st	XFAIL
+base-A2	WriteBarrierTest	testMutateByteArrayUsingFloatAtPut	WriteBarrierTest	cog-vm	our VM only	PASS	PASS	not run	20-WriteBarrierTest.st	XFAIL
+base-A3	AllTestFailTest	testFail1	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	AllTestFailTest	testFail2	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	AllTestFailTest	testFail3	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	AllTestFailTest	testFail4	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	ClyTestedClassMockTest	testExpectedFailure	NA-fixture-tests	none-not-applicable	not applicable	XFAIL	XFAIL	not run		XFAIL
+base-A3	DependencyTest	testDataIs10ThenIncrement	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	DependencyTest	testDataIs11ThenIncrement	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	DependencyTest	testDataIs12ThenIncrement	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	DependencyTest	testDataIs13ThenIncrement	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	DependencyTest	testDataIs14ThenIncrement	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	DependencyTest	testDataIs15ThenIncrement	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	EmptyTest	test1	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	EmptyTest	test2	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	EmptyTest	test3	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	EmptyTest	test4	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	FFIExternalStructurePlatformTest	testStructureHasCorrectOffsets32bits	NA-platform-32bit	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	FFIExternalStructurePlatformTest	testStructureHasCorrectSize32bits	NA-platform-32bit	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	FailThenPassTest	testFailAtFirstRunning	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	FailThenPassTest	testPass	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	GreenTest	testPass	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	GreenTest	testPassAgain	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	IntegerTest	testCreationFromBytes1	NA-platform-32bit	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	IntegerTest	testCreationFromBytes2	NA-platform-32bit	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	IntegerTest	testCreationFromBytes3	NA-platform-32bit	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	KMCombinationTest	testWindowsAndUnixMetaShouldBeCtrl	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	LongTest	testIsTakingTooLong	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testCallingSuperHelper	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testFailingButNotConsideredAsRotten	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testHelperHelperAssertHelper	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithAssertionInHelperRun	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithAssertionInSuperHelperRun	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithAssertionRun	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithHelperHelper	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithNoAssertionInHelperRun	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithNoAssertionInSuperHelperRun	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RTFFakeTestClassTest	testWithoutAssertionRun	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RedTest	testFail	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RedTest	testPass	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	RedTest	testWithError	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	TFBasicTypeSizeTest	testSizeSignedLongWindows	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFBasicTypeSizeTest	testSizeUnsignedLongWindows	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFBasicTypeTest	testSignedLongWindows	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFBasicTypeTest	testUnsignedLongWindows	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFFunctionCallTest	testCallingFunctionWithW64CallingConvention	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFUFFIBasicTypeSizeTest	testSizeSignedLongWindows	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFUFFIBasicTypeSizeTest	testSizeUnsignedLongWindows	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	TFUFFIDifferentCallingConventionFunctionCallTest	testCallingFunctionWithW64CallingConvention	NA-platform-windows	none-not-applicable	not applicable	SKIP 2x	SKIP 2x	not run	20-NA-platform-windows.st	SKIP
+base-A3	Win32WideStringTest	testCharactersAreEncodedInUnicode16Bits	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	Win32WideStringTest	testConvertingInBothDirectionsGaveSameString	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	Win32WideStringTest	testHandleIsAByteArray	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	Win32WideStringTest	testUnderlayingByteArrayEndsInTwoZeros	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	Win32WideStringTest	testUnderlayingByteArrayIsMultipleOf2	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	WinPlatformTest	testGetTempPathFromTMP	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	WindowsResolverTest	testResolveTempPathFromTMP	NA-platform-windows	none-not-applicable	not applicable	SKIP	SKIP	not run	20-NA-platform-windows.st	SKIP
+base-A3	YellowTest	testFail	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A3	YellowTest	testPass	NA-fixture-tests	none-not-applicable	not applicable	SKIP	SKIP	not run		SKIP
+base-A4	MorphicNativeWindowTest	testMaximizeWindow	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicNativeWindowTest	testMinimizeWindow	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicNativeWindowTest	testNewWindowDefaultsIsNotMaximize	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicNativeWindowTest	testNewWindowDefaultsIsNotMinimized	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicNativeWindowTest	testRestoreWindow	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicWindowManagerTest	testDeleteAllWindowToLeftOfAWindow	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicWindowManagerTest	testDeleteAllWindowToRightOfAWindow	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	MorphicWindowManagerTest	testDeleteAWindowAndTaskBarActualized	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testImplementorsOfAt	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testInspectArray	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testInspectClass	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testInspectDictionary	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testInspectInteger	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testInspectTraitClass	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnClass	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnInstalledTraitMethod	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnMethod	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnTraitMethod	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	OpenToolTest	testSendersOfAt	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SimulateMouseTest	testSimulateClick	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SimulateMouseTest	testSimulateMiddleClick	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SimulateMouseTest	testSimulateRightClick	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SpTextPresenterTest	testPropagateNaturalHeight	interactive session	test	needs an interactive session	PASS	PASS	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SpTextPresenterTest	testPropagateNaturalHeightWithMultipleLines	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SpTextPresenterTest	testPropagateNaturalWidth	interactive session	test	needs an interactive session	PASS	PASS	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SpCodePresenterTest	testPropagateNaturalHeight	interactive session	test	needs an interactive session	PASS	PASS	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SpCodePresenterTest	testPropagateNaturalHeightWithMultipleLines	interactive session	test	needs an interactive session	SKIP	SKIP	PASS	22-interactive-session-tests.st	SKIP
+base-A4	SpCodePresenterTest	testPropagateNaturalWidth	interactive session	test	needs an interactive session	PASS	PASS	PASS	22-interactive-session-tests.st	SKIP
+found	TKTCommonQueueWorkerPoolTest	testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel	TaskIt-worker-pool-race (added after the repair run)	image-code	repaired	PASS	PASS	not run	25-taskit-worker-pool-race.st
+found	TKTFutureTest	testFutureFirstCompleteOfSuccessIfFirstSuccessFaster	TaskIt-worker-pool-race (added after the repair run)	image-code and test	repaired	PASS	PASS	not run	25-taskit-worker-pool-race.st
+found	AtomicSharedQueueTest	testSecondReaderGetsItemWhenFirstReaderHadTheLock	AtomicSharedQueue-wakeups (added after the repair run)	image-code	repaired	PASS	PASS	not run	27-atomic-shared-queue-wakeups.st
+found	AtomicSharedQueueTest	testReaderGetsItemThatCameWhileItResetTheSignals	AtomicSharedQueue-wakeups (added after the repair run)	image-code	repaired	PASS	PASS	not run	27-atomic-shared-queue-wakeups.st
+found	AtomicSharedQueueTest	testQueueIsFreeAfterReaderIsTerminatedInARead	AtomicSharedQueue-wakeups (added after the repair run)	image-code	repaired	PASS	PASS	not run	27-atomic-shared-queue-wakeups.st
+found	OCParseCodeSnippetTest	testSimpleFormattedCode	Simple-formatter-comments (added after the repair run)	image-code and test	repaired	PASS 353x	PASS 353x	not run	28-simple-formatter-comments.st
+found	CodeImporterCodeSnippetTest	testCodeImporter	Code-importer-snippets (added after the repair run)	test	repaired	PASS 353x	PASS 353x	not run	29-code-importer-snippets.st
+found	ChanelTestCaseNameCleanerTest	testRenameTestCaseEndingWithTestsUpdateReferences	Rename-class-changes (found by the package run)	image code	repaired	not run	not run	not run	31-rename-class-changes.st
+found	RBTransformationsTest	testRenameClassTransform	Rename-class-changes (found by the package run)	test	repaired	PASS	PASS	not run	31-rename-class-changes.st
+found	ReRenameClassCommandTest	testRenameClassCommandSuccess	Rename-class-changes (found by the package run)	test	repaired	PASS	PASS	not run	31-rename-class-changes.st
+found	DurationTest	testAsDelayDoesNotRoundDown	Duration-wait-rounds-up (found by the package run)	image code	repaired	PASS	PASS	not run	32-duration-wait-rounds-up.st
+found	TkThreadTest	testPeriodFixedDuration	Duration-wait-rounds-up (found by the package run)	image code	repaired	not run	not run	not run	32-duration-wait-rounds-up.st
+found	LinkInstallerTest	testUninstallVisitsEveryNodeWhenTheNodeSetCollides	Metalink-uninstall-order (found in a sweep of our VM)	image code	repaired	PASS	PASS	not run	33-metalink-uninstall-order.st
+found	LinkInstallerTest	testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode	Metalink-uninstall-order (found in a sweep of our VM)	image code	repaired	PASS	PASS	not run	33-metalink-uninstall-order.st
+found	LinkInstallerTest	testLinkOnTempVarForObject	Metalink-uninstall-order (found in a sweep of our VM)	image code	repaired	PASS	PASS	not run	33-metalink-uninstall-order.st
+found	ZnUrlTest	testEqualsWithQueryFieldsInAnotherOrder	Znurl-query-order (found by the package run)	image code	repaired	PASS	PASS	not run	34-znurl-query-order.st
+found	TKTFutureTest	testFutureAndThenExecutesInOrder	Taskit-andthen-order (found by a sweep)	image	see text	PASS	PASS	not run	
+found	TKTNewProcessTaskRunnerTest	testNewProcessTaskRunnerRunsInNewProcessEveryTime	open: draft entry 36, not validated	image	see text	FAIL	PASS	not run	
+pkg-row-57	EscapeTest	testComplexWeighterGraph	fouziray-escapeanalysispharo			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandChained	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandEcho	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandFailureReturnsErrorOutput	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandParameter	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandPipeline	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandQuotedParameter	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-70	BioGtUnixSubprocessTest	testExecuteCommandStderrOutput	hernanmd-biosmalltalk			SKIP	SKIP		
+pkg-row-71	PRIntegrationTest	testBasicLatexPdf	pillar-markup-pillar			SKIP	SKIP		
+pkg-row-71	PRIntegrationTest	testBookPdf	pillar-markup-pillar			SKIP	SKIP		
+pkg-row-71	PRIntegrationTest	testPresentationPdf	pillar-markup-pillar			SKIP	SKIP		
+pkg-row-71	PRIntegrationTest	testWelcomePdf	pillar-markup-pillar			SKIP	SKIP		
+pkg-row-75	PharoKeyringIntegrationTest	testLookupProvisionedSecret	punt-labs-anthropic-sdk-pharo			SKIP	SKIP		
+pkg-row-82	MCPToolStructuredOutputTest	testEvaluateTakesTheStepTheWorldGivesTheTranscript	evref-bl-mcp			SKIP	SKIP		
+pkg-row-84	SoilCleanCodeTest	testCodeCoverage	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilIndexIteratorTest	testMoveKey(#classToTest->SoilBTree_#uniqueKeys->false)	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilIndexIteratorTest	testMoveKey(#classToTest->SoilSkipList_#uniqueKeys->false)	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilIndexIteratorTest	testMoveKeyOnNonUniqueIndexIsRefused(#classToTest->SoilBTree_#uniqueKeys->true)	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilIndexIteratorTest	testMoveKeyOnNonUniqueIndexIsRefused(#classToTest->SoilSkipList_#uniqueKeys->true)	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilIndexIteratorTest	testMoveKeyOverwritesTheTarget(#classToTest->SoilBTree_#uniqueKeys->false)	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilIndexIteratorTest	testMoveKeyOverwritesTheTarget(#classToTest->SoilSkipList_#uniqueKeys->false)	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilResidentCleanCodeTest	testCodeCoverage	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilSerializerCleanCodeTest	testCodeCoverage	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testFlushFileBuffersDirect	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testFsyncEntireFile	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testLockAndUnlockEntireFile	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testLockAndUnlockRange	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testLockExclusive	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testLockOrErrorSuccess	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testLockShared	apptivegrid-soil			SKIP	SKIP		
+pkg-row-84	SoilWindowsFileLockTest	testMultipleLocks	apptivegrid-soil			SKIP	SKIP		
+pkg-row-89	TeapotSslTest	testHttpsGet	zeroflag-teapot			SKIP	SKIP		
+pkg-row-113	P3ClientTest	testArrayTypes	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testBitStringConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testBooleanConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testBoxConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testByteArrayConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testChronology	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testChronologyWithTimezone	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testCircleConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testConnection	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testConstraints	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testConvenienceMetaAccess	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testCustomCompositeType	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testEmptyString	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testEnum	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testError	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testIntegerConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testIntegerVector	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testIntervalConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testJsonConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testLineConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testLineSegmentConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testMultiStatement	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testMultipleCommandsInOneRequest	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testNonAsciiStrings	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testNotification	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testPathConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testPointConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testPolygonConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testQueryCatalog	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testSession	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testSimpleTable	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testSqlFunction	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testStringEscaping	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testTimeConversion	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testTimeout	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testTimezone	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testTimezoneZTimestamp	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testUuid	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testValuesArray1	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testValuesArray2	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testZTimestamp	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ClientTest	testZTimestampWithTimezone	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3ConnectionPoolTest	testError	svenvc-p3			TIMEOUT	TIMEOUT		
+pkg-row-113	P3ConnectionPoolTest	testOne	svenvc-p3			TIMEOUT	TIMEOUT		
+pkg-row-113	P3ConnectionPoolTest	testWarmUp	svenvc-p3			TIMEOUT	TIMEOUT		
+pkg-row-113	P3FormattedStatementTest	testBitString	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testByteArray	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testChronology	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testChronologyWithTimezone	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testGeometricTypes	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testInClause	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testInterval	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testNull	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testPrintOn	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testSimple	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3FormattedStatementTest	testStrings	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testBatchInsertStatement	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testBinaryColumn	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testBitString	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testBulkInsertAndSelect	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testChronology	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testChronologyWithTimezone	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testChronologyZTimestamp	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testGeometricTypes	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testInClause	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testInsertNull	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testInterval	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testLongQueries	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testMultipleInsertStatements	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testNamedPreparedStatement	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testScaledDecimal	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testSelectStatement	svenvc-p3			ERROR	ERROR		
+pkg-row-113	P3PreparedStatementTest	testSimpleInsertStatement	svenvc-p3			ERROR	ERROR		
+pkg-row-119	Y2025Day05Test	testParser	shnarazk-aoc-in-pharo			SKIP	SKIP		
+pkg-row-119	Y2025Day05Test	testPart1	shnarazk-aoc-in-pharo			SKIP	SKIP		
+pkg-row-119	Y2025Day05Test	testPart2	shnarazk-aoc-in-pharo			SKIP	SKIP		
+pkg-row-119	Y2025Day08Test	testParser	shnarazk-aoc-in-pharo			SKIP	SKIP		
+pkg-row-119	Y2025Day08Test	testPart1	shnarazk-aoc-in-pharo			SKIP	SKIP		
+pkg-row-119	Y2025Day08Test	testPart2	shnarazk-aoc-in-pharo			SKIP	SKIP		
+pkg-row-121	CpClientEnvironmentTest	testInstallClass	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-121	CpClientEnvironmentTest	testInstallMethod	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-121	CpClientEnvironmentTest	testInstallMethodWithClassVarAccess	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-121	CpClientEnvironmentTest	testInstallMethodWithInstVarAccess	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-121	CpEncodeDecodeObjectTest	testCompiledMethod	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-121	CpEncodeDecodeObjectTest	testCompiledMethodWithAdditionalMethodState	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-121	CpEncodeDecodeObjectTest	testSortedCollection	erikonbike-codeparadise			SKIP	SKIP		
+pkg-row-124	AntDesignIconsLibraryTest	testSerializeAsFormMaxWidthMaxHeight	opensmock-iconography			FAIL	PASS		
+pkg-row-126	FamixCppCSVImporterTest	testOnlyDeclarations	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testClassDataLine	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testFunctionCreationDependingOnParent	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testFunctionCreationWithBadConstructor	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testFunctionCreationWithBadDestructor	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testFunctionCreationWithCommaAroundName	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testFunctionWithLOCandCyclo	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testImportTypesInNamspaces	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testImportTypesPointerReference	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-126	FamixCppCSVParserTest	testMultiFileAnchorCreation	moosetechnology-famix-cpp			XFAIL	XFAIL		
+pkg-row-138	FASTCopyVisitorCodeGeneratorTest	testShouldCopyMultiValuedDerivedProperty	moosetechnology-fast			FAIL	FAIL		
+pkg-row-138	FASTCopyVisitorCodeGeneratorTest	testShouldNotCopyMultivaluedDerivedProperty	moosetechnology-fast			FAIL	FAIL		
+pkg-row-146	GraphCallerTest	testFuzzyMatcher	jordanmontt-pharo-instrumentation			FAIL	FAIL		
+pkg-row-146	GraphCallerTest	testGraphAlgos	jordanmontt-pharo-instrumentation			FAIL	FAIL		
+pkg-row-146	GraphCallerTest	testMicrodown	jordanmontt-pharo-instrumentation			FAIL	FAIL		
+pkg-row-146	GraphCallerTest	testProfStef	jordanmontt-pharo-instrumentation			FAIL	FAIL		
+pkg-row-146	GraphCallerTest	testRewriteTool	jordanmontt-pharo-instrumentation			FAIL	FAIL		
+pkg-row-147	NeoConsoleTelnetServerTests	testGetSystemTimestamp	svenvc-neoconsole			ERROR	PASS		
+pkg-row-147	NeoConsoleTelnetServerTests	testSumMultiline	svenvc-neoconsole			ERROR	PASS		
+pkg-row-151	GenieActionTest	testVariableRefactoringToolsTemporaryRefactorings	kentbeck-smalltalkgenie			FAIL	FAIL		
+pkg-row-151	GenieProtocolTest	testToolErrorsExposeDebugDetailsOnlyWhenExplicitlyEnabled	kentbeck-smalltalkgenie			ERROR	ERROR		
+pkg-row-153	OpenWeatherHistoryFlatBulkTest	testCSVOneRecord	reugalabf-openweatherapi4pharo			ERROR	ERROR		
+pkg-row-153	OpenWeatherHistoryFlatBulkTest	testCSVOneRecordAsDictionary	reugalabf-openweatherapi4pharo			ERROR	ERROR		
+pkg-row-153	OpenWeatherHistoryFlatBulkTest	testCSVOneRecordAsHistoryFlatBulk	reugalabf-openweatherapi4pharo			ERROR	ERROR		
+pkg-row-154	ViennaConstrainedTypeTest	testName	tomooda-viennatalk			FAIL	FAIL		
+pkg-row-158	PyramidCopyPastePluginTest	testCopyAsStonMenu	opensmock-pyramid			SKIP	SKIP		
+pkg-row-158	PyramidEditorTest	testOpenFromBlSpace	opensmock-pyramid			SKIP	SKIP		
+pkg-row-158	PyramidEditorTest	testOpenFromBlSpaceWithSpacePluginUninstalled	opensmock-pyramid			SKIP	SKIP		
+pkg-row-158	PyramidEditorTest	testOpenNewEditor	opensmock-pyramid			SKIP	SKIP		
+pkg-row-158	PyramidPluginEditOnRunningTest	testBlSpaceShortcutAddAndRemove	opensmock-pyramid			SKIP	SKIP		
+pkg-row-159	IceCherryPickBrowserTest	testWindowOnMethodConflict	pharo-vcs-iceberg			SKIP	SKIP		
+pkg-row-159	IceClassesCherryPickingTest	testAddClassDependingInATrait	pharo-vcs-iceberg			FAIL	FAIL		
+pkg-row-159	IceMemoryRepositoryWithSingleRemoteTest	testPushPushesTags	pharo-vcs-iceberg			SKIP	SKIP		
+pkg-row-160	MiAccumulatorBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiAccumulatorBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiAccumulatorBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiAccumulatorBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiAccumulatorBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiArchitecturalMapBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiArchitecturalMapBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testPropagateToOtherBrowser	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiBusLogBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiButterflyMapBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiButterflyMapBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCoUsageMapBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCoUsageMapBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCoUsageMapBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCoUsageMapBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCoUsageMapBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCriticBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCriticBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCriticBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCriticBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiCriticBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDSMBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDSMBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDSMBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDSMBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDeadCodeBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDeadCodeBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDeadCodeBrowserTest	testPropagateToOtherBrowser	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDistributionMapBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDistributionMapBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiDuplicationBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiExportBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiExportBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiExportBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiExportBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiExportBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiExportBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiFilesBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiHeatMapBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiHeatMapBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiInspectorBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiInspectorBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiInspectorBrowserTest	testNavigationTabIsSorted	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiInspectorBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiInspectorBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiInspectorBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testPropagateToOtherBrowser	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiLogsBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiModelsBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiModelsBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiModelsBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiModelsBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiNotebookBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiNotebookBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiNotebookBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiNotebookBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiNotebookBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiQueriesBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiSourceTextBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiSourceTextBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiSystemComplexityBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiSystemComplexityBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiSystemComplexityBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiSystemComplexityBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testCanOpenSettings	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testSettingsClickCancel	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testSettingsClickOK	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testSettingsClickReset	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiTagCreationFormTest	testIsConsumerOfFQAbstractQuery	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiUMLBrowserTest	testFollowEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiUMLBrowserTest	testHighlightEntity	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiUMLBrowserTest	testSelectedTagSetAndGet	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-160	MiUMLBrowserTest	testTagMenuListsTags	moosetechnology-mooseide			SKIP	SKIP		
+pkg-row-163	DRConditionalConstraintTest	testNotSupportedCases	alamvic-druid			XFAIL	XFAIL		
+pkg-row-163	DRConstantPhiInsertionTest	testPhiInsertionInConditionalCase5	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRCopyPropagationTest	testCopyIsPropagatedInSingleBlockToManyInstructions	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRDeadCodeEliminationTest	testDCEOnConditionalJump	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRDeadCodeEliminationTest	testDCEOnDeadEndInstruction	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRDeadCodeEliminationTest	testDCEOnSeveralBlocs	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRDeadCodeEliminationTest	testNotRemoveUnusedMandatoryInstruction	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRGlobalValueNumberingTest	testLoadInstructionOperandsAreNotDeteleted	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRPhiSimplicationTest	testNotSimplifyPhiWithNoResultInstruction	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRRedundantCodeEliminationTest	testRedundantCopyIsEliminated	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConditionalConstantFoldingTest	testConditionalEvaluationOnNilObject	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConditionalConstantFoldingTest	testConditionalEvaluationOnNullValue	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConditionalConstantFoldingTest	testSCCPPropagationBothWithPhiFunction	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConditionalConstantFoldingTest	testSCCPPropagationWithFarAwayPhiFunctionFinishWithValidCFG	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingAddOfLeftNonConstants	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingAddOfRightNonConstants	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingLoadConstant	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingLoadJitCompileExpression	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingLoadNonConstant	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingMultiplyByZeroLeft	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testConstantFoldingMultiplyByZeroRight	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testFoldBitShiftWithNonLeftConstant	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testFoldingLoadWithConstant	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingTest	testFoldingLoadWithOperation	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingWithStagingTest	testConstantFoldingLoadNonConstant	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingWithStagingTest	testFoldingLoadWithConstant	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantFoldingWithStagingTest	testFoldingLoadWithOperation	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantPropagationTest	testDoNotPropagateInPhiFunctions	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantPropagationTest	testPropagateToAddOperand	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantPropagationTest	testPropagateToMulOperand	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSCCPConstantPropagationTest	testPropagateWhenResultIsPhisicalRegister	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSSAPREConstantLinearCFGTest	testPartialRedundancyWithSameConstExpressInConditionCF	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSSAPRETest	testPartialRedundancyWithSameConstIn124BlockInConditionCF	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSSAPRETest	testPartialRedundancyWithSameConstIn12BlockInConditionCF	alamvic-druid			ERROR	ERROR		
+pkg-row-163	DRSSAPRETest	testPhiInsertionInConditionalCase5	alamvic-druid			ERROR	ERROR		

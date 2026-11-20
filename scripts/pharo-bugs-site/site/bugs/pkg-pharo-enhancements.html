@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Pharo-Enhancements (seandenigris/Pharo-Enhancements, row 149) - Pharo test defects</title><meta name="description" content="Package: Pharo-Enhancements (seandenigris/Pharo-Enhancements, row 149): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Pharo-Enhancements (seandenigris/Pharo-Enhancements, row 149)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>seandenigris-pharo-enhancements.patch</dd><dt>Upstream repository</dt><dd>seandenigris/Pharo-Enhancements</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: <code>LOAD-FAIL</code> (<code>UndeclaredVariableRead</code> of
+<code>RPackageOrganizer</code> in <code>BaselineOfPharoEnhancements&gt;&gt;isGTImage</code>).</li>
+<li>Causes, in the package:
+<ul>
+<li>The baseline reads the class <code>RPackageOrganizer</code>, which Pharo 12 and
+later do not have.</li>
+<li><code>TraitBuilderEnhancer.extension.st</code> replaces two methods of the image
+with copies of an older Pharo.  The copy of <code>allSlotsForBuilder:</code> leaves
+the slots of the superclass out.  Pharo 14 builds each class with that
+method, so a load of the file breaks the build of classes after it.</li>
+</ul>
+</li>
+<li>Repair (<code>patches/seandenigris-pharo-enhancements.patch</code>, for the owner of
+the package): the baseline uses <code>PackageOrganizer default</code>, and the
+extension file of <code>TraitBuilderEnhancer</code> is gone (no code of the package
+uses its two methods).</li>
+<li>Result: the load ends with no error, and 4 of 4 tests pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 149&quot;
+Metacello new baseline: &#x27;PharoEnhancements&#x27;; repository: &#x27;github://seandenigris/Pharo-Enhancements:master/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>149</td><td><code>seandenigris-pharo-enhancements</code></td><td>ok</td><td>tests=4 P=4 F=0 E=0 S=0 T=0 X=0</td><td>tests=4 P=4 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Patch of the package source: seandenigris-pharo-enhancements.patch (<a href="../files/packages/patches/seandenigris-pharo-enhancements.patch">download</a>)</summary><pre class="code">diff --git a/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st b/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st
+index 346bf79..c71402f 100644
+--- a/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st
++++ b/src/BaselineOfPharoEnhancements/BaselineOfPharoEnhancements.class.st
+@@ -39,6 +39,6 @@ BaselineOfPharoEnhancements &gt;&gt; customProjectAttributes [
+ { #category : #testing }
+ BaselineOfPharoEnhancements &gt;&gt; isGTImage [
+ 	
+-	^ RPackageOrganizer default packageNames anySatisfy: [ :pn | pn beginsWith: &#x27;Lepiter-&#x27; ].
++	^ PackageOrganizer default packageNames anySatisfy: [ :pn | pn beginsWith: &#x27;Lepiter-&#x27; ].
+ 	&quot;Implementation note: used to check for GToolkit prefix, but P7 has a GToolkit-Examples package. Lepiter, OTOH, could only be loaded in a GT image&quot;
+ ]
+diff --git a/src/PharoEnhancements/TraitBuilderEnhancer.extension.st b/src/PharoEnhancements/TraitBuilderEnhancer.extension.st
+deleted file mode 100644
+index eb30e39..0000000
+--- a/src/PharoEnhancements/TraitBuilderEnhancer.extension.st
++++ /dev/null
+@@ -1,23 +0,0 @@
+-Extension { #name : &#x27;TraitBuilderEnhancer&#x27; }
+-
+-{ #category : &#x27;*PharoEnhancements&#x27; }
+-TraitBuilderEnhancer &gt;&gt; allSlotsForBuilder: aBuilder [
+-
+- 	| resultingSlots |
+-
+- 	resultingSlots := self
+- 		eliminateDuplicates: aBuilder layoutDefinition slots , aBuilder traitComposition asTraitComposition slotsCopy
+- 		withSuperclassSlots: (aBuilder superclass ifNil: [#()] ifNotNil:[ :x | x allSlots]).
+-
+- 	^ resultingSlots
+-]
+-
+-{ #category : &#x27;*PharoEnhancements&#x27; }
+-TraitBuilderEnhancer &gt;&gt; configureClass: newClass superclass: superclass withLayoutType: layoutType slots: slots [
+-	| resultingSlots |
+-	self validateTraitComposition: self traitComposition ofClass: builder oldClass.
+-
+-	resultingSlots := self allSlotsForBuilder: builder.
+-
+-	newClass superclass: superclass withLayoutType: layoutType slots: resultingSlots
+-]
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

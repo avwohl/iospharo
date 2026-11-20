@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pharo 13: 183 tests do not pass, no per-test list - Pharo test defects</title><meta name="description" content="Pharo 13: 183 tests do not pass, no per-test list: Open: not measured again">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Pharo 13: 183 tests do not pass, no per-test list</h1><dl class="meta"><dt>State</dt><dd><span class="st st-open">Open: not measured again</span></dd><dt>Defect in</dt><dd>not known per test</dd><dt>Tests</dt><dd>183</dd><dt>Fix</dt><dd>partial: 10-pharo13-test-defects.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Summary</h2><p>The first sweep of Pharo 13 with the old runner gave 27894 passes of 28077 tests: 2 failures, 131 skips and 50 expected failures (183 tests that do not pass).  No per-test list of that sweep was saved, and the repair work for Pharo 13 did not start.  A comparison of the sources shows that 123 of the 132 Pharo 14 repairs have the same defect in Pharo 13; 8 of the tests are not in Pharo 13, and 1 skip exists only in Pharo 14.  Seven Pharo 13 test defects have their own fix (below).</p><p>Of the methods that the fix entries 20 to 35 replace, 126 have the same source in Pharo 13, 10 differ and 16 are not in Pharo 13.  An entry checks the old source text first, so an entry for a method that differs makes no change on Pharo 13.  The 10 methods that differ: <code>BlockClosureTest&gt;&gt;testOnForkErrorTakesLessThanOneSecond</code>, <code>ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering</code>, <code>ClyBrowserMorph&gt;&gt;spawnQueryBrowserOn:withState:</code>, <code>OCASTTranslator&gt;&gt;visitArrayNode:</code>, <code>ReflectivityOnStackTest&gt;&gt;testExecuteWithWaiting...ChangeMethodManually</code>, <code>OCCodeReparator&gt;&gt;openMenu</code>, <code>NetNameResolver class&gt;&gt;localHostAddress</code>, <code>OCCodeSnippet class&gt;&gt;badExpressions</code>, <code>RBNamespace&gt;&gt;renameClass:to:around:</code>, <code>RBTransformationsTest&gt;&gt;testRenameClassTransform</code>.  No Pharo 13 run with the entries is recorded.</p><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>10-pharo13-test-defects.st (<a href="../files/image-fixes/10-pharo13-test-defects.st">download</a>)</summary><pre class="code">&quot;Fixes for seven defects of the Pharo 13 image and its tests (2026-10-15).
+Each defect fails the same way on stock Cog with a pristine image; see
+docs/image_issues.md, &#x27;Test defects fixed by scripts/pharo-image-fixes.st&#x27;.
+Entries 5 and 6 read the actual object of the assertion from index 2 of the
+description block; their guard looks for that.&quot;
+
+&quot;1. The trait composition names TAsStringCommaAndDelimiterTest, which the
+image renamed to TAsStringOnDelimiterTest; the compiler refuses the
+undeclared name (OCClassBuilderTest&gt;&gt;testCreateNormalClassWithTraitComposition).
+Pharo 14 no longer names the old class.&quot;
+fix value: #OCClassBuilderTest value: #testCreateNormalClassWithTraitComposition
+	value: [ :source | (source includesSubstring: &#x27;TAsStringCommaAndDelimiterTest&#x27;)
+		and: [ (Smalltalk globals includesKey: #TAsStringCommaAndDelimiterTest) not ] ]
+	value:
+&#x27;testCreateNormalClassWithTraitComposition
+
+	| class |
+	class := self buildClassFromDefinition:
+		         &#x27;&#x27;Class &lt;&lt; #TestSubClass traits: TAddForUniquenessTest + TIncludesWithIdentityCheckTest + TCloneTest + TCopyTest + TRemoveTest + TGrowableTest + TStructuralEqualityTest + TPrintTest + TAsStringOnDelimiterTest + TConvertTest + TConvertAsSortedTest + TConcatenationEqualElementsRemovedTest + TOccurrencesTest + (TCreationWithTest - {#testOfSize. #collectionClass}) + (TSetArithmetic - {#collectionClass})&#x27;&#x27;.
+
+	self assert: (class isComposedBy: TAddForUniquenessTest).
+	self assert: (class isComposedBy: TIncludesWithIdentityCheckTest)&#x27;.
+
+&quot;2. The UI layer&#x27;s external dependencies now include Reflectivity; the
+allowlist predates it (SystemDependenciesTest&gt;&gt;testExternalUIDependencies).
+Pharo 14 has no SystemDependenciesTest.&quot;
+fix value: #SystemDependenciesTest value: #knownUIDependencies
+	value: [ :source | (source includesSubstring: &#x27;#Reflectivity&#x27;) not ]
+	value:
+&#x27;knownUIDependencies
+	&quot;ideally this list should be empty&quot;
+
+	^ #( &#x27;&#x27;Athens-Cairo&#x27;&#x27; &#x27;&#x27;Athens-Core&#x27;&#x27; #&#x27;&#x27;Refactoring-Critics&#x27;&#x27; #&#x27;&#x27;Refactoring-Environment&#x27;&#x27; #Reflectivity &#x27;&#x27;Reflectivity-Tools&#x27;&#x27; #Shout #&#x27;&#x27;Tool-Diff&#x27;&#x27; #&#x27;&#x27;HeuristicCompletion-Model&#x27;&#x27;
+	     &#x27;&#x27;NECompletion-Morphic&#x27;&#x27; #VariablesLibrary #&#x27;&#x27;Tools-CodeNavigation&#x27;&#x27; #&#x27;&#x27;Spec2-CommonWidgets&#x27;&#x27; #&#x27;&#x27;NewTools-Scopes&#x27;&#x27; #&#x27;&#x27;NewTools-FileBrowser&#x27;&#x27; )&#x27;.
+
+&quot;3. The argument homeContext shadows the instance variable homeContext
+(ReleaseTest&gt;&gt;testNoShadowedVariablesInMethods).  Renamed; the method used
+the argument.  Pharo 14 renamed the argument itself.&quot;
+fix value: #FastStepThroughController value: #findNextContext:having:fixing:
+	value: [ :source | source includesSubstring: &#x27;having: homeContext fixing:&#x27; ]
+	value:
+&#x27;findNextContext: originContext having: aHomeContext fixing: buggyContext
+
+	| blockContext fixedContext |
+	&quot;Find the next context, restoring blocks, removing HaltingBlocks&quot;
+	blockContext := self findNextContext: originContext.
+
+	&quot;a. Here step through exits the block is being evaluated.&quot;
+	(self stepOutOfBlock: blockContext from: originContext to: aHomeContext)
+		ifNotNil: [:targetContext | ^ targetContext ].
+
+	&quot;b. Here step through behaves like step over.&quot;
+	blockContext == originContext ifTrue: [ ^ originContext ].
+
+	&quot;c. Here step through steps into a block.&quot;
+	fixedContext := self findFirstContext: buggyContext
+								  withReceiverOfClass: HaltingBlock.
+	blockContext sender: (fixedContext ifNotNil: [fixedContext sender ]).
+
+	^ blockContext&#x27;.
+
+&quot;4. The forked process sets the dynamic variable only when it first runs, and
+fork does not run it: the test then passed only if something preempted the
+test process while the debugger was built (a Delay firing).  Let it run to
+its wait first (StDebuggerTest&gt;&gt;testDynamicVariableEvaluation).  Pharo 14
+rewrote the method with a Semaphore.&quot;
+fix value: #StTestDebuggerProvider value: #debuggerWithDynamicVariableSuspendedContext
+	value: [ :source | (source includesSubstring: &#x27;Semaphore&#x27;) not ]
+	value:
+&#x27;debuggerWithDynamicVariableSuspendedContext
+	|process|
+	process := [
+	           TestDynamicVariable value: 42 during: [
+		           self assert:
+			           (thisProcess psValueAt: TestDynamicVariable soleInstance index) = 42.
+					  100 milliSeconds wait.
+		           thisProcess suspend ] ] fork.
+	1 to: 1000 do: [ :i |
+		(process psValueAt: TestDynamicVariable soleInstance index) ifNil: [ Processor yield ] ].
+	session := DebugSession
+		           named: &#x27;&#x27;test session providerSessionFor:&#x27;&#x27;
+		           on: process
+		           startedAt: process suspendedContext.
+	session exception:
+		(OupsNullException fromSignallerContext: process suspendedContext).
+	^ self newDebugger&#x27;.
+
+&quot;5 and 6. The tests read actual and expected from the assertion&#x27;s description
+block by index: actual at 2, expected at 1.  The block&#x27;s copied values are
+(actual, expected) in this image, so both tests compared swapped values
+(StDebuggerTest&gt;&gt;testUpdateLayoutForContextsIfAssertionFailure and
+StDebuggerInspectorTest&gt;&gt;testUpdateLayoutForContextsWithAssertionFailure,
+&#x27;Got 4 instead of 2&#x27;).  The inspector&#x27;s answer is right.  Pharo 14 reads
+index 1 for the actual object already.&quot;
+fix value: #StDebuggerTest value: #testUpdateLayoutForContextsIfAssertionFailure
+	value: [ :source | | i |
+		i := source findString: &#x27;actualObject&#x27;.
+		i &gt; 0 and: [ (source copyFrom: i to: (i + 120 min: source size)) includesSubstring: &#x27;at: 2&#x27; ] ]
+	value:
+&#x27;testUpdateLayoutForContextsIfAssertionFailure
+
+	| assertionFailure currentLayout expectedLayout |
+	debugger := StTestDebuggerProvider new
+		            debuggerWithFailingAssertionContext.
+	session := debugger session.
+	debugger application: StDebugger currentApplication.
+	debugger initialize.
+	debugger updateInspectorFromContext: session interruptedContext.
+	assertionFailure := debugger inspector assertionFailure.
+	currentLayout := debugger inspector layout.
+	expectedLayout := StDebuggerInspector new assertionFailureLayout.
+	StDebuggerInspector maximizeAssertionSpec: false.
+	self assert: currentLayout direction equals: expectedLayout direction.
+	self
+		assertCollection: currentLayout children first class
+		equals: expectedLayout children first class.
+	self
+		assertCollection: currentLayout children first direction
+		equals: expectedLayout children first direction.
+	self
+		assertCollection: currentLayout children second
+		equals: expectedLayout children second.
+	self
+		assert: currentLayout positionOfSlider
+		equals: expectedLayout positionOfSlider.
+	self
+		assert: currentLayout children size
+		equals: expectedLayout children size.
+	self
+		assert: assertionFailure actualObject
+		equals:
+		((session interruptedContext tempNamed: #aStringOrBlock) at: 1).
+	self
+		assert: assertionFailure expectedObject
+		equals:
+		((session interruptedContext tempNamed: #aStringOrBlock) at: 2)&#x27;.
+fix value: #StDebuggerInspectorTest value: #testUpdateLayoutForContextsWithAssertionFailure
+	value: [ :source | | i |
+		i := source findString: &#x27;actualObject&#x27;.
+		i &gt; 0 and: [ (source copyFrom: i to: (i + 120 min: source size)) includesSubstring: &#x27;at: 2&#x27; ] ]
+	value:
+&#x27;testUpdateLayoutForContextsWithAssertionFailure
+
+	| assertionFailure |
+	debugger := StTestDebuggerProvider new
+		            debuggerWithFailingAssertionContext.
+	session := debugger session.
+
+	inspector
+		updateLayoutForContexts: session interruptedContext
+		isAssertionFailure: true.
+	assertionFailure := inspector assertionFailure.
+	self
+		assert: inspector currentLayoutSelector
+		equals: inspector assertionLayoutSelector.
+	self
+		assert: assertionFailure actualObject
+		equals:
+		((session interruptedContext tempNamed: #aStringOrBlock) at: 1).
+	self
+		assert: assertionFailure expectedObject
+		equals:
+		((session interruptedContext tempNamed: #aStringOrBlock) at: 2)&#x27;.
+
+&quot;7. UIManager&gt;&gt;nonInteractiveManager answers NonInteractiveUIManager
+beDefault, a send to the CLASS, and the class has no #beDefault.  Every default
+manager but NonInteractiveUIManager itself then fails in UIManager
+class&gt;&gt;nonInteractiveDuring: (TFUFFICallbackTest&gt;&gt;testCallbackWithErrorHanlded).
+Stock Cog fails the same way once MorphicUIManager is the default, which the
+fake-GUI prep and the runner install.  Pharo 14 only: Pharo 13 has
+&#x27;^NonInteractiveUIManager replacing: self&#x27; and needs no fix.&quot;
+fix value: #UIManager value: #nonInteractiveManager
+	value: [ :source | source includesSubstring: &#x27;^NonInteractiveUIManager beDefault&#x27; ]
+	value:
+&#x27;nonInteractiveManager
+	&quot;Answer an instance of non-interactive manager, which will be used when image runs headless.
+	 We put it here, so subclasses can override it.&quot;
+
+	^ NonInteractiveUIManager new beDefault&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

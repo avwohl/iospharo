@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: DatasetUtilities4Pharo (reugalabf/DatasetUtilities4Pharo, row 56) - Pharo test defects</title><meta name="description" content="Package: DatasetUtilities4Pharo (reugalabf/DatasetUtilities4Pharo, row 56): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: DatasetUtilities4Pharo (reugalabf/DatasetUtilities4Pharo, row 56)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>reugalabf-datasetutilities4pharo.st</dd><dt>Upstream repository</dt><dd>reugalabf/DatasetUtilities4Pharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 37 tests, 26 pass, 1 failure, 10 errors on the two VMs.</li>
+<li>Causes, all in the package:
+<ul>
+<li><code>DatasetAggregator</code> calls <code>Number readFrom:</code> on the value of a row.  A
+row from JSON has a Number there, and <code>Number readFrom:</code> needs a String
+or a stream (2 errors).  The repair parses a String and passes a Number
+on.</li>
+<li><code>DictionaryAggregatorTest&gt;&gt;testSingleValueDataset</code> asserts 3 rows for a
+text with 4 data rows, and then calls <code>inspect</code> (1 failure).  The repair
+asserts 4 rows and the hourly minimum and maximum.  One more test ends
+with <code>inspect</code>; the repair removes that line.</li>
+<li><code>ObjectAggregatorTest</code> uses the classes <code>FlareSenseDevelopment</code> and
+<code>FlareSenseRawEndpointClient</code> (8 errors).  No repository of the run and
+no baseline has these classes.  The repair makes the two classes from
+the JSON text and the expected values of the tests.</li>
+</ul>
+</li>
+<li>Limit: the two classes are stand-ins that we wrote.  The classes of the
+author can differ.  The author must add the classes to the test package,
+or add their project to the baseline.</li>
+<li>Result: 37 of 37 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 56&quot;
+Metacello new baseline: &#x27;DatasetUtilities&#x27;; repository: &#x27;github://reugalabf/DatasetUtilities4Pharo:main&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;default&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>56</td><td><code>reugalabf-datasetutilities4pharo</code></td><td>ok</td><td>tests=37 P=37 F=0 E=0 S=0 T=0 X=0</td><td>tests=37 P=37 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): reugalabf-datasetutilities4pharo.st (<a href="../files/packages/fixes/reugalabf-datasetutilities4pharo.st">download</a>)</summary><pre class="code">&quot;reugalabf/DatasetUtilities4Pharo (main, 3638c6e).  Four defects.  The record
+of the repair: docs/upstream/package-repairs.md.
+
+1. DatasetAggregator&gt;&gt;sumAggregationBlock, maxAggregationBlock and
+   minAggregationBlock call Number readFrom: on the value of the row.  A row of
+   a JSON source (NeoJSON) holds a Number, and Number class&gt;&gt;readFrom: wants a
+   String or a stream: NumberParser&gt;&gt;on: keeps the Float as the source stream
+   and peekSignIsMinus sends #peekFor: to it.  A row of a CSV source holds a
+   String.  The repair parses a String and passes a Number on.  A String that
+   is not a number (the &#x27;foo&#x27; of testSingleBadDataset) still signals an error.
+   (2 errors of DictionaryAggregatorTest)
+2. DictionaryAggregatorTest&gt;&gt;testSingleValueDataset asserts &#x27;col size = 3&#x27; for
+   a CSV text of 4 data rows and a trailing blank line, and then only calls
+   #inspect.  The repair reads the text without the trailing blank line, asserts
+   4 rows and asserts the hourly minimum and maximum values.  (1 failure)
+   DictionaryAggregatorTest&gt;&gt;testMultiMappingsFilter ends with &#x27;aggregated
+   inspect&#x27;, a debug leftover that opens a window.  The repair removes the line.
+3. ObjectAggregatorTest (8 tests) and DatasetAggregatorTest&gt;&gt;getCollectionToAggregate
+   use the classes FlareSenseDevelopment and FlareSenseRawEndpointClient.  Neither
+   class is in the repository, in the baseline or in the image.  The repair
+   makes the two classes from the JSON text and the expected values of the
+   tests.  (8 errors)&quot;
+
+fix value: #DatasetAggregator value: #sumAggregationBlock
+	value: [ :source | source includesSubstring: &#x27;Number readFrom:&#x27; ]
+	value:
+&#x27;sumAggregationBlock
+&quot;
+Classes that takes a CSV file and tranform it to Dictionary, JSON or Domain Object (JSONSchema)
+&quot;
+
+	^ [ :bulk :outReg :assocKey | 
+	  | value |
+	  value := self numberFrom: (self computeValueOf: assocKey key asSymbol from: bulk).
+	  value isNumber ifTrue: [ 
+		  outReg
+			  at: assocKey value
+			  ifPresent: [ :v | outReg at: assocKey value put: value + v ]
+			  ifAbsent: [ outReg at: assocKey value put: value ] ].
+	  outReg ]&#x27;.
+
+fix value: #DatasetAggregator value: #maxAggregationBlock
+	value: [ :source | source includesSubstring: &#x27;Number readFrom:&#x27; ]
+	value:
+&#x27;maxAggregationBlock
+
+	^ [ :bulk :outReg :assocKey | 
+	  | value |
+	  value := self numberFrom: (self computeValueOf: assocKey key asSymbol from: bulk).
+	  value isNumber ifTrue: [ 
+		  outReg
+			  at: assocKey value
+			  ifPresent: [ :v | outReg at: assocKey value  put: (value max: v) ]
+			  ifAbsent: [ outReg at: assocKey value put: value ] ].
+	  outReg ]&#x27;.
+
+fix value: #DatasetAggregator value: #minAggregationBlock
+	value: [ :source | source includesSubstring: &#x27;Number readFrom:&#x27; ]
+	value:
+&#x27;minAggregationBlock
+
+	^ [ :bulk :outReg :assocKey | 
+	  | value |
+	  value := self numberFrom: (self computeValueOf: assocKey key asSymbol from: bulk).
+	  value isNumber ifTrue: [ 
+		  outReg
+			  at: assocKey value
+			  ifPresent: [ :v | 
+				  v ifNotNil: [ 
+					  outReg at: assocKey value put: (value min: v);
+							   yourself ] ]
+			  ifAbsent: [ 
+				  value ifNotNil: [ 
+					  outReg at: assocKey value put: value ] ] ].
+	  outReg ]&#x27;.
+
+add value: #DatasetAggregator value: #numberFrom: value: &#x27;private&#x27; value:
+&#x27;numberFrom: aValue
+	&quot;A row of a CSV source holds a String, a row of a JSON source or of a domain object holds a Number.  Number class&gt;&gt;readFrom: takes a String or a stream only.&quot;
+
+	^ aValue isString
+		  ifTrue: [ Number readFrom: aValue ]
+		  ifFalse: [ aValue ]&#x27;.
+
+fix value: #DictionaryAggregatorTest value: #testSingleValueDataset
+	value: [ :source | source includesSubstring: &#x27;col size = 3&#x27; ]
+	value:
+&#x27;testSingleValueDataset
+
+	| col agregator agregated |
+	&quot;The text has a blank line at its end: the reader would make one more record from the blank line&quot;
+	col := (CSV2DictionaryStream source: (ReadStream on: self completeDataset trimRight)) contents collect: [ :each |
+		       each at: #key put: (each at: #h1).
+		       each ].
+
+	self assert: col size equals: 4.
+
+	agregator := DictionaryAggregator new.
+	agregator
+		hourly;
+		keyAspect: #key;
+		addMinMappingFor: #h2 as: #minH2;
+		addMaxMappingFor: #h3 as: #maxH3.
+
+	agregated := agregator aggregate: col.
+
+	self assert: agregated size equals: 2.
+	self assert: (agregated first value at: #minH2) equals: -2.
+	self assert: (agregated first value at: #maxH3) equals: 4.
+	self assert: (agregated last value at: #minH2) equals: -3.
+	self assert: (agregated last value at: #maxH3) equals: 3&#x27;.
+
+fix value: #DictionaryAggregatorTest value: #testMultiMappingsFilter
+	value: [ :source | source includesSubstring: &#x27;inspect&#x27; ]
+	value:
+&#x27;testMultiMappingsFilter
+
+	| col agregator aggregated |
+	col := self getCollectionToAggregate.
+
+
+	self should: [ col size = 3 ].
+	self should: [ 
+		((col first at: #when) printString) = &#x27;&#x27;2023-11-28T13:03:38.897+00:00&#x27;&#x27; ].
+	agregator := DictionaryAggregator new.
+	agregator
+		afterDateandTime: (DateAndTime fromString: &#x27;&#x27;2023-11-28T13:03:38.897Z&#x27;&#x27;) ;
+		keyAspect: #when;
+		addAverageMappingFor: #hum;
+		addSumMappingFor: #tem;
+		addMaxMappingFor: #wind_ws_gust;
+		addMinMappingFor: #temperature_ws.
+
+
+	aggregated := agregator aggregate: col.
+	self should: [ aggregated size = 2 ].
+	self should: [ 
+		(aggregated first value at: &#x27;&#x27;when&#x27;&#x27;)
+		= &#x27;&#x27;2023-11-28T13:38:45.393+00:00&#x27;&#x27; ].
+	self should: [ (aggregated first value at: #hum) = 66.7 ]&#x27;.
+
+&quot;The two classes of the FlareSense project that the tests use.&quot;
+(Smalltalk globals includesKey: #FlareSenseDevelopment) ifFalse: [
+	(Object &lt;&lt; #FlareSenseDevelopment
+		slots: { #wind_ws_gust. #when. #timeDeltaM. #humidity_ws. #nodeId. #wind_wspeed_s. #tem. #hum. #pressure_ws. #raing. #temperature_ws. #fw. #wind_direction_ws };
+		package: &#x27;DatasetUtilities-Tests&#x27;;
+		yourself) install ].
+
+(Smalltalk globals includesKey: #FlareSenseRawEndpointClient) ifFalse: [
+	(Object &lt;&lt; #FlareSenseRawEndpointClient
+		package: &#x27;DatasetUtilities-Tests&#x27;;
+		yourself) install ].
+
+#(#wind_ws_gust #when #timeDeltaM #humidity_ws #nodeId #wind_wspeed_s #tem #hum #pressure_ws #raing #temperature_ws #fw #wind_direction_ws) do: [ :name |
+	add value: #FlareSenseDevelopment value: name value: &#x27;accessing&#x27; value:
+		name, String lf, String tab, &#x27;^ &#x27;, name ].
+
+add value: #&#x27;FlareSenseDevelopment class&#x27; value: #neoJsonMapping: value: &#x27;json&#x27; value:
+&#x27;neoJsonMapping: mapper
+
+	mapper for: self do: [ :mapping |
+		mapping mapAllInstVars.
+		(mapping mapInstVar: #when) valueSchema: DateAndTime ].
+	mapper for: DateAndTime customDo: [ :mapping |
+		mapping decoder: [ :string | DateAndTime fromString: string ] ]&#x27;.
+
+add value: #FlareSenseRawEndpointClient value: #transformJSONFrom: value: &#x27;json&#x27; value:
+&#x27;transformJSONFrom: aReadStream
+	&quot;The raw text has one record for each reading period, and each measure is an Array with one value for each sample of the period.  Answer the JSON text with one record for each sample.  The time of the record is the time of the period, and a period of n samples starts (n - 1) steps before it (step: timeDeltaM minutes).&quot;
+
+	| raw flat |
+	raw := (NeoJSONReader on: aReadStream) next.
+	flat := OrderedCollection new.
+	raw do: [ :entry |
+		| count when step |
+		count := (entry at: &#x27;&#x27;hum&#x27;&#x27;) size.
+		when := DateAndTime fromString: (entry at: &#x27;&#x27;when&#x27;&#x27;).
+		step := Duration minutes: (entry at: &#x27;&#x27;timeDeltaM&#x27;&#x27;).
+		1 to: count do: [ :index |
+			| row |
+			row := Dictionary new.
+			entry keysAndValuesDo: [ :key :value |
+				(value isCollection and: [ value isString not ])
+					ifTrue: [ row at: key put: (value at: index) ]
+					ifFalse: [ row at: key put: value ] ].
+			row at: &#x27;&#x27;when&#x27;&#x27; put: (when - (step * (count - index))) printString.
+			flat add: row ] ].
+	^ NeoJSONWriter toString: flat&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

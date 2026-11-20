@@ -1,0 +1,58 @@
+Test counts of the Pharo CI, read on 2026-11-20 from the JUnit reports of the Pharo Jenkins
+(https://ci.inria.fr/pharo-ci-jenkins2/).  The reports record a skipped test and an expected
+failure as PASSED.  Fetch again with (curl -g turns off URL globbing):
+  curl -s -g -L 'https://ci.inria.fr/pharo-ci-jenkins2/job/Test%20pending%20pull%20request%20and%20branch%20Pipeline/job/Pharo14/791/testReport/api/json?tree=suites[name,cases[className,name,status]]'
+  curl -s -g -L 'https://ci.inria.fr/pharo-ci-jenkins2/job/pharo-vm/job/pharo-12/151/testReport/api/json?tree=suites[name,cases[className,name,status]]'
+
+pharo-project/pharo, job Pharo14, build 791 (the image of our runs)
+  MacOSX64                 Tests-osx-64                         PASSED   39452
+  Unix64                   (ISO, no stage name)                 PASSED   1158
+  Unix64                   Tests-ISO-Announcements              PASSED   65
+  Unix64                   Tests-ISO-Collections                PASSED   5971
+  Unix64                   Tests-ISO-Compiler                   PASSED   2832
+  Unix64                   Tests-ISO-DebuggerCLI                PASSED   37
+  Unix64                   Tests-ISO-FileSystem                 PASSED   367
+  Unix64                   Tests-ISO-Files                      PASSED   33
+  Unix64                   Tests-ISO-Refactoring                PASSED   1034
+  Unix64                   Tests-ISO-SUnit                      PASSED   347
+  Unix64                   Tests-ISO-Shift                      PASSED   104
+  Unix64                   Tests-ISO-SystemCommandLineHandler   PASSED   18
+  Unix64                   Tests-ISO-SystemFinalization         PASSED   6
+  Unix64                   Tests-ISO-SystemPlatforms            PASSED   12
+  Unix64                   Tests-ISO-SystemSessionManager       PASSED   24
+  Unix64                   Tests-ISO-SystemSupport              PASSED   237
+  Unix64                   Tests-ISO-SystemVersion              PASSED   16
+  Unix64                   Tests-ISO-ZincCharacterEncoding      PASSED   124
+  Unix64                   Tests-unix-64                        PASSED   39452
+  Windows64                Tests-windows-64                     PASSED   39452
+  pharo-cli-basic-hermes   bats                                 PASSED   1
+  pharo-cli-clean          bats                                 PASSED   2
+  pharo-cli-clean          bats                                 SKIPPED  2
+  pharo-cli-eval-tests     bats                                 PASSED   8
+  pharo-cli-fuel           bats                                 PASSED   3
+  pharo-cli-hermes         bats                                 PASSED   4
+  pharo-cli-metacello      bats                                 PASSED   3
+  pharo-cli-run            bats                                 PASSED   5
+  pharo-cli-save           bats                                 PASSED   4
+  pharo-cli-st-tests       bats                                 PASSED   7
+  pharo-cli-test-runner    bats                                 PASSED   7
+  not PASSED (test, status, count over all runs):
+    bats>>clean can run basic clean on image  SKIPPED  1
+    bats>>clean can run production clean  SKIPPED  1
+
+pharo-project/pharo-vm, job pharo-12, build 151 (result UNSTABLE)
+  MacOSX64                 VM unit tests                        PASSED   9543
+  MacOSX64                 image tests                          FAILED   24
+  MacOSX64                 image tests                          PASSED   159924
+  Unix64                   image tests                          FAILED   12
+  Unix64                   image tests                          PASSED   79962
+  Windows64                image tests                          FAILED   12
+  Windows64                image tests                          PASSED   79962
+  not PASSED (test, status, count over all runs):
+    MirrorPrimitivesTest>>testExecutingPrimitive  FAILED  8
+    OCClassBuilderTest>>testCreateNormalClassWithTraitComposition  FAILED  8
+    ReleaseTest>>testNoShadowedVariablesInMethods  FAILED  8
+    StDebuggerInspectorTest>>testUpdateLayoutForContextsWithAssertionFailure  FAILED  8
+    StDebuggerTest>>testUpdateLayoutForContextsIfAssertionFailure  FAILED  8
+    SystemDependenciesTest>>testExternalUIDependencies  FAILED  8
+

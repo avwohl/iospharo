@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: PharoAthleteProject (RomaShmyhelskyi/PharoAthleteProject, row 61) - Pharo test defects</title><meta name="description" content="Package: PharoAthleteProject (RomaShmyhelskyi/PharoAthleteProject, row 61): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: PharoAthleteProject (RomaShmyhelskyi/PharoAthleteProject, row 61)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>romashmyhelskyi-pharoathleteproject.st</dd><dt>Upstream repository</dt><dd>RomaShmyhelskyi/PharoAthleteProject</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: <code>NO-TEST-CLASSES</code>.  The load loaded only the baseline class.</li>
+<li>Cause: on the branch <code>main</code>, <code>BaselineOfProjectAthlete</code> has the method
+<code>baseline:</code> on the class side.  Metacello calls <code>baseline:</code> on an
+instance, so the load has no package.  The branch <code>master</code> has the method
+on the instance side, and the README names that branch.</li>
+<li>Repair here: the manifest row loads the branch <code>master</code>.
+<code>fixes/romashmyhelskyi-pharoathleteproject.st</code> repairs two defects of the
+package code on that branch:
+<ul>
+<li><code>TennisPlayer&gt;&gt;addPrizeMoney:</code> added a prize and removed the last
+element at once, so the list of prizes stayed empty.  The repair removes
+the last element only when the list has more than 3.</li>
+<li><code>Footballer&gt;&gt;goalsScored:</code> refused 0, the value that <code>initialize</code> sets,
+and the error text joined a String and an Integer.</li>
+</ul>
+</li>
+<li>Result: 34 of 34 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 61&quot;
+Metacello new baseline: &#x27;ProjectAthlete&#x27;; repository: &#x27;github://RomaShmyhelskyi/PharoAthleteProject:master/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>61</td><td><code>romashmyhelskyi-pharoathleteproject</code></td><td>ok</td><td>tests=34 P=34 F=0 E=0 S=0 T=0 X=0</td><td>tests=34 P=34 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): romashmyhelskyi-pharoathleteproject.st (<a href="../files/packages/fixes/romashmyhelskyi-pharoathleteproject.st">download</a>)</summary><pre class="code">&quot;RomaShmyhelskyi/PharoAthleteProject, branch master (see the .md: the manifest
+row must load branch master, because the baseline of branch main has its
+baseline: method on the class side and loads no package at all).
+
+TennisPlayer&gt;&gt;addPrizeMoney: did addFirst: and then removeLast at every call.
+With fewer than 3 prizes in the list, the call removed the prize that it had
+just added, so the list stayed empty.  TennisPlayerTest testAddSinglePrizeMoney
+(expects size 1), testAddMultiplePrizeMoney (size 3), testKeepOnlyLastThreePrizes
+and the two compare tests (all salaries were 0) could not pass.  The class
+comment says that the oldest prize leaves only when a fourth one comes in.  The
+repair removes the last element only while the list has more than 3.
+
+Footballer&gt;&gt;goalsScored: refused 0 (test aNumber &gt; 0), but a footballer with no
+goal is valid: the initialize method sets 0 and the class comment counts goals
+per year.  FootballerTest testCalculateIncomeWithoutGoals calls goalsScored: 0
+and got an error.  The error text also did concatenate a number to a string
+(String , Integer fails), so the refusal printed a second error.  The repair
+accepts 0 and negative integers get an error with printString.&quot;
+
+fix value: #TennisPlayer value: #addPrizeMoney:
+	value: [ :source | (source includesSubstring: &#x27;size &gt; 3&#x27;) not ]
+	value:
+&#x27;addPrizeMoney: amount
+	&quot;Додає призові з нового турніру. Зберігає тільки останні 3 турніри&quot;
+
+	amount isNumber
+		ifTrue: [
+			amount &gt; 0
+				ifTrue: [
+					lastThreePrizeMoney addFirst: amount.
+					[ lastThreePrizeMoney size &gt; 3 ] whileTrue: [ lastThreePrizeMoney removeLast ] ]
+				ifFalse: [ self error: &#x27;&#x27;Хибне значення: &#x27;&#x27; , amount printString ] ]
+		ifFalse: [
+			self error:
+				&#x27;&#x27;Недопустиме значення призових з останнього турніру: &#x27;&#x27; , amount printString ]&#x27;.
+
+fix value: #Footballer value: #goalsScored:
+	value: [ :source | (source includesSubstring: &#x27;&gt;= 0&#x27;) not ]
+	value:
+&#x27;goalsScored: aNumber
+	&quot;Встановлює кількість забитих голів&quot;
+
+	aNumber isInteger
+		ifTrue: [
+			aNumber &gt;= 0
+				ifTrue: [ goalsScored := aNumber ]
+				ifFalse: [
+				self error: &#x27;&#x27;Хибне значення кількості забитих голів: &#x27;&#x27; , aNumber printString ] ]
+		ifFalse: [
+			self error:
+				&#x27;&#x27;Недопустиме значення кількості забитих голів: &#x27;&#x27; , aNumber printString ].
+	^ aNumber&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

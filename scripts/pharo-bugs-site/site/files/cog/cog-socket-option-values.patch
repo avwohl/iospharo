@@ -1,0 +1,79 @@
+From 7e941fc475a4484bbdc4f8b603de3cd7889abdde Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 11:40:56 -0500
+Subject: [PATCH] SocketPlugin: an integer option value of each length, and
+ SO_LINGER as a struct linger
+
+sqSocketSetOptions read an integer only from a value of sizeof(int)
+characters or less.  Socket>>setOption: 'SO_RCVBUF' value: 65536 went to
+setsockopt as the 5 characters '65536', and the system read the first 4 of
+them as the int: the buffer became 8 MB on macOS.  A value that reads as an
+integer is now an int of each length.
+
+SO_LINGER is in the option table, but setsockopt got one int for it and
+answered EINVAL, so the option could not be set.  The value is now the
+linger time in a struct linger (0 sets the option off), and the get
+primitive answers the linger time.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../src/common/SocketPluginImpl.c             | 31 +++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..40ad60c93 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -1576,13 +1576,27 @@ sqInt sqSocketSetOptionsoptionNameStartoptionNameSizeoptionValueStartoptionValue
+ 
+ 	  memset((void *)buf, 0, sizeof(buf));
+ 	  memcpy((void *)buf, optionValue, optionValueSize);
+-	  if (optionValueSize <= sizeof(int)
+-	   && (strtol(buf, &endptr, 0),
++	  /* A value that reads as an integer is an int of each length.  With a
++	     limit of sizeof(int) characters here, '65536' for SO_RCVBUF went to
++	     setsockopt as 5 characters, and the system read the first 4 of them
++	     as the int (a buffer of 8 MB on macOS). */
++	  if ((strtol(buf, &endptr, 0),
+ 	       endptr - buf == optionValueSize)) /* are all option chars digits? */
+ 	    {
+ 	      val= strtol(buf, &endptr, 0);
+ 		  memcpy((void *)buf, (void *)&val, sizeof(val));
+ 		  optionValueSize= sizeof(val);
++		  /* SO_LINGER takes a struct linger.  The value is the linger
++		     time in seconds, and 0 sets the option off. */
++		  if (opt->optlevel == SOL_SOCKET && opt->optname == SO_LINGER)
++		    {
++		      struct linger lin;
++		      memset(&lin, 0, sizeof(lin));
++		      lin.l_onoff= val > 0;
++		      lin.l_linger= val;
++		      memcpy((void *)buf, (void *)&lin, sizeof(lin));
++		      optionValueSize= sizeof(lin);
++		    }
+ 	    }
+ 	  if ((setsockopt(PSP(s)->s, opt->optlevel, opt->optname,
+ 			  (const void *)buf, optionValueSize)) < 0)
+@@ -1624,6 +1638,19 @@ sqInt sqSocketGetOptionsoptionNameStartoptionNameSizereturnedValue(SocketPtr s,
+ 		  int optval;	/* NOT sqInt */
+ 		  socklen_t optlen= sizeof(optval);
+ 
++		  if (opt->optlevel == SOL_SOCKET && opt->optname == SO_LINGER) {
++			  /* The answer is the linger time, or 0 when the option is off. */
++			  struct linger lin;
++			  socklen_t linlen= sizeof(lin);
++
++			  if (getsockopt(PSP(s)->s, SOL_SOCKET, SO_LINGER, (void *)&lin, &linlen) < 0) {
++				  success(false);
++				  return getLastSocketError();
++			  }
++			  *result = lin.l_onoff ? lin.l_linger : 0;
++			  return 0;
++		  }
++
+ 		  if (((getsockopt(PSP(s)->s, opt->optlevel, opt->optname, (void *)&optval, &optlen)) < 0) || optlen != sizeof(optval)){
+ 			  success(false);
+ 			  return getLastSocketError();
+-- 
+2.54.0 (Apple Git-157)
+

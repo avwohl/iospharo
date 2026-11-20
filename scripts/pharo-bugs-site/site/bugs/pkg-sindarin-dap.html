@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Sindarin-DAP (Pharo-XP-Tools/Sindarin-DAP, row 145) - Pharo test defects</title><meta name="description" content="Package: Sindarin-DAP (Pharo-XP-Tools/Sindarin-DAP, row 145): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Sindarin-DAP (Pharo-XP-Tools/Sindarin-DAP, row 145)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>pharo-xp-tools-sindarin-dap.st</dd><dt>Upstream repository</dt><dd>Pharo-XP-Tools/Sindarin-DAP</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 18 tests.  Our VM passed 18 in the run of the row.  Stock
+Cog passed 17 and had 1 failure:
+<code>DAPHistoryTest&gt;&gt;testMessagesShouldReturnInReverseChronologicalOrder</code>
+(&quot;Got 7 instead of 8&quot;).</li>
+<li>No defect of a VM.  The test fails on the two VMs in repeated runs: 171 of
+300 runs on stock Cog and 67 of 300 on our VM.  Our VM passed the run of
+the row by accident.</li>
+<li>Cause, in the package: <code>DAPHistory&gt;&gt;messages</code> sorts the messages by their
+time stamp (<code>DateAndTime now</code>) with the block <code>[ tA &gt;= tB ]</code>.  Messages
+that arrive in one tick of the clock have the same time stamp, and the
+sort then gives them in any order.  Measured: of 2000 time stamps taken
+in a loop, 655 are distinct on stock Cog and 912 on our VM.</li>
+<li>Repair (<code>fixes/pharo-xp-tools-sindarin-dap.st</code>): <code>addRequest:</code>,
+<code>addEvent:</code> and <code>addResponse:</code> give each message an arrival number, and
+<code>messages</code> sorts by the time stamp and then by the arrival number.  The
+test is not changed.</li>
+<li>Result: the test passes 300 of 300 runs on the two VMs, and the row
+passes 18 of 18 on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 145&quot;
+Metacello new baseline: &#x27;PharoDAPClient&#x27;; repository: &#x27;github://Pharo-XP-Tools/Sindarin-DAP:main&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>145</td><td><code>pharo-xp-tools-sindarin-dap</code></td><td>ok</td><td>tests=18 P=18 F=0 E=0 S=0 T=0 X=0</td><td>tests=18 P=18 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): pharo-xp-tools-sindarin-dap.st (<a href="../files/packages/fixes/pharo-xp-tools-sindarin-dap.st">download</a>)</summary><pre class="code">&quot;Sindarin-DAP (Pharo-XP-Tools/Sindarin-DAP): DAPHistoryTest&gt;&gt;
+testMessagesShouldReturnInReverseChronologicalOrder fails on stock Cog with
+&#x27;Got 7 instead of 8&#x27;.
+
+Cause, in the package: DAPHistory&gt;&gt;messages sorts requests, events and
+responses by the time stamp that addRequest:, addEvent: and addResponse: write
+(DateAndTime now) with the sort block [ tA &gt;= tB ].  Two messages that are
+added in the same clock tick have equal time stamps.  The sort block then
+answers true for both orders, and the order of the two messages is left to the
+sort algorithm.  The result depends on the resolution of the clock and on the
+speed of the VM: a VM that adds messages in a different tick from each other
+passes by accident, a VM that adds two messages in one tick can fail.  It is
+not a defect of a primitive.
+
+The repair: addRequest:, addEvent: and addResponse: also store the arrival
+number of the message (how many messages the history holds before the add), and
+messages sorts by time stamp and, for equal time stamps, by arrival number, so
+the newest message is first on every clock.&quot;
+
+fix value: #DAPHistory value: #addEvent:
+	value: [ :source | (source includesSubstring: &#x27;arrival&#x27;) not ]
+	value:
+&#x27;addEvent: eventAsDict
+	
+	eventAsDict at: #arrival put: requests size + events size + responses size.
+	eventAsDict at: #timestamp put: DateAndTime now.
+	events add: eventAsDict.
+	self notifyObserversEvent: eventAsDict&#x27;.
+
+fix value: #DAPHistory value: #addRequest:
+	value: [ :source | (source includesSubstring: &#x27;arrival&#x27;) not ]
+	value:
+&#x27;addRequest: requestAsDict
+
+	requestAsDict at: #arrival put: requests size + events size + responses size.
+	requestAsDict at: #timestamp put: DateAndTime now.
+	requests add: requestAsDict.
+	self notifyObserversRequest: requestAsDict&#x27;.
+
+fix value: #DAPHistory value: #addResponse:
+	value: [ :source | (source includesSubstring: &#x27;arrival&#x27;) not ]
+	value:
+&#x27;addResponse: responseAsDict
+	
+	responseAsDict at: #arrival put: requests size + events size + responses size.
+	responseAsDict at: #timestamp put: DateAndTime now.
+	responses add: responseAsDict.
+	self notifyObserversResponse: responseAsDict&#x27;.
+
+fix value: #DAPHistory value: #messages
+	value: [ :source | (source includesSubstring: &#x27;arrival&#x27;) not ]
+	value:
+&#x27;messages
+
+	| all |
+	all := requests , events , responses.
+
+	&quot;Newest first.  Equal time stamps (same clock tick) are ordered by arrival number.&quot;
+	^ all sort: [ :a :b |
+			  | tA tB |
+			  tA := a at: #timestamp ifAbsent: [ DateAndTime now ].
+			  tB := b at: #timestamp ifAbsent: [ DateAndTime now ].
+			  tA = tB
+				  ifTrue: [ (a at: #arrival ifAbsent: [ 0 ]) &gt;= (b at: #arrival ifAbsent: [ 0 ]) ]
+				  ifFalse: [ tA &gt; tB ] ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

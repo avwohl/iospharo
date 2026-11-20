@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SettingsStonReaderTest - Pharo test defects</title><meta name="description" content="SettingsStonReaderTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>SettingsStonReaderTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-SettingsStonReaderTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-SettingsStonReaderTest.st</code></li>
+<li>Methods: <code>SettingsStonReader&gt;&gt;load</code>, <code>SettingsStonReaderTest&gt;&gt;testNonExistingStoredSettingVariable</code></li>
+</ul>
+<p>The test loads a settings STON file whose ClassStoredSetting names an instance variable that no longer exists. STONReader signals InstanceVariableNotFound, and SettingsStonReader&gt;&gt;load did not handle it, so the test errored (marked expectedFailure). The image code defect: load now answers an empty collection and stores nothing when a stored setting names a missing instance variable (the stream is still closed by the ensure:). The test also had a vacuous final assertion (it checked a fresh reader, not the one that did the load); it now checks the reader that loaded, and asserts that load raises no Error. The expectedFailure pragma is removed.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SettingsStonReaderTest&gt;&gt;testNonExistingStoredSettingVariable</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>SettingsStonReader&gt;&gt;load let InstanceVariableNotFound from STONReader escape; test assertion also checked a new reader (always nil).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Base vs fixed image, on ours and on Cog: SettingsStonReaderTest 6 pass + 1 error before, 7 pass after (both VMs). SystemSettingsPersistenceTest 26/26 before and after. SettingsStonWriterTest 5/5 before and after. StoredSettingsMergerTest 2/2 before and after. StoredSettingsFactoryTest does not exist as a test class in the image (no results).</p>
+<p>Upstream note: Title: SettingsStonReader&gt;&gt;load: tolerate stored settings with unknown instance variables. Project: pharo (System-Settings-Core, System-Settings-Tests). A settings file written with an older ClassStoredSetting layout raised InstanceVariableNotFound out of load (secureLoad only catches STONReaderError). load now catches InstanceVariableNotFound, stores nothing and answers #(). SettingsStonReaderTest&gt;&gt;testNonExistingStoredSettingVariable drops its expectedFailure pragma and checks the reader that did the load, not a new one.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>SettingsStonReaderTest&gt;&gt;testNonExistingStoredSettingVariable</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((SettingsStonReaderTest selector: #testNonExistingStoredSettingVariable) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>SettingsStonReaderTest&gt;&gt;testNonExistingStoredSettingVariable before the fix (Pharo 14 build 791)</summary><pre class="code">testNonExistingStoredSettingVariable
+	&lt;expectedFailure&gt;
+	reader stream: MockSettings changedClassStoredSettingVariable readStream.
+	reader load.
+	self assert: SettingsStonReader new storedSettings isNil</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-SettingsStonReaderTest.st (<a href="../files/image-fixes/20-SettingsStonReaderTest.st">download</a>)</summary><pre class="code">fix value: #SettingsStonReader value: #load
+	value: [ :source | (source includesSubstring: &#x27;InstanceVariableNotFound&#x27;) not ]
+	value:
+&#x27;load
+	&quot;It loads all instances of StoredSetting from a stream.
+	 A stored setting that names an instance variable which no longer exists
+	 (the setting class changed since the file was written) cannot be loaded:
+	 nothing is stored and an empty collection is answered.&quot;
+	stream ifNil: [ ^ #() ].
+	stream atEnd ifTrue: [ ^ #() ].
+	[ | reader |
+		reader := STON reader on: stream; yourself.
+		[ storedSettings := reader next ]
+			on: InstanceVariableNotFound
+			do: [ :ex | storedSettings := nil ]
+	] ensure: [ stream close ].
+	^ storedSettings ifNil: [ #() ]&#x27;.
+
+fix value: #SettingsStonReaderTest value: #testNonExistingStoredSettingVariable
+	value: [ :source | (source includesSubstring: &#x27;expectedFailure&#x27;) or: [ source includesSubstring: &#x27;SettingsStonReader new storedSettings&#x27; ] ]
+	value:
+&#x27;testNonExistingStoredSettingVariable
+	reader stream: MockSettings changedClassStoredSettingVariable readStream.
+	self shouldnt: [ reader load ] raise: Error.
+	self assert: reader storedSettings isNil&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

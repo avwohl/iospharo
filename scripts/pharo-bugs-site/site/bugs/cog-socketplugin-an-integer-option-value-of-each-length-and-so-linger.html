@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cog: SocketPlugin: an integer option value of each length, and SO_LINGER - Pharo test defects</title><meta name="description" content="Cog: SocketPlugin: an integer option value of each length, and SO_LINGER: Fixed in a Cog patch (not sent)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Cog: SocketPlugin: an integer option value of each length, and SO_LINGER</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed in a Cog patch (not sent)</span></dd><dt>Defect in</dt><dd>stock Cog VM v12.0.6</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>cog-socket-option-values.patch</dd><dt>Upstream repository</dt><dd>pharo-project/pharo-vm</dd></dl><h2>Record</h2><ul>
+<li>Defect 1: <code>sqSocketSetOptions...</code> reads an integer only from a value of
+<code>sizeof(int)</code> characters or less.  The image gives the value as a string.
+<code>Socket&gt;&gt;setOption: 'SO_RCVBUF' value: 65536</code> goes to <code>setsockopt</code> as the
+5 characters <code>65536</code>, and the system reads the first 4 of them as the
+<code>int</code>.  On macOS the buffer becomes 8 MB.</li>
+<li>Defect 2: <code>SO_LINGER</code> is in the option table, but <code>setsockopt</code> gets one
+<code>int</code> for it, and the system needs a <code>struct linger</code>.  The primitive
+fails, so the image cannot set the option.</li>
+<li>Measurement (<code>scripts/cogdiff/socket_options.st</code>, 72 option calls on a UDP
+socket and on a TCP socket): the stock VM and our VM differ in these 4
+lines only.</li>
+<li>Change: a value that reads as an integer is an <code>int</code> of each length.  For
+<code>SO_LINGER</code> the value is the linger time in a <code>struct linger</code>, 0 sets the
+option off, and the get primitive answers the linger time.</li>
+<li>Test (2026-11-17, macOS 27, arm64): with the change, the patched Cog and
+our VM give the same answer for each of the 72 calls of the script.</li>
+<li>Not tested: Windows and Linux.</li>
+</ul>
+<h2>Test</h2><p>A probe that prints the same lines on a correct VM.  Run it with <code>Pharo.image eval</code> or file it in:</p><details open><summary>socket_options.st (<a href="../files/cogdiff/socket_options.st">download</a>)</summary><pre class="code">&quot;socket_options.st -- the socket options of the image, on a UDP socket and on
+ a TCP socket.  The answer has one line for each call, so a diff of the
+ output of two VMs shows each option that the VMs handle in different ways.
+
+   scripts/vmrun.sh eval cog  scripts/cogdiff/socket_options.st
+   scripts/vmrun.sh eval ours scripts/cogdiff/socket_options.st
+
+ The names are the table of the stock VM
+ (plugins/SocketPlugin/src/common/SocketPluginImpl.c, socketOptions[]), two
+ names that the table does not have (SO_PRIORITY, NO_SUCH_OPTION), and the
+ calls that a multicast socket makes.
+
+ Measured 2026-11-17 (Pharo 14 build 791, macOS 27): 72 lines.  Stock Cog and
+ our VM give the same answer for 68 of them.  The 4 lines that differ are two
+ defects of the stock VM, each on the UDP and on the TCP socket:
+   set SO_RCVBUF := 65536   stock Cog answers #(0 0), and the option then
+                            reads 8388608.  The stock VM reads an integer
+                            only from a value of 4 characters or less, and
+                            gives &#x27;65536&#x27; to setsockopt as 5 characters.
+   set SO_LINGER := 5       stock Cog answers nil (the primitive fails): it
+                            gives setsockopt one int, and the system needs a
+                            struct linger.
+ Before the repair of 2026-11-17 our VM knew 6 names and answered #(0 0) for
+ each other name.&quot;
+| names out try run udp tcp |
+names := #( &#x27;SO_DEBUG&#x27; &#x27;SO_REUSEADDR&#x27; &#x27;SO_DONTROUTE&#x27; &#x27;SO_BROADCAST&#x27; &#x27;SO_SNDBUF&#x27; &#x27;SO_RCVBUF&#x27; &#x27;SO_KEEPALIVE&#x27;
+	&#x27;SO_OOBINLINE&#x27; &#x27;SO_LINGER&#x27; &#x27;IP_TTL&#x27; &#x27;IP_HDRINCL&#x27; &#x27;IP_MULTICAST_IF&#x27; &#x27;IP_MULTICAST_TTL&#x27; &#x27;IP_MULTICAST_LOOP&#x27;
+	&#x27;IP_ADD_MEMBERSHIP&#x27; &#x27;TCP_MAXSEG&#x27; &#x27;TCP_NODELAY&#x27; &#x27;SO_REUSEPORT&#x27; &#x27;SO_PRIORITY&#x27; &#x27;NO_SUCH_OPTION&#x27; ).
+out := WriteStream on: String new.
+try := [ :block | [ block value printString ] on: Error do: [ :e | &#x27;error &#x27; , e class name ] ].
+run := [ :label :socket |
+	names do: [ :each |
+		out nextPutAll: label; nextPutAll: &#x27; get &#x27;; nextPutAll: each; nextPutAll: &#x27; -&gt; &#x27;;
+			nextPutAll: (try value: [ socket getOption: each ]); lf ].
+	{ &#x27;SO_REUSEADDR&#x27; -&gt; true. &#x27;SO_REUSEPORT&#x27; -&gt; true. &#x27;SO_BROADCAST&#x27; -&gt; true. &#x27;SO_KEEPALIVE&#x27; -&gt; true.
+	  &#x27;IP_TTL&#x27; -&gt; 7. &#x27;IP_MULTICAST_TTL&#x27; -&gt; 3. &#x27;IP_MULTICAST_LOOP&#x27; -&gt; false.
+	  &#x27;IP_MULTICAST_IF&#x27; -&gt; #[ 127 0 0 1 ].
+	  &#x27;IP_ADD_MEMBERSHIP&#x27; -&gt; #[ 224 0 0 251 127 0 0 1 ].
+	  &#x27;IP_DROP_MEMBERSHIP&#x27; -&gt; #[ 224 0 0 251 127 0 0 1 ].
+	  &#x27;TCP_NODELAY&#x27; -&gt; 1. &#x27;SO_SNDBUF&#x27; -&gt; 8192. &#x27;SO_RCVBUF&#x27; -&gt; 65536. &#x27;SO_LINGER&#x27; -&gt; 5.
+	  &#x27;SO_PRIORITY&#x27; -&gt; 1. &#x27;NO_SUCH_OPTION&#x27; -&gt; 1 } do: [ :each |
+		out nextPutAll: label; nextPutAll: &#x27; set &#x27;; nextPutAll: each key; nextPutAll: &#x27; := &#x27;; print: each value;
+			nextPutAll: &#x27; -&gt; &#x27;; nextPutAll: (try value: [ socket setOption: each key value: each value ]);
+			nextPutAll: &#x27;  then get -&gt; &#x27;; nextPutAll: (try value: [ socket getOption: each key ]); lf ] ].
+udp := Socket newUDP.
+tcp := Socket newTCP.
+[ run value: &#x27;udp&#x27; value: udp.
+  run value: &#x27;tcp&#x27; value: tcp ] ensure: [ udp closeAndDestroy. tcp closeAndDestroy ].
+out contents
+</pre></details><p class="note">Names such as <code>scripts/vmrun.sh</code> and <code>scripts/cogdiff/</code> are scripts of the <a href="https://github.com/avwohl/iospharo">iospharo repository</a>, which runs one VM at a time.  <i>cog</i> is stock Cog, <i>cogp</i> is Cog with the change, <i>ours</i> is iospharo.</p><h2>Fix</h2><p>A change of the Cog sources (<code>pharo-project/pharo-vm</code>, branch <code>pharo-12</code>), on the local branch <code>fix/socket-option-values</code>.  State: committed on the branch, tested.  Not sent upstream.</p><details open><summary>cog-socket-option-values.patch (<a href="../files/cog/cog-socket-option-values.patch">download</a>)</summary><pre class="code">From 7e941fc475a4484bbdc4f8b603de3cd7889abdde Mon Sep 17 00:00:00 2001
+From: Aaron Wohl
+Date: Tue, 17 Nov 2026 11:40:56 -0500
+Subject: [PATCH] SocketPlugin: an integer option value of each length, and
+ SO_LINGER as a struct linger
+
+sqSocketSetOptions read an integer only from a value of sizeof(int)
+characters or less.  Socket&gt;&gt;setOption: &#x27;SO_RCVBUF&#x27; value: 65536 went to
+setsockopt as the 5 characters &#x27;65536&#x27;, and the system read the first 4 of
+them as the int: the buffer became 8 MB on macOS.  A value that reads as an
+integer is now an int of each length.
+
+SO_LINGER is in the option table, but setsockopt got one int for it and
+answered EINVAL, so the option could not be set.  The value is now the
+linger time in a struct linger (0 sets the option off), and the get
+primitive answers the linger time.
+
+Co-Authored-By: Claude Fable 5.2 &lt;noreply@anthropic.com&gt;
+---
+ .../src/common/SocketPluginImpl.c             | 31 +++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..40ad60c93 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -1576,13 +1576,27 @@ sqInt sqSocketSetOptionsoptionNameStartoptionNameSizeoptionValueStartoptionValue
+ 
+ 	  memset((void *)buf, 0, sizeof(buf));
+ 	  memcpy((void *)buf, optionValue, optionValueSize);
+-	  if (optionValueSize &lt;= sizeof(int)
+-	   &amp;&amp; (strtol(buf, &amp;endptr, 0),
++	  /* A value that reads as an integer is an int of each length.  With a
++	     limit of sizeof(int) characters here, &#x27;65536&#x27; for SO_RCVBUF went to
++	     setsockopt as 5 characters, and the system read the first 4 of them
++	     as the int (a buffer of 8 MB on macOS). */
++	  if ((strtol(buf, &amp;endptr, 0),
+ 	       endptr - buf == optionValueSize)) /* are all option chars digits? */
+ 	    {
+ 	      val= strtol(buf, &amp;endptr, 0);
+ 		  memcpy((void *)buf, (void *)&amp;val, sizeof(val));
+ 		  optionValueSize= sizeof(val);
++		  /* SO_LINGER takes a struct linger.  The value is the linger
++		     time in seconds, and 0 sets the option off. */
++		  if (opt-&gt;optlevel == SOL_SOCKET &amp;&amp; opt-&gt;optname == SO_LINGER)
++		    {
++		      struct linger lin;
++		      memset(&amp;lin, 0, sizeof(lin));
++		      lin.l_onoff= val &gt; 0;
++		      lin.l_linger= val;
++		      memcpy((void *)buf, (void *)&amp;lin, sizeof(lin));
++		      optionValueSize= sizeof(lin);
++		    }
+ 	    }
+ 	  if ((setsockopt(PSP(s)-&gt;s, opt-&gt;optlevel, opt-&gt;optname,
+ 			  (const void *)buf, optionValueSize)) &lt; 0)
+@@ -1624,6 +1638,19 @@ sqInt sqSocketGetOptionsoptionNameStartoptionNameSizereturnedValue(SocketPtr s,
+ 		  int optval;	/* NOT sqInt */
+ 		  socklen_t optlen= sizeof(optval);
+ 
++		  if (opt-&gt;optlevel == SOL_SOCKET &amp;&amp; opt-&gt;optname == SO_LINGER) {
++			  /* The answer is the linger time, or 0 when the option is off. */
++			  struct linger lin;
++			  socklen_t linlen= sizeof(lin);
++
++			  if (getsockopt(PSP(s)-&gt;s, SOL_SOCKET, SO_LINGER, (void *)&amp;lin, &amp;linlen) &lt; 0) {
++				  success(false);
++				  return getLastSocketError();
++			  }
++			  *result = lin.l_onoff ? lin.l_linger : 0;
++			  return 0;
++		  }
++
+ 		  if (((getsockopt(PSP(s)-&gt;s, opt-&gt;optlevel, opt-&gt;optname, (void *)&amp;optval, &amp;optlen)) &lt; 0) || optlen != sizeof(optval)){
+ 			  success(false);
+ 			  return getLastSocketError();
+-- 
+2.54.0 (Apple Git-157)
+
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

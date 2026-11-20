@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: AoC-in-Pharo (shnarazk/AoC-in-Pharo, row 119) - Pharo test defects</title><meta name="description" content="Package: AoC-in-Pharo (shnarazk/AoC-in-Pharo, row 119): Fixed; 6 tests cannot apply">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: AoC-in-Pharo (shnarazk/AoC-in-Pharo, row 119)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed; 6 tests cannot apply</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>6</dd><dt>Fix</dt><dd>see record</dd><dt>Upstream repository</dt><dd>shnarazk/AoC-in-Pharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 20 tests, 7 pass, 13 errors on the two VMs (<code>OSEnvironment</code>,
+<code>Dictionary</code> and <code>Array</code> do not understand <code>#atGrid:</code>; <code>SmallInteger</code> does
+not understand <code>#y</code>).</li>
+<li>Causes, in the package:
+<ul>
+<li>The last commit of the repository (20b89cf) renamed <code>at:</code> to <code>atGrid:</code>
+also in code whose receiver is not a <code>GridArray</code>.  Only <code>GridArray</code> has
+<code>atGrid:</code>.</li>
+<li><code>GridArray&gt;&gt;x:y:</code> and <code>x:y:put:</code> gave an Integer to <code>atGrid:</code>, which
+takes a Point.</li>
+</ul>
+</li>
+<li>Repair (<code>fixes/shnarazk-aoc-in-pharo.st</code>): the 10 methods send <code>at:</code>
+again, and the two <code>GridArray</code> methods use <code>at:</code> and <code>at:put:</code>.</li>
+<li>6 tests cannot apply on this machine (<code>Y2025Day05Test</code>, <code>Y2025Day08Test</code>).
+They read puzzle input files from a directory <code>data</code> under the home
+directory.  The repository has no such file, and Advent of Code asks that
+the puzzle text and the inputs are not copied.  The setUp of the two
+classes skips the test with that reason when the file is absent.
+<code>not-applicable/shnarazk-aoc-in-pharo.txt</code> has the proof.</li>
+<li>For the owner of the package: the solution of day 8 of 2025 is not
+complete (<code>part2</code> answers 0), so <code>testPart2</code> cannot pass with the input
+file either.</li>
+<li>Result: 14 pass and 6 skips on the two VMs; each skip is in the
+not-applicable file.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 119&quot;
+Metacello new baseline: &#x27;AdventOfCode&#x27;; repository: &#x27;github://shnarazk/AoC-in-Pharo:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Advent-of-Code&#x27; &#x27;Advent-of-Code-Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>119</td><td><code>shnarazk-aoc-in-pharo</code></td><td>ok</td><td>tests=20 P=14 F=0 E=0 S=6 T=0 X=0</td><td>tests=20 P=14 F=0 E=0 S=6 T=0 X=0</td></tr></table><h3>Tests that do not pass</h3><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>Y2025Day05Test&gt;&gt;testParser</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>Y2025Day05Test&gt;&gt;testPart1</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>Y2025Day05Test&gt;&gt;testPart2</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>Y2025Day08Test&gt;&gt;testParser</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>Y2025Day08Test&gt;&gt;testPart1</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>Y2025Day08Test&gt;&gt;testPart2</code></td><td>SKIP</td><td>SKIP</td></tr></table><p class="note">The fixes file of this row is not shown here: it has values of the puzzle input and answers of the package author.  It is in the iospharo repository, <code>scripts/pkg-jit-test/fixes/</code>.</p><h2>Fix</h2><details open><summary>Tests that cannot apply, with the proof: shnarazk-aoc-in-pharo.txt (<a href="../files/packages/not-applicable/shnarazk-aoc-in-pharo.txt">download</a>)</summary><pre class="code"># Tests that cannot apply on a machine that does not have the puzzle input
+# files of the author.  One test for each line: Class&gt;&gt;selector, or Class&gt;&gt;*
+# for each test of the class.  A line that starts with # has the proof.
+#
+# The setUp and the tests of the two classes read a puzzle input file:
+# AoCSolver&gt;&gt;inputData: opens
+# &lt;project directory&gt;/data/&lt;year&gt;/input-day&lt;NN&gt;-0.txt, and the project
+# directory is the environment variable AOC_DIR or the home directory
+# (src/Advent-of-Code/AoCSolver.class.st).
+#
+# The repository does not have the files: commit 20b89cf has 22 files, and
+# none is under a directory &quot;data&quot; or has the extension &quot;.txt&quot;.
+#
+# Our repository cannot supply the files.  Advent of Code asks that the
+# puzzle text, which has the example inputs, and the puzzle inputs are not
+# copied (https://adventofcode.com/about, &quot;Can I copy/redistribute part of
+# Advent of Code?&quot;).
+#
+# The solution of day 8 is also not complete in the repository (part2 answers
+# 0).  The owner of the repository must complete it; a run needs the input
+# file.
+Y2025Day05Test&gt;&gt;testParser
+Y2025Day05Test&gt;&gt;testPart1
+Y2025Day05Test&gt;&gt;testPart2
+Y2025Day08Test&gt;&gt;testParser
+Y2025Day08Test&gt;&gt;testPart1
+Y2025Day08Test&gt;&gt;testPart2
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

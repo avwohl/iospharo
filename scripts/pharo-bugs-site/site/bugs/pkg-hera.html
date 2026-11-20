@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Hera (koendehondt/hera-for-pharo, row 78) - Pharo test defects</title><meta name="description" content="Package: Hera (koendehondt/hera-for-pharo, row 78): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Hera (koendehondt/hera-for-pharo, row 78)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>koendehondt-hera-for-pharo.st</dd><dt>Upstream repository</dt><dd>koendehondt/hera-for-pharo</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 672 tests, 582 pass, 4 failures, 86 errors on the two VMs
+(<code>UndeclaredVariableRead: HeraSyntaxDarkTheme</code>).</li>
+<li>Cause: the commit <code>6bf7551</code> of the package uses the classes
+<code>HeraSyntaxLightTheme</code> and <code>HeraSyntaxDarkTheme</code>.  No file of the
+repository defines them.  <code>HeraSettings&gt;&gt;syntaxTheme</code> reads the dark theme
+class when the UI theme of the image is dark, as in the image of the run.</li>
+<li>Repair here: <code>fixes/koendehondt-hera-for-pharo.st</code> makes the three theme
+classes (<code>HeraSyntaxTheme</code> and the two subclasses) with the six colours
+that <code>HeraScriptGenerator</code> asks for.  The light colours are the values in
+the expected texts of the tests.  Each test of <code>HeraUnitTestCase</code> runs with
+the light theme, because the tests expect the light colours.</li>
+<li>Limit: the dark colours are ours (the GitHub dark palette).  The author
+must add the class files to the repository.</li>
+<li>Result: 672 of 672 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 78&quot;
+Metacello new baseline: &#x27;Hera&#x27;; repository: &#x27;github://koendehondt/hera-for-pharo:main&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>78</td><td><code>koendehondt-hera-for-pharo</code></td><td>ok</td><td>tests=672 P=672 F=0 E=0 S=0 T=0 X=0</td><td>tests=672 P=672 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): koendehondt-hera-for-pharo.st (<a href="../files/packages/fixes/koendehondt-hera-for-pharo.st">download</a>)</summary><pre class="code">&quot;Koen De Hondt / hera-for-pharo.
+
+H1. The upstream commit 6bf7551 (&#x27;Apply syntax highlighting in the script
+generator&#x27;) uses the classes HeraSyntaxLightTheme and HeraSyntaxDarkTheme in
+HeraSettings&gt;&gt;syntaxTheme, HeraSettings&gt;&gt;syntaxLightThemeDuring: and
+HeraScriptGeneratorTestCase&gt;&gt;initializeSubject, but the commit does not
+contain the two classes (no file of the repository defines them, and the git
+history has no such file).  Every HeraScriptGenerator new reads
+&#x27;Hera settings syntaxTheme&#x27;, so each test that makes a script, a report or a
+rich script stops with UndeclaredVariableRead (86 errors, and 4 failures
+that come from a run process that stopped for the same reason).  The repair
+creates an abstract class HeraSyntaxTheme and the two subclasses with the
+six colour messages that HeraScriptGenerator sends: tagColor, keywordColor,
+stepKeywordColor, titleColor, tableColor, docStringColor.  The light colours
+are the ones that the expected texts of the tests contain (116329 tags,
+CF222E keywords and step keywords, 0A3069 titles, 8250DF tables, data trees
+and doc strings).  The dark colours are the GitHub dark palette; no test
+reads them.
+
+H2. The tests that compare coloured text expect the light colours, but
+HeraSettings&gt;&gt;syntaxTheme picks the theme from the brightness of the active
+Pharo UI theme.  The image of the run has a DARK UI theme: 85 of the 86
+errors name HeraSyntaxDarkTheme, which only the dark branch reads.  So this
+entry is needed, not only a precaution.  Only HeraFeatureTestCase fixes the light theme.  A
+test run on a dark UI theme would fail on colours.  HeraUnitTestCase&gt;&gt;performTest
+now runs each test inside &#x27;Hera settings syntaxLightThemeDuring:&#x27;, the
+method that the package has for this purpose.&quot;
+
+&quot;H1: the three classes of the syntax theme.&quot;
+(Smalltalk globals includesKey: #HeraSyntaxTheme) ifFalse: [
+	(Object &lt;&lt; #HeraSyntaxTheme)
+		package: &#x27;Hera&#x27;;
+		tag: &#x27;Core&#x27;;
+		install.
+	Stdio stdout nextPutAll: &#x27;ADDED class HeraSyntaxTheme&#x27;; lf; flush ].
+(Smalltalk globals includesKey: #HeraSyntaxLightTheme) ifFalse: [
+	((Smalltalk globals at: #HeraSyntaxTheme) &lt;&lt; #HeraSyntaxLightTheme)
+		package: &#x27;Hera&#x27;;
+		tag: &#x27;Core&#x27;;
+		install.
+	Stdio stdout nextPutAll: &#x27;ADDED class HeraSyntaxLightTheme&#x27;; lf; flush ].
+(Smalltalk globals includesKey: #HeraSyntaxDarkTheme) ifFalse: [
+	((Smalltalk globals at: #HeraSyntaxTheme) &lt;&lt; #HeraSyntaxDarkTheme)
+		package: &#x27;Hera&#x27;;
+		tag: &#x27;Core&#x27;;
+		install.
+	Stdio stdout nextPutAll: &#x27;ADDED class HeraSyntaxDarkTheme&#x27;; lf; flush ].
+
+#( #tagColor #keywordColor #stepKeywordColor #titleColor #tableColor #docStringColor ) do: [ :each |
+	add value: #HeraSyntaxTheme value: each value: &#x27;accessing&#x27; value:
+(each asString, &#x27;
+	&quot;The colour of this kind of text in a generated script.&quot;
+
+	^ self subclassResponsibility&#x27;) ].
+
+add value: #HeraSyntaxLightTheme value: #tagColor value: &#x27;accessing&#x27; value:
+&#x27;tagColor
+
+	^ Color fromHexString: &#x27;&#x27;116329&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxLightTheme value: #keywordColor value: &#x27;accessing&#x27; value:
+&#x27;keywordColor
+
+	^ Color fromHexString: &#x27;&#x27;CF222E&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxLightTheme value: #stepKeywordColor value: &#x27;accessing&#x27; value:
+&#x27;stepKeywordColor
+
+	^ Color fromHexString: &#x27;&#x27;CF222E&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxLightTheme value: #titleColor value: &#x27;accessing&#x27; value:
+&#x27;titleColor
+
+	^ Color fromHexString: &#x27;&#x27;0A3069&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxLightTheme value: #tableColor value: &#x27;accessing&#x27; value:
+&#x27;tableColor
+
+	^ Color fromHexString: &#x27;&#x27;8250DF&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxLightTheme value: #docStringColor value: &#x27;accessing&#x27; value:
+&#x27;docStringColor
+
+	^ Color fromHexString: &#x27;&#x27;8250DF&#x27;&#x27;&#x27;.
+
+add value: #HeraSyntaxDarkTheme value: #tagColor value: &#x27;accessing&#x27; value:
+&#x27;tagColor
+
+	^ Color fromHexString: &#x27;&#x27;7EE787&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxDarkTheme value: #keywordColor value: &#x27;accessing&#x27; value:
+&#x27;keywordColor
+
+	^ Color fromHexString: &#x27;&#x27;FF7B72&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxDarkTheme value: #stepKeywordColor value: &#x27;accessing&#x27; value:
+&#x27;stepKeywordColor
+
+	^ Color fromHexString: &#x27;&#x27;FF7B72&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxDarkTheme value: #titleColor value: &#x27;accessing&#x27; value:
+&#x27;titleColor
+
+	^ Color fromHexString: &#x27;&#x27;A5D6FF&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxDarkTheme value: #tableColor value: &#x27;accessing&#x27; value:
+&#x27;tableColor
+
+	^ Color fromHexString: &#x27;&#x27;D2A8FF&#x27;&#x27;&#x27;.
+add value: #HeraSyntaxDarkTheme value: #docStringColor value: &#x27;accessing&#x27; value:
+&#x27;docStringColor
+
+	^ Color fromHexString: &#x27;&#x27;D2A8FF&#x27;&#x27;&#x27;.
+
+&quot;H2: each Hera unit test runs with the light syntax theme.&quot;
+add value: #HeraUnitTestCase value: #performTest value: &#x27;running&#x27; value:
+&#x27;performTest
+	&quot;The expected texts of the tests have the colours of the light syntax theme.&quot;
+
+	Hera settings syntaxLightThemeDuring: [ super performTest ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Debugger-kernel-skips - Pharo test defects</title><meta name="description" content="Debugger-kernel-skips: Partly fixed: 3 tests repaired in the image; debugger stepping not repaired; stock Cog needs a Cog change; review not accepted">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Debugger-kernel-skips</h1><dl class="meta"><dt>State</dt><dd><span class="st st-part">Partly fixed: 3 tests repaired in the image; debugger stepping not repaired; stock Cog needs a Cog change; review not accepted</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>4</dd><dt>Fix</dt><dd>image fix 20-Debugger-kernel-skips.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><p class="note">Open: the debugger still steps with the old stop points (<code>shouldStepStopAt:</code>), because 11 tests of the external Sindarin package (<code>SindarinDebuggerTest</code>) fail with the new stop points.  A decision is needed: change Sindarin, or keep the two stop sets.  The test <code>CodeSimulationTest&gt;&gt;testErrorCodeNotFound</code> passes on stock Cog only with the Cog change for primitive 218 (see the Cog section).</p><h2>Record</h2><ul>
+<li>Review: NOT accepted (round 2).</li>
+<li>Entries: <code>scripts/image-fixes/20-Debugger-kernel-skips.st</code></li>
+<li>Methods: <code>OnlineSourceDebugInfo&gt;&gt;shouldStopAt:</code>, <code>OnlineSourceDebugInfo&gt;&gt;shouldStepStopAt: (added)</code>, <code>OfflineSourceDebugInfo&gt;&gt;shouldStepStopAt: (added)</code>, <code>DebugSession&gt;&gt;stepToFirstInterestingBytecodeInContext:</code>, <code>DebugInfoTest&gt;&gt;testNotStopAtAllButFirstBytecodeOfOptimizedSend</code>, <code>DebugInfoTest&gt;&gt;testNotStopAtConstantBlockCreation</code>, <code>DebugInfoTest&gt;&gt;testNotStopAtFullBlockCreation</code>, <code>CodeSimulationTest&gt;&gt;testErrorCodeNotFound</code></li>
+</ul>
+<p>DebugInfoTest: the three testNotStop* tests are restored with their original assertions and only the 'self skip' and the 'only valid when' comment removed. OnlineSourceDebugInfo&gt;&gt;shouldStopAt: is repaired: it now stops at every return and at the first bytecode of each message or assignment node of the source, not at compiler-inserted stores, comparisons, increments, jumps or closure creation. Measured side effect: the only sender is DebugSession&gt;&gt;stepToFirstInterestingBytecodeInContext:, and SindarinDebuggerTest (external package) steps over the old stop points; with the strict set it dropped from 87 to 76 passes (11 tests fail or error) on both VMs. So the old stop set is kept under the new name shouldStepStopAt: (added to OnlineSourceDebugInfo and OfflineSourceDebugInfo) and DebugSession uses that; SindarinDebuggerTest is back to 87 on both VMs. Moving the debugger to the strict stops needs a Sindarin change first (blockers). CodeSimulationTest&gt;&gt;testErrorCodeNotFound: the skip is removed. The real defect is a VM divergence: on stock Cog a missing named primitive gives #'not found' when called, but Context&gt;&gt;doPrimitive: 117 (VM primitive 218) gives nil (Cog sends -1). On our VM both gave nil, so the test only passed by accident (nil equals nil) and our VM did not match Cog for the real call. I changed a private copy of our VM so both give #'not found', as Cog does for the real call; the test passes 3 of 3 on that build. Stock Cog fails the test (Got #'not found' instead of nil) until the Cog one-line change below is made; I did not build Cog.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DebugInfoTest&gt;&gt;testNotStopAtAllButFirstBytecodeOfOptimizedSend</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>OnlineSourceDebugInfo&gt;&gt;shouldStopAt: stopped at compiler-inserted stores, sends and jumps of the inlined to:do: ('for now' in the source). Repaired: stop only at returns and at the first bytecode of message and assignment nodes. Test only loses the skip.</td>
+</tr>
+<tr>
+<td><code>DebugInfoTest&gt;&gt;testNotStopAtConstantBlockCreation</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>shouldStopAt: stopped at the closure-creation bytecode (isSourceBlockCreation:). No longer a stop point; test only loses the skip.</td>
+</tr>
+<tr>
+<td><code>DebugInfoTest&gt;&gt;testNotStopAtFullBlockCreation</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>shouldStopAt: stopped at the fullClosure bytecode. No longer a stop point; test only loses the skip.</td>
+</tr>
+<tr>
+<td><code>CodeSimulationTest&gt;&gt;testErrorCodeNotFound</code></td>
+<td>both-vms</td>
+<td>needs a VM change</td>
+<td>A named primitive that does not exist: the real call gives error code #'not found' on Cog (PrimErrNotFound 11) but nil on our VM (primitiveExternalCall returned Failure with no code). Simulation through Context&gt;&gt;doPrimitive:method:receiver:args: 117 gives nil on both VMs (ours: primFailCode_ = -1 always, Primitives.cpp primitiveDoNamedPrimitiveWithArgs; Cog: StackInterpreterPrimitives&gt;&gt;primitiveDoNamedPrimitiveWithArgs line 916, primitiveFailFor: -1). The test wants both to be equal. On unpatched ours the test passes only because nil equals nil (real call gives nil as well). Skip removed from the test; the assertions are unchanged.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Pass counts (P/F/E/S) with the base image vs the fix image, run on both VMs (ours = vm-base, Cog = native arm64 v12.0.6). Final fix image: DebugInfoTest base 68P/3S, fix 71P/0S on both VMs. SindarinDebuggerTest base 87P, fix 87P on both VMs (with the first attempt, the strict stops used by DebugSession, it dropped to 76P/7F/4E on both VMs; that is why shouldStepStopAt: exists). Unchanged base vs fix on both VMs: DebugSessionContextsTest 2, DebugSessionContexts2Test 3, DebugSessionExceptionTest 3, DebuggerModelTest 7, AssignmentAndLiteralDebuggerTest 6, InstructionStreamSteppingTest 6, SindarinDebugSessionTest 3, StDebuggerContextTest 14, StMorphicDebugSessionTest 2, StDebuggerTest 62P/6S (one flaky fail testUpdateExtensionSubscription on Cog showed up on base too; 2 of 3 reruns pass on both), DebuggerTest 0 tests. CodeSimulationTest: ours base 8P/1S, fix 9P; Cog base 8P/1S, fix 8P/1F (the Cog failure is testErrorCodeNotFound, see vmChange). VM change, private build vs vm-base, same fix image, ours only: FFICalloutTest 6/6, FFICalloutAPITest 18/18, FFIFunctionResolutionTest 19/19, FFIStringCalloutTest 13/13, FFIExternalStructureTest 12/12, FFITypesTest 15/15, FFICallbackTest 2/2, FileAttributesPluginPrimsTest 6/6, CodeSimulationTest 9/9, DebuggerModelTest 7/7, SindarinDebuggerTest 87/87, ByteArrayTest 13/13, StringTest 433/433, LargePositiveIntegerTest 19/19, FloatTest 60P/1S both, CairoLibraryTest 1/1, ProcessTest 47/47, BlockClosureTest 29P/2S both, DateAndTimeTest 59/59, ZipArchiveTest 15 vs 14 once, then 15 vs 15 in 3 reruns (parallel runs shared /tmp/testfiles: flake). SocketTest has no tests in this runner. Not run: the whole Pharo suite, GUI tests of StDebugger beyond StDebuggerTest, the JIT-off VM.</p>
+<p>VM change: Both changes are for a person to review before any pull request. I did not edit the iospharo repository ; I changed a private copy (&lt;work directory&gt;) and built it with cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHARO_ASM_TRAMPOLINE=ON -DPHARO_WITH_CRYPTO=ON -DPHARO_DIAG_KNOBS=OFF; binary &lt;local work directory&gt; unified diff: &lt;local work directory&gt; (70 lines, against HEAD 9b4e3107, files src/vm/Primitives.cpp and src/vm/Interpreter.hpp).</p>
+<p>OUR VM. (1) Interpreter.hpp: add <code>static constexpr int PrimErrNotFound_ = 11;</code> (value from src/vm/plugins/sqVirtualMachine.h PrimErrNotFound). (2) Primitives.cpp primitiveExternalCall: (a) in the miss-cache hit <code>if (extEntry.missing)</code> set primFailCode_ = PrimErrNotFound_ before the Failure return; (b) at the end, where a named-primitive spec (Array of 4 with a byte-object name) was found and not resolved, set <code>if (primFailCode_ == 0) primFailCode_ = PrimErrNotFound_;</code> and move the PHARO_NO_EXTCALL_MISS_CACHE check so that it guards only the caching, not the code. (3) Primitives.cpp primitiveDoNamedPrimitiveWithArgs (prim 218): keep the inner failure code (<code>const int innerCode = primFailCode_;</code> before popN) and set <code>primFailCode_ = (innerCode &gt; 1) ? innerCode : -1;</code> instead of always -1. This is what Cog does: Cog keeps the code of the failed external primitive and maps only the generic code 1 to -1. Defect before: Primitives.cpp primitiveExternalCall ended in a bare return PrimitiveResult::Failure (primFailCode_ stays 0), so <code>&lt;primitive: 'dooo' module: 'bar' error: code&gt;</code> got code = nil; Cog gives #'not found'.</p>
+<p>Minimal reproducer (Smalltalk, evalfile):
+| r | r := CodeSimulationTest new veryBasicAt: 1. { r. (Context sender: nil receiver: nil method: Object &gt;&gt; #at: arguments: #(10)) push: nil; push: 500; doPrimitive: 117 method: CodeSimulationTest &gt;&gt; #veryBasicAt: receiver: CodeSimulationTest new args: #(999) }
+Our VM before: {nil. {token. nil}}. Our VM patched: {#'not found'. {token. #'not found'}}. Stock Cog v12.0.6 (arm64): {#'not found'. {token. nil}}.</p>
+<p>COG (proposal, not built, not measured). pharo-vm/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st line 916 in primitiveDoNamedPrimitiveWithArgs: <code>addr = 0 ifTrue: [ ^ self primitiveFailFor: -1 ]. \&quot;could not find function; answer generic failure (see below)\&quot;</code>. Proposal: <code>addr = 0 ifTrue: [ ^ self primitiveFailFor: PrimErrNotFound ].</code> primitiveExternalCall already fails with PrimErrNotFound for the same case (see its class comment), and Context&gt;&gt;tryNamedPrimitiveIn:for:withArgs: (Kernel-CodeModel/Context.class.st line 2110) passes a non-integer error code on as the code of the failure token, so the simulation then answers #'not found' like the real call. With this change CodeSimulationTest&gt;&gt;testErrorCodeNotFound should pass on Cog; this is derived from reading the sources and the one measurement above, not from a built Cog. The generated C is in the VMMaker output (cointerp.c, primitiveDoNamedPrimitiveWithArgs).</p>
+<p>Open points: 1) The debugger still uses the OLD (compiler-level) stop points through shouldStepStopAt:. The user-visible stepping granularity is not repaired, only shouldStopAt: and its tests are. Moving DebugSession to shouldStopAt: needs the Sindarin package (external, not in the Pharo sources (pharo-project/pharo)) to be changed: with the strict set these 11 SindarinDebuggerTest tests fail on both VMs: testCanStillExecuteWhenAimedNodePcIsAfterInAnyContext, testCanStillExecuteWhenAimedNodePcIsBeforeInAnyContext, testMoveToNodeWhenNodeIsInBlockThatCreatesContextAndBlockCreationIsFirstBytecodeInFirstStatement, testMoveToNodeWhenNodeIsInBlockThatCreatesContextAndBlockHasBeenCreated, testMoveToNodeWhenNodeIsInBlockThatCreatesContextAndBlockHasBeenCreatedBackward, testMoveToNodeWhenNodeIsInIfTrueIfFalseBlock, testSkipAssignmentWithStoreIntoBytecodePushesReplacementValueButNotWithPopIntoBytecode, testSkipStepsMethodNodes, testSkipUpToNodeInEvaluatedBlock, testSkipUpToNodeStopsOnImplicitReturnIfAimedNodeCanStillBeExecuted, testSkipUpToNodeStopsOnReturnNodes. The owner should decide whether Sindarin is to be changed or the split stays. 2) CodeSimulationTest&gt;&gt;testErrorCodeNotFound passes on our VM only with the VM change (which I made and built only in a private copy under scratchpad/&lt;work directory&gt;; the repository was not touched) and fails on stock Cog until the one-line Cog change is made; I could not build a patched Cog (the VMMaker generation and the Cog build were not attempted), so the Cog side is a proposal from source reading plus the measured failure text. The fix file applies the test change on both VMs, so with the skip removed the test will fail on stock Cog until Cog is changed. 3) The DebugInfoTest runs use the SUnit runner's single default parametrization; I checked cached=true and cached=false by an eval loop for all testStop*/testNotStop* tests (all pass on both VMs).</p>
+<p>Upstream note: Pharo (Debugger/DebugInfo): &quot;Make OnlineSourceDebugInfo&gt;&gt;shouldStopAt: stop only at source stop points and enable three DebugInfoTest tests&quot;. shouldStopAt: answers true for every return and for the first bytecode of each message or assignment node; the compiler-inserted store, comparison, increment and jump bytecodes of inlined loops and the closure-creation bytecodes are no stop points. The three DebugInfoTest testNotStop* tests lose their 'self skip'. Note for review: DebugSession&gt;&gt;stepToFirstInterestingBytecodeInContext: is the only sender and Sindarin (external) tests step over the old stop points (11 tests of SindarinDebuggerTest fail with the strict set), so the proposal keeps the old set as shouldStepStopAt: for DebugSession until Sindarin changes. Separate, for the Cog people (owner reviews first, no AI-written PR before that): in StackInterpreterPrimitives&gt;&gt;primitiveDoNamedPrimitiveWithArgs answer PrimErrNotFound instead of -1 when the function is not found, so the simulation in Context&gt;&gt;doPrimitive:method:receiver:args: gives the same error code as the real call, and enable CodeSimulationTest&gt;&gt;testErrorCodeNotFound.</p>
+<p>Reviewer, required changes: 1) CodeSimulationTest&gt;&gt;testErrorCodeNotFound must pass 3 of 3 on both VMs with the images the fix file produces. Either (a) get the Cog change reviewed by the owner, built, and measured on a patched Cog. The patch is primitiveFailFor: PrimErrNotFound in primitiveDoNamedPrimitiveWithArgs. Report the 3 of 3 pass on that Cog and apply the VM patch to our VM in the repository. Or (b) leave the skip in until both VMs are fixed. Do not remove the skip while the test fails on Cog. 2) The user-visible debugger stepping is not repaired, because DebugSession uses the old stop set (shouldStepStopAt:). Either make the Sindarin tests pass with the strict set, or document that clearly as a deferred item with an owner decision. 3) Re-run the regression comparison, base against fix, on both VMs.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>DebugInfoTest&gt;&gt;testNotStopAtAllButFirstBytecodeOfOptimizedSend</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>DebugInfoTest&gt;&gt;testNotStopAtConstantBlockCreation</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>DebugInfoTest&gt;&gt;testNotStopAtFullBlockCreation</code></td><td>SKIP</td><td>repaired</td><td>PASS 2x</td><td>PASS 2x</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>CodeSimulationTest&gt;&gt;testErrorCodeNotFound</code></td><td>SKIP</td><td>needs a VM change</td><td>PASS</td><td>PASS</td><td>FAIL</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((CodeSimulationTest selector: #testErrorCodeNotFound) run) printString.
+((DebugInfoTest selector: #testNotStopAtAllButFirstBytecodeOfOptimizedSend) run) printString.
+((DebugInfoTest selector: #testNotStopAtConstantBlockCreation) run) printString.
+((DebugInfoTest selector: #testNotStopAtFullBlockCreation) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>CodeSimulationTest&gt;&gt;testErrorCodeNotFound before the fix (Pharo 14 build 791)</summary><pre class="code">testErrorCodeNotFound
+	| ctx result resultSimu |
+	self skip.
+
+	Smalltalk vm isRunningCog ifFalse: [ ^ self ].
+
+	result := self veryBasicAt: 1.
+
+	ctx := Context
+		sender: nil
+		receiver: nil
+		method: Object &gt;&gt; #at:
+		arguments: #(10).
+
+	resultSimu := ctx
+		push: nil;
+		push: 500;
+		doPrimitive: 117
+			method: self class &gt;&gt; #veryBasicAt:
+			receiver: self
+			args: #(999).
+
+	self assert: resultSimu isArray.
+	self assert: Context primitiveFailToken first identicalTo: resultSimu first.
+	self assert: result equals: resultSimu second</pre></details><details><summary>DebugInfoTest&gt;&gt;testNotStopAtAllButFirstBytecodeOfOptimizedSend before the fix (Pharo 14 build 791)</summary><pre class="code">testNotStopAtAllButFirstBytecodeOfOptimizedSend
+
+	| debugInfo methodToTest send todoPCs |
+	
+	&quot;This test is only valid when shouldStopAt: does not stop at
+	  - compiler only inserted stores
+	  - closure creations&quot;
+	self skip.
+	
+	methodToTest := self class &gt;&gt; #methodWithOptimizedSend.
+	debugInfo := self newDebugInfoFor: methodToTest.
+
+	&quot;a to:do: send should stop at the to:do: point but not in the intermediate steps&quot;
+	send := methodToTest ast statements first.
+	todoPCs := send methodNode pcsForNode: send.
+	self assert: todoPCs size &gt; 1.
+
+	todoPCs allButFirst do: [ :otherPC |
+		self deny: (debugInfo shouldStopAt: otherPC) ]</pre></details><details><summary>DebugInfoTest&gt;&gt;testNotStopAtConstantBlockCreation before the fix (Pharo 14 build 791)</summary><pre class="code">testNotStopAtConstantBlockCreation
+
+	| debugInfo methodToTest blockNode blockCreationPC |
+	
+	&quot;This test is only valid when shouldStopAt: does not stop at
+	  - compiler only inserted stores
+	  - closure creations&quot;
+	self skip.
+	
+	methodToTest := self class &gt;&gt; #methodWithConstantBlockReturn.
+	debugInfo := self newDebugInfoFor: methodToTest.
+
+	blockNode := methodToTest ast statements first.
+	blockCreationPC := (blockNode methodNode pcsForNode: blockNode) first.
+
+	self deny: (debugInfo shouldStopAt: blockCreationPC)</pre></details><details><summary>DebugInfoTest&gt;&gt;testNotStopAtFullBlockCreation before the fix (Pharo 14 build 791)</summary><pre class="code">testNotStopAtFullBlockCreation
+
+	| debugInfo methodToTest blockNode blockCreationPCs |
+	
+	&quot;This test is only valid when shouldStopAt: does not stop at
+	  - compiler only inserted stores
+	  - closure creations&quot;
+	self skip.
+	
+	methodToTest := self class &gt;&gt; #methodWithFullBlockReturn.
+	debugInfo := self newDebugInfoFor: methodToTest.
+
+	blockNode := methodToTest ast statements first.
+	&quot;A block may have many PCs: the creation of the block but also the creation of the temp verctor and the copied vars
+	None of them are stop points.&quot;
+	blockCreationPCs := blockNode methodNode pcsForNode: blockNode.
+	self assert: blockCreationPCs notEmpty.
+
+	blockCreationPCs do: [ :e | self deny: (debugInfo shouldStopAt: e) ]</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-Debugger-kernel-skips.st (<a href="../files/image-fixes/20-Debugger-kernel-skips.st">download</a>)</summary><pre class="code">&quot;Debugger-kernel-skips.
+
+1. OnlineSourceDebugInfo&gt;&gt;shouldStopAt: stopped at every send, store, jump and
+closure-creation bytecode, the ones that the compiler inserts included (the
+comments of isSourceSend:, isSourceStore: and isSourceBlockCreation: say &#x27;for
+now&#x27;).  DebugInfoTest has three tests of the intended behavior
+(testNotStopAtAllButFirstBytecodeOfOptimizedSend, testNotStopAtConstantBlockCreation,
+testNotStopAtFullBlockCreation); they said &#x27;self skip&#x27; until shouldStopAt: no
+longer stops at compiler-inserted stores and closure creations.  The fix:
+shouldStopAt: stops at every return (the compiler inserts them, the debugger
+must stop there) and at the FIRST bytecode of each message or assignment node
+of the source.  Bytecodes that the compiler adds around such a node (the store
+of the loop variable, the comparison, the increment and the jumps of an inlined
+to:do:, the creation of a closure) are no stop points.  The three tests lose
+the skip and their &#x27;only valid when&#x27; comment; the assertions are unchanged.
+
+The debugger (DebugSession&gt;&gt;stepToFirstInterestingBytecodeInContext:) is the
+only sender of shouldStopAt:, and the Sindarin debugger (an external package,
+SindarinDebuggerTest) steps over exactly the old stop points: with the strict
+set 11 SindarinDebuggerTest tests that pass now would fail (testMoveToNode...
+BlockHasBeenCreated, testSkipAssignment..., testSkipUpToNodeStopsOnReturnNodes
+and others; their names say block creation is a step).  So the old stop set
+stays available, under its own name shouldStepStopAt:, and DebugSession uses
+that.  Moving DebugSession to the strict set needs the Sindarin package to be
+changed first.
+
+2. CodeSimulationTest&gt;&gt;testErrorCodeNotFound said &#x27;self skip&#x27;.  It checks that
+the simulation of a named primitive that does not exist gives the same error
+code as the real primitive (#&#x27;not found&#x27;).  The skip is removed.  It passes on
+our VM with the VM change of the report (Primitives.cpp, primitiveExternalCall
+and primitiveDoNamedPrimitiveWithArgs) and needs the Cog change of the report
+to pass on stock Cog.&quot;
+
+fix value: #OnlineSourceDebugInfo value: #shouldStopAt: value: [ :src | (src includesSubstring: &#x27;isSourceBlockCreation:&#x27;) ]
+	value: &#x27;shouldStopAt: aBytecodePC
+
+	&quot;Stop at all returns (the compiler inserts some, and the debugger has to stop there)
+	 and at the first bytecode of each message or assignment node of the source.
+	 The other bytecodes of the expansion of such a node are compiler-inserted and are
+	 not stop points: the store of the loop variable, the comparison, the increment and
+	 the jumps of an inlined to:do:, the closure creation, and the pushes of copied variables.&quot;
+	| node |
+	(self isSourceReturn: aBytecodePC) ifTrue: [ ^ true ].
+	node := self privateSourceNodeForPC: aBytecodePC.
+	node ifNil: [ ^ false ].
+	(node isMessage or: [ node isAssignment ]) ifFalse: [ ^ false ].
+	^ (bytecodeToASTCache firstBcOffsetForNode: node) = aBytecodePC&#x27;.
+
+fix value: #DebugInfoTest value: #testNotStopAtAllButFirstBytecodeOfOptimizedSend value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testNotStopAtAllButFirstBytecodeOfOptimizedSend
+
+	| debugInfo methodToTest send todoPCs |
+	methodToTest := self class &gt;&gt; #methodWithOptimizedSend.
+	debugInfo := self newDebugInfoFor: methodToTest.
+
+	&quot;a to:do: send should stop at the to:do: point but not in the intermediate steps&quot;
+	send := methodToTest ast statements first.
+	todoPCs := send methodNode pcsForNode: send.
+	self assert: todoPCs size &gt; 1.
+
+	todoPCs allButFirst do: [ :otherPC |
+		self deny: (debugInfo shouldStopAt: otherPC) ]&#x27;.
+
+fix value: #DebugInfoTest value: #testNotStopAtConstantBlockCreation value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testNotStopAtConstantBlockCreation
+
+	| debugInfo methodToTest blockNode blockCreationPC |
+	methodToTest := self class &gt;&gt; #methodWithConstantBlockReturn.
+	debugInfo := self newDebugInfoFor: methodToTest.
+
+	blockNode := methodToTest ast statements first.
+	blockCreationPC := (blockNode methodNode pcsForNode: blockNode) first.
+
+	self deny: (debugInfo shouldStopAt: blockCreationPC)&#x27;.
+
+fix value: #DebugInfoTest value: #testNotStopAtFullBlockCreation value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testNotStopAtFullBlockCreation
+
+	| debugInfo methodToTest blockNode blockCreationPCs |
+	methodToTest := self class &gt;&gt; #methodWithFullBlockReturn.
+	debugInfo := self newDebugInfoFor: methodToTest.
+
+	blockNode := methodToTest ast statements first.
+	&quot;A block may have many PCs: the creation of the block but also the creation of the temp verctor and the copied vars
+	None of them are stop points.&quot;
+	blockCreationPCs := blockNode methodNode pcsForNode: blockNode.
+	self assert: blockCreationPCs notEmpty.
+
+	blockCreationPCs do: [ :e | self deny: (debugInfo shouldStopAt: e) ]&#x27;.
+
+fix value: #CodeSimulationTest value: #testErrorCodeNotFound value: [ :src | src includesSubstring: &#x27;self skip&#x27; ]
+	value: &#x27;testErrorCodeNotFound
+	| ctx result resultSimu |
+	Smalltalk vm isRunningCog ifFalse: [ ^ self ].
+
+	result := self veryBasicAt: 1.
+
+	ctx := Context
+		sender: nil
+		receiver: nil
+		method: Object &gt;&gt; #at:
+		arguments: #(10).
+
+	resultSimu := ctx
+		push: nil;
+		push: 500;
+		doPrimitive: 117
+			method: self class &gt;&gt; #veryBasicAt:
+			receiver: self
+			args: #(999).
+
+	self assert: resultSimu isArray.
+	self assert: Context primitiveFailToken first identicalTo: resultSimu first.
+	self assert: result equals: resultSimu second&#x27;.
+
+add value: #OnlineSourceDebugInfo value: #shouldStepStopAt: value: &#x27;api&#x27;
+	value: &#x27;shouldStepStopAt: aBytecodePC
+
+	&quot;The stop points of the stepping of the debugger: every send, return, store, closure creation
+	 and jump bytecode, the ones that the compiler inserts included.  This is the old behavior of
+	 shouldStopAt:, which now answers the stop points of the source only.  The Sindarin debugger
+	 steps over these stop points.  Merge this with shouldStopAt: when Sindarin is changed.&quot;
+
+	^ (self isSourceSend: aBytecodePC) or: [
+			  (self isSourceReturn: aBytecodePC) or: [
+				  (self isSourceStore: aBytecodePC) or: [ (self isSourceBlockCreation: aBytecodePC) or: [ self isSourceJump: aBytecodePC ] ] ] ]&#x27;.
+
+fix value: #DebugSession value: #stepToFirstInterestingBytecodeInContext: value: [ :src | src includesSubstring: &#x27;debugInfo shouldStopAt: aContext pc&#x27; ]
+	value: &#x27;stepToFirstInterestingBytecodeInContext: aContext
+
+	| bytecodeInterpreter context debugInfo |
+	aContext isDead ifTrue: [
+		self error: &#x27;&#x27;Cannot step into dead context&#x27;&#x27; ].
+
+	debugInfo := aContext method debugInfo.
+	bytecodeInterpreter := InstructionStream
+		                       on: aContext method
+		                       pc: aContext pc.
+	[ debugInfo shouldStepStopAt: aContext pc ] whileFalse: [
+			context := bytecodeInterpreter interpretNextInstructionFor:
+				           aContext.
+			context == aContext ifFalse: [ &quot;Caused all non-send, non-store, non-return instructions
+				that may activate a method. This is today the case of mustBeBoolean.
+				
+				If a mustBeBoolean has been activated, we need to change contexts&quot;
+				^ context ] ].
+
+	^ aContext&#x27;.
+
+add value: #OfflineSourceDebugInfo value: #shouldStepStopAt: value: &#x27;accessing&#x27;
+	value: &#x27;shouldStepStopAt: aBytecodePC
+
+	&quot;The stop table of an offline debug info holds the stop points of the source only, see OnlineSourceDebugInfo&gt;&gt;shouldStopAt:&quot;
+
+	^ self shouldStopAt: aBytecodePC&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

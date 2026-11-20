@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCArrayLiteralTest - Pharo test defects</title><meta name="description" content="OCArrayLiteralTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>OCArrayLiteralTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-OCArrayLiteralTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-OCArrayLiteralTest.st</code></li>
+<li>Methods: <code>OCASTTranslator&gt;&gt;visitArrayNode:</code>, <code>OCASTTranslator&gt;&gt;stackDepthOfBraceArrayElement:</code>, <code>OCArrayLiteralTest&gt;&gt;testLiteralArrayLongHavingAnotherArrayLong</code></li>
+</ul>
+<p>The test was skipped for pharo issue 19058. A brace array of up to 32 elements is compiled with push-cons-array, which needs one stack slot per element. A 32-element brace array as the last element of a 32-element brace array needs 31+32=63 slots. A method frame has 56 (LargeFrame), so compilation failed with 'Cannot compile -- stack including temps is too deep'. The failure is identical on both VMs, so the defect is in the image compiler (OCASTTranslator&gt;&gt;visitArrayNode:). The old workaround only tested statements size &gt; 32. The fix adds OCASTTranslator&gt;&gt;stackDepthOfBraceArrayElement:, a conservative recursive estimate of the stack depth of a brace array including nested brace arrays. visitArrayNode: now takes the existing at:put: path (visitLargeArrayNode:) when the size is over 32 or the estimate is over 32. The test entry removes the self flag: and self skip lines and keeps every assertion unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OCArrayLiteralTest&gt;&gt;testLiteralArrayLongHavingAnotherArrayLong</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>OCASTTranslator&gt;&gt;visitArrayNode: emits push-cons-array for nested brace arrays whose combined depth (63) exceeds the 56-slot frame; the skip hid this (pharo issue 19058).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Ran each class on our VM (JIT) and on Cog, on the base image and on the fixed image. Pass counts were identical before and after, with 0 FAIL/ERROR/TIMEOUT, on both VMs. OCArrayLiteralTest went from 8 to 9 passes, the test that was skipped now passing. The other classes: OCASTTranslatorTest 4, OCCompilerTest 16, OCBytecodeGeneratorTest 2, OCASTBasicTranslatorTest 3, OCClosureTest 21, OCIRBuilderTest 34, OCLiteralTest 14, OpalCompilerTest 16, OCEvaluatorTest 4, OCDoitTest 13, OCClosureCompilerTest 18, OCASTBlockTranslatorTest 17. I also compiled and ran the nested 32x32 brace array directly with evalfile on both fixed images (size 32, elements correct). I did not run ours-nojit, and I did not run the whole OpalCompiler-Tests package; only the classes listed above.</p>
+<p>Upstream note: Title: Opal: compile nested large brace arrays without overflowing the frame (fixes #19058, re-enables OCArrayLiteralTest&gt;&gt;testLiteralArrayLongHavingAnotherArrayLong). Description: OCASTTranslator&gt;&gt;visitArrayNode: used push-cons-array for any brace array of 32 or fewer elements, so a 32-element array whose last element is another 32-element array needs 63 stack slots, more than the 56-slot LargeFrame, and fails with 'stack including temps is too deep'. The translator now estimates the stack depth of the array including nested brace arrays (stackDepthOfBraceArrayElement:) and uses the at:put: path (visitLargeArrayNode:) when the estimate is over 32. The skip in the test is removed. This is a conservative estimate, not a track of the real stack depth at the emit point; a stack-aware check (the commented-out stackLimit line in visitArrayNode:) would be more exact. No PR has been made; the owner must review first.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>OCArrayLiteralTest&gt;&gt;testLiteralArrayLongHavingAnotherArrayLong</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((OCArrayLiteralTest selector: #testLiteralArrayLongHavingAnotherArrayLong) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>OCArrayLiteralTest&gt;&gt;testLiteralArrayLongHavingAnotherArrayLong before the fix (Pharo 14 build 791)</summary><pre class="code">testLiteralArrayLongHavingAnotherArrayLong
+	| method array elements |
+	
+	self flag: &#x27;Skipped in Pharo14 because of github.com/pharo-project/pharo/issues/19058. Fix should come on P15&#x27;.
+	self skip.
+	
+	elements := ((1 to: 32) inject: &#x27; &#x27; into: [ :r :e | r , &#x27; . &#x27; , e asString ]).
+	array := &#x27; { &#x27; , elements , &#x27; }&#x27;.
+	array := array copyReplaceAll: &#x27;32&#x27; with: array.
+	
+	method := self compile: &#x27;array ^&#x27; , array.
+	array := method valueWithReceiver: #().
+	
+	self assert: ( array isKindOf: Array).
+	self assert: array size equals: 32.
+	1 to: 31 do: [ :index | self assert: (array at: index) equals: index ].
+	1 to: 32 do: [ :index | self assert: ((array at: 32) at: index) equals: index ].</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-OCArrayLiteralTest.st (<a href="../files/image-fixes/20-OCArrayLiteralTest.st">download</a>)</summary><pre class="code">&quot;OCArrayLiteralTest&gt;&gt;testLiteralArrayLongHavingAnotherArrayLong (pharo issue 19058):
+ a brace array of up to 32 elements is compiled with push-cons-array, so it needs one stack slot
+ per element.  A 32-element brace array as last element of a 32-element brace array needs
+ 31 + 32 = 63 slots, but a method frame has 56 slots (CompiledCode class&gt;&gt;fullFrameSize), and the
+ compiler fails with &#x27;stack including temps is too deep&#x27;.  The translator now takes the at:put:
+ path when the estimated stack depth of the array, nested brace arrays included, is over 32.&quot;
+add value: #OCASTTranslator value: #stackDepthOfBraceArrayElement: value: &#x27;private&#x27; value: &#x27;stackDepthOfBraceArrayElement: aNode
+	&quot;Conservative estimate of the stack slots that the push-cons-array code of aNode needs.  Blocks run in their own frame.&quot;
+
+	| deepest |
+	aNode isBlock ifTrue: [ ^ 1 ].
+	deepest := 0.
+	aNode isDynamicArray
+		ifTrue: [
+			aNode children withIndexDo: [ :each :index |
+				deepest := deepest max: index - 1 + (self stackDepthOfBraceArrayElement: each) ].
+			^ deepest max: aNode children size ].
+	aNode children do: [ :each | deepest := deepest max: (self stackDepthOfBraceArrayElement: each) ].
+	^ deepest + 1&#x27;.
+fix value: #OCASTTranslator value: #visitArrayNode: value: [ :s | (s includesSubstring: &#x27;statements size &gt; 32&#x27;) and: [ (s includesSubstring: &#x27;stackDepthOfBraceArrayElement:&#x27;) not ] ] value: &#x27;visitArrayNode: anArrayNode
+	| elementNodes |
+
+	&quot;A brace array that needs more stack than the frame has is built with at:put: (pharo issue 19058).&quot;
+	(anArrayNode statements size &gt; 32 or: [ (self stackDepthOfBraceArrayElement: anArrayNode) &gt; 32 ]) ifTrue: [ ^ self visitLargeArrayNode: anArrayNode ].
+
+	elementNodes := anArrayNode children.
+	elementNodes do: [ :node | self visitNode: node ].
+	methodBuilder pushConsArray: elementNodes size&#x27;.
+fix value: #OCArrayLiteralTest value: #testLiteralArrayLongHavingAnotherArrayLong value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testLiteralArrayLongHavingAnotherArrayLong
+	| method array elements |
+
+	elements := ((1 to: 32) inject: &#x27;&#x27; &#x27;&#x27; into: [ :r :e | r , &#x27;&#x27; . &#x27;&#x27; , e asString ]).
+	array := &#x27;&#x27; { &#x27;&#x27; , elements , &#x27;&#x27; }&#x27;&#x27;.
+	array := array copyReplaceAll: &#x27;&#x27;32&#x27;&#x27; with: array.
+
+	method := self compile: &#x27;&#x27;array ^&#x27;&#x27; , array.
+	array := method valueWithReceiver: #().
+
+	self assert: ( array isKindOf: Array).
+	self assert: array size equals: 32.
+	1 to: 31 do: [ :index | self assert: (array at: index) equals: index ].
+	1 to: 32 do: [ :index | self assert: ((array at: 32) at: index) equals: index ]&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

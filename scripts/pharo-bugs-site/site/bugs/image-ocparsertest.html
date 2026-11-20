@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCParserTest - Pharo test defects</title><meta name="description" content="OCParserTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>OCParserTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>2</dd><dt>Fix</dt><dd>image fix 20-OCParserTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-OCParserTest.st</code></li>
+<li>Methods: <code>OCParserTest&gt;&gt;testUnclosedTemporariesErrorNodeContainsRightValue</code>, <code>OCParserTest&gt;&gt;testParseExpressionDontFreeze</code></li>
+</ul>
+<p>Both tests were defects in the test methods. testUnclosedTemporariesErrorNodeContainsRightValue started with an unconditional self skip (&quot;extra space on the server but not locally&quot;); with the skip removed, the assertions pass on both VMs. testParseExpressionDontFreeze was marked expectedFailure and had no assertion; it called parseExpression: '#', which raises OCCodeError (&quot;Literal Array, ByteArray or Symbol expected&quot;). That is the graceful error the comment says is wanted, and the test failed on it. The fix removes the skip and the mark, and the test now asserts that OCCodeError is raised. The change is a changed expectation, not a deleted check: the raise was the whole intent of the test.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OCParserTest&gt;&gt;testUnclosedTemporariesErrorNodeContainsRightValue</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Unconditional self skip left in the test; the underlying assertions already hold on both VMs.</td>
+</tr>
+<tr>
+<td><code>OCParserTest&gt;&gt;testParseExpressionDontFreeze</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>Test is marked expectedFailure and only calls parseExpression: '#', which raises OCCodeError by design. The raise is the graceful behaviour the test comment asks for. Fix: drop the mark and assert should:raise: OCCodeError.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: I ran OCParserTest on the base image (before) and on the fixed image (after), on our VM (ours) and on Cog. OCParserTest: 147 pass before and 149 pass after on both VMs, and the 2 changed tests are the only difference. OCPatternParserTest: 8 before, 8 after, on both VMs. OCErrorNodeParserTest: 29 before, 29 after, on both VMs. No non-test method was changed. The OCPatternParserTest and OCErrorNodeParserTest counts did not change, so I did not check whether those two classes run the inherited tests.</p>
+<p>Upstream note: Pharo, AST-Core-Tests: OCParserTest. Remove the unconditional self skip from testUnclosedTemporariesErrorNodeContainsRightValue; the test passes. Turn testParseExpressionDontFreeze from an expectedFailure test with no assertion into a test that asserts parseExpression: '#' raises OCCodeError. The test comment says the error is the graceful result, so the expectedFailure mark was wrong.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>OCParserTest&gt;&gt;testParseExpressionDontFreeze</code></td><td>XFAIL</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr><tr><td><code>OCParserTest&gt;&gt;testUnclosedTemporariesErrorNodeContainsRightValue</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((OCParserTest selector: #testParseExpressionDontFreeze) run) printString.
+((OCParserTest selector: #testUnclosedTemporariesErrorNodeContainsRightValue) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>OCParserTest&gt;&gt;testParseExpressionDontFreeze before the fix (Pharo 14 build 791)</summary><pre class="code">testParseExpressionDontFreeze
+
+	&quot;This test is here to chark that CI does not freeze or crash on code error.&quot;
+	&quot;The test sould just &#x27;fail&#x27; gracefully.&quot;
+	&lt;expectedFailure&gt;
+
+	&quot;Force a parse error (from a simple tool class).
+	The image (and CI) should not freeze :)&quot;
+	self parserClass parseExpression: &#x27;#&#x27;</pre></details><details><summary>OCParserTest&gt;&gt;testUnclosedTemporariesErrorNodeContainsRightValue before the fix (Pharo 14 build 791)</summary><pre class="code">testUnclosedTemporariesErrorNodeContainsRightValue
+	| tree |
+	self skip. 
+	&quot;This test has an extra space on the server but not locally.&quot;
+	tree := self parseFaultyExpression: &#x27;| faulty temporaries&#x27;.
+	self assert: tree isEnglobingError.
+	self assert: tree formattedCode  equals: &#x27;| faulty temporaries |&#x27;, String cr</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-OCParserTest.st (<a href="../files/image-fixes/20-OCParserTest.st">download</a>)</summary><pre class="code">fix value: #OCParserTest value: #testUnclosedTemporariesErrorNodeContainsRightValue value: [ :s | s includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testUnclosedTemporariesErrorNodeContainsRightValue
+	| tree |
+	tree := self parseFaultyExpression: &#x27;&#x27;| faulty temporaries&#x27;&#x27;.
+	self assert: tree isEnglobingError.
+	self assert: tree formattedCode equals: &#x27;&#x27;| faulty temporaries |&#x27;&#x27;, String cr&#x27;.
+fix value: #OCParserTest value: #testParseExpressionDontFreeze value: [ :s | s includesSubstring: &#x27;&lt;expectedFailure&gt;&#x27; ] value: &#x27;testParseExpressionDontFreeze
+
+	&quot;This test checks that the image (and CI) does not freeze or crash on a code error.
+	The parse error must be reported gracefully, as an OCCodeError.&quot;
+
+	self should: [ self parserClass parseExpression: &#x27;&#x27;#&#x27;&#x27; ] raise: OCCodeError&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

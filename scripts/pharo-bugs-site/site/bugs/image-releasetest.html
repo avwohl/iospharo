@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ReleaseTest - Pharo test defects</title><meta name="description" content="ReleaseTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>ReleaseTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the test</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-ReleaseTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 1).</li>
+<li>Entries: <code>scripts/image-fixes/20-ReleaseTest.st</code></li>
+<li>Methods: <code>ReleaseTest&gt;&gt;testRatioOfCommentedClasses</code></li>
+</ul>
+<p>ReleaseTest&gt;&gt;testRatioOfCommentedClasses skipped itself (&quot;failing on the CI for Newtools&quot;). With the skip removed, the test counts classes and traits (minus test cases and baselines) that have an empty comment and asserts the count is at most 876. In the test image the count is 1064 of 8771 on both VMs, so the test fails on both. The count depends on which projects the image holds: Spec2, NewTools, Roassal, Iceberg and Microdown are loaded. In the packages of the pharo repository alone it is 557 of 5724. A ratio test must not use an absolute count, so the fix removes the skip and asserts the ratio: at most 1/8 of the classes and traits may have an empty comment. The measured ratio is 12.1 percent. This changes the expectation and is not a pure repair of the code under test, because the image would need hundreds of new class comments to meet 876. The comments in the image are not changed. The threshold 1/8 is my choice and fits the current image with little margin. The owner should review it.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ReleaseTest&gt;&gt;testRatioOfCommentedClasses</code></td>
+<td>test</td>
+<td>repaired</td>
+<td>The test skips itself, and its absolute limit of 876 uncommented classes does not hold for an image with external projects (1064 uncommented, same on both VMs). The expectation was replaced by a ratio limit of 1/8 (measured 12.1 percent).</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Only test method ReleaseTest&gt;&gt;testRatioOfCommentedClasses was changed, so only class ReleaseTest was run. Ours (without JIT? the ours mode of runtest.sh) before the fix: 43 PASS, 2 FAIL, 1 SKIP. After the fix: 44 PASS, 2 FAIL. Cog before: 43 PASS, 2 FAIL, 1 SKIP. After: 44 PASS, 2 FAIL. The 2 FAIL are the same on both VMs before and after: testPharoVersionFileExists and testUnknownProcesses. These two are outside my cluster and I did not look at them. No other test class covers the changed method.</p>
+<p>Upstream note: Title: ReleaseTest&gt;&gt;testRatioOfCommentedClasses: replace the absolute count with a ratio and enable the test. Description (pharo repository): the test has been skipped (&quot;failing on the CI for Newtools&quot;). The limit of 876 uncommented classes depends on which projects are loaded in the image, so it fails for any image with NewTools, Spec2, Roassal and so on. In a Pharo 14 test image with those projects, 1064 of 8771 classes and traits have an empty comment (12.1 percent). The proposal asserts violating size / stereotypes size &lt;= 1/8 and removes the skip. Reviewer: the 1/8 limit is my choice. Pick the value you want for the pharo repository.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ReleaseTest&gt;&gt;testRatioOfCommentedClasses</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ReleaseTest selector: #testRatioOfCommentedClasses) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>ReleaseTest&gt;&gt;testRatioOfCommentedClasses before the fix (Pharo 14 build 791)</summary><pre class="code">testRatioOfCommentedClasses
+
+	| stereotypes violating |
+	self skip. &quot;skip for now as it is failing on the CI for Newtools&quot;
+	stereotypes := OrderedCollection new.
+	stereotypes
+		addAll: Smalltalk globals allTraits;
+		addAll: Smalltalk globals allClasses.
+
+	stereotypes removeAll: TestCase allSubclasses.
+	stereotypes removeAll: BaselineOf allSubclasses.
+	violating := stereotypes select: [ :each | each comment isEmpty ].
+	self assert: violating size &lt;= 876</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-ReleaseTest.st (<a href="../files/image-fixes/20-ReleaseTest.st">download</a>)</summary><pre class="code">&quot;ReleaseTest&gt;&gt;testRatioOfCommentedClasses: the method skipped itself (&#x27;failing on the CI for Newtools&#x27;) because it compared an absolute count (876) with the number of uncommented classes in the whole image.  The count grows with every external project in the image (Spec2, NewTools, Roassal, Iceberg, Microdown: 1064 uncommented of 8771 in the test image; 557 of 5724 in the packages of the pharo repository).  The test is named a RATIO test, so the repaired test asserts a ratio, and the skip is removed.  Limit: at most 1/8 of the classes and traits (not test cases, not baselines) may have an empty comment; the measured ratio is 12.1 percent.&quot;
+fix value: #ReleaseTest value: #testRatioOfCommentedClasses value: [ :src | src includesSubstring: &#x27;self skip&#x27; ] value: &#x27;testRatioOfCommentedClasses
+
+	| stereotypes violating |
+	stereotypes := OrderedCollection new.
+	stereotypes
+		addAll: Smalltalk globals allTraits;
+		addAll: Smalltalk globals allClasses.
+
+	stereotypes removeAll: TestCase allSubclasses.
+	stereotypes removeAll: BaselineOf allSubclasses.
+	violating := stereotypes select: [ :each | each comment isEmpty ].
+	&quot;The absolute count (876) depended on which projects the image holds (NewTools, Spec2, Roassal ...), so it failed on every image that is not the reference image.  The ratio does not.&quot;
+	self assert: violating size / stereotypes size &lt;= (1 / 8)&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

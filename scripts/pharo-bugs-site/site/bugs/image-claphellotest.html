@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClapHelloTest - Pharo test defects</title><meta name="description" content="ClapHelloTest: Fixed (image fix)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>ClapHelloTest</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (image fix)</span></dd><dt>Defect in</dt><dd>the Pharo image</dd><dt>Tests</dt><dd>1</dd><dt>Fix</dt><dd>image fix 20-ClapHelloTest.st</dd><dt>Upstream repository</dt><dd>pharo-project/pharo</dd></dl><h2>Record</h2><ul>
+<li>Review: accepted (round 2).</li>
+<li>Entries: <code>scripts/image-fixes/20-ClapHelloTest.st</code></li>
+<li>Methods: <code>ClapCommandLineExamples&gt;&gt;latestVoiceFlag (added)</code>, <code>ClapCommandLineExamples&gt;&gt;shouting</code>, <code>ClapCommandLineExamples&gt;&gt;whispering</code>, <code>ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering</code>, <code>ClapHelloTest&gt;&gt;testHelloBothWhisperingAndShouting (added)</code></li>
+</ul>
+<p>The test was a placeholder: self skip: 'should probably fail or obey the latest flag'. The previous repair pinned 'shout wins', which the reviewer rejected. This repair takes the reviewer's Option A and repairs the code under test. ClapCommandLineExamples&gt;&gt;shouting and &gt;&gt;whispering used hasFlag:, which cannot tell which flag came last, so voice: always preferred shouting. The Clap match keeps the flags in command line order (ClapCompositeMatch&gt;&gt;children is an OrderedCollection, and ClapCompositeMatch&gt;&gt;flags selects from it in order). A new method ClapCommandLineExamples&gt;&gt;latestVoiceFlag returns the identifier of the last of #shout and #whisper in the last subcommand's flags, and shouting and whispering compare against it. The test now asserts '(hello, world)' for '--shout --whisper', and a new test testHelloBothWhisperingAndShouting asserts 'HELLO, WORLD!' for '--whisper --shout'. Single-flag behaviour is unchanged. No assertion is weakened, and no claim is made that 'shout wins' is the contract.</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Defect in</th>
+<th>State</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering</code></td>
+<td>image-code</td>
+<td>repaired</td>
+<td>The example command could not honour the latest flag because shouting and whispering used hasFlag:, which loses the order of the flags. The test author's own comment asked for failure or obeying the latest flag.</td>
+</tr>
+</tbody>
+</table>
+<p>Regression check: Ran all 22 test classes of the Clap-Tests package (ClapApplicationTest through SaveCliCommandTest), plus HermesClapCommandTest and SaveCliCommandTest, on our VM and on Cog, each with the fix image and the base image. The pass counts are identical with and without the fix for every class except ClapHelloTest, which goes from 7 PASS + 1 SKIP to 9 PASS on both VMs. ClapParameterizedTest (7 ERROR) and ClapParameterTest (4 ERROR) produce the same errors on both VMs with and without the fix; I did not investigate them, they are outside this cluster. ClapPharoCommandsTest printed no RT lines in any of the four runs; I did not investigate that, and the class has no test methods of its own that I checked. ClapCommandLineExamples is also used by ClapHelloWorldTest and ClapApplicationTest, which pass 6 of 6 before and after on both VMs.</p>
+<p>Upstream note: Title: Clap hello example: the latest of --shout and --whisper wins. Description (Pharo, package Clap-Examples and Clap-Tests): ClapCommandLineExamples&gt;&gt;shouting and &gt;&gt;whispering used hasFlag:, so --shout --whisper always shouted, and ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering was skipped with 'should probably fail or obey the latest flag'. The flags of a ClapCompositeMatch are kept in command line order, so a new method latestVoiceFlag finds the last of #shout and #whisper. The skipped test now asserts the whispering output, and a new test covers the opposite order. This is a proposal for the owner to review; it has not been sent anywhere.</p>
+<h2>Results</h2><p>Last full sweeps of 2026-11-17: iospharo (<code>sweep14-new14</code>) and stock Cog with the Cog changes (<code>sweepcogp14-new10</code>), with all image fixes.  "Before" is the state of the test before the repairs.  The Stock Cog column has a value only where the record measured stock Cog: "PASS 3 of 3 (repair run)" is the check of each repair on stock Cog v12.0.6 with the fix entry; "-" is not measured separately.</p><table><tr><th>Test</th><th>Before</th><th>State</th><th>iospharo VM</th><th>Patched Cog</th><th>Stock Cog</th></tr><tr><td><code>ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering</code></td><td>SKIP</td><td>repaired</td><td>PASS</td><td>PASS</td><td>PASS 3 of 3 (repair run)</td></tr></table><h2>Test</h2><p>Run the tests in a Pharo 14 image (build 791).  Before the fix they skip, fail or carry the expected-failure mark.</p><pre class="code">&quot;Run in a Playground of a Pharo 14 image (Do it and print each line).&quot;
+((ClapHelloTest selector: #testHelloBothShoutingAndWhispering) run) printString.</pre><h3>Source of the tests before the fix</h3><details><summary>ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering before the fix (Pharo 14 build 791)</summary><pre class="code">testHelloBothShoutingAndWhispering
+	context := ClapCommandLineExamples hello activateWith: #(&#x27;hello&#x27; &#x27;--shout&#x27; &#x27;--whisper&#x27;).
+	
+	self skip: &#x27;should probably fail or obey the latest flag&#x27;</pre></details><h2>Fix</h2><p>How to apply an entries file: file in <code>00-header.st</code> and the entries file as one chunk (the iospharo script <code>scripts/gen-image-fixes.py</code> makes that chunk).  Each entry checks for the defect first and prints <code>FIXED</code>, <code>ADDED</code> or <code>SKIP</code>.  <a href="../files/image-fixes/00-header.st">Download 00-header.st</a>.</p><details open><summary>20-ClapHelloTest.st (<a href="../files/image-fixes/20-ClapHelloTest.st">download</a>)</summary><pre class="code">&quot;ClapHelloTest&gt;&gt;testHelloBothShoutingAndWhispering: the author left self skip: should probably fail or obey the latest flag.  Repair: obey the latest flag.  The Clap match keeps the flags in
+ command line order (ClapCompositeMatch children is an OrderedCollection, ClapCompositeMatch&gt;&gt;flags
+ selects from it in order), so ClapCommandLineExamples can see which of --shout and --whisper came
+ last.  The test keeps its intent: it now asserts the whispering form for --shout --whisper.
+ A second test covers the opposite order.&quot;
+add value: #ClapCommandLineExamples value: #latestVoiceFlag value: &#x27;accessing&#x27;
+	value: &#x27;latestVoiceFlag
+	&quot;The voice flag given last on the command line wins: --shout --whisper whispers, --whisper --shout shouts.&quot;
+	^ (self context lastSubcommand flags collect: [ :each | each specification identifier ])
+		reverse
+		detect: [ :id | id = #shout or: [ id = #whisper ] ]
+		ifNone: [ nil ]&#x27;.
+fix value: #ClapCommandLineExamples value: #shouting
+	value: [ :src | src includesSubstring: &#x27;hasFlag: #shout&#x27; ]
+	value: &#x27;shouting
+	^ self latestVoiceFlag == #shout&#x27;.
+fix value: #ClapCommandLineExamples value: #whispering
+	value: [ :src | src includesSubstring: &#x27;hasFlag: #whisper&#x27; ]
+	value: &#x27;whispering
+	^ self latestVoiceFlag == #whisper&#x27;.
+fix value: #ClapHelloTest value: #testHelloBothShoutingAndWhispering
+	value: [ :src | src includesSubstring: &#x27;self skip:&#x27; ]
+	value: &#x27;testHelloBothShoutingAndWhispering
+	context := ClapCommandLineExamples hello activateWith: #(&#x27;&#x27;hello&#x27;&#x27; &#x27;&#x27;--shout&#x27;&#x27; &#x27;&#x27;--whisper&#x27;&#x27;).
+	self assertSuccess.
+	self
+		assert: self outputString
+		equals: &#x27;&#x27;(hello, world)&#x27;&#x27; , self lineEnding&#x27;.
+add value: #ClapHelloTest value: #testHelloBothWhisperingAndShouting value: &#x27;tests&#x27;
+	value: &#x27;testHelloBothWhisperingAndShouting
+	context := ClapCommandLineExamples hello activateWith: #(&#x27;&#x27;hello&#x27;&#x27; &#x27;&#x27;--whisper&#x27;&#x27; &#x27;&#x27;--shout&#x27;&#x27;).
+	self assertSuccess.
+	self
+		assert: self outputString
+		equals: &#x27;&#x27;HELLO, WORLD&#x27;&#x27; , 33 asCharacter asString , self lineEnding&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

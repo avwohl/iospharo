@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: Postern (punt-labs/postern, row 116) - Pharo test defects</title><meta name="description" content="Package: Postern (punt-labs/postern, row 116): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: Postern (punt-labs/postern, row 116)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>punt-labs-postern.st</dd><dt>Upstream repository</dt><dd>punt-labs/postern</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 88 tests, 82 pass, 2 failures, 1 error, 3 skips on the two
+VMs.</li>
+<li>Causes, all in the package, which is for Pharo 12:
+<ul>
+<li><code>testCodeFencesParse</code>: the test catches <code>CodeError</code>.  Pharo 14 signals
+<code>OCCodeError</code>, the superclass.</li>
+<li><code>testPharoVersionPin</code> asks for a review of the help content when the
+Pharo version changes.  The review found names that Pharo 14 does not
+have (<code>RPackageOrganizer</code>, <code>RBRenameMethodRefactoring</code>, <code>TestRunner</code>,
+<code>IceWorkingCopy&gt;&gt;changes</code>).  The help content and the version text are
+for Pharo 14 now.</li>
+<li><code>testDelegateNormalizesLfToCr</code>: the input of the test has no period
+after a statement, so the code that it evaluates is not the code that
+the test means.</li>
+<li>2 skips &quot;test requires a running eval server&quot;: no test starts the
+server.  Each of the two tests now starts a server on the loopback
+interface and stops it.</li>
+<li>1 skip: the test looks for the Iceberg repository of another project of
+the author.  It uses the repository of the package now.</li>
+</ul>
+</li>
+<li>Repair here: <code>fixes/punt-labs-postern.st</code>.</li>
+<li>Result: 88 of 88 pass on the two VMs.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 116&quot;
+Metacello new baseline: &#x27;Postern&#x27;; repository: &#x27;github://punt-labs/postern:main/src&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;all&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>116</td><td><code>punt-labs-postern</code></td><td>ok</td><td>tests=88 P=88 F=0 E=0 S=0 T=0 X=0</td><td>tests=88 P=88 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): punt-labs-postern.st (<a href="../files/packages/fixes/punt-labs-postern.st">download</a>)</summary><pre class="code">&quot;punt-labs/postern: repairs for the six tests that did not pass.
+
+1. PosternHelpTest&gt;&gt;canParseExpression: and canParseMethod: catch CodeError.
+   Pharo 14 signals OCCodeError (the superclass of CodeError) from the parser
+   (OCNotice&gt;&gt;signalError), so the handler never runs: the first snippet of a
+   code fence that is a method definition (for example &#x27;fromJson: aDictionary
+   ...&#x27;) does not parse as an expression, the OCCodeError escapes, and
+   testCodeFencesParse ends with &#x27;Variable or expression expected&#x27; before the
+   method parse runs.  The two helpers now catch OCCodeError and use OCParser
+   (RBParser is a deprecated alias in Pharo 14).
+
+2. PosternHelp (the help text) was written for Pharo 12.  Review for Pharo 14:
+   RPackageOrganizer does not exist (use &#x27;self packageOrganizer&#x27;, Object&gt;&gt;
+   packageOrganizer), RBRenameMethodRefactoring does not exist (the class is
+   ReRenameMethodRefactoring; RBBrowserEnvironment and RBNamespace still
+   exist), TestRunner does not exist (NewTestRunner).  The text says Pharo 12
+   in six places; it now says Pharo 14.  PosternHelp class&gt;&gt;expectedPharoVersion
+   (read by testPharoVersionPin) is now &#x27;Pharo-14.0.0&#x27;, the start of
+   SystemVersion current imageVersionString on Pharo 14.
+
+3. PosternServerTest&gt;&gt;testDelegateNormalizesLfToCr evaluated
+   &#x27;| x |&#x27; LF &#x27;x := 42&#x27; LF &#x27;x&#x27; : no period after 42.  Pharo reads that as
+   &#x27;x := 42 x&#x27; (unary send of #x to 42), the evaluation ends with a
+   doesNotUnderstand, and the printed stack has no &#x27;42&#x27;.  LF and CR are both
+   white space to the Pharo scanner, so the test could not show the
+   normalisation anyway.  The repair adds the period and a second check where
+   an LF inside a string literal must reach the compiler as CR.
+
+4. PosternDashboardTest&gt;&gt;testTwoDashboardsOnSameServerShareTheLogger and
+   testWindowClosedReleasesViewResources skipped when PosternDashboard
+   findServer found no server with a PosternDelegate (no test starts one).
+   Each test now starts its own server with PosternServer startOn: (ports 8501
+   and 8502, loopback) and stops the server at the end.  The assertions are
+   the same.
+
+5. PosternSyncReferenceCommitCommandTest&gt;&gt;testExecuteCoreSetsReferenceCommit
+   looked for an Iceberg repository named &#x27;claude-agent-sdk-smalltalk&#x27;, the
+   private repository of the author, and skipped without text when absent.  The
+   test now uses the repository of Postern itself, registered by the load as
+   &#x27;postern&#x27;.&quot;
+
+Smalltalk globals at: #PosternPatchBlock put: [ :clsName :sel :pairs | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifTrue: [
+			fix value: clsName value: sel
+				value: [ :source | pairs anySatisfy: [ :p | source includesSubstring: p key ] ]
+				value: (pairs inject: (cls &gt;&gt; sel) sourceCode into: [ :s :p | s copyReplaceAll: p key with: p value ]) ]
+		ifFalse: [ fix value: clsName value: sel value: [ :s | false ] value: &#x27;&#x27; ] ].
+
+&quot;1. parser helpers of the help tests&quot;
+(Smalltalk globals at: #PosternPatchBlock) value: #PosternHelpTest value: #canParseExpression:
+	value: { &#x27;on: CodeError&#x27; -&gt; &#x27;on: OCCodeError&#x27;. &#x27;RBParser&#x27; -&gt; &#x27;OCParser&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #PosternHelpTest value: #canParseMethod:
+	value: { &#x27;on: CodeError&#x27; -&gt; &#x27;on: OCCodeError&#x27;. &#x27;RBParser&#x27; -&gt; &#x27;OCParser&#x27; }.
+
+&quot;2. help content for Pharo 14, and the version pin&quot;
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #api
+	value: { &#x27;RPackageOrganizer default&#x27; -&gt; &#x27;self packageOrganizer&#x27;. &#x27;Pharo 12&#x27; -&gt; &#x27;Pharo 14&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #browse
+	value: { &#x27;RPackageOrganizer default&#x27; -&gt; &#x27;self packageOrganizer&#x27;. &#x27;Pharo 12&#x27; -&gt; &#x27;Pharo 14&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #git
+	value: { &#x27;RPackageOrganizer default&#x27; -&gt; &#x27;self packageOrganizer&#x27;.
+		&#x27;repo workingCopy changes.&#x27; -&gt; &#x27;repo workingCopy diffToReferenceCommit.&#x27;. &#x27;Pharo 12&#x27; -&gt; &#x27;Pharo 14&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #lessons
+	value: { &#x27;RPackageOrganizer default&#x27; -&gt; &#x27;self packageOrganizer&#x27;.
+		&#x27;RBRenameMethodRefactoring&#x27; -&gt; &#x27;ReRenameMethodRefactoring&#x27;. &#x27;Pharo 12&#x27; -&gt; &#x27;Pharo 14&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #pharo
+	value: { &#x27;Pharo 12&#x27; -&gt; &#x27;Pharo 14&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #tableOfContents
+	value: { &#x27;Pharo 12&#x27; -&gt; &#x27;Pharo 14&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #testing
+	value: { &#x27;TestRunner runAll&#x27; -&gt; &#x27;NewTestRunner new runAll&#x27; }.
+(Smalltalk globals at: #PosternPatchBlock) value: #&#x27;PosternHelp class&#x27; value: #expectedPharoVersion
+	value: { &#x27;Pharo-12.0.0&#x27; -&gt; &#x27;Pharo-14.0.0&#x27; }.
+
+&quot;3. the LF to CR test&quot;
+fix value: #PosternServerTest value: #testDelegateNormalizesLfToCr
+	value: [ :source | source includesSubstring: &#x27;42&#x27;&#x27; , String lf&#x27; ]
+	value:
+&#x27;testDelegateNormalizesLfToCr
+	| delegate input result literalInput literalResult |
+	delegate := PosternDelegate new.
+	input := &#x27;&#x27;| x |&#x27;&#x27; , String lf , &#x27;&#x27;x := 42.&#x27;&#x27; , String lf , &#x27;&#x27;x&#x27;&#x27;.
+	result := delegate evaluate: input.
+	self assert: (result includesSubstring: &#x27;&#x27;42&#x27;&#x27;).
+	&quot;an LF inside a string literal must reach the compiler as a CR&quot;
+	literalInput := (String with: $&#x27;&#x27;) , &#x27;&#x27;a&#x27;&#x27; , String lf , &#x27;&#x27;b&#x27;&#x27; , (String with: $&#x27;&#x27;) , &#x27;&#x27; includes: Character cr&#x27;&#x27;.
+	literalResult := delegate evaluate: literalInput.
+	self assert: (literalResult includesSubstring: &#x27;&#x27;true&#x27;&#x27;)&#x27;.
+
+&quot;4. the two dashboard tests start their own server&quot;
+fix value: #PosternDashboardTest value: #testTwoDashboardsOnSameServerShareTheLogger
+	value: [ :source | source includesSubstring: &#x27;findServer&#x27; ]
+	value:
+&#x27;testTwoDashboardsOnSameServerShareTheLogger
+	&quot;Round 7 - System Browser pattern. Multiple dashboards on the same
+	eval server share the underlying logger. Closing one window
+	unsubscribes only that view; the logger keeps running and the
+	other window keeps observing it. The load-bearing invariant is
+	identity: m1 logger == m2 logger when both wrap the same server.
+	The test starts its own eval server on loopback.&quot;
+
+	| server m1 m2 d1 d2 sharedLogger |
+	server := PosternServer startOn: 8501.
+	[
+		m1 := PosternDashboardModel on: server.
+		m2 := PosternDashboardModel on: server.
+		self
+			assert: m1 logger == m2 logger
+			description: &#x27;&#x27;two models on the same server must share one logger&#x27;&#x27;.
+		d1 := PosternDashboard openOn: m1.
+		d2 := PosternDashboard openOn: m2.
+		[
+			sharedLogger := m1 logger.
+			self assert: sharedLogger isRunning.
+			d1 windowClosed.
+			Smalltalk garbageCollect.
+			self
+				assert: sharedLogger isRunning
+				description: &#x27;&#x27;shared logger must survive d1 close&#x27;&#x27;.
+			self
+				assert: m2 logger == sharedLogger
+				description: &#x27;&#x27;d2 still references the same logger&#x27;&#x27;
+		] ensure: [
+			d1 ifNotNil: [ d1 window ifNotNil: [ :w | w isClosed ifFalse: [ w close ] ] ].
+			d2 ifNotNil: [ d2 window ifNotNil: [ :w | w isClosed ifFalse: [ w close ] ] ] ]
+	] ensure: [ server stop ]&#x27;.
+
+fix value: #PosternDashboardTest value: #testWindowClosedReleasesViewResources
+	value: [ :source | source includesSubstring: &#x27;findServer&#x27; ]
+	value:
+&#x27;testWindowClosedReleasesViewResources
+	&quot;Round 7 - windowClosed cleans up THIS view resources only:
+	the refresh process this view forked, and this view subscription
+	on the shared logger announcer. The shared logger itself is owned
+	by the server delegate and keeps running.
+	The test starts its own eval server on loopback.&quot;
+
+	| server model live |
+	server := PosternServer startOn: 8502.
+	[
+		model := PosternDashboardModel on: server.
+		live := PosternDashboard openOn: model.
+		[
+			self
+				assert: live isRefreshProcessAlive
+				description: &#x27;&#x27;view must have a running refresh process&#x27;&#x27;.
+			live windowClosed.
+			Smalltalk garbageCollect.
+			self
+				deny: live isRefreshProcessAlive
+				description: &#x27;&#x27;view refresh process must be terminated&#x27;&#x27;.
+			self
+				assert: model logger isRunning
+				description: &#x27;&#x27;shared logger must survive - owned by the server&#x27;&#x27;
+		] ensure: [
+			live ifNotNil: [ live window ifNotNil: [ :w | w isClosed ifFalse: [ w close ] ] ] ]
+	] ensure: [ server stop ]&#x27;.
+
+&quot;5. the sync command test uses the Postern repository&quot;
+(Smalltalk globals at: #PosternPatchBlock) value: #PosternSyncReferenceCommitCommandTest value: #testExecuteCoreSetsReferenceCommit
+	value: { &#x27;claude-agent-sdk-smalltalk&#x27; -&gt; &#x27;postern&#x27; }.
+
+Smalltalk globals removeKey: #PosternPatchBlock ifAbsent: [ ].
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

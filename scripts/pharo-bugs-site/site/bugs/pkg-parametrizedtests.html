@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: ParametrizedTests (tesonep/ParametrizedTests, row 32) - Pharo test defects</title><meta name="description" content="Package: ParametrizedTests (tesonep/ParametrizedTests, row 32): Fixed (package repair)">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: ParametrizedTests (tesonep/ParametrizedTests, row 32)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed (package repair)</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>0</dd><dt>Fix</dt><dd>tesonep-parametrizedtests.st</dd><dt>Upstream repository</dt><dd>tesonep/ParametrizedTests</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 139 tests, 136 pass, 3 errors on the two VMs.</li>
+<li>Cause: Pharo 14 has this package in <code>SUnit-Core</code> and <code>SUnit-Tests</code>, in a
+newer version.  The load puts the old <code>ParametrizedTestMatrix&gt;&gt;addCase:</code>
+in place of the method of the image.  Three tests of <code>PaSuiteTest</code> that
+only Pharo 14 has then fail (<code>ShouldBeImplemented</code>, <code>#key</code>).</li>
+<li>Repair here: <code>fixes/tesonep-parametrizedtests.st</code> puts the Pharo 14 source
+of the method back.</li>
+<li>Result: 139 of 139 pass on the two VMs.</li>
+<li>For the owner of the package: the package is a part of Pharo 14, and a
+load of it on Pharo 14 replaces newer code.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 32&quot;
+Metacello new baseline: &#x27;ParametrizedTests&#x27;; repository: &#x27;github://tesonep/ParametrizedTests:master/src&#x27;; onConflict: [:e | e useIncoming]; load.</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>32</td><td><code>tesonep-parametrizedtests</code></td><td>ok</td><td>tests=139 P=139 F=0 E=0 S=0 T=0 X=0</td><td>tests=139 P=139 F=0 E=0 S=0 T=0 X=0</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): tesonep-parametrizedtests.st (<a href="../files/packages/fixes/tesonep-parametrizedtests.st">download</a>)</summary><pre class="code">&quot;ParametrizedTests (tesonep/ParametrizedTests, master 9c43791): Pharo 14 contains
+this package in SUnit-Core (ParametrizedTestCase, ParametrizedTestMatrix,
+ParametrizedTestOption, ParametrizedTestExpandedParameter) and SUnit-Tests
+(PaSuiteTest and the Pa*ExampleTest classes).  The load of the old package
+replaces the Pharo 14 method ParametrizedTestMatrix&gt;&gt;addCase: with the old
+version.  The old version sends #asDictionary to its argument and expects
+associations.  Pharo 14 passes arrays of ParametrizedTestExpandedParameter
+(ParametrizedTestMatrix&gt;&gt;*), and the old code sends #key to an expanded
+parameter: ShouldBeImplemented.  Three tests of PaSuiteTest that exist only in
+Pharo 14 (testMultiply...MultiplyCases) fail on stock Cog and on our VM.
+
+The repair puts back the Pharo 14 source of the method.&quot;
+
+fix value: #ParametrizedTestMatrix value: #addCase:
+	value: [ :source | source includesSubstring: &#x27;asDictionary&#x27; ]
+	value:
+&#x27;addCase: aCollection
+	&quot;Declare a specific configuration of parameters. See forSelector:addOptions: for matrix combinations.&quot;
+
+	cases add: (aCollection
+		collect: [ :assoc | assoc asTestParameter ]
+		as: Array).
+
+	^ self&#x27;.
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>

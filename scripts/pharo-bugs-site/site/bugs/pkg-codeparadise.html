@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Package: CodeParadise (ErikOnBike/CodeParadise, row 121) - Pharo test defects</title><meta name="description" content="Package: CodeParadise (ErikOnBike/CodeParadise, row 121): Fixed; 7 tests cannot apply">
+<link rel="stylesheet" href="../style.css"></head>
+<body><div class="wrap">
+<p class="crumb"><a href="../index.html">Pharo test defects</a></p>
+<h1>Package: CodeParadise (ErikOnBike/CodeParadise, row 121)</h1><dl class="meta"><dt>State</dt><dd><span class="st st-fixed">Fixed; 7 tests cannot apply</span></dd><dt>Defect in</dt><dd>see the record</dd><dt>Tests</dt><dd>7</dd><dt>Fix</dt><dd>erikonbike-codeparadise.st</dd><dt>Upstream repository</dt><dd>ErikOnBike/CodeParadise</dd></dl><p class="note">The record is the text of the repair.  The Results table is the last run of the row.</p><h2>Record</h2><ul>
+<li>State before: 33 tests, 19 pass, 1 failure, 13 skips on the two VMs.  The
+13 are tests with <code>self skip</code> as their first statement.</li>
+<li>A first repair took the skips out with a stand-in for the client
+environment.  A run showed that it was wrong: the tests then failed on
+stock Cog, and one of them hung on our VM.  That repair is gone.</li>
+<li>The hang, measured:
+<ul>
+<li><code>CpClientCommunicator&gt;&gt;checkConnection</code> with no URL calls <code>reconnect</code>,
+which fails inside a handler that takes each Error and answers nil, and
+calls <code>checkConnection</code> again.  The recursion has no end.</li>
+<li>The time limit of SUnit signals <code>TestTookTooMuchTime</code>, an Error.  The
+same handler takes the signal when the signal comes inside it.  In 200
+trials the signal ended the test in 41 on stock Cog and in 13 on our VM.</li>
+<li>Our VM then had a limit of 56000 frames for each process.  Its error
+went into the same handler, a second one stopped the process with no
+unwind, and the run had no end.  Since the deep recursion change of
+2026-11-17 our VM has no such limit, and the test ends by the time
+limit as on stock Cog.</li>
+</ul>
+</li>
+<li>Repair (<code>fixes/erikonbike-codeparadise.st</code>), with no stand-in:
+<ul>
+<li><code>checkConnection</code> does nothing when the communicator has no URL, and
+<code>reconnect</code> asks the client environment only when one runs.</li>
+<li>6 tests of <code>CpCommunicatorTest</code> run: the client comes from a helper,
+three tests make their Semaphore before the connection (a race), and
+setUp and tearDown stop the servers and close the clients.</li>
+<li>2 of them were stale: commit 0fb2f0a (2021) made &quot;always reconnect&quot; the
+default, and the tests assert the state with no reconnect strategy.
+They now set that state.  Each assertion stays.</li>
+<li><code>testLookAheadAt</code> was stale since commit 9f09c7f moved the index of
+<code>ReadStream&gt;&gt;lookAheadAt:</code> by one.  It uses the present index.</li>
+</ul>
+</li>
+<li>7 tests cannot apply in a server image
+(<code>not-applicable/erikonbike-codeparadise.txt</code>, with the proof for each):
+4 of <code>CpClientEnvironmentTest</code> and 3 of <code>CpEncodeDecodeObjectTest</code>.  The
+code under test is the client side, which runs in a small image in the
+browser.  The package refuses that code in an image with the server
+classes.  Each of the 7 keeps its skip, with the reason as its text.</li>
+<li>For the owner of the package: a reconnect that fails for a URL that is
+set still calls <code>checkConnection</code> again at once.  And
+<code>testSortedCollection</code> passes with a stand-in client environment; it is
+in the list of 7 because the repair uses no stand-in.</li>
+<li>Result, in a run from a new load: 26 pass and 7 skips on the two VMs; each
+skip is in the not-applicable file.</li>
+</ul>
+<h2>Test</h2><p>Load the package into a Pharo 14 image (build 791) with the load expression of the test run, file in the fixes file of the row if there is one, and run the test classes of the package.</p><pre class="code">&quot;row 121&quot;
+Metacello new baseline: &#x27;CodeParadise&#x27;; repository: &#x27;github://ErikOnBike/CodeParadise:master/repository&#x27;; onConflict: [:e | e useIncoming]; load: #(&#x27;Core&#x27; &#x27;Tests&#x27;).</pre><h2>Results</h2><p>Last result of the package run (stock Cog and iospharo on the same image).</p><table><tr><th>Row</th><th>Label</th><th>Load</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td>121</td><td><code>erikonbike-codeparadise</code></td><td>ok</td><td>tests=33 P=26 F=0 E=0 S=7 T=0 X=0</td><td>tests=33 P=26 F=0 E=0 S=7 T=0 X=0</td></tr></table><h3>Tests that do not pass</h3><table><tr><th>Test</th><th>Stock Cog</th><th>iospharo VM</th></tr><tr><td><code>CpClientEnvironmentTest&gt;&gt;testInstallClass</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>CpClientEnvironmentTest&gt;&gt;testInstallMethod</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>CpClientEnvironmentTest&gt;&gt;testInstallMethodWithClassVarAccess</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>CpClientEnvironmentTest&gt;&gt;testInstallMethodWithInstVarAccess</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>CpEncodeDecodeObjectTest&gt;&gt;testCompiledMethod</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>CpEncodeDecodeObjectTest&gt;&gt;testCompiledMethodWithAdditionalMethodState</code></td><td>SKIP</td><td>SKIP</td></tr><tr><td><code>CpEncodeDecodeObjectTest&gt;&gt;testSortedCollection</code></td><td>SKIP</td><td>SKIP</td></tr></table><h2>Fix</h2><details open><summary>Fixes file (filed in after the load): erikonbike-codeparadise.st (<a href="../files/packages/fixes/erikonbike-codeparadise.st">download</a>)</summary><pre class="code">&quot;ErikOnBike/CodeParadise (row 121).  Before: 33 tests, 19 pass, 13 skip, 1 fail.
+
+A. The six tests of CpCommunicatorTest were disabled with &#x27;self skip.&#x27; (comment:
+   &#x27;safety checks prevent it&#x27;).  They run a client and a server Communicator in one
+   image.  They did not pass for six reasons; each is repaired where it is:
+   1. CpClientCommunicator&gt;&gt;checkConnection reconnected also when the communicator
+      never had an URL.  #reconnect calls #connectToUrl: nil, which fails, and
+      #connectToUrl: ends in #messageChannel: nil, which calls #checkConnection
+      again: endless recursion.  testClientSendBeforeConnection sends messages
+      before #connectToUrl:, so it hit this and ran until the watchdog of the
+      test runner stopped it.  (The package guards the creation of a
+      CpClientCommunicator in a server image, &#x27;deadlock issues&#x27;; this is a
+      likely cause.)  Package code: with no URL there is nothing to reconnect to.
+   2. CpClientCommunicator&gt;&gt;reconnect sent &#x27;CpClientEnvironment current
+      restartCommunication&#x27;.  Only a client has a ClientEnvironment; in a server
+      image #current refuses.  Now #restartCommunication is sent when a
+      ClientEnvironment is running (the real client: always).  Package code.
+   3. Since commit 0fb2f0a (2021) a new CpClientCommunicator has the strategy to
+      always reconnect (#initialize).  testConnectionStrategies and
+      testSendWithReconnects test the state without a strategy (&#x27;Default no
+      reconnect&#x27;, &#x27;Client is no longer connected&#x27;); they predate the commit.  The
+      class comment says: without a strategy a lost connection is not restored.
+      The tests now set &#x27;reconnectStrategy: nil&#x27; and keep their assertions.
+   4. Three tests made the Semaphore after the connection.  The handler process
+      (priority highIOPriority) of the other side runs at once, finds the Semaphore
+      nil and fails, and the signal is lost.  The Semaphore is made at the start.
+   5. CpClientCommunicator class&gt;&gt;newForOwner: refuses in an image that has a
+      CpServerCommunicator.  The tests build the client with #initializeWithOwner:
+      (the code of CpCommunicator class&gt;&gt;newForOwner:) through a helper.
+   6. All tests use port 1701.  A test that stops early left its ZnServer and its
+      channels.  setUp and tearDown of the test class now stop them.
+B. Seven tests need the client environment and keep their skip, now with a reason
+   text: they cannot apply in a server image (proof in the .not-applicable.txt file).
+C. CpReadStreamExtensionTest&gt;&gt;testLookAheadAt asserts the index of before commit
+   9f09c7f (2021).  That commit moved the index by one in ReadStream&gt;&gt;lookAheadAt:
+   and in its callers, and did not change the test.  The test now uses the index of
+   the extension: 0 is the element that #peek answers, 1 the one after it, -1 the
+   element that #next answered last.  No assertion is removed.
+
+All entries are guarded on text that only the old source has.&quot;
+
+
+&quot;The helpers of CpCommunicatorTest.  Slots first.&quot;
+{ #servers. #clients } do: [ :name | | cls |
+	cls := resolve value: #CpCommunicatorTest.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: &#x27;SKIP slot CpCommunicatorTest&gt;&gt;&#x27;, name, &#x27; (class absent)&#x27;; lf; flush ]
+		ifNotNil: [
+			(cls allInstVarNames includes: name)
+				ifTrue: [ Stdio stdout nextPutAll: &#x27;SKIP slot CpCommunicatorTest&gt;&gt;&#x27;, name, &#x27; (already present)&#x27;; lf; flush ]
+				ifFalse: [
+					cls addSlot: (InstanceVariableSlot named: name).
+					Stdio stdout nextPutAll: &#x27;ADDED slot CpCommunicatorTest&gt;&gt;&#x27;, name; lf; flush ] ] ].
+
+add value: #CpCommunicatorTest value: #setUp value: &#x27;running&#x27;
+	value: &#x27;setUp
+
+	super setUp.
+
+	servers := OrderedCollection new.
+	clients := OrderedCollection new&#x27;.
+
+add value: #CpCommunicatorTest value: #tearDown value: &#x27;running&#x27;
+	value: &#x27;tearDown
+
+	&quot;Close the clients first (the server side channels then end), without a reconnect. All tests use port 1701: stop the servers&quot;
+	clients do: [ :each | each reconnectStrategy: nil ; close ].
+	servers do: [ :each | each stop ].
+
+	super tearDown&#x27;.
+
+add value: #CpCommunicatorTest value: #startServerForOwner:path: value: &#x27;support&#x27;
+	value: &#x27;startServerForOwner: ownerObject path: aString
+
+	&quot;Start the server on port 1701 and remember it, so tearDown stops it&quot;
+
+	| server |
+
+	server := CpMessageChannel startServerForOwner: ownerObject onPort: 1701 path: aString.
+	servers add: server.
+	^ server&#x27;.
+
+add value: #CpCommunicatorTest value: #newClientCommunicatorForOwner: value: &#x27;support&#x27;
+	value: &#x27;newClientCommunicatorForOwner: ownerObject
+
+	&quot;CpClientCommunicator class &gt;&gt; #newForOwner: refuses to run in an image that has a CpServerCommunicator.
+	These tests run both sides in one image, so do what CpCommunicator class &gt;&gt; #newForOwner: does.
+	Remember the client, so tearDown closes it.&quot;
+
+	| client |
+
+	client := CpClientCommunicator basicNew
+		initializeWithOwner: ownerObject ;
+		yourself.
+	clients add: client.
+	^ client&#x27;.
+
+fix value: #CpClientCommunicator value: #checkConnection value: [ :source | (source includesSubstring: &#x27;url ifNil:&#x27;) not ] value:
+&#x27;checkConnection
+
+	&quot;Check connection and restore connection if needed, according to receiver&#x27;&#x27;s reconnect strategy&quot;
+
+	(self hasOpenMessageChannel or: [ self hasReconnectStrategy not ])
+		ifTrue: [ ^ self ].
+
+	&quot;Without an URL no connection was ever made, so there is nothing to reconnect to. (Reconnecting
+	without an URL makes #connectToUrl: fail, which evaluates #checkConnection again, and so on.)&quot;
+	url ifNil: [ ^ self ].
+
+	&quot;Reconnect according to the receiver&#x27;&#x27;s reconnect strategy&quot;
+	(self reconnectStrategy shouldReconnect: self)
+		ifTrue: [ self reconnect ]&#x27;.
+fix value: #CpClientCommunicator value: #reconnect value: [ :source | (source includesSubstring: &#x27;isRunning&#x27;) not ] value:
+&#x27;reconnect
+
+	&quot;Reconnect the receiver to the previous URL&quot;
+
+	self connectToUrl: self url.
+
+	&quot;Let the server know on which WebSocket we reconnected by restarting communication.
+	Only a ClientEnvironment can do this, so skip it for a Communicator which runs without one.&quot;
+	CpClientEnvironment isRunning
+		ifTrue: [ CpClientEnvironment current restartCommunication ]&#x27;.
+fix value: #CpCommunicatorTest value: #testClientSendBeforeConnection value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testClientSendBeforeConnection
+
+	| originalClientMessages originalServerMessages client clientOwner clientMessages server serverOwner serverMessages semaphore |
+
+	semaphore := Semaphore new.
+
+	originalClientMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;Hello&#x27;&#x27; . &#x27;&#x27;World&#x27;&#x27; . &#x27;&#x27;Welcome&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+	originalServerMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;42&#x27;&#x27; . &#x27;&#x27;is&#x27;&#x27; . &#x27;&#x27;the&#x27;&#x27; . &#x27;&#x27;answer&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+
+	serverMessages := OrderedCollection new.
+	serverOwner := CpMessageHandler new
+		onMessage: [ :message |
+			serverMessages add: message.
+			serverMessages size = 3
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	server := CpServerCommunicator newForOwner: serverOwner.
+
+	clientMessages := OrderedCollection new.
+	clientOwner := CpMessageHandler new
+		onMessage: [ :message |
+			clientMessages add: message.
+			clientMessages size = 4
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	client := self newClientCommunicatorForOwner: clientOwner.
+
+	&quot;Create a server for incoming connections and have the server side Communicator own it&quot;
+	self startServerForOwner: server path: &#x27;&#x27;/test&#x27;&#x27;.
+
+	originalClientMessages do: [ :each | client sendMessage: each ].
+
+	&quot;Make connection&quot;
+	client connectToUrl: &#x27;&#x27;ws://localhost:1701/test&#x27;&#x27;.
+
+	&quot;Send messages&quot;
+	[ originalServerMessages do: [ :each | server sendMessage: each ] ] fork.
+	semaphore wait.
+	semaphore wait.
+
+	&quot;Validate messages&quot;
+	self
+		assertCollection: originalClientMessages equals: serverMessages ;
+		assertCollection: originalServerMessages equals: clientMessages&#x27;.
+fix value: #CpCommunicatorTest value: #testConnectionStrategies value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testConnectionStrategies
+
+	| client clientOwner server serverOwner |
+
+	&quot;Server and client do not receive messages, so empty owners&quot;
+	serverOwner := CpMessageHandler new.
+	server := CpServerCommunicator newForOwner: serverOwner.
+
+	clientOwner := CpMessageHandler new.
+	client := self newClientCommunicatorForOwner: clientOwner.
+
+	&quot;Without a reconnect strategy a lost connection is not restored. Since 2021 (commit 0fb2f0a) a new
+	CpClientCommunicator has the strategy to always reconnect, which this test predates.&quot;
+	client reconnectStrategy: nil.
+
+	&quot;Create a server for incoming connections and have the server side Communicator own it&quot;
+	self startServerForOwner: server path: &#x27;&#x27;/test&#x27;&#x27;.
+
+	&quot;Make connection&quot;
+	client connectToUrl: &#x27;&#x27;ws://localhost:1701/test&#x27;&#x27;.
+	self assert: client hasOpenMessageChannel description: &#x27;&#x27;Made first connection&#x27;&#x27;.
+
+	&quot;Close connection and perform #checkConnection&quot;
+	client
+		close ;
+		checkConnection.
+	self assert: client hasOpenMessageChannel not description: &#x27;&#x27;No reconnect without reconnect strategy&#x27;&#x27;.
+
+	&quot;Set reconnect strategy to &#x27;&#x27;always&#x27;&#x27;&quot;
+	client reconnectStrategy: CpCommunicatorReconnectStrategy new.
+
+	&quot;Close connection and perform #checkConnection&quot;
+	client
+		close ;
+		checkConnection.
+	self assert: client hasOpenMessageChannel description: &#x27;&#x27;Reconnect with reconnection strategy from client close&#x27;&#x27;&#x27;.
+fix value: #CpCommunicatorTest value: #testReconnectStrategy value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testReconnectStrategy
+
+	| originalClientMessages client clientOwner server serverOwner serverMessages semaphore |
+
+	originalClientMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;Hello&#x27;&#x27; . &#x27;&#x27;World&#x27;&#x27; . &#x27;&#x27;Welcome&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+
+	semaphore := Semaphore new.
+	serverMessages := OrderedCollection new.
+	serverOwner := CpMessageHandler new
+		onMessage: [ :message |
+			serverMessages add: message.
+			serverMessages size = 2
+				ifTrue: [ server messageChannel close ].
+			serverMessages size &gt;= 2
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	server := CpServerCommunicator newForOwner: serverOwner.
+
+	&quot;Client does not receive messages, so empty owner&quot;
+	clientOwner := CpMessageHandler new.
+	client := (self newClientCommunicatorForOwner: clientOwner)
+		reconnectStrategy: CpCommunicatorReconnectStrategy new ;
+		yourself.
+
+	&quot;Create a server for incoming connections and have the server side Communicator own it&quot;
+	self startServerForOwner: server path: &#x27;&#x27;/test&#x27;&#x27;.
+
+	&quot;Make connection&quot;
+	client connectToUrl: &#x27;&#x27;ws://localhost:1701/test&#x27;&#x27;.
+	self assert: client hasOpenMessageChannel description: &#x27;&#x27;Made first connection&#x27;&#x27;.
+
+	&quot;Send first message&quot;
+	client sendMessage: originalClientMessages first.
+
+	&quot;Close connection from client and send second message&quot;
+	client close.
+
+	&quot;Send second message (server will close as a result)&quot;
+	client sendMessage: originalClientMessages second.
+	semaphore wait.
+
+	&quot;Send third message&quot;	
+	client sendMessage: originalClientMessages third.
+
+	&quot;Wait for final message&quot;
+	semaphore wait.
+
+	&quot;Validate messages&quot;
+	self assertCollection: originalClientMessages equals: serverMessages&#x27;.
+fix value: #CpCommunicatorTest value: #testSendReceive value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testSendReceive
+
+	| originalClientMessages originalServerMessages client clientOwner clientMessages server serverOwner serverMessages semaphore |
+
+	semaphore := Semaphore new.
+
+	originalClientMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;Hello&#x27;&#x27; . &#x27;&#x27;World&#x27;&#x27; . &#x27;&#x27;Welcome&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+	originalServerMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;42&#x27;&#x27; . &#x27;&#x27;is&#x27;&#x27; . &#x27;&#x27;the&#x27;&#x27; . &#x27;&#x27;answer&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+
+	serverMessages := OrderedCollection new.
+	serverOwner := CpMessageHandler new
+		onMessage: [ :message |
+			serverMessages add: message.
+			serverMessages size = 3
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	server := CpServerCommunicator newForOwner: serverOwner.
+
+	clientMessages := OrderedCollection new.
+	clientOwner := CpMessageHandler new
+		onMessage: [ :message |
+			clientMessages add: message.
+			clientMessages size = 4
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	client := self newClientCommunicatorForOwner: clientOwner.
+
+	&quot;Create a server for incoming connections and have the server side Communicator own it&quot;
+	self startServerForOwner: server path: &#x27;&#x27;/test&#x27;&#x27;.
+
+	&quot;Make connection&quot;
+	client connectToUrl: &#x27;&#x27;ws://localhost:1701/test&#x27;&#x27;.
+
+	&quot;Send messages&quot;
+	[ originalClientMessages do: [ :each | client sendMessage: each ] ] fork.
+	[ originalServerMessages do: [ :each | server sendMessage: each ] ] fork.
+	semaphore wait.
+	semaphore wait.
+
+	&quot;Validate messages&quot;
+	self
+		assertCollection: originalClientMessages equals: serverMessages ;
+		assertCollection: originalServerMessages equals: clientMessages&#x27;.
+fix value: #CpCommunicatorTest value: #testSendWithReconnects value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testSendWithReconnects
+
+	| originalClientMessages client clientOwner server serverOwner serverMessages semaphore |
+
+	originalClientMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;Hello&#x27;&#x27; . &#x27;&#x27;World&#x27;&#x27; . &#x27;&#x27;Welcome&#x27;&#x27; . &#x27;&#x27;Here&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+
+	semaphore := Semaphore new.
+	serverMessages := OrderedCollection new.
+	serverOwner := CpMessageHandler new
+		onMessage: [ :message |
+			serverMessages add: message.
+			serverMessages size = 4
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	server := CpServerCommunicator newForOwner: serverOwner.
+
+	&quot;Client does not receive messages, so empty owner&quot;
+	clientOwner := CpMessageHandler new.
+	client := self newClientCommunicatorForOwner: clientOwner.
+
+	&quot;Without a reconnect strategy a lost connection is not restored. Since 2021 (commit 0fb2f0a) a new
+	CpClientCommunicator has the strategy to always reconnect, which this test predates.&quot;
+	client reconnectStrategy: nil.
+
+	&quot;Create a server for incoming connections and have the server side Communicator own it&quot;
+	self startServerForOwner: server path: &#x27;&#x27;/test&#x27;&#x27;.
+
+	&quot;Make connection&quot;
+	client connectToUrl: &#x27;&#x27;ws://localhost:1701/test&#x27;&#x27;.
+	self assert: client hasOpenMessageChannel description: &#x27;&#x27;Made first connection&#x27;&#x27;.
+
+	&quot;Send first message&quot;
+	client sendMessage: originalClientMessages first.
+
+	&quot;Close connection and send second message&quot;
+	client close.
+	client sendMessage: originalClientMessages second.
+	self assert: client hasOpenMessageChannel not description: &#x27;&#x27;Client is no longer connected&#x27;&#x27;.
+
+	&quot;Make new connection and send third message&quot;	
+	client connectToUrl: &#x27;&#x27;ws://127.0.0.1:1701/test&#x27;&#x27;.
+	self assert: client hasOpenMessageChannel description: &#x27;&#x27;Make second connection&#x27;&#x27;.
+
+	client sendMessage: originalClientMessages third.
+
+	&quot;Reconnect and send fourth message&quot;
+	client reconnect.
+	self assert: client hasOpenMessageChannel description: &#x27;&#x27;Make third connection&#x27;&#x27;.
+	client sendMessage: originalClientMessages fourth.
+
+	&quot;Wait for final message&quot;
+	semaphore wait.
+
+	&quot;Validate messages&quot;
+	self assertCollection: originalClientMessages equals: serverMessages&#x27;.
+fix value: #CpCommunicatorTest value: #testServerSendBeforeConnection value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testServerSendBeforeConnection
+
+	| originalClientMessages originalServerMessages client clientOwner clientMessages server serverOwner serverMessages semaphore |
+
+	semaphore := Semaphore new.
+
+	originalClientMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;Hello&#x27;&#x27; . &#x27;&#x27;World&#x27;&#x27; . &#x27;&#x27;Welcome&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+	originalServerMessages := OrderedCollection newFrom: (
+		{ &#x27;&#x27;42&#x27;&#x27; . &#x27;&#x27;is&#x27;&#x27; . &#x27;&#x27;the&#x27;&#x27; . &#x27;&#x27;answer&#x27;&#x27; } collect: [ :each | each asByteArray ]).
+
+	serverMessages := OrderedCollection new.
+	serverOwner := CpMessageHandler new
+		onMessage: [ :message |
+			serverMessages add: message.
+			serverMessages size = 3
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	server := CpServerCommunicator newForOwner: serverOwner.
+
+	clientMessages := OrderedCollection new.
+	clientOwner := CpMessageHandler new
+		onMessage: [ :message |
+			clientMessages add: message.
+			clientMessages size = 4
+				ifTrue: [ semaphore signal ] ] ;
+		yourself.
+	client := self newClientCommunicatorForOwner: clientOwner.
+
+	&quot;Create a server for incoming connections and have the server side Communicator own it&quot;
+	self startServerForOwner: server path: &#x27;&#x27;/test&#x27;&#x27;.
+
+	originalServerMessages do: [ :each | server sendMessage: each ].
+
+	&quot;Make connection&quot;
+	client connectToUrl: &#x27;&#x27;ws://localhost:1701/test&#x27;&#x27;.
+
+	&quot;Send messages&quot;
+	[ originalClientMessages do: [ :each | client sendMessage: each ] ] fork.
+	semaphore wait.
+	semaphore wait.
+
+	&quot;Validate messages&quot;
+	self
+		assertCollection: originalClientMessages equals: serverMessages ;
+		assertCollection: originalServerMessages equals: clientMessages&#x27;.
+fix value: #CpClientEnvironmentTest value: #testInstallClass value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testInstallClass
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed)&quot;
+
+	| clientEnvironment someClass |
+
+	self skip: &#x27;&#x27;The test needs the singleton CpClientEnvironment current. The package refuses to make it in an image that has CpServerEnvironment (this is a server image). See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	clientEnvironment := CpClientEnvironment current.
+	self
+		assert: (Smalltalk classNamed: #CpTestClassToBeRemoved) isNil
+		description: &#x27;&#x27;Class not already present&#x27;&#x27;.
+
+	someClass := Object subclass: #CpTestClassToBeRemoved
+		instanceVariableNames: &#x27;&#x27;instVar1 instVar2 instVar3&#x27;&#x27;
+		classVariableNames: &#x27;&#x27;classVar1 classVar2&#x27;&#x27;
+		package: self class category.
+
+	[
+		clientEnvironment handleMessageReceived: (MessageSend
+			receiver: nil
+			selector: #installClass:
+			arguments: { someClass }) cpEncoded.
+
+		self
+			assert: (Smalltalk classNamed: #CpTestClassToBeRemoved) isNotNil
+			description: &#x27;&#x27;Class is installed&#x27;&#x27;.
+		self
+			assertCollection: (Smalltalk classNamed: #CpTestClassToBeRemoved) instVarNames
+			equals: { #instVar1. #instVar2. #instVar3 }.
+		self
+			assertCollection: (Smalltalk classNamed: #CpTestClassToBeRemoved) classVarNames
+			equals: {  #classVar1. #classVar2 } 
+	] ensure: [ Smalltalk removeClassNamed: #CpTestClassToBeRemoved ]&#x27;.
+fix value: #CpClientEnvironmentTest value: #testInstallMethod value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testInstallMethod
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed)&quot;
+
+	| clientEnvironment someMethod |
+
+	self skip: &#x27;&#x27;The test needs the singleton CpClientEnvironment current. The package refuses to make it in an image that has CpServerEnvironment (this is a server image). See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	clientEnvironment := CpClientEnvironment current.
+	self
+		assert: (self class methodDict includesKey: #temporaryMethod) not
+		description: &#x27;&#x27;Method not already present&#x27;&#x27;.
+
+	[
+		&quot;Compile new method for class, test it did not get installed&quot;
+		someMethod := self class compiler
+			source: &#x27;&#x27;temporaryMethod ^ 42&#x27;&#x27; ;
+			requestor: nil ;
+			failBlock: [ ^ nil ];
+			compile.
+		self assert: someMethod notNil description: &#x27;&#x27;Temporary method compiled&#x27;&#x27;.
+		self
+			assert: (self class methodDict includesKey: #temporaryMethod) not
+			description: &#x27;&#x27;Method not present after compilation&#x27;&#x27;.
+
+		clientEnvironment handleMessageReceived: (MessageSend
+			receiver: nil
+			selector: #installMethod:
+			arguments: { someMethod }) cpEncoded.
+		self assert: (self perform: #temporaryMethod) = 42 description: &#x27;&#x27;Compiled method answers correct value&#x27;&#x27;
+	] ensure: [ self class removeSelector: #temporaryMethod ]&#x27;.
+fix value: #CpClientEnvironmentTest value: #testInstallMethodWithClassVarAccess value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testInstallMethodWithClassVarAccess
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed)&quot;
+
+	| clientEnvironment someMethod |
+
+	self skip: &#x27;&#x27;The test needs the singleton CpClientEnvironment current. The package refuses to make it in an image that has CpServerEnvironment (this is a server image). See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	clientEnvironment := CpClientEnvironment current.
+	self
+		assert: (CpClientEnvironmentTestObject classSide methodDict includesKey: #temporaryMethod) not
+		description: &#x27;&#x27;Method not already present&#x27;&#x27;.
+
+	[
+		&quot;Compile new class method for class, test it did not get installed&quot;
+		someMethod := CpClientEnvironmentTestObject classSide compiler
+			source: &#x27;&#x27;temporaryMethod SomeClassVar := #test&#x27;&#x27; ;
+			requestor: nil ;
+			failBlock: [ ^ nil ];
+			compile.
+		self assert: someMethod notNil description: &#x27;&#x27;Temporary method compiled&#x27;&#x27;.
+		self
+			assert: (CpClientEnvironmentTestObject classSide methodDict includesKey: #temporaryMethod) not
+			description: &#x27;&#x27;Method not present after compilation&#x27;&#x27;.
+
+		clientEnvironment handleMessageReceived: (MessageSend
+			receiver: nil
+			selector: #installMethod:
+			arguments: { someMethod }) cpEncoded.
+
+		CpClientEnvironmentTestObject perform: #temporaryMethod.
+		self
+			assert: CpClientEnvironmentTestObject someClassVar = #test
+			description: &#x27;&#x27;Compiled method answers correct value&#x27;&#x27;
+	] ensure: [ CpClientEnvironmentTestObject classSide removeSelector: #temporaryMethod ]&#x27;.
+fix value: #CpClientEnvironmentTest value: #testInstallMethodWithInstVarAccess value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testInstallMethodWithInstVarAccess
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed)&quot;
+
+	| clientEnvironment someMethod instance |
+
+	self skip: &#x27;&#x27;The test needs the singleton CpClientEnvironment current. The package refuses to make it in an image that has CpServerEnvironment (this is a server image). See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	clientEnvironment := CpClientEnvironment current.
+	self
+		assert: (CpClientEnvironmentTestObject instanceSide methodDict includesKey: #temporaryMethod) not
+		description: &#x27;&#x27;Method not already present&#x27;&#x27;.
+
+	[
+		&quot;Compile new instance method for class, test it did not get installed&quot;
+		someMethod := CpClientEnvironmentTestObject instanceSide compiler
+			source: &#x27;&#x27;temporaryMethod someInstVar := 123. otherInstVar := self&#x27;&#x27; ;
+			requestor: nil ;
+			failBlock: [ ^ nil ];
+			compile.
+		self assert: someMethod notNil description: &#x27;&#x27;Temporary method compiled&#x27;&#x27;.
+		self
+			assert: (CpClientEnvironmentTestObject instanceSide methodDict includesKey: #temporaryMethod) not
+			description: &#x27;&#x27;Method not present after compilation&#x27;&#x27;.
+
+		clientEnvironment handleMessageReceived: (MessageSend
+			receiver: nil
+			selector: #installMethod:
+			arguments: { someMethod }) cpEncoded.
+
+		instance := CpClientEnvironmentTestObject new.
+		instance perform: #temporaryMethod.
+		self
+			assert: instance someInstVar = 123
+			description: &#x27;&#x27;Compiled method answers correct value&#x27;&#x27;.
+		self
+			assert: instance otherInstVar = instance
+			description: &#x27;&#x27;Compiled method answers correct reference to self&#x27;&#x27;
+	] ensure: [ CpClientEnvironmentTestObject instanceSide removeSelector: #temporaryMethod ]&#x27;.
+fix value: #CpEncodeDecodeObjectTest value: #testCompiledMethod value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testCompiledMethod
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed)&quot;
+
+	self skip: &#x27;&#x27;CpObjectDecoder&gt;&gt;decodeCompiledMethod runs only in the client environment, and it makes the method in the format of the tiny client image (4 byte trailer; this image has 5). See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	self
+		assert: (self class compareMethod: (CpObjectDecoder on: (CpObjectEncoder new encodeCompiledMethod: (CpEncodeDecodeObjectTest &gt;&gt; #testCompiledMethod) ; bytes)) decodeNext to: CpEncodeDecodeObjectTest &gt;&gt; #testCompiledMethod)
+		description: &#x27;&#x27;Encode/decode CpEncodeDecodeMessageTest &gt;&gt; #testCompiledMethod&#x27;&#x27;.
+	self
+		assert: (self class compareMethod: (CpObjectDecoder on: (CpObjectEncoder new encodeCompiledMethod: (ByteString &gt;&gt; #isByteString) ; bytes)) decodeNext to: ByteString &gt;&gt; #isByteString)
+		description: &#x27;&#x27;Encode/decode ByteString &gt;&gt; #isByteString&#x27;&#x27;.
+	self
+		assert: (self class compareMethod: (CpObjectDecoder on: (CpObjectEncoder new encodeCompiledMethod: (ByteString &gt;&gt; #isByteString) ; bytes)) decodeNext to: ByteSymbol &gt;&gt; #isByteString) not
+		description: &#x27;&#x27;Encode/decode ByteString &gt;&gt; #isByteString and ByteSymbol &gt;&gt; #isByteString (same implementation but different class)&#x27;&#x27;&#x27;.
+fix value: #CpEncodeDecodeObjectTest value: #testCompiledMethodWithAdditionalMethodState value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testCompiledMethodWithAdditionalMethodState
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed)&quot;
+
+	&lt;somePragma: #someValue&gt;
+
+	self skip: &#x27;&#x27;CpObjectDecoder&gt;&gt;decodeCompiledMethod runs only in the client environment, and it makes the method in the format of the tiny client image (4 byte trailer; this image has 5). See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	self
+		assert: (self class compareMethod: (CpObjectDecoder on: (CpObjectEncoder new encodeCompiledMethod: (CpEncodeDecodeObjectTest &gt;&gt; #testCompiledMethodWithAdditionalMethodState) ; bytes)) decodeNext to: CpEncodeDecodeObjectTest &gt;&gt; #testCompiledMethodWithAdditionalMethodState)
+		description: &#x27;&#x27;Encode/decode CpEncodeDecodeMessageTest &gt;&gt; #testCompiledMethodWithAdditionalMethodState&#x27;&#x27;&#x27;.
+fix value: #CpEncodeDecodeObjectTest value: #testSortedCollection value: [ :source | source includesSubstring: &#x27;self skip.&#x27; ] value:
+&#x27;testSortedCollection
+
+	&quot;These tests are disabled because safety checks prevent it (to prevent CompiledMethods from being installed).
+	Tests have been performed by manually removing the safe guards. Need to find a mechanism to make this
+	possible from inside these tests. Since it is a security risks, I&#x27;&#x27;m not too keen on this.&quot;
+
+	self skip: &#x27;&#x27;CpObjectDecoder&gt;&gt;decodeCleanBlockClosure runs only in the client environment (CpClientEnvironment isRunning), which a server image does not have. See erikonbike-codeparadise.not-applicable.txt.&#x27;&#x27;.
+
+	&quot;SortedCollection are only supported when CleanBlockClosures are enabled&quot;
+
+	self class compiler compilationContext optionCleanBlockClosure 
+		ifFalse: [ ^ self ].
+
+	self
+		assert: (CpObjectDecoder on: (CpObjectEncoder new encodeSortedCollection: (SortedCollection sortBlock: [ :a :b | a &gt; b ]) ; bytes)) decodeNext isEmpty
+		description: &#x27;&#x27;Encode/decode empty SortedCollection has no elements&#x27;&#x27;.
+	self
+		assert: (CpObjectDecoder on: (CpObjectEncoder new encodeSortedCollection: ((SortedCollection sortBlock: [ :a :b | a &gt; b ]) addAll: { 1 . 3 . 2 } ; yourself) ; bytes)) decodeNext first = 3
+		description: &#x27;&#x27;Encode/decode SortedCollection first is in order&#x27;&#x27;.
+	self
+		assert: (CpObjectDecoder on: (CpObjectEncoder new encodeSortedCollection: ((SortedCollection sortBlock: [ :a :b | a &gt; b ]) addAll: { 1 . 3 . 2 } ; yourself) ; bytes)) decodeNext last = 1
+		description: &#x27;&#x27;Encode/decode SortedCollection last is in order&#x27;&#x27;&#x27;.
+fix value: #CpReadStreamExtensionTest value: #testLookAheadAt value: [ :source | source includesSubstring: &#x27;No current (at start)&#x27; ] value:
+&#x27;testLookAheadAt
+
+	&quot;Index 0 is the element that #peek answers, 1 is the one after it and -1 is the element that #next answered last
+	(see ReadStream &gt;&gt; #lookAheadAt: and its callers)&quot;
+
+	| readStream |
+
+	readStream := ReadStream on: &#x27;&#x27;Hello world&#x27;&#x27;.
+
+	self assert: (readStream lookAheadAt: 0) = $H description: &#x27;&#x27;Look at next Character from start&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: 1) = $e description: &#x27;&#x27;Look at second Character from start&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: -1) isNil description: &#x27;&#x27;No current (at start)&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: -2) isNil description: &#x27;&#x27;No previous (at start)&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: readStream size - 1) = $d description: &#x27;&#x27;Look at last element&#x27;&#x27;.
+
+	readStream next: 5.
+	self assert: (readStream lookAheadAt: 0) = Character space description: &#x27;&#x27;Look at next Character from middle&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: 1) = $w description: &#x27;&#x27;Look at second Character from middle&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: -1) = $o description: &#x27;&#x27;Current in middle&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: -2) = $l description: &#x27;&#x27;Previous in middle&#x27;&#x27;.
+
+	readStream next: 6.
+	self assert: readStream atEnd description: &#x27;&#x27;Read all Characters&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: 0) isNil description: &#x27;&#x27;Look at next Character from end&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: 1) isNil description: &#x27;&#x27;Look at second Character from end&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: -1) = $d description: &#x27;&#x27;Current at end&#x27;&#x27;.
+	self assert: (readStream lookAheadAt: -2) = $l description: &#x27;&#x27;Previous at end&#x27;&#x27;&#x27;.
+</pre></details><details open><summary>Tests that cannot apply, with the proof: erikonbike-codeparadise.txt (<a href="../files/packages/not-applicable/erikonbike-codeparadise.txt">download</a>)</summary><pre class="code"># Tests that cannot apply in a server image.  One test for each line:
+# Class&gt;&gt;selector.  A line that starts with # has the proof.
+#
+# CodeParadise runs a web application as two images: a server image (this one,
+# Pharo 14, has CpServerEnvironment) and a tiny client image that runs in the
+# browser (SqueakJS; docs/Implementation.md: &quot;client-environment.image is a tiny
+# Smalltalk image ... based on Pharo Candle ... no Compiler&quot;).  The classes
+# under test below are client code.  By design the package refuses to run
+# them in an image that has the server side classes (the comments say: &quot;to
+# prevent CompiledMethods from being installed&quot; and &quot;to prevent communicators
+# from crashing the image&quot;; the author skipped the tests for that reason).
+#
+# Proof 1: each test, with the skip taken out, in the unchanged package in this
+# image (both VMs give the same text):
+#   CpClientEnvironmentTest&gt;&gt;testInstallClass, testInstallMethod,
+#   testInstallMethodWithClassVarAccess, testInstallMethodWithInstVarAccess:
+#     Error: Creating ClientEnvironment instances on the server is temporarily
+#     disabled because of deadlock issues
+#     (CpClientEnvironment class&gt;&gt;current: &quot;Smalltalk classNamed:
+#     #CpServerEnvironment&quot; is not nil)
+#   CpEncodeDecodeObjectTest&gt;&gt;testCompiledMethod,
+#   testCompiledMethodWithAdditionalMethodState:
+#     Error: ClientEnvironment sent CompiledMethod to ServerEnvironment
+#     (CpObjectDecoder&gt;&gt;decodeCompiledMethod: CpClientEnvironment isRunning)
+#   CpEncodeDecodeObjectTest&gt;&gt;testSortedCollection:
+#     Error: ClientEnvironment sent CompiledBlock to ServerEnvironment
+#     (CpObjectDecoder&gt;&gt;decodeCleanBlockClosure: CpClientEnvironment isRunning)
+#
+# Proof 2: the client environment is a singleton of the client image.  With a
+# stand-in for it (the class variable Current set, #current answering it; this
+# is NOT in the repair, it is a measurement) the tests still do not pass,
+# because the code under test expects the client image:
+#   testCompiledMethod, testCompiledMethodWithAdditionalMethodState:
+#     &quot;Unknown type in decode stream&quot;.  CpObjectDecoder&gt;&gt;decodeCompiledMethod
+#     makes the method with &#x27;CompiledMethod basicNew: bytecodeSize + 4 header:&#x27;.
+#     The 4 is the trailer size of the client image.  CompiledMethod trailerSize
+#     is 5 in this image, so the decoder reads one byte too few and the next
+#     literal starts at the wrong place.  With the trailer size of this image
+#     the decode works, and the test still fails (&#x27;Encode/decode ... &gt;&gt;
+#     #testCompiledMethod&#x27;): the decoded method is not equal to the original
+#     (see the .md: compareMethod:to:).
+#   testInstallMethod, testInstallMethodWithClassVarAccess,
+#   testInstallMethodWithInstVarAccess: the same decoder error is swallowed by
+#     CpClientEnvironment&gt;&gt;handleMessageReceived:, the method is not installed
+#     (MessageNotUnderstood #temporaryMethod), and the ensure: block of the
+#     test fails with KeyNotFound.  Also the cleanup of the tests makes an
+#     endless recursion in this image: Class&gt;&gt;removeMethod: of the package
+#     sends #removeInstanceMethod: while CpClientEnvironment isRunning, and
+#     Behavior&gt;&gt;removeInstanceMethod: sends #removeSelector:, which in Pharo
+#     14 sends #removeMethod: again.  (On the tiny image #removeSelector: does
+#     not call #removeMethod:.)  The run of the endless recursion stopped
+#     stock Cog with a segmentation fault (low space) once.
+#   testInstallClass: the test calls &#x27;Object subclass:instanceVariableNames:
+#     classVariableNames:package:&#x27;, which Pharo 14 does not have
+#     (MessageNotUnderstood), and the decoder of a class builds the class with
+#     the format of the client image.
+#
+# Open point for the owner: testSortedCollection PASSES on both VMs when the
+# stand-in is set.  It is kept as not applicable because the stand-in is the
+# thing the repair rule forbids (a fake client).  A decision for the owner.
+CpClientEnvironmentTest&gt;&gt;testInstallClass
+CpClientEnvironmentTest&gt;&gt;testInstallMethod
+CpClientEnvironmentTest&gt;&gt;testInstallMethodWithClassVarAccess
+CpClientEnvironmentTest&gt;&gt;testInstallMethodWithInstVarAccess
+CpEncodeDecodeObjectTest&gt;&gt;testCompiledMethod
+CpEncodeDecodeObjectTest&gt;&gt;testCompiledMethodWithAdditionalMethodState
+CpEncodeDecodeObjectTest&gt;&gt;testSortedCollection
+</pre></details>
+<p class="crumb" style="margin-top:3em">State of 2026-11-20.  Made from the test records of the iospharo project (a second Pharo VM).  The fixes are proposals for review.</p>
+</div></body></html>
