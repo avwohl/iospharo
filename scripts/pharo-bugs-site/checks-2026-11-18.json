@@ -1,0 +1,1642 @@
+{
+ "orig": {
+  "tests": [
+   {
+    "cls": "BlockClosureTest",
+    "sel": "testOnForkErrorTakesLessThanOneSecond",
+    "before": "SKIP",
+    "evidence": "REC:28 unconditional skip; SRC:56758 'self flag: ...; skip'"
+   },
+   {
+    "cls": "BlockClosureTest",
+    "sel": "testOnForkSplit",
+    "before": "SKIP",
+    "evidence": "REC:28; SRC:56932 'self flag: ...; skip.'"
+   },
+   {
+    "cls": "CavWindowStrategyTest",
+    "sel": "testExactReplaceStrategyDoesNotChangeExtentAndPosition",
+    "before": "SKIP",
+    "evidence": "REC:45 unconditional self skip; SRC:71258"
+   },
+   {
+    "cls": "ClapHelloTest",
+    "sel": "testHelloBothShoutingAndWhispering",
+    "before": "SKIP",
+    "evidence": "REC:61; skip call SRC:81146"
+   },
+   {
+    "cls": "ClyAsyncQueryResultTest",
+    "sel": "testItemsChangedNotificationShouldResetItems",
+    "before": "XFAIL",
+    "evidence": "REC:77 expected-failure override; <expectedFailure> SRC:94677"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testHasCompositeScopeFromSubqueries",
+    "before": "XFAIL",
+    "evidence": "REC:120; ClyWrapQueryTest override has <expectedFailure> SRC:134708, inherited"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects",
+    "before": "XFAIL",
+    "evidence": "REC:121; ClyWrapQueryTest override <expectedFailure> SRC:134715, inherited"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject",
+    "before": "XFAIL",
+    "evidence": "REC:122; ClyWrapQueryTest override <expectedFailure> SRC:134674, inherited"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope",
+    "before": "XFAIL",
+    "evidence": "REC:123; ClyWrapQueryTest override <expectedFailure> SRC:134667, inherited"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject",
+    "before": "XFAIL",
+    "evidence": "REC:124; ClyWrapQueryTest override <expectedFailure> SRC:134693, inherited"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope",
+    "before": "XFAIL",
+    "evidence": "REC:125; ClyWrapQueryTest override <expectedFailure> SRC:134681, inherited"
+   },
+   {
+    "cls": "ClyAsyncQueryTest",
+    "sel": "testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects",
+    "before": "XFAIL",
+    "evidence": "REC:126; ClyWrapQueryTest override <expectedFailure> SRC:134722, inherited"
+   },
+   {
+    "cls": "ClyConstantMethodQueryTest",
+    "sel": "testIsEmptyFromEmptyMethodScope",
+    "before": "XFAIL",
+    "evidence": "REC:94 'override marked expectedFailure'; pragma SRC:103219"
+   },
+   {
+    "cls": "ClyExtendingPackagesQueryTest",
+    "sel": "testFromClassWhichTraitIsExtendedButNotItself",
+    "before": "XFAIL",
+    "evidence": "REC:94; <expectedFailure> SRC:106880"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testHasCompositeScopeFromSubqueries",
+    "before": "XFAIL",
+    "evidence": "REC:127; ClyWrapQueryTest override <expectedFailure> SRC:134708, inherited"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects",
+    "before": "XFAIL",
+    "evidence": "REC:128; ClyWrapQueryTest override <expectedFailure> SRC:134715, inherited"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject",
+    "before": "XFAIL",
+    "evidence": "REC:129; ClyWrapQueryTest override <expectedFailure> SRC:134674, inherited"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope",
+    "before": "XFAIL",
+    "evidence": "REC:130; ClyWrapQueryTest override <expectedFailure> SRC:134667, inherited"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject",
+    "before": "XFAIL",
+    "evidence": "REC:131; ClyWrapQueryTest override <expectedFailure> SRC:134693, inherited"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope",
+    "before": "XFAIL",
+    "evidence": "REC:132; ClyWrapQueryTest override <expectedFailure> SRC:134681, inherited"
+   },
+   {
+    "cls": "ClyFilterQueryTest",
+    "sel": "testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects",
+    "before": "XFAIL",
+    "evidence": "REC:133; ClyWrapQueryTest override <expectedFailure> SRC:134722, inherited"
+   },
+   {
+    "cls": "ClyRestUntaggedClassesQueryTest",
+    "sel": "testIsEmptyFromEmptyClassScope",
+    "before": "XFAIL",
+    "evidence": "REC:94; <expectedFailure> SRC:123025"
+   },
+   {
+    "cls": "ClySemiAsyncQueryResultTest",
+    "sel": "testItemsChangedNotificationShouldResetItems",
+    "before": "XFAIL",
+    "evidence": "REC:84 inherited from ClyAsyncQueryResultTest; <expectedFailure> SRC:94677"
+   },
+   {
+    "cls": "ClyUnimplementedMethodsQueryTest",
+    "sel": "testIsEmptyFromEmptyMethodScope",
+    "before": "XFAIL",
+    "evidence": "REC:94; <expectedFailure> SRC:133314"
+   },
+   {
+    "cls": "ClyUnknownQueryTest",
+    "sel": "testIsBoundToEnvironmentWhenScopeIs",
+    "before": "XFAIL",
+    "evidence": "REC:94; <expectedFailure> SRC:133829"
+   },
+   {
+    "cls": "DebugInfoTest",
+    "sel": "testNotStopAtAllButFirstBytecodeOfOptimizedSend",
+    "before": "SKIP",
+    "evidence": "REC:143 'test only loses the skip'; skip call SRC:187052"
+   },
+   {
+    "cls": "DebugInfoTest",
+    "sel": "testNotStopAtConstantBlockCreation",
+    "before": "SKIP",
+    "evidence": "REC:143 'test only loses the skip'; SRC:186900"
+   },
+   {
+    "cls": "DebugInfoTest",
+    "sel": "testNotStopAtFullBlockCreation",
+    "before": "SKIP",
+    "evidence": "REC:143 'test only loses the skip'; SRC:186741"
+   },
+   {
+    "cls": "FFICallbackParametersTest",
+    "sel": "testIdentityStruct",
+    "before": "SKIP",
+    "evidence": "REC:797 'true ifTrue: [ ^ self skip ]'; SRC:249326"
+   },
+   {
+    "cls": "FLBinaryFileStreamBasicSerializationTest",
+    "sel": "testConsiderCustomWideSymbolGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:214; FLSerializationTest>>expectedFailures lists the 3 wide tests SRC:275174; image-fixes/20-Fuel-widestring-globals.st:77-81 empties the list"
+   },
+   {
+    "cls": "FLBinaryFileStreamBasicSerializationTest",
+    "sel": "testWideStringClassName",
+    "before": "XFAIL",
+    "evidence": "REC:215; FLSerializationTest>>expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLBinaryFileStreamBasicSerializationTest",
+    "sel": "testWideStringGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:216; FLSerializationTest>>expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLByteArrayBasicSerializationTest",
+    "sel": "testConsiderCustomWideSymbolGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:217; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLByteArrayBasicSerializationTest",
+    "sel": "testWideStringClassName",
+    "before": "XFAIL",
+    "evidence": "REC:218; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLByteArrayBasicSerializationTest",
+    "sel": "testWideStringGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:219; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFileReferenceStreamBasicSerializationTest",
+    "sel": "testConsiderCustomWideSymbolGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:220; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFileReferenceStreamBasicSerializationTest",
+    "sel": "testWideStringClassName",
+    "before": "XFAIL",
+    "evidence": "REC:221; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFileReferenceStreamBasicSerializationTest",
+    "sel": "testWideStringGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:222; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFullBasicSerializationTest",
+    "sel": "testConsiderCustomWideSymbolGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:223; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFullBasicSerializationTest",
+    "sel": "testWideStringClassName",
+    "before": "XFAIL",
+    "evidence": "REC:224; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFullBasicSerializationTest",
+    "sel": "testWideStringGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:225; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLFullHeaderSerializationTest",
+    "sel": "testPostMaterializationActions",
+    "before": "SKIP",
+    "evidence": "REC:184 'obsolete optionCleanBlockClosure skip guard'; skip SRC:269292"
+   },
+   {
+    "cls": "FLFullHeaderSerializationTest",
+    "sel": "testPreMaterializationActions",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:269316"
+   },
+   {
+    "cls": "FLGZippedBasicSerializationTest",
+    "sel": "testConsiderCustomWideSymbolGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:226; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLGZippedBasicSerializationTest",
+    "sel": "testWideStringClassName",
+    "before": "XFAIL",
+    "evidence": "REC:227; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLGZippedBasicSerializationTest",
+    "sel": "testWideStringGlobal",
+    "before": "XFAIL",
+    "evidence": "REC:228; expectedFailures SRC:275174"
+   },
+   {
+    "cls": "FLGlobalEnvironmentTest",
+    "sel": "testCompiledMethodChanged",
+    "before": "SKIP",
+    "evidence": "REC:184 skip guard obsolete; skip SRC:270083"
+   },
+   {
+    "cls": "FLHeaderSerializationTest",
+    "sel": "testPostMaterializationActions",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:271290"
+   },
+   {
+    "cls": "FLHeaderSerializationTest",
+    "sel": "testPreMaterializationActions",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:271314"
+   },
+   {
+    "cls": "FLSortedCollectionSerializationTest",
+    "sel": "testSortedCollection",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:276495"
+   },
+   {
+    "cls": "FLSortedCollectionSerializationTest",
+    "sel": "testSortedCollectionWithClassVariableChanges",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:276540"
+   },
+   {
+    "cls": "FLSortedCollectionSerializationTest",
+    "sel": "testSortedCollectionWithClassVariableReference",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:276517"
+   },
+   {
+    "cls": "FLUserGuidesTest",
+    "sel": "testDemo",
+    "before": "SKIP",
+    "evidence": "REC:184; skip SRC:277618"
+   },
+   {
+    "cls": "FloatTest",
+    "sel": "testNaNCompare",
+    "before": "SKIP",
+    "evidence": "REC:168 unconditional 'self skip'; SRC:309284"
+   },
+   {
+    "cls": "GArcTest",
+    "sel": "testIntersectionsWithArc",
+    "before": "XFAIL",
+    "evidence": "REC:238 (shouldBeImplemented stub); <expectedFailure> SRC:321970"
+   },
+   {
+    "cls": "GArcTest",
+    "sel": "testIntersectionsWithEllipse",
+    "before": "XFAIL",
+    "evidence": "REC:238; <expectedFailure> SRC:321951"
+   },
+   {
+    "cls": "GEllipseTest",
+    "sel": "testIntersectionsWithArc",
+    "before": "XFAIL",
+    "evidence": "REC:238; <expectedFailure> SRC:322974"
+   },
+   {
+    "cls": "MicMetaDataBlockTest",
+    "sel": "testCreatingAnInstanceInitializeTheMetadatDictionary",
+    "before": "SKIP",
+    "evidence": "REC:256 'unconditionally skipped'; SRC:484383"
+   },
+   {
+    "cls": "MicTextPresenterTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:477 class has no #example; SpSmokeTest>>testExample '(respondsTo: #example) ifFalse: [ self skip ]' SRC:964605"
+   },
+   {
+    "cls": "MicrodownPresenterTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:478; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "NavigationInteractionTest",
+    "sel": "testBrowseMethodViaImplementorActuallyBrowseTheClass",
+    "before": "SKIP",
+    "evidence": "REC:349 'Skipped by the test itself'; SRC:522008"
+   },
+   {
+    "cls": "NetNameResolverTest",
+    "sel": "testLocalHostAddress",
+    "before": "SKIP",
+    "evidence": "REC:365 'test was skipped'; SRC:522718"
+   },
+   {
+    "cls": "OCArrayLiteralTest",
+    "sel": "testLiteralArrayLongHavingAnotherArrayLong",
+    "before": "SKIP",
+    "evidence": "REC:388 'the skip hid this'; SRC:532863"
+   },
+   {
+    "cls": "OCParserTest",
+    "sel": "testParseExpressionDontFreeze",
+    "before": "XFAIL",
+    "evidence": "REC:404 'marked expectedFailure'; pragma SRC:556464"
+   },
+   {
+    "cls": "OCParserTest",
+    "sel": "testUnclosedTemporariesErrorNodeContainsRightValue",
+    "before": "SKIP",
+    "evidence": "REC:404 'Unconditional self skip'; SRC:558079"
+   },
+   {
+    "cls": "OCProgramNodeTest",
+    "sel": "testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart",
+    "before": "XFAIL",
+    "evidence": "REC:421; <expectedFailure> SRC:561528"
+   },
+   {
+    "cls": "OCRengineTest",
+    "sel": "testWhichUNodesDefinesBlockArg",
+    "before": "SKIP",
+    "evidence": "REC:437 unconditional self skip; SRC:563266"
+   },
+   {
+    "cls": "RGMCClassTest",
+    "sel": "testClassesWithTraits",
+    "before": "SKIP",
+    "evidence": "REC:526 'Skip on an old issue'; SRC:689626"
+   },
+   {
+    "cls": "ReflectivityOnStackTest",
+    "sel": "testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually",
+    "before": "SKIP",
+    "evidence": "REC:494; skip call SRC:803452"
+   },
+   {
+    "cls": "ReleaseTest",
+    "sel": "testRatioOfCommentedClasses",
+    "before": "SKIP",
+    "evidence": "REC:510 'The test skips itself'; SRC:806872"
+   },
+   {
+    "cls": "Ring2ChunkImporterTest",
+    "sel": "testMultipleMixedChunksInStrangeOrderWithMetaclassTrait",
+    "before": "XFAIL",
+    "evidence": "REC:542; <expectedFailure> SRC:808407"
+   },
+   {
+    "cls": "Ring2ChunkImporterTest",
+    "sel": "testStandardMethodInNewMetaclassTrait",
+    "before": "XFAIL",
+    "evidence": "REC:542; <expectedFailure> SRC:808339"
+   },
+   {
+    "cls": "RubEditingAreaTest",
+    "sel": "testEmbeddedAnchorInTextAreDrawn",
+    "before": "SKIP",
+    "evidence": "REC:559 'starts with self skip'; SRC:814217"
+   },
+   {
+    "cls": "RubEditingAreaTest",
+    "sel": "testEmbeddedAnchorInTextAreDrawnAtRightPosition",
+    "before": "SKIP",
+    "evidence": "REC:559; SRC:814241"
+   },
+   {
+    "cls": "RubScrolledTextMorphTest",
+    "sel": "testEmbeddedAnchorInTextAreDrawnAtRightPosition",
+    "before": "SKIP",
+    "evidence": "REC:559; SRC:820004"
+   },
+   {
+    "cls": "RunnerLongDurationTest",
+    "sel": "testRunningFromAClass",
+    "before": "SKIP",
+    "evidence": "REC:577 unconditional self skip; SRC:832321"
+   },
+   {
+    "cls": "RunnerLongDurationTest",
+    "sel": "testRunningFromACollectionOfClasses",
+    "before": "SKIP",
+    "evidence": "REC:577; SRC:832313"
+   },
+   {
+    "cls": "SettingsStonReaderTest",
+    "sel": "testNonExistingStoredSettingVariable",
+    "before": "XFAIL",
+    "evidence": "REC:594; <expectedFailure> SRC:868275"
+   },
+   {
+    "cls": "SlotErrorsTest",
+    "sel": "testCannotBeRecompiled",
+    "before": "XFAIL",
+    "evidence": "REC:610; <expectedFailure> SRC:881936"
+   },
+   {
+    "cls": "SpCodeEditorPresenterTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:479; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "SpCodePresenterTest",
+    "sel": "testDoBrowseClassNotFound",
+    "before": "SKIP",
+    "evidence": "REC:626 'skipped itself'; SRC:913269"
+   },
+   {
+    "cls": "SpCodePresenterTest",
+    "sel": "testDoBrowseMethodReferences",
+    "before": "SKIP",
+    "evidence": "REC:626 'Obsolete skip'; SRC:913327"
+   },
+   {
+    "cls": "SpCodePresenterTest",
+    "sel": "testEnvironment",
+    "before": "SKIP",
+    "evidence": "REC:626; 'self skip' SRC:913286"
+   },
+   {
+    "cls": "SpDemoTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:480; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "SpEasyColumnViewPresenterTest",
+    "sel": "testDisableActivationDuring",
+    "before": "SKIP",
+    "evidence": "REC:650 'Needless self skip override'; SRC:923278"
+   },
+   {
+    "cls": "SpEasyColumnViewPresenterTest",
+    "sel": "testSetSortingBlockBeforeItems",
+    "before": "SKIP",
+    "evidence": "REC:651; skip override SRC:923254"
+   },
+   {
+    "cls": "SpEasyColumnViewPresenterTest",
+    "sel": "testSortingBlock",
+    "before": "SKIP",
+    "evidence": "REC:652; skip override SRC:923267"
+   },
+   {
+    "cls": "SpEasyListViewPresenterTest",
+    "sel": "testDisableActivationDuring",
+    "before": "SKIP",
+    "evidence": "REC:653; SRC:923884"
+   },
+   {
+    "cls": "SpEasyTreeColumnViewPresenterTest",
+    "sel": "testDisableActivationDuring",
+    "before": "SKIP",
+    "evidence": "REC:654; SRC:924183"
+   },
+   {
+    "cls": "SpEasyTreeColumnViewPresenterTest",
+    "sel": "testPathIndexOf",
+    "before": "SKIP",
+    "evidence": "REC:655; 'self skip' SRC:924188"
+   },
+   {
+    "cls": "SpEasyTreeColumnViewPresenterTest",
+    "sel": "testPathItemOf",
+    "before": "SKIP",
+    "evidence": "REC:656; 'self skip' SRC:924178"
+   },
+   {
+    "cls": "SpEasyTreeListViewPresenterTest",
+    "sel": "testDisableActivationDuring",
+    "before": "SKIP",
+    "evidence": "REC:657 inherits the skip of SpEasyTreeColumnViewPresenterTest"
+   },
+   {
+    "cls": "SpEasyTreeListViewPresenterTest",
+    "sel": "testPathIndexOf",
+    "before": "SKIP",
+    "evidence": "REC:658 inherited skip; SRC:924188"
+   },
+   {
+    "cls": "SpEasyTreeListViewPresenterTest",
+    "sel": "testPathItemOf",
+    "before": "SKIP",
+    "evidence": "REC:659 inherited skip; SRC:924178"
+   },
+   {
+    "cls": "SpMenuItemPresenterTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:481; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "SpMenuPresenterTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:482; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "SpMorphPresenterTest",
+    "sel": "testChangingHelpAffectTheWidget",
+    "before": "SKIP",
+    "evidence": "REC:675 'the test skipped'; SRC:936444"
+   },
+   {
+    "cls": "SpRadioButtonInteractionTest",
+    "sel": "testHidePresenterHidesWidget",
+    "before": "SKIP",
+    "evidence": "REC:685 'skipped itself'; SRC:960799"
+   },
+   {
+    "cls": "SpRadioButtonInteractionTest",
+    "sel": "testShowPresenterShowsWidget",
+    "before": "SKIP",
+    "evidence": "REC:685; SRC:960762"
+   },
+   {
+    "cls": "SpToolbarToggleButtonMorphTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:483; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "SpTransmissionWithComponentListTest",
+    "sel": "testExample",
+    "before": "SKIP",
+    "evidence": "REC:484; SpSmokeTest>>testExample skip SRC:964605"
+   },
+   {
+    "cls": "SpTreeAdapterMultipleSelectionTest",
+    "sel": "testSelectPresenterItemSetsSelectedIndexInWidget",
+    "before": "SKIP",
+    "evidence": "REC:702 'self skip with obsolete comment'; SRC:976795"
+   },
+   {
+    "cls": "SpTreeAdapterSingleSelectionTest",
+    "sel": "testSelectPresenterItemSetsSelectedIndexInWidget",
+    "before": "SKIP",
+    "evidence": "REC:702 'self skip stub'; SRC:976958"
+   },
+   {
+    "cls": "SpTreeAdapterSingleSelectionTest",
+    "sel": "testUnselectPresenterItemUnselectsIndexInWidget",
+    "before": "SKIP",
+    "evidence": "REC:702; SRC:976974"
+   },
+   {
+    "cls": "SpTreeTableAdapterMultipleSelectionTest",
+    "sel": "testSelectPresenterItemSetsSelectedIndexInWidget",
+    "before": "SKIP",
+    "evidence": "REC:702; SRC:978222"
+   },
+   {
+    "cls": "SpTreeTableAdapterSingleSelectionTest",
+    "sel": "testSelectPresenterItemSetsSelectedIndexInWidget",
+    "before": "SKIP",
+    "evidence": "REC:702; SRC:978402"
+   },
+   {
+    "cls": "SpTreeTableAdapterSingleSelectionTest",
+    "sel": "testUnselectPresenterItemUnselectsIndexInWidget",
+    "before": "SKIP",
+    "evidence": "REC:702; SRC:978418"
+   },
+   {
+    "cls": "StDebuggerClientModelTest",
+    "sel": "testComputeInitialTopContext",
+    "before": "SKIP",
+    "evidence": "REC:740 'Skipped'; SRC:990268"
+   },
+   {
+    "cls": "StDebuggerContextPredicateTest",
+    "sel": "testPrintDescription",
+    "before": "SKIP",
+    "evidence": "REC:740 'Skipped and expected 0'; SRC:992032"
+   },
+   {
+    "cls": "StDebuggerContextPredicateTest",
+    "sel": "testPrintPostMortemDescription",
+    "before": "SKIP",
+    "evidence": "REC:740; SRC:992007"
+   },
+   {
+    "cls": "StDebuggerTest",
+    "sel": "testGenerateAndProceed",
+    "before": "SKIP",
+    "evidence": "REC:740; skip call SRC:995821"
+   },
+   {
+    "cls": "StDebuggerTest",
+    "sel": "testRestoreReceiverRawInspectionSelection",
+    "before": "SKIP",
+    "evidence": "REC:740 'Empty placeholder (self skip)'; SRC:995721"
+   },
+   {
+    "cls": "StDebuggerTest",
+    "sel": "testRestoreReceiverRawInspectionSelectionAfterContextChange",
+    "before": "SKIP",
+    "evidence": "REC:740; SRC:996300"
+   },
+   {
+    "cls": "StDebuggerTest",
+    "sel": "testReturnEnteredValue",
+    "before": "SKIP",
+    "evidence": "REC:740; SRC:996284"
+   },
+   {
+    "cls": "StDebuggerTest",
+    "sel": "testSaveReceiverRawInspectionSelection",
+    "before": "SKIP",
+    "evidence": "REC:740 'self skip. self flag: #DBG_TEST'; SRC:996147"
+   },
+   {
+    "cls": "StDebuggerTest",
+    "sel": "testSaveReceiverRawInspectionSelectionAfterContextChange",
+    "before": "SKIP",
+    "evidence": "REC:740; SRC:996365"
+   },
+   {
+    "cls": "StObjectContextPresenterTest",
+    "sel": "testDoEvaluateDeclareGlobal",
+    "before": "SKIP",
+    "evidence": "REC:723 'Test skipped itself'; SRC:1017599"
+   },
+   {
+    "cls": "StObjectTranscriptPresenterTest",
+    "sel": "testTrueShowInspectorShowsInspector",
+    "before": "SKIP",
+    "evidence": "REC:764 'self skip left in'; SRC:1018553"
+   },
+   {
+    "cls": "StPlaygroundPagePresenterTest",
+    "sel": "testDoEvaluateDeclareGlobal",
+    "before": "SKIP",
+    "evidence": "REC:723; SRC:1024547"
+   },
+   {
+    "cls": "StSettingsBrowserTest",
+    "sel": "testSimulateCategoryPopulation",
+    "before": "SKIP",
+    "evidence": "REC:780 'parked with self skip'; SRC:1036349"
+   },
+   {
+    "cls": "TFCallbacksTest",
+    "sel": "testCallbackNotRespectingLIFOOrderFailsReturn",
+    "before": "SKIP",
+    "evidence": "REC:797 'true ifTrue: [ ^ self skip ]'; SRC:1098054"
+   },
+   {
+    "cls": "TFUFFIFunctionCallTest",
+    "sel": "testLongCalloutDoesNotBlockImage",
+    "before": "SKIP",
+    "evidence": "REC:797 same-thread variant skipped; SRC:1101940"
+   },
+   {
+    "cls": "UnixResolverTest",
+    "sel": "testGetTempFromTMPDIR",
+    "before": "SKIP",
+    "evidence": "REC:453 skip guard uses isUnix; SRC:1175932"
+   },
+   {
+    "cls": "UnixResolverTest",
+    "sel": "testXdgParseUserDirLineDocuments",
+    "before": "SKIP",
+    "evidence": "REC:453; SRC:1175915"
+   },
+   {
+    "cls": "UnixResolverTest",
+    "sel": "testXdgParseUserDirLineNotRoot",
+    "before": "SKIP",
+    "evidence": "REC:453; SRC:1175945"
+   },
+   {
+    "cls": "WeakAnnouncerTest",
+    "sel": "testNoWeakBlock",
+    "before": "XFAIL",
+    "evidence": "REC:820 'marked expectedFailure'; pragma SRC:1180198"
+   },
+   {
+    "cls": "Win32EnvironmentTest",
+    "sel": "testExistingEnvironmentVariableLongerThanBufferShouldReturnValue",
+    "before": "SKIP",
+    "evidence": "REC:313 'isWindows skip'; SRC:1184398"
+   },
+   {
+    "cls": "Win32EnvironmentTest",
+    "sel": "testExistingEnvironmentVariableShouldReturnValue",
+    "before": "SKIP",
+    "evidence": "REC:313; SRC:1184414"
+   },
+   {
+    "cls": "Win32EnvironmentTest",
+    "sel": "testNonExistingEnvironmentVariableShouldGenerateException",
+    "before": "SKIP",
+    "evidence": "REC:313; SRC:1184390"
+   },
+   {
+    "cls": "ZnClientTest",
+    "sel": "testQueryGoogle",
+    "before": "FAIL",
+    "evidence": "REC:365 google page has no 'pharo.org'; test source SRC:1202931 has no skip call and no expectedFailure (checked); plain assertion failure. Only FAIL row"
+   },
+   {
+    "cls": "ZnHTTPSTest",
+    "sel": "testGetPharoVersion",
+    "before": "SKIP",
+    "evidence": "REC:365 'empty skip stub'; SRC:1207137"
+   },
+   {
+    "cls": "ZnHTTPSTest",
+    "sel": "testSNIPage",
+    "before": "SKIP",
+    "evidence": "REC:365 skipped 'no longer works'; SRC:1207208"
+   },
+   {
+    "cls": "CodeSimulationTest",
+    "sel": "testErrorCodeNotFound",
+    "before": "SKIP",
+    "evidence": "REC:143 (needs a VM change); skip call SRC:150574"
+   },
+   {
+    "cls": "TFUFFICallbackTest",
+    "sel": "testCallbacksInOtherThread",
+    "before": "SKIP",
+    "evidence": "REC:805; skip call SRC:1101465"
+   },
+   {
+    "cls": "WriteBarrierTest",
+    "sel": "testMutateByteArrayUsingDoubleAtPut",
+    "before": "XFAIL",
+    "evidence": "REC:836; <expectedFailure> SRC:1188287"
+   },
+   {
+    "cls": "WriteBarrierTest",
+    "sel": "testMutateByteArrayUsingFloatAtPut",
+    "before": "XFAIL",
+    "evidence": "REC:836; <expectedFailure> SRC:1188384"
+   },
+   {
+    "cls": "AllTestFailTest",
+    "sel": "testFail1",
+    "before": "SKIP",
+    "evidence": "REC:277; MockTest>>setUp 'self shouldIgnore ifTrue: [ self skip ]' SRC:497020, class>>initialize sets ignore"
+   },
+   {
+    "cls": "AllTestFailTest",
+    "sel": "testFail2",
+    "before": "SKIP",
+    "evidence": "REC:277; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "AllTestFailTest",
+    "sel": "testFail3",
+    "before": "SKIP",
+    "evidence": "REC:277; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "AllTestFailTest",
+    "sel": "testFail4",
+    "before": "SKIP",
+    "evidence": "REC:277; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "ClyTestedClassMockTest",
+    "sel": "testExpectedFailure",
+    "before": "XFAIL",
+    "evidence": "REC:281 body assert: false with expectedFailure pragma; SRC:129689 (class is not a MockTest)"
+   },
+   {
+    "cls": "DependencyTest",
+    "sel": "testDataIs10ThenIncrement",
+    "before": "SKIP",
+    "evidence": "REC:278; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "DependencyTest",
+    "sel": "testDataIs11ThenIncrement",
+    "before": "SKIP",
+    "evidence": "REC:278; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "DependencyTest",
+    "sel": "testDataIs12ThenIncrement",
+    "before": "SKIP",
+    "evidence": "REC:278; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "DependencyTest",
+    "sel": "testDataIs13ThenIncrement",
+    "before": "SKIP",
+    "evidence": "REC:278; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "DependencyTest",
+    "sel": "testDataIs14ThenIncrement",
+    "before": "SKIP",
+    "evidence": "REC:278; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "DependencyTest",
+    "sel": "testDataIs15ThenIncrement",
+    "before": "SKIP",
+    "evidence": "REC:278; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "EmptyTest",
+    "sel": "test1",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "EmptyTest",
+    "sel": "test2",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "EmptyTest",
+    "sel": "test3",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "EmptyTest",
+    "sel": "test4",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "FFIExternalStructurePlatformTest",
+    "sel": "testStructureHasCorrectOffsets32bits",
+    "before": "SKIP",
+    "evidence": "REC:300 'is32bit ifFalse: [^self skip]'; SRC:253573"
+   },
+   {
+    "cls": "FFIExternalStructurePlatformTest",
+    "sel": "testStructureHasCorrectSize32bits",
+    "before": "SKIP",
+    "evidence": "REC:301; SRC:253593"
+   },
+   {
+    "cls": "FailThenPassTest",
+    "sel": "testFailAtFirstRunning",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "FailThenPassTest",
+    "sel": "testPass",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "GreenTest",
+    "sel": "testPass",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "GreenTest",
+    "sel": "testPassAgain",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "IntegerTest",
+    "sel": "testCreationFromBytes1",
+    "before": "SKIP",
+    "evidence": "REC:297 'wordSize = 4 ifFalse: [^self skip]'; SRC:394624"
+   },
+   {
+    "cls": "IntegerTest",
+    "sel": "testCreationFromBytes2",
+    "before": "SKIP",
+    "evidence": "REC:298; SRC:393991"
+   },
+   {
+    "cls": "IntegerTest",
+    "sel": "testCreationFromBytes3",
+    "before": "SKIP",
+    "evidence": "REC:299; SRC:393947"
+   },
+   {
+    "cls": "KMCombinationTest",
+    "sel": "testWindowsAndUnixMetaShouldBeCtrl",
+    "before": "SKIP",
+    "evidence": "REC:327 skipped when isMacOS; SRC:401047"
+   },
+   {
+    "cls": "LongTest",
+    "sel": "testIsTakingTooLong",
+    "before": "SKIP",
+    "evidence": "REC:279; MockTest>>setUp skip SRC:497020 (REC:279 says it is run only by RunnerLongDurationTest)"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testCallingSuperHelper",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testFailingButNotConsideredAsRotten",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testHelperHelperAssertHelper",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithAssertionInHelperRun",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithAssertionInSuperHelperRun",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithAssertionRun",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithHelperHelper",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithNoAssertionInHelperRun",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithNoAssertionInSuperHelperRun",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RTFFakeTestClassTest",
+    "sel": "testWithoutAssertionRun",
+    "before": "SKIP",
+    "evidence": "REC:280; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RedTest",
+    "sel": "testFail",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RedTest",
+    "sel": "testPass",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "RedTest",
+    "sel": "testWithError",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "TFBasicTypeSizeTest",
+    "sel": "testSizeSignedLongWindows",
+    "before": "SKIP",
+    "evidence": "REC:328; skip call SRC:1097271"
+   },
+   {
+    "cls": "TFBasicTypeSizeTest",
+    "sel": "testSizeUnsignedLongWindows",
+    "before": "SKIP",
+    "evidence": "REC:329; SRC:1097263"
+   },
+   {
+    "cls": "TFBasicTypeTest",
+    "sel": "testSignedLongWindows",
+    "before": "SKIP",
+    "evidence": "REC:330; SRC:1097385"
+   },
+   {
+    "cls": "TFBasicTypeTest",
+    "sel": "testUnsignedLongWindows",
+    "before": "SKIP",
+    "evidence": "REC:331; SRC:1097292"
+   },
+   {
+    "cls": "TFFunctionCallTest",
+    "sel": "testCallingFunctionWithW64CallingConvention",
+    "before": "SKIP",
+    "evidence": "REC:334 runs only on isMacOS and x86_64; skip SRC:1099186"
+   },
+   {
+    "cls": "TFUFFIBasicTypeSizeTest",
+    "sel": "testSizeSignedLongWindows",
+    "before": "SKIP",
+    "evidence": "REC:332 inherits TFBasicTypeSizeTest skip SRC:1097271 (no own method in sources)"
+   },
+   {
+    "cls": "TFUFFIBasicTypeSizeTest",
+    "sel": "testSizeUnsignedLongWindows",
+    "before": "SKIP",
+    "evidence": "REC:333 inherits TFBasicTypeSizeTest skip SRC:1097263"
+   },
+   {
+    "cls": "TFUFFIDifferentCallingConventionFunctionCallTest",
+    "sel": "testCallingFunctionWithW64CallingConvention",
+    "before": "SKIP",
+    "evidence": "REC:335; skip call SRC:1101855"
+   },
+   {
+    "cls": "Win32WideStringTest",
+    "sel": "testCharactersAreEncodedInUnicode16Bits",
+    "before": "SKIP",
+    "evidence": "REC:322; skip call SRC:1184594"
+   },
+   {
+    "cls": "Win32WideStringTest",
+    "sel": "testConvertingInBothDirectionsGaveSameString",
+    "before": "SKIP",
+    "evidence": "REC:323; SRC:1184586"
+   },
+   {
+    "cls": "Win32WideStringTest",
+    "sel": "testHandleIsAByteArray",
+    "before": "SKIP",
+    "evidence": "REC:324; SRC:1184619"
+   },
+   {
+    "cls": "Win32WideStringTest",
+    "sel": "testUnderlayingByteArrayEndsInTwoZeros",
+    "before": "SKIP",
+    "evidence": "REC:325; SRC:1184611"
+   },
+   {
+    "cls": "Win32WideStringTest",
+    "sel": "testUnderlayingByteArrayIsMultipleOf2",
+    "before": "SKIP",
+    "evidence": "REC:326; SRC:1184627"
+   },
+   {
+    "cls": "WinPlatformTest",
+    "sel": "testGetTempPathFromTMP",
+    "before": "SKIP",
+    "evidence": "REC:336; skip call SRC:1184976"
+   },
+   {
+    "cls": "WindowsResolverTest",
+    "sel": "testResolveTempPathFromTMP",
+    "before": "SKIP",
+    "evidence": "REC:337; skip call SRC:1185514"
+   },
+   {
+    "cls": "YellowTest",
+    "sel": "testFail",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "YellowTest",
+    "sel": "testPass",
+    "before": "SKIP",
+    "evidence": "REC:276; MockTest>>setUp skip SRC:497020"
+   },
+   {
+    "cls": "MorphicNativeWindowTest",
+    "sel": "testMaximizeWindow",
+    "before": "SKIP",
+    "evidence": "A4; skip guard on Smalltalk isInteractive in test body SRC:512932; image-fixes/22-interactive-session-tests.st:1-12"
+   },
+   {
+    "cls": "MorphicNativeWindowTest",
+    "sel": "testMinimizeWindow",
+    "before": "SKIP",
+    "evidence": "A4; isInteractive skip SRC:512917"
+   },
+   {
+    "cls": "MorphicNativeWindowTest",
+    "sel": "testNewWindowDefaultsIsNotMaximize",
+    "before": "SKIP",
+    "evidence": "A4; skip guard SRC:512888"
+   },
+   {
+    "cls": "MorphicNativeWindowTest",
+    "sel": "testNewWindowDefaultsIsNotMinimized",
+    "before": "SKIP",
+    "evidence": "A4; skip guard SRC:512877"
+   },
+   {
+    "cls": "MorphicNativeWindowTest",
+    "sel": "testRestoreWindow",
+    "before": "SKIP",
+    "evidence": "A4; isInteractive skip SRC:512899"
+   },
+   {
+    "cls": "MorphicWindowManagerTest",
+    "sel": "testDeleteAllWindowToLeftOfAWindow",
+    "before": "SKIP",
+    "evidence": "A4; skip guard SRC:515595"
+   },
+   {
+    "cls": "MorphicWindowManagerTest",
+    "sel": "testDeleteAllWindowToRightOfAWindow",
+    "before": "SKIP",
+    "evidence": "A4; skip guard SRC:515710"
+   },
+   {
+    "cls": "MorphicWindowManagerTest",
+    "sel": "testDeleteAWindowAndTaskBarActualized",
+    "before": "SKIP",
+    "evidence": "A4; skip guard SRC:515690; image-fixes/22-interactive-session-tests.st:13-19"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testImplementorsOfAt",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase 'Smalltalk isInteractive ifFalse: [ ^ self skip ]' SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testInspectArray",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testInspectClass",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testInspectDictionary",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testInspectInteger",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testInspectTraitClass",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testOpenBrowseOnClass",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testOpenBrowseOnInstalledTraitMethod",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testOpenBrowseOnMethod",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testOpenBrowseOnTraitMethod",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "OpenToolTest",
+    "sel": "testSendersOfAt",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "SimulateMouseTest",
+    "sel": "testSimulateClick",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "SimulateMouseTest",
+    "sel": "testSimulateMiddleClick",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123"
+   },
+   {
+    "cls": "SimulateMouseTest",
+    "sel": "testSimulateRightClick",
+    "before": "SKIP",
+    "evidence": "A4; AbstractUITestCase>>runCase skip SRC:12123; image-fixes/22-interactive-session-tests.st:20-24"
+   },
+   {
+    "cls": "SpTextPresenterTest",
+    "sel": "testPropagateNaturalHeight",
+    "before": "SKIP",
+    "evidence": "A4; 'Smalltalk isHeadless ifTrue: [ ^ self skip ]' SRC:973682; image-fixes/22-interactive-session-tests.st:5-11"
+   },
+   {
+    "cls": "SpTextPresenterTest",
+    "sel": "testPropagateNaturalHeightWithMultipleLines",
+    "before": "SKIP",
+    "evidence": "A4; isHeadless skip SRC:973659"
+   },
+   {
+    "cls": "SpTextPresenterTest",
+    "sel": "testPropagateNaturalWidth",
+    "before": "SKIP",
+    "evidence": "A4; isHeadless skip SRC:973622 (verified text); SpCodePresenterTest>>expectedFailures returns #() when isHeadless so no XFAIL"
+   },
+   {
+    "cls": "SpCodePresenterTest",
+    "sel": "testPropagateNaturalHeight",
+    "before": "SKIP",
+    "evidence": "A4; inherited from SpTextPresenterTest SRC:973682"
+   },
+   {
+    "cls": "SpCodePresenterTest",
+    "sel": "testPropagateNaturalHeightWithMultipleLines",
+    "before": "SKIP",
+    "evidence": "A4; inherited SRC:973659"
+   },
+   {
+    "cls": "SpCodePresenterTest",
+    "sel": "testPropagateNaturalWidth",
+    "before": "SKIP",
+    "evidence": "A4; inherited SRC:973622"
+   }
+  ],
+  "counts": {
+   "SKIP": 170,
+   "XFAIL": 49,
+   "FAIL": 1,
+   "UNKNOWN": 0
+  },
+  "reconciles": "Yes. Counting all 220 base rows gives SKIP 170, XFAIL 49, FAIL 1, UNKNOWN 0, matching WIP.md (the table at about line 143 and the repair record line 5). The one FAIL is ZnClientTest>>testQueryGoogle, whose source has neither a skip call nor an expectedFailure mark. The 49 XFAIL rows are: Cly-wrapper-queries 14, Cly-async-results 2, Cly-misc-queries 5, Fuel-widestring-globals 15 (listed in FLSerializationTest>>expectedFailures), Geometry-intersections 3, WriteBarrierTest 2, Ring2ChunkImporterTest 2, OCParserTest testParseExpressionDontFreeze 1, OCProgramNodeTest 1, SettingsStonReaderTest 1, SlotErrorsTest 1, WeakAnnouncerTest 1, and the fixture ClyTestedClassMockTest>>testExpectedFailure 1. The other 170 are skips: the 28 base-A4 rows, 34 MockTest fixture rows, 16 plus 3 Windows rows, 5 32-bit rows, and the repaired-skip groups. Method: there is no pre-repair sweep result. All saved sweeps (sweep14-deep-final, new12 to new14, cogp new9, new10) are post-repair. The status comes from the Pharo 14 sources file and the repair record. REC means docs/upstream/pharo-image-repairs-2026-11-17.md line, and SRC means a line in the LF copy of ~/pharo-work-save/2026-11-17/images/Pharo14.0-64bit-42a90c7.sources, made at /private/tmp/claude-501/-Users-wohl-src-iospharo/9538298f-2fab-4f17-9fa9-017b747ce8fe/scratchpad/src.txt. Caveats: (1) The Cly-wrapper rows (14) inherit the expectedFailure pragma from ClyWrapQueryTest and do not carry their own mark. (2) The four tests TFUFFIBasicTypeSize*, SpEasyTreeListView* and the 3 SpEasyTreeListViewPresenterTest rows are inherited skips (no own method in the sources). (3) The 28 A4 rows skip through the isInteractive or isHeadless guard (OpenToolTest and SimulateMouseTest via AbstractUITestCase>>runCase). I did not read every A4 test body in full. I only read the fix 22 header (scripts/image-fixes/22-interactive-session-tests.st lines 1-30) and the source of runCase and of SpTextPresenterTest>>testPropagateNaturalWidth. (4) SRC line numbers refer to the CR-to-LF copy and will differ if that copy is regenerated differently."
+ },
+ "critic": {
+  "missing": [
+   {
+    "test": "StSpotterTest>>testOpenSpotterRefreshesPreviewOnce (Pharo 14 and 13)",
+    "evidence": "Failed in earlier sweeps on both VMs: docs/WIP.md:589-590 (build-nojit sweep, also failed in one of four pre-fix sweeps), docs/WIP.md:906-907 and 920, docs/WIP.md:1060 ('which Cog fails too'), docs/vm-compat-bugs.md:4612 ('SHARED with Cog', 'Got 2 instead of 1'). No row in nonpass.tsv, no image-fixes entry, absent from all saved sweeps (they passed in the last sweeps). WIP.md:496-497 item 4 'repair the flaky tests' is still open.",
+    "why": "Owner rule: a test that fails on both VMs needs a fix, and flaky is not an exclusion. It is a recurring non-pass that is not in the list."
+   },
+   {
+    "test": "StPlaygroundPageTest>>testContents",
+    "evidence": "docs/WIP.md:906-907 lists it among timing-dependent tests that did not pass; docs/WIP.md:1326 and docs/vm-compat-bugs.md measurement trap 20 (the CI-skip guard) mention it; no row, no fix entry.",
+    "why": "Failed intermittently in earlier sweeps; same category as the previous item."
+   },
+   {
+    "test": "FreeTypeCacheTest>>testGlyphAccessIsThreadSafe (Pharo 14 arm64, and Pharo 13 both arches) and ...WhenAskingWidth",
+    "evidence": "docs/WIP.md:877-879 (Pharo 14 arm64: old binary 11 failures in 50 runs, new binary 11 in 50, Cog 9 errors in 50); docs/WIP.md:1054-1055 (Pharo 13); docs/WIP.md:1195 and 1231; docs/test-results.md:193-194 (WhenAskingWidth timeout). Not in nonpass.tsv, not in any saved sweep.",
+    "why": "Failed on both VMs (Cog 9 of 50). No repair entry exists."
+   },
+   {
+    "test": "StObjectTranscriptPresenterTest>>testOpenedLogIsSelectedLog (Pharo 14 x86_64)",
+    "evidence": "docs/WIP.md:880-883: error in about 3 of 1000 runs on the old binary, the new binary and Cog. nonpass.tsv has a different test of that class (testTrueShowInspectorShowsInspector) only.",
+    "why": "Intermittent failure on both VMs, not listed; the gate repair for TabSelectorMorph>>updateTabs is not in setup_fake_gui.st yet (docs/WIP.md:485-495)."
+   },
+   {
+    "test": "NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft and ReleaseTest>>testNoShadowedVariablesInMethods (interpreter-only build-nojit, Pharo 14)",
+    "evidence": "docs/WIP.md:540-565: timeouts at the 80 s watchdog on the interpreter (73 s and 270 s), pass only with SUNIT_TIMEOUT_MULT=6; docs/WIP.md:585-588 sweeps with 1-2 fail, 1-2 error, 1 timeout. The second also appears in docs/image_issues.md:180 and docs/results/sweep-arm-2026-10-11/failing-selectors.txt (TIMEOUT).",
+    "why": "Did not pass on an iOS-like (JIT off) configuration. Outside the arm64 JIT scope, but non-passing tests without a row."
+   },
+   {
+    "test": "Package tests that failed on both VMs before the repairs in docs/upstream/package-repairs.md and now pass (about 50 named tests)",
+    "evidence": "docs/upstream/package-repairs.md:4-5 says each defect shows on stock Cog and our VM. Examples not in nonpass.tsv: GlorpDatabasePlatformTest>>testTrimString1/2 (line 28), OrderedDictionaryExtensionsTest>>testEquals (50), AOC2016Day1Test>>testFailing01 (96), MTAnalysisTest>>testExecutingInfiniteRecursionAnalysis (106), MTMethodMutationTest>>testMutationInfiniteRecursion (107), XMLConformanceExpatTest>>testnotwfsa140xml (140), SmSingleMiddlewareTest>>testCommunication (196), NeUdpUnicastSocketTest>>testCloseWhileReceiving (225), TkThreadTest>>testFinalization (241), FiSetSimpleChangesTest>>testUpdate (285), ZnUrlHyperspaceExtensionsTest>>testStartLimit (366), CXXMLItemSaverLoaderTest>>testVisitorXML (490), MongoTest>>testAddExistingCollection (748), FamixMetricsTest>>testLCOM2 (872), SSWReStoreTypeTest>>testVeryLargeString (902), MicDumperTest>>testTable (1003), TbBoundsTest>>testAtRandom (1021), PRIntegrationTest>>testBookEpub (1044), PetsRESTfulControllerTest>>testComplexPagination (1422), DAPHistoryTest>>testMessagesShouldReturnInReverseChronologicalOrder (1722). pkgs1/summary.tsv holds only the final state of each row.",
+    "why": "The list covers only package tests that still do not pass. If the user wants every test that failed at some point, these are missing. If current non-passing only, they are correctly absent."
+   },
+   {
+    "test": "Package rows 166 to 200 (35 rows; rows 164 and 165 are the ones the brief says to ignore)",
+    "evidence": "scripts/pkg-jit-test/packages-200.tsv has 200 rows; ~/pharo-work-save/2026-11-17/pkgs1/summary.tsv has 163 data lines. docs/WIP.md:35 and 88 say rows 1 to 163 have a result. Rows 166-200 (e.g. moosetechnology-gitprojecthealth, pharo-spec-gtk-bindings, cormas-cormas, pharo-llm-pharo-huggingface) have no summary line.",
+    "why": "The brief ignores only rows 164 and 165. Rows 166 to 200 never ran, so the list says nothing about them."
+   },
+   {
+    "test": "Package rows that do not load: 8 LOAD-FAIL lines in summary.tsv (georghagn-tsf-scheduler, -filerotator, -logger, -nexio, pharo-llm-pharo-agent, pharo-spec-spec, pharo-spec-newtools, pharo-graphics-bloc)",
+    "evidence": "summary.tsv LOAD-FAIL rc=1 lines; causes in docs/WIP.md:780-800.",
+    "why": "No tests ran, so no test names exist. These rows have no entry in nonpass.tsv; the code is untested."
+   }
+  ],
+  "wrong": [
+   {
+    "test": "TFUFFICallbackTest>>testCallbacksInOtherThread (base-A2)",
+    "claim_in_list": "fix_entry = 20-TFFI-disabled-tests.st; cogp column 'PASS 2x'",
+    "what_sources_say": "The entry that changes this test is scripts/image-fixes/30-ffi-callback-from-other-thread.st (fix entry at lines 29-33, helper sameThreadRunnerTakesCallbackFromOtherThread at line 16). 20-TFFI-disabled-tests.st has no entry for it. The cogp column is the PATCHED Cog; stock Cog stops with a segmentation fault (repair record line 805, 812; docs/WIP.md:237, 440-445).",
+    "evidence": "scripts/image-fixes/30-ffi-callback-from-other-thread.st:1-33; grep of 20-TFFI-disabled-tests.st finds no testCallbacksInOtherThread; docs/upstream/pharo-image-repairs-2026-11-17.md:805,812."
+   },
+   {
+    "test": "All base-A2 rows (CodeSimulationTest>>testErrorCodeNotFound, WriteBarrierTest>>testMutateByteArrayUsingDoubleAtPut and ...FloatAtPut, TFUFFICallbackTest>>testCallbacksInOtherThread)",
+    "claim_in_list": "Column cogp_sweep14_new10 = PASS",
+    "what_sources_say": "The column is sweepcogp14-new10, the patched Cog, not stock Cog (docs/WIP.md:269-284). Stock Cog v12.0.6 still fails the two WriteBarrierTest tests (record lines 838, 845, 849) and segfaults on testCallbacksInOtherThread (805). For testErrorCodeNotFound stock Cog differs from ours (record line 152).",
+    "evidence": "docs/upstream/pharo-image-repairs-2026-11-17.md:152, 805, 838, 849; docs/WIP.md:441-445."
+   },
+   {
+    "test": "DebugInfoTest>>testNotStopAtAllButFirstBytecodeOfOptimizedSend, testNotStopAtConstantBlockCreation, testNotStopAtFullBlockCreation (group Debugger-kernel-skips)",
+    "claim_in_list": "state = repaired, PASS 2x on both VMs",
+    "what_sources_say": "The group review is 'NOT accepted (round 2)' (record line 141). Required changes are open (lines 158, 162): DebugSession still uses the old stop set through shouldStepStopAt:, so the user-visible stepping is not repaired; the reviewer says the skip of CodeSimulationTest must not be removed while the test fails on Cog, but entry 20-Debugger-kernel-skips.st line 91 removes it. The tests pass in sweeps, but 'repaired' is stronger than the record supports.",
+    "evidence": "docs/upstream/pharo-image-repairs-2026-11-17.md:141, 152, 158, 162; scripts/image-fixes/20-Debugger-kernel-skips.st:27, 91."
+   },
+   {
+    "test": "TFFunctionCallTest>>testCallingFunctionWithW64CallingConvention and TFUFFIDifferentCallingConventionFunctionCallTest>>testCallingFunctionWithW64CallingConvention (2 parameter sets each)",
+    "claim_in_list": "state = not applicable (skip on both VMs)",
+    "what_sources_say": "The test runs on macOS only with architectureName 'x86_64'. The record says no x86_64 VM under Rosetta was tried, so the test is not proven to pass there (lines 334, 335, 344). This Mac runs an x86_64 VM under Rosetta (docs/WIP.md:958, 1100, 1157). The owner rule needs proof for 'cannot apply'; the proof is missing.",
+    "evidence": "docs/upstream/pharo-image-repairs-2026-11-17.md:334, 335, 344; docs/WIP.md:958, 1157."
+   },
+   {
+    "test": "AllTestFailTest>>testFail1-4 and DependencyTest>>testDataIs10..15ThenIncrement (10 tests); also LongTest>>testIsTakingTooLong",
+    "claim_in_list": "state = not applicable (fixture)",
+    "what_sources_say": "The record says no test in the image references AllTestFailTest (allReferencesTo: size 0) or DependencyTest, so no consumer exists to cite (line 272, 285). The owner rule accepts a skip only for a fixture that another test runs. DependencyTest fails by order dependence when run (line 272). LongTest: its only consumer RunnerLongDurationTest was a different cluster whose skips are now removed by entry 20-RunnerLongDurationTest.st, so that proof needs a re-check.",
+    "evidence": "docs/upstream/pharo-image-repairs-2026-11-17.md:272, 285; CLAUDE.md rule 'Every failing test gets a fix'."
+   },
+   {
+    "test": "TKTFutureTest>>testFutureAndThenExecutesInOrder and TKTNewProcessTaskRunnerTest>>testNewProcessTaskRunnerRunsInNewProcessEveryTime (part found)",
+    "claim_in_list": "state = see text; one PASS or FAIL value in the sweep columns",
+    "what_sources_say": "Both are timing-sensitive. testFutureAndThenExecutesInOrder: PASS on ours in sweep14-new14 but FAIL on the patched Cog in sweepcogp14-new9, PASS in new10. testNewProcessTaskRunner...: FAIL in sweep14-new14 ('Got 9 instead of 10'), PASS in new10 and in patchwork new11-13. A single PASS value hides the flakiness. Draft entry 36 is untracked and not validated.",
+    "evidence": "~/pharo-work-save/2026-11-17/sweeps/sweepcogp14-new9/all_detail.txt, sweeps/sweep14-new14/all_detail.txt, patchwork/*.nonpass.txt; scripts/image-fixes/36-taskit-newprocess-runner-tests.st (untracked in git status)."
+   }
+  ],
+  "pharo13": "NONE as a per-test list. Looked in ~/pharo-work-save/2026-11-17 (only stock/harness holds the unchanged Pharo 13 image and sources; sweeps/ and patchwork/ are Pharo 14 only), docs/results, docs/WIP.md and git history (git log -S\"27894\" finds no data file). The figure 27894 of 28077 (2 failures, 131 skips, 50 expected failures) appears only in docs/WIP.md:496-497 and docs/nonpassing-tests.md:77 as a count. Partial lists that exist: /Users/wohl/src/iospharo/docs/results/sweep-arm-2026-10-11/failing-selectors.txt (19 lines, Pharo 13.1, FAIL/ERROR/TIMEOUT only, no skips, no expected failures) and per-class-totals.txt in the same directory (skip count per class, 182 skips in total); also failing-selectors.txt in sweep-arm-2026-09-03, -09-03-gui, -10-12-internal-j2j and sweep-x86-real-2026-09-04. The 7 Pharo 13 test defects fixed by scripts/image-fixes/10-pharo13-test-defects.st are named in docs/image_issues.md:402-426 (OCClassBuilderTest>>testCreateNormalClassWithTraitComposition, SystemDependenciesTest>>testExternalUIDependencies, ReleaseTest>>testNoShadowedVariablesInMethods, StDebuggerTest>>testDynamicVariableEvaluation, StDebuggerTest>>testUpdateLayoutForContextsIfAssertionFailure, StDebuggerInspectorTest>>testUpdateLayoutForContextsWithAssertionFailure, TFUFFICallbackTest>>testCallbackWithErrorHanlded). None of these is in nonpass.tsv. The 131 skips and 50 expected failures of Pharo 13 are UNKNOWN per test.",
+  "other_notes": "Checks that found nothing wrong: (1) All 175 Class>>selector entries in the repair record tables (docs/upstream/pharo-image-repairs-2026-11-17.md) are in nonpass.tsv. The A1 to A4 counts match docs/WIP.md:150-158 once the 3 Win32EnvironmentTest tests (WIP counts them in 24 platform tests) and ZnClientTest>>testQueryGoogle are put in A1 and the 4 A2 tests are taken out. (2) Every fix or add entry in image-fixes/*.st that changes a test is in the list, or is an inherited test whose subclasses are listed (ClyWrapQueryTest 7 tests -> 14 rows in ClyAsyncQueryTest and ClyFilterQueryTest), or a test added by the fix (ClapHelloTest>>testHelloBothWhisperingAndShouting, WriteBarrierTest integer-store tests, TKTFutureTest additions in entry 35), or a Pharo 13 only fix (entry 10; fixes 1 to 6 find nothing on Pharo 14, docs/image_issues.md:415-417). (3) Every non-PASS line of the saved Pharo 14 sweeps (deep-final, new12, new13, new14, cogp new9, new10) and all 10 patchwork/*.nonpass.txt files is in nonpass.tsv; only the parameterized name suffix '(#runner->...)' differs for the 8 TFFI Windows/W64 rows. No row marked repaired fails in any saved sweep. (4) For package rows, every summary.tsv line with F, E, S, T or X above 0 has the same number of rows in nonpass.tsv (svenvc-p3 70E+3T = 73, moosetechnology-mooseide 104, alamvic-druid 34E+1X = 35). Caveat: the saved sweeps are all AFTER the repairs. The morning measurement (170 skips, 49 expected failures, 1 failure) has no saved per-test file, so completeness of the A part cannot be checked against raw data (UNKNOWN); the rows come from the repair record. Also: docs/nonpassing-tests.md exists but still has placeholders {{PKG_OPEN}} and {{P13}} (lines 31 and 78) and links to docs/results/nonpassing-tests-2026-11-18.tsv, which does not exist on disk. Pkgs summary.tsv has no row number; mapping to pkg-row-N goes through the label in column 4 of nonpass.tsv."
+ },
+ "pkg": {
+  "rows": [
+   {
+    "row": 57,
+    "label": "EscapeAnalysisPharo (EscapeTest>>testComplexWeighterGraph)",
+    "open_tests": 1,
+    "not_applicable_tests": 0,
+    "state": "The author skips the test with self skip; the analyzer says two objects escape, the test says they do not, and the test is right by definition. A repair changes the answer of testTempInBlock, testReturnTempInBlock and testArgBlockReturnsTemp, which assert the careful answer.",
+    "next_step": "The package author decides which answer is right; until then the skip is not accepted (row not clean). Under the owner's rule a fix entry could change the three sibling tests too, but no entry for this was made.",
+    "blocked_on_owner": true,
+    "evidence": "docs/upstream/package-repairs.md:857-866; docs/WIP.md:376; summary.tsv row: 82 tests P=81 S=1 on both VMs; no not-applicable file for this row"
+   },
+   {
+    "row": 70,
+    "label": "BioSmalltalk (7 BioGtUnixSubprocessTest)",
+    "open_tests": 0,
+    "not_applicable_tests": 7,
+    "state": "The class tests an adapter for a Glamorous Toolkit class; the setUp skips with that reason. Proven in not-applicable/hernanmd-biosmalltalk.txt (7 lines).",
+    "next_step": "None. Row is clean: 1198 pass, 7 skips on both VMs.",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/not-applicable/hernanmd-biosmalltalk.txt; docs/upstream/package-repairs.md:950-981; docs/WIP.md:359"
+   },
+   {
+    "row": 71,
+    "label": "Pillar (4 PRIntegrationTest PDF tests)",
+    "open_tests": 4,
+    "not_applicable_tests": 0,
+    "state": "The 4 tests start with self skip and run latexmk with lualatex; the machine has no TeX. Behind them the baseline pins OSSubprocess v2.0.0, which calls OSEnvironment>>defaultEncoding, missing in Pharo 14 (master has the repair). No not-applicable file exists, so none counts as proven.",
+    "next_step": "Owner decides whether TeX goes on the machine; then repair the OSSubprocess pin and the 4 tests.",
+    "blocked_on_owner": true,
+    "evidence": "docs/upstream/package-repairs.md:1060-1070; docs/WIP.md:377; summary.tsv: 66 tests P=62 S=4"
+   },
+   {
+    "row": 75,
+    "label": "anthropic-sdk-pharo (PharoKeyringIntegrationTest>>testLookupProvisionedSecret)",
+    "open_tests": 1,
+    "not_applicable_tests": 0,
+    "state": "On macOS the guard asks isUnix and skips; with the right guard the test writes a secret into the owner's login keychain and removes it in tearDown. Not repaired, because writing into a keychain needs the word of the owner.",
+    "next_step": "Owner decides if the test may write to a keychain (or a fixture keychain is made).",
+    "blocked_on_owner": true,
+    "evidence": "docs/upstream/package-repairs.md:652-655; docs/WIP.md:378; summary.tsv: 932 tests P=931 S=1"
+   },
+   {
+    "row": 82,
+    "label": "MCP (testEvaluateTakesTheStepTheWorldGivesTheTranscript)",
+    "open_tests": 0,
+    "not_applicable_tests": 1,
+    "state": "Pharo 14 WorldState>>runStepMethodsIn: does not send stepGlobal, so the World no longer steps the Transcript; the test skips itself. Proven in not-applicable/evref-bl-mcp.txt.",
+    "next_step": "None. Row is clean on both VMs (1166 pass, 1 skip).",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/not-applicable/evref-bl-mcp.txt:1-8; docs/upstream/package-repairs.md:727-732"
+   },
+   {
+    "row": 84,
+    "label": "Soil (17 skips)",
+    "open_tests": 3,
+    "not_applicable_tests": 14,
+    "state": "14 are proven not applicable (8 SoilWindowsFileLockTest with kernel32 FFI, 6 SoilIndexIteratorTest parametrized cases with no meaning). The 3 testCodeCoverage tests (SoilCleanCodeTest, SoilResidentCleanCodeTest, SoilSerializerCleanCodeTest) ask 93 percent; measured 86, 85, 81 percent.",
+    "next_step": "Write tests for about 210 methods to reach 93 percent in Soil-Core, Soil-Resident and Soil-Serializer, or the package author decides on the limit. A round-2 file exists in scratch/ag/round2/apptivegrid-soil.st (not checked against the repo).",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/not-applicable/apptivegrid-soil.txt (14 entries); docs/upstream/package-repairs.md:1339-1350; docs/WIP.md:379"
+   },
+   {
+    "row": 89,
+    "label": "Teapot (TeapotSslTest>>testHttpsGet)",
+    "open_tests": 1,
+    "not_applicable_tests": 0,
+    "state": "The test needs an HTTPS server in the image; the SSL plugin of both VMs takes a server certificate only from a keychain on macOS. WIP table line 380 says 'Not started', but the reboot table says branch ssl-pem-identity has 1 commit (8b79c33d, verified in git) and an uncommitted review change of sqMacSSL.c is only in the saved copy.",
+    "next_step": "Read scratch/ssl89 (report.md is NOT in the saved copy: UNKNOWN), apply the saved diff, finish review, build, run row 89, merge; then give the Cog patch scratch/ssl89/cog-squeakssl-mac-pem-identity.patch to the owner.",
+    "blocked_on_owner": false,
+    "evidence": "docs/WIP.md:92 and :380; git log 8b79c33d; ~/pharo-work-save/2026-11-17/scratch/ssl89/; summary.tsv: 79 tests P=78 S=1"
+   },
+   {
+    "row": 113,
+    "label": "P3 (70 errors, 3 timeouts)",
+    "open_tests": 73,
+    "not_applicable_tests": 0,
+    "state": "73 tests need a PostgreSQL server; P3ClientTest class>>url names host 'postgres' (a CI service container) and the lookup fails. No not-applicable file is in the repo (a draft svenvc-p3.not-applicable.txt is only in scratch/ag/pkgfinal). The 3 timeouts are a 10 x 5 s retry of the name lookup failure. One package defect (retryDelay:) is repaired.",
+    "next_step": "Owner decides on a PostgreSQL server on 127.0.0.1:5432 (database, user, password postgres); then tests need host 127.0.0.1 in their URL. A stand-in was rejected as not an honest test.",
+    "blocked_on_owner": true,
+    "evidence": "docs/upstream/package-repairs.md:1186-1209; docs/WIP.md:381; summary.tsv: 96 tests P=23 E=70 T=3"
+   },
+   {
+    "row": 119,
+    "label": "AoC-in-Pharo (Y2025Day05Test, Y2025Day08Test, 6 tests)",
+    "open_tests": 0,
+    "not_applicable_tests": 6,
+    "state": "The tests read puzzle input files of the author under a data directory; the repository has none and Advent of Code forbids copying inputs. Proven in not-applicable/shnarazk-aoc-in-pharo.txt. The author's day 8 part2 answers 0, so testPart2 could not pass even with the input.",
+    "next_step": "None. Row is clean: 14 pass, 6 skips on both VMs.",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/not-applicable/shnarazk-aoc-in-pharo.txt; docs/upstream/package-repairs.md:1603-1627"
+   },
+   {
+    "row": 121,
+    "label": "CodeParadise (4 CpClientEnvironmentTest, 3 CpEncodeDecodeObjectTest)",
+    "open_tests": 0,
+    "not_applicable_tests": 7,
+    "state": "The code under test is client side and runs in a small browser image; the package refuses it in an image with the server classes. Proof for each is in not-applicable/erikonbike-codeparadise.txt (67 lines).",
+    "next_step": "None. Row is clean: 26 pass, 7 skips on both VMs (commit f5822a29). Note: testSortedCollection passes with a stand-in environment and is listed as not applicable only because the repair uses no stand-in.",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/not-applicable/erikonbike-codeparadise.txt; docs/upstream/package-repairs.md:1772-1814; git f5822a29"
+   },
+   {
+    "row": 124,
+    "label": "Iconography (AntDesignIconsLibraryTest>>testSerializeAsFormMaxWidthMaxHeight)",
+    "open_tests": 1,
+    "not_applicable_tests": 0,
+    "state": "Defect in our VM, measured: primitiveWarpBits does not step and pick pixels as the stock BitBltSimulation>>warpLoop (138 of 992 words differ); stock Cog passes 32 of 32. A second defect: alpha blend of rules 24 and 34 rounds differently.",
+    "next_step": "Restart the workflow vm-warpblt-repair-wf_34a48e2b-34f.js on branch warpblt-stock-algorithm (1058-line port, not built; branch exists, no commit); build, then run scripts/cogdiff/bitblt_warp_pixels.st and the row.",
+    "blocked_on_owner": false,
+    "evidence": "docs/upstream/package-repairs.md:1498-1533; docs/WIP.md:87-93 and :382; ~/pharo-work-save/2026-11-17/scratch/ag/round2/opensmock-iconography.md; summary.tsv: ours F=1"
+   },
+   {
+    "row": 126,
+    "label": "Famix-Cpp (9 FamixCppCSVParserTest, 1 FamixCppCSVImporterTest, expected failures)",
+    "open_tests": 10,
+    "not_applicable_tests": 0,
+    "state": "The CSV parser and importer (Famix-Cpp-Parser) name classes the metamodel no longer has (FamixCppType, FamixCppFileAnchor, FamixCppSourcedEntity); the tests are marked expected failure. Same on both VMs. Not counted as accepted.",
+    "next_step": "Finish the port of the parser and importer to the present metamodel; the port is said to be in work but no file of it is in the saved copy (UNKNOWN where). Rerun with the second-round workflow package-rows-second-round-wf_99e9fd7b-897.js.",
+    "blocked_on_owner": false,
+    "evidence": "docs/upstream/package-repairs.md:1628-1644; docs/WIP.md:94 and :383; summary.tsv: 30 tests P=20 X=10"
+   },
+   {
+    "row": 138,
+    "label": "FAST (FASTCopyVisitorCodeGeneratorTest, 2 failures)",
+    "open_tests": 2,
+    "not_applicable_tests": 0,
+    "state": "Famix commit bcc80b10 removed the <derived> pragma from the fixture; the FAST tests are stale. A round-2 draft (scratch/ag/round2/moosetechnology-fast.st) forces isDerived: true in the two tests; its probe passes 57 of 57 on both VMs, but it is NOT in scripts/pkg-jit-test/fixes (the repo file is the round-1 one) and was not run as a full row.",
+    "next_step": "Copy round2/moosetechnology-fast.st to scripts/pkg-jit-test/fixes/moosetechnology-fast.st, rerun row 138 with scripts/vmrun.sh pkgs --redo; give the FAST/Famix change upstream to the owner for review.",
+    "blocked_on_owner": false,
+    "evidence": "~/pharo-work-save/2026-11-17/scratch/ag/round2/moosetechnology-fast.md; docs/WIP.md:94 and :384; summary.tsv: P=55 F=2"
+   },
+   {
+    "row": 146,
+    "label": "pharo-instrumentation (5 GraphCallerTest tests, count of 1)",
+    "open_tests": 5,
+    "not_applicable_tests": 0,
+    "state": "The first repair (action source from block, onProfiler:, unproxifiedMethod) took 13 away. The 5 heavy GraphCallerTest tests give a count of 1. A round-2 draft (scratch/ag/round2/jordanmontt-pharo-instrumentation.st, adds resetSharedState to clear the Microdown resource cache and a warm-up run) is not in the repo and has no report .md; cause is a draft, not proven.",
+    "next_step": "Validate the round-2 draft: copy it to scripts/pkg-jit-test/fixes/jordanmontt-pharo-instrumentation.st, rerun row 146 on both VMs; if the VMs differ, treat as a VM defect.",
+    "blocked_on_owner": false,
+    "evidence": "docs/WIP.md:94 and :385; ~/pharo-work-save/2026-11-17/scratch/ag/round2/jordanmontt-pharo-instrumentation.st; summary.tsv: P=12 F=5 on both"
+   },
+   {
+    "row": 147,
+    "label": "NeoConsole (testGetSystemTimestamp, testSumMultiline)",
+    "open_tests": 2,
+    "not_applicable_tests": 0,
+    "state": "Our VM only: ConnectionClosed to the package's telnet server on port 4999; stock Cog passes 7 of 7, ours 5. The eval-mode change did not repair it. Cause not found; no round-2 file exists.",
+    "next_step": "Do this row first (a VM difference): reproduce under vmrun.sh on our VM and read the socket/server side; start the second-round workflow for row 147.",
+    "blocked_on_owner": false,
+    "evidence": "docs/WIP.md:94 and :386; ~/pharo-work-save/2026-11-17/pkgs1/res/svenvc-neoconsole.diff; summary.tsv: cog P=7, ours P=5 E=2"
+   },
+   {
+    "row": 151,
+    "label": "SmalltalkGenie (GenieProtocolTest>>testToolErrorsExposeDebugDetailsOnlyWhenExplicitlyEnabled ERROR, GenieActionTest>>testVariableRefactoringToolsTemporaryRefactorings FAIL)",
+    "open_tests": 2,
+    "not_applicable_tests": 0,
+    "state": "Same on both VMs; package uses Pharo 13 API: Context>>debugStack:on: is gone, and the stale RBTemporaryToInstanceVariableTransformation breaks under the Pharo 14 compiler (OCCompilationError). Repair fixes/kentbeck-smalltalkgenie.st is committed (f433b127) but NOT run; confidence from reading only.",
+    "next_step": "scripts/vmrun.sh pkgs --redo /tmp/pharo-work/pkgs1 151 151; later steps of the refactoring test were never reached and can show a second defect.",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/fixes/kentbeck-smalltalkgenie.st; ~/pharo-work-save/2026-11-17/scratch/ag/pkgfinal/kentbeck-smalltalkgenie.md; docs/WIP.md:89"
+   },
+   {
+    "row": 153,
+    "label": "OpenWeatherAPI4Pharo (3 OpenWeatherHistoryFlatBulkTest CSV tests)",
+    "open_tests": 3,
+    "not_applicable_tests": 0,
+    "state": "The baseline lacks the dependency DatasetUtilities (CSV2JSONStream etc.); both VMs error identically. Patch patches/reugalabf-openweatherapi4pharo.patch is committed (f433b127) but NOT run; the date comparison in testCSVOneRecordAsHistoryFlatBulk is only inferred.",
+    "next_step": "scripts/vmrun.sh pkgs --redo /tmp/pharo-work/pkgs1 153 153; expect 11 of 11.",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/patches/reugalabf-openweatherapi4pharo.patch; ~/pharo-work-save/2026-11-17/scratch/ag/pkgfinal/reugalabf-openweatherapi4pharo.md; docs/WIP.md:89"
+   },
+   {
+    "row": 154,
+    "label": "ViennaTalk (ViennaConstrainedTypeTest>>testName)",
+    "open_tests": 1,
+    "not_applicable_tests": 0,
+    "state": "ViennaConstrainedType>>name takes the block source from printString; Pharo 14 BlockClosure>>printOn: prints '[ ] in Class>>selector'. Repair fixes/tomooda-viennatalk.st (name uses sourceNode sourceCode) is committed but NOT run.",
+    "next_step": "scripts/vmrun.sh pkgs --redo /tmp/pharo-work/pkgs1 154 154; expect 1430 of 1430.",
+    "blocked_on_owner": false,
+    "evidence": "scripts/pkg-jit-test/fixes/tomooda-viennatalk.st; ~/pharo-work-save/2026-11-17/scratch/ag/pkgfinal/tomooda-viennatalk.md; docs/WIP.md:89"
+   },
+   {
+    "row": 158,
+    "label": "Pyramid (5 skips)",
+    "open_tests": 5,
+    "not_applicable_tests": 0,
+    "state": "No analysis was made; cause UNKNOWN. The 5 tests are PyramidCopyPastePluginTest>>testCopyAsStonMenu, 3 PyramidEditorTest and PyramidPluginEditOnRunningTest>>testBlSpaceShortcutAddAndRemove, skipped on both VMs. No not-applicable file.",
+    "next_step": "Run the analyse workflow package-rows-analyse-verify-wf_8c002123-bea.js for row 158 (read the skip reasons; then repair, or prove not applicable).",
+    "blocked_on_owner": false,
+    "evidence": "docs/WIP.md:95; summary.tsv: 480 tests P=475 S=5; pkgs1/res/opensmock-pyramid.ours_test_detail.txt"
+   },
+   {
+    "row": 159,
+    "label": "Iceberg (IceCherryPickBrowserTest>>testWindowOnMethodConflict skip, IceClassesCherryPickingTest>>testAddClassDependingInATrait fail, IceMemoryRepositoryWithSingleRemoteTest>>testPushPushesTags skip; run stops after 305 tests)",
+    "open_tests": 3,
+    "not_applicable_tests": 0,
+    "state": "No analysis; cause UNKNOWN. State BOTH-INCOMPLETE: the run ends after 305 tests on both VMs (cog_exit 1), so tests after the stop were never run and the true count of non-passing tests is UNKNOWN (3 is only what ran).",
+    "next_step": "Run the analyse workflow for row 159: first find why the run stops after 305 tests (read pharo-vcs-iceberg.cog.status and the logs), then the 3 tests.",
+    "blocked_on_owner": false,
+    "evidence": "summary.tsv row pharo-vcs-iceberg BOTH-INCOMPLETE, tests=305 P=302 F=1 S=2; docs/WIP.md:95"
+   },
+   {
+    "row": 160,
+    "label": "MooseIDE (104 skips)",
+    "open_tests": 104,
+    "not_applicable_tests": 0,
+    "state": "No analysis; cause UNKNOWN. 104 tests in 23 Mi*BrowserTest classes skip on both VMs; no not-applicable file. Whether they skip on a missing World or by the author's self skip is UNKNOWN.",
+    "next_step": "Run the analyse workflow for row 160: read the skip texts, then repair or prove not applicable per test.",
+    "blocked_on_owner": false,
+    "evidence": "summary.tsv: 1382 tests P=1278 S=104; docs/WIP.md:95; pkgs1/res/moosetechnology-mooseide.ours_test_detail.txt"
+   },
+   {
+    "row": 163,
+    "label": "Druid (34 errors, 1 expected failure)",
+    "open_tests": 35,
+    "not_applicable_tests": 0,
+    "state": "No analysis; cause UNKNOWN. 34 errors in 13 DR*Test classes (DRSCCP*, DRSSAPRE*, DRDeadCodeEliminationTest and others) and 1 expected failure, same on both VMs.",
+    "next_step": "Run the analyse workflow for row 163: read the error messages, then repair; the expected failure also needs a fix by the owner's rule.",
+    "blocked_on_owner": false,
+    "evidence": "summary.tsv: 216 tests P=181 E=34 X=1; docs/WIP.md:95; pkgs1/res/alamvic-druid.ours_test_detail.txt"
+   }
+  ],
+  "rows_that_cannot_run": "Rows 51, 62, 66, 135 (georghagn TSF-Scheduler, TSF-FileRotator, TSF-Logger, TSF-NexIO): LOAD-FAIL rc=1 in summary.tsv. The four GitHub repositories do not exist (git ls-remote answers 'Repository not found'; the account has no public repository; search finds no copy). No repair is possible; the rows run with no change if the owner makes the repositories public (docs/upstream/package-repairs.md:435-452). Row 150 (pharo-llm/pharo-agent): LOAD-FAIL, KeyNotFound 'BaselineOfLLMPharoAgent'; the repository is a TypeScript program with no Smalltalk package and no baseline, so it has no test to run; the baseline name in the manifest was a guess; the owner can replace the package in the manifest (package-repairs.md:1739-1754). Row 155 (Spec): LOAD-FAIL because the manifest loaded branch Pharo13 over a Pharo 14 image (SpContainerStyle did not understand #intercellSpacing:). Repair committed in f433b127 (packages-200.tsv: branch Pharo14, plus a SpecCore load of Spec2-CommonWidgets-Tests), NOT run. Row 156 (NewTools): LOAD-FAIL, key 'NewTools-Refactoring-Commands' not found (Pharo13 branch lacks that package). Repair committed in f433b127 (branch v0.11.0, the tag the image uses), NOT run; the report says it adds little beyond the image sweep. Row 157 (Bloc): LOAD-FAIL, 'Name not found: tests in baseline [BaselineOfBloc]'. Repair committed in f433b127 (load: #('default')), NOT run; later load errors in Alexandrie or native libraries are possible. Rows 155 to 157 need LOAD_TIMEOUT=2400 TEST_TIMEOUT=3600 (docs/WIP.md:89). Sources: docs/WIP.md:359-370, git show f433b127, ~/pharo-work-save/2026-11-17/scratch/ag/batch6/pharo-spec-spec.md, pharo-spec-newtools.md, pharo-graphics-bloc.md. Rows 164 to 200 were never run (reboot); that is outside the list asked about."
+ }
+}

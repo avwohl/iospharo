@@ -5,6 +5,11 @@ file lists each such test of the Pharo test suites, on our VM and on stock
 Cog.  For each test the file gives the state now.  The data comes from saved
 results.  No VM ran to make this file.
 
+Web site for the Pharo group: https://www.awohl.com/pharo_bugs1/ (one page
+per defect of the image, the tests, stock Cog and the packages, with a test
+and the fix; no page for a defect of our VM).  The generator is
+`scripts/pharo-bugs-site/gen.py`.
+
 Sources:
 
 - The repair record:
