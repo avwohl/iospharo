@@ -738,6 +738,55 @@ for rel, src in list(FILES.items()):
     open(dst, 'w').write(clean(data))
 
 # ---------------------------------------------------------------- index
+GH = 'https://github.com/pharo-project'
+CI_SKIP = [('RandomTest', 'testUnixRandomGeneratorSeed', ''), ('AllocationTest', 'testOneGBAllocation', ' (on Windows only)'),
+           ('AllocationTest', 'testOneGWordAllocation', ''), ('OmDeferrerTest', 'testExecuteOnceAfterScheduling', ''),
+           ('OmDeferrerTest', 'testExecuteWithoutDelay', ''), ('WeakAnnouncerTest', 'testNoDeadWeakSubscriptions', ''),
+           ('DebugPointTest', 'testTranscriptDebugPoint', ''),
+           ('TKTNewProcessTaskRunnerTest', 'testNewProcessTaskRunnerRunsInNewProcessEveryTime', ' (fails at random: <a href="bugs/open-taskit-newprocess-runner.html">page</a>)')]
+EXTEND = (
+ '<h2 id="extend">How these tests extend the Pharo CI</h2>'
+ '<h3>What the Pharo CI runs</h3><ul>'
+ f'<li>The CI of <code>pharo-project/pharo</code> builds the image and runs all its SUnit tests (<code>test \'.*\'</code>) with the stock VM '
+ f'on Linux, macOS and Windows, 64-bit, and the command-line tests (<a href="{GH}/pharo/blob/Pharo14/Jenkinsfile">Jenkinsfile</a>, '
+ f'<a href="{GH}/pharo/blob/Pharo14/bootstrap/scripts/runTests.sh">runTests.sh</a>).</li>'
+ f'<li>The CI of <code>pharo-project/pharo-vm</code> runs the VM unit tests (<code>VMMakerTests</code>, <code>Slang-Tests</code>), then the SUnit '
+ f'tests of the image on the new VM.  A failure of the image tests marks the build, but does not stop it '
+ f'(<a href="{GH}/pharo-vm/blob/pharo-12/Jenkinsfile">Jenkinsfile</a>).</li>'
+ '<li>Both set <code>PHARO_CI_TESTING_ENVIRONMENT</code>, and some tests skip when it is set (see below).</li></ul>'
+ '<h3>What we add</h3><ul>'
+ '<li><b>A second VM.</b>  Each test runs on stock Cog v12.0.6 and on iospharo, a VM written separately (C++, with a JIT for arm64 and x86_64).  '
+ 'A test that fails the same way on two VMs points at the image, the test or the package, not at one VM.  The platform is macOS arm64.</li>'
+ '<li><b>Skips and expected failures are failures.</b>  A test that skips or carries the expected-failure mark is work to do here, not a pass.  '
+ 'The CI does not report these tests as failures.</li>'
+ '<li><b>The whole SUnit suite of Pharo 14 (build 791): 39465 tests in 2160 classes</b>, each parameter set of a parametrized test '
+ 'counted once.  Six classes that need a display (135 tests) also run in an interactive session.  The Pharo 13 suite (28077 tests) ran too.</li>'
+ '<li><b>Repetition.</b>  The full suite ran 22 times on 2026-11-17 (13 times on iospharo, 9 times on Cog with our Cog changes).  Tests that '
+ 'failed at random ran in loops of 600 to 3000 runs.  The loops found races in the image that one CI run does not show: the TaskIt '
+ 'worker pool (83 failures in 600 runs before the fix, 0 in 3000 after), the wake-ups of <code>AtomicSharedQueue</code>, and the '
+ 'uninstall of an object-specific MetaLink, which depends on the order of a set.</li>'
+ '<li><b>Packages.</b>  200 maintained packages with tests, from the <a href="https://github.com/avwohl/soogle">Soogle</a> index of public Smalltalk '
+ 'code: of 26,876 Pharo repositories, 528 had a push in the last year, 318 had a <code>BaselineOf</code> and tests, and 200 were chosen '
+ 'for variety (a limit for each GitHub organization).  Stock Cog loads each package into Pharo 14, then the two VMs run its tests.  '
+ 'Rows 1 to 163 ran: 155 packages loaded, with 46,419 tests.  The package tests found defects in the image that the image suite does not '
+ 'cover: <code>RBNamespace&gt;&gt;renameClass:to:around:</code>, <code>Duration&gt;&gt;asDelay</code> and the equality of <code>ZnUrl</code>.</li>'
+ '<li><b>Stock Cog.</b>  The runs found 11 defects in stock Cog.  9 have a change on a local branch of <code>pharo-vm</code>, built and tested; '
+ '2 are open (segmentation faults with no known cause).  See the Cog section.</li>'
+ '</ul>'
+ '<h3>Tests that the Pharo CI accepts as known failures</h3><ul>'
+ '<li><b>220 tests of Pharo 14 build 791 do not pass, the same on the two VMs:</b> 170 skips, 49 tests with the expected-failure mark and 1 '
+ 'failure (<code>ZnClientTest&gt;&gt;testQueryGoogle</code>, which searches the Google result page for pharo.org).  132 of them pass with a fix '
+ 'of the image or of the test.  4 more pass with a fix of the image and a Cog change.  56 cannot apply on macOS arm64: fixtures, Windows, '
+ '32-bit.  28 need a display.  The section "Defects in the Pharo 14 image" has a page for each group.</li>'
+ '<li><b>8 tests skip when <code>PHARO_CI_TESTING_ENVIRONMENT</code> is set</b> (<code>TestCase&gt;&gt;skipOnPharoCITestingEnvironment</code>).  '
+ 'Our runs do not set the variable, so the tests run: '
+ + ', '.join(f'<code>{c}&gt;&gt;{s}</code>{n}' for c, s, n in CI_SKIP) + '.  '
+ 'In our 6 saved full runs of 2026-11-17, 7 of the 8 pass every time; the TaskIt test failed once.</li>'
+ f'<li><b>The VM CI removes <code>ReflectivityControlTest&gt;&gt;testAfterSequence</code> before its run</b>, because the test stopped the VM '
+ f'(<a href="{GH}/pharo-vm/blob/pharo-12/scripts/patchPharoPreTests.st">patchPharoPreTests.st</a>, '
+ f'<a href="{GH}/pharo/issues/11745">pharo issue 11745</a>).  The test passes in our 6 saved full runs, on iospharo and on Cog with our Cog changes.</li>'
+ '</ul>')
+
 KINDS = [('image', 'Defects in the Pharo 14 image and its tests',
           'The 220 Pharo 14 tests that did not pass on the two VMs on 2026-11-17 (170 skips, 49 expected failures, 1 failure), and the defects that the sweeps found later.  One page per group of the repair record.'),
          ('open', 'Open: tests that fail at random, and Pharo 13', 'Tests with no proven cause or no fix yet.'),
@@ -752,7 +801,7 @@ def cat(s):
 cc = collections.Counter(cat(p['status']) for p in PAGES)
 st_open, st_fixed, st_na, st_wait = cc['open'], cc['fixed'], cc['na'], cc['part']
 assert st_open + st_fixed + st_na + st_wait == len(PAGES)
-body = [f'<h1>Pharo test defects</h1><p class="lede">Each test that did not pass on the iospharo VM and on the stock Cog VM, '
+body = [f'<h1>Pharo test defects</h1>' + EXTEND + f'<h2 id="defects">The defects</h2><p class="lede">Each test that did not pass on the iospharo VM and on the stock Cog VM, '
         f'grouped by the defect behind it.  The defects are in the Pharo 14 image, in its tests, in the stock Cog VM, and in packages '
         f'that load into Pharo 14.  Each page has a summary, a test that shows the defect, and the fix when one is known.  '
         f'The fixes are proposals for review: none was sent to a Pharo repository yet.</p>',
