@@ -484,6 +484,36 @@ that fails.
 | 6 | `NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft` | `build-nojit` (JIT off, the iOS configuration): timeout, 73 s at the 80 s limit of the old runner | [WIP.md](WIP.md) ("Stack-depth fix and interpreter-only sweeps") |
 | 7 | `ReleaseTest>>testNoShadowedVariablesInMethods` | `build-nojit`: timeout, 270 s | same |
 
+## Part D: defects of our VM found by this work, 10 defects
+
+The tests found these defects in our VM.  Each one made a test fail on our VM
+only, or showed a difference from Cog.  The details are in
+[vm-compat-bugs.md](vm-compat-bugs.md) (the entries of 2026-11-17) and in
+[WIP.md](WIP.md).  The web site for the Pharo group
+(`awohl.com/pharo_bugs1/`) does not show these defects: the site has only
+the defects of the Pharo image, of the tests, of stock Cog and of the
+packages.  The site also leaves out three pages where only our VM fails:
+package row 124 (Iconography), package row 147 (NeoConsole) and the two
+`build-nojit` timeouts of part C.
+
+| # | Defect | State | Commit or branch |
+|---|---|---|---|
+| 1 | Five leads from an audit for stale object pointers (the become of two objects of the same size, and four more) | open | branch `store-barrier-audit`, no commit; leads in the saved copy, `scratch/barrier/finding-1.md` to `finding-5.md` |
+| 2 | A recursion deeper than 56000 frames got an error that Cog does not give (MuTalk, MCP) | fixed | `a8ebcb4a`, `b2734014`, merge `c9bfa598` |
+| 3 | The identity hash sequence did not continue from the image header, and had a 32-bit state (the order of hashed collections differed from Cog) | fixed | `0f9f4562` |
+| 4 | The socket option primitives knew 6 names and gave a false success for each other name; a new socket had no `SO_REUSEADDR` (PharoMisc) | fixed | `0f9f4562` |
+| 5 | The `perform:` cache of the arm64 JIT called a method through a call-cache entry with no compiled code (two stopped batches of `sweep14-new6`) | fixed | `e4e01459` |
+| 6 | A process switch at the entry of `ensure:` left a context with no unwind block (`ZdcSocketStreamTest`, a stopped batch of `sweep14-new2`) | fixed | `f9cac33f`, `39105f0c` |
+| 7 | Four defects found by the repair of the skipped tests: `primitiveResolverLocalAddress` answered 127.0.0.1; a named primitive that does not exist gave no error code; `primitiveFFIIntegerAtPut` wrote into a read-only `ByteArray`; `PHARO_INTERACTIVE=1` had no effect on an eval run | fixed | `83e3a6b8`, `0aed4b10` |
+| 8 | The eval mode ran its text before the deferred start actions of the image (PharoSmalltalkInteropServer, 9 of 44 on our VM) | fixed | `135e59e6` |
+| 9 | No `NewFilePlugin` (pharo-newfile, 8 tests skipped on our VM only) | fixed | `0f9f4562` |
+| 10 | VM parameter 11 (the count of objects that scavenges moved to old space) was always 0 (Stargate) | fixed | `75d540bc` |
+
+Also open in our VM, and in the package part of this file: row 124
+(WarpBlt picks other pixels than the stock plugin, and the alpha blend of
+rules 24 and 34 rounds in another way; branch `warpblt-stock-algorithm`) and
+row 147 (`ConnectionClosed` to the NeoConsole telnet server on our VM only).
+
 ## Package run: tests that do not pass, rows 1 to 163
 
 The package run loads each package of `scripts/pkg-jit-test/packages-200.tsv`
