@@ -32,6 +32,14 @@ sweeps use the runner `scripts/pharo-headless-test/run_sunit.st`, which runs
 each parameter set of a parametrized test.  A count such as "PASS 2x" is a
 test with two parameter sets.
 
+## Pharo 15 (2026-11-20)
+
+All 220 tests of the Pharo 14 list still do not pass on a clean Pharo 15
+image (build 141), on stock Cog and on our VM.  The fix entries repair them
+on Pharo 15 too, except `RGMCClassTest>>testClassesWithTraits`.  Pharo 15
+repaired the rename defect of fix entry 31 itself.  Pharo 15 adds 3 open
+items.  Details: [pharo15-check.md](pharo15-check.md).
+
 ## Summary
 
 | Test set | Tests | Did not pass on 2026-11-17 | Do not pass now | Of these, open |

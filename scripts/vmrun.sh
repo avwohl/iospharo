@@ -36,6 +36,7 @@
 #   ours     build-rel/test_load_image           nojit  build-nojit/test_load_image
 #   x86      build-x86/test_load_image           dbg    build-dbg/test_load_image
 #   cog      stock Pharo 14 VM (/tmp/harness14)  cog13  stock Pharo 13 VM (/tmp/harness)
+#   cog15    stock Pharo 15 VM (/tmp/harness15)
 #   cogp     the Cog build with the changes of docs/upstream ($PHARO_WORK/cogbuild-all)
 #
 # Environment (all optional):
@@ -98,6 +99,7 @@ resolve_vm() {                      # sets VM (binary) and KIND (ours|cog)
         dbg)   VM=$REPO/build-dbg/test_load_image;   KIND=ours ;;
         cog)   VM=/tmp/harness14/pharo-vm/Pharo.app/Contents/MacOS/Pharo; KIND=cog ;;
         cog13) VM=/tmp/harness/pharo-vm/Pharo.app/Contents/MacOS/Pharo;   KIND=cog ;;
+        cog15) VM=/tmp/harness15/pharo-vm/Pharo.app/Contents/MacOS/Pharo; KIND=cog ;;
         cogp)  # the stock app with the VM core and the socket plugin of the build with
                # the changes of docs/upstream (a local Cog build lacks freetype, cairo
                # and libgit2, so the stock app keeps its own third-party libraries)
@@ -257,6 +259,7 @@ default_image() {                   # $1 = vm name
     case "$1" in
         cog|cogp) echo "$WORK/images/cog14.image" ;;
         cog13)    echo "$WORK/images/cog13.image" ;;
+        cog15)    echo "$WORK/images/cog15.image" ;;
         *)        echo "$WORK/images/ours14.image" ;;
     esac
 }

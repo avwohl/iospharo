@@ -1,0 +1,211 @@
+entry	kind	class	selector	state14to15
+10-pharo13-test-defects.st	fix	OCClassBuilderTest	testCreateNormalClassWithTraitComposition	same
+10-pharo13-test-defects.st	fix	SystemDependenciesTest	knownUIDependencies	not in either
+10-pharo13-test-defects.st	fix	FastStepThroughController	findNextContext:having:fixing:	same
+10-pharo13-test-defects.st	fix	StTestDebuggerProvider	debuggerWithDynamicVariableSuspendedContext	same
+10-pharo13-test-defects.st	fix	StDebuggerTest	testUpdateLayoutForContextsIfAssertionFailure	same
+10-pharo13-test-defects.st	fix	StDebuggerInspectorTest	testUpdateLayoutForContextsWithAssertionFailure	same
+10-pharo13-test-defects.st	fix	UIManager	nonInteractiveManager	same
+20-BlockClosureTest.st	fix	BlockClosureTest	testOnForkErrorTakesLessThanOneSecond	same
+20-BlockClosureTest.st	fix	BlockClosureTest	testOnForkSplit	same
+20-CavWindowStrategyTest.st	fix	CavWindowStrategyTest	testExactReplaceStrategyDoesNotChangeExtentAndPosition	same
+20-ClapHelloTest.st	add	ClapCommandLineExamples	latestVoiceFlag	add: class in 15
+20-ClapHelloTest.st	fix	ClapCommandLineExamples	shouting	same
+20-ClapHelloTest.st	fix	ClapCommandLineExamples	whispering	same
+20-ClapHelloTest.st	fix	ClapHelloTest	testHelloBothShoutingAndWhispering	same
+20-ClapHelloTest.st	add	ClapHelloTest	testHelloBothWhisperingAndShouting	add: class in 15
+20-Cly-async-results.st	fix	ClyAsyncQueryResultTest	testItemsChangedNotificationShouldResetItems	same
+20-Cly-misc-queries.st	fix	ClyConstantMethodQueryTest	testIsEmptyFromEmptyMethodScope	same
+20-Cly-misc-queries.st	fix	ClyUnknownQueryTest	testIsBoundToEnvironmentWhenScopeIs	same
+20-Cly-misc-queries.st	fix	ClyRestUntaggedClassesQueryTest	testIsEmptyFromEmptyClassScope	same
+20-Cly-misc-queries.st	fix	ClyUnimplementedMethodsQueryTest	testIsEmptyFromEmptyMethodScope	same
+20-Cly-misc-queries.st	fix	ClyExtendingPackagesQueryTest	testFromClassWhichTraitIsExtendedButNotItself	differs
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	same
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	same
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope	same
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	same
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope	same
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	same
+20-Cly-wrapper-queries.st	fix	ClyWrapQueryTest	testHasCompositeScopeFromSubqueries	same
+20-Debugger-kernel-skips.st	fix	OnlineSourceDebugInfo	shouldStopAt:	same
+20-Debugger-kernel-skips.st	fix	DebugInfoTest	testNotStopAtAllButFirstBytecodeOfOptimizedSend	same
+20-Debugger-kernel-skips.st	fix	DebugInfoTest	testNotStopAtConstantBlockCreation	same
+20-Debugger-kernel-skips.st	fix	DebugInfoTest	testNotStopAtFullBlockCreation	same
+20-Debugger-kernel-skips.st	fix	CodeSimulationTest	testErrorCodeNotFound	same
+20-Debugger-kernel-skips.st	add	OnlineSourceDebugInfo	shouldStepStopAt:	add: class in 15
+20-Debugger-kernel-skips.st	fix	DebugSession	stepToFirstInterestingBytecodeInContext:	same
+20-Debugger-kernel-skips.st	add	OfflineSourceDebugInfo	shouldStepStopAt:	add: class in 15
+20-FloatTest.st	fix	FloatTest	testNaNCompare	same
+20-Fuel-cleanblock.st	fix	FLGlobalEnvironmentTest	testCompiledMethodChanged	same
+20-Fuel-widestring-globals.st	add	FLGlobalCluster	encodeGlobalName:on:	add: class in 15
+20-Fuel-widestring-globals.st	add	FLGlobalCluster	nextGlobalNameFrom:	add: class in 15
+20-Fuel-widestring-globals.st	fix	FLGlobalCluster	serializeGlobalClass:on:	same
+20-Fuel-widestring-globals.st	fix	FLGlobalCluster	serializeGlobalAssociationKeyed:on:	same
+20-Fuel-widestring-globals.st	fix	FLGlobalCluster	materializeGlobalAssociationFrom:	same
+20-Fuel-widestring-globals.st	fix	FLGlobalCluster	materializeGlobalClassFrom:	same
+20-Fuel-widestring-globals.st	fix	FLBasicSerializationTest	testWideStringGlobal	same
+20-Fuel-widestring-globals.st	fix	FLSerializationTest	expectedFailures	same
+20-Geometry-intersections.st	fix	GEllipse	intersectionsWithEllipse:	same
+20-Geometry-intersections.st	fix	GArcTest	testIntersectionsWithArc	same
+20-Geometry-intersections.st	fix	GArcTest	testIntersectionsWithEllipse	same
+20-Geometry-intersections.st	fix	GEllipseTest	testIntersectionsWithArc	same
+20-MicMetaDataBlockTest.st	fix	MicMetaDataBlockTest	testCreatingAnInstanceInitializeTheMetadatDictionary	same
+20-NA-platform-windows.st	fix	Win32EnvironmentTest	testExistingEnvironmentVariableLongerThanBufferShouldReturnValue	same
+20-NA-platform-windows.st	fix	Win32EnvironmentTest	testExistingEnvironmentVariableShouldReturnValue	same
+20-NA-platform-windows.st	fix	Win32EnvironmentTest	testNonExistingEnvironmentVariableShouldGenerateException	same
+20-NavigationInteractionTest.st	fix	ClyBrowserMorph	browseImplementorsOf:inNameResolver:	same
+20-NavigationInteractionTest.st	fix	ClyBrowserMorph	spawnQueryBrowserOn:withState:	same
+20-NavigationInteractionTest.st	fix	NavigationInteractionTest	testBrowseMethodViaImplementorActuallyBrowseTheClass	same
+20-OCArrayLiteralTest.st	add	OCASTTranslator	stackDepthOfBraceArrayElement:	add: class in 15
+20-OCArrayLiteralTest.st	fix	OCASTTranslator	visitArrayNode:	same
+20-OCArrayLiteralTest.st	fix	OCArrayLiteralTest	testLiteralArrayLongHavingAnotherArrayLong	same
+20-OCParserTest.st	fix	OCParserTest	testUnclosedTemporariesErrorNodeContainsRightValue	same
+20-OCParserTest.st	fix	OCParserTest	testParseExpressionDontFreeze	same
+20-OCProgramNodeTest.st	add	OCAssignmentNode	bestNodeFor:	add: class in 15
+20-OCProgramNodeTest.st	fix	OCProgramNodeTest	testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart	same
+20-OCRengineTest.st	fix	OCRengineTest	testWhichUNodesDefinesBlockArg	same
+20-RGMCClassTest.st	fix	RGMCClassTest	testClassesWithTraits	same
+20-RGMCClassTest.st	fix	RGMCTest	testClass:	same
+20-RGMCClassTest.st	fix	MCClassDefinition	ensureRingDefinitionIn:	same
+20-ReflectivityOnStackTest.st	fix	ReflectivityOnStackTest	testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually	same
+20-ReflectivityOnStackTest.st	add	CompiledMethod	sourceNodeForPC:	add: class in 15
+20-ReleaseTest.st	fix	ReleaseTest	testRatioOfCommentedClasses	same
+20-Ring2ChunkImporterTest.st	add	BehaviorOwnedChunk	isMetaclassTrait	add: class in 15
+20-Ring2ChunkImporterTest.st	add	BehaviorOwnedChunk	isMetaclassTrait:	add: class in 15
+20-Ring2ChunkImporterTest.st	fix	ChunkFileFormatParserV100	parseMethodDeclarations:	same
+20-Ring2ChunkImporterTest.st	fix	RGChunkImporter	visitMethodChunk:	same
+20-Ring2ChunkImporterTest.st	fix	Ring2ChunkImporterTest	testStandardMethodInNewMetaclassTrait	same
+20-Ring2ChunkImporterTest.st	fix	Ring2ChunkImporterTest	testMultipleMixedChunksInStrangeOrderWithMetaclassTrait	same
+20-Rubric-anchors.st	fix	RubEditingAreaTest	testEmbeddedAnchorInTextAreDrawn	same
+20-Rubric-anchors.st	fix	RubEditingAreaTest	testEmbeddedAnchorInTextAreDrawnAtRightPosition	same
+20-Rubric-anchors.st	fix	RubScrolledTextMorphTest	testEmbeddedAnchorInTextAreDrawnAtRightPosition	same
+20-RunnerLongDurationTest.st	fix	RunnerLongDurationTest	testRunningFromAClass	same
+20-RunnerLongDurationTest.st	fix	RunnerLongDurationTest	testRunningFromACollectionOfClasses	same
+20-SettingsStonReaderTest.st	fix	SettingsStonReader	load	same
+20-SettingsStonReaderTest.st	fix	SettingsStonReaderTest	testNonExistingStoredSettingVariable	same
+20-SlotErrorsTest.st	fix	SlotErrorsTest	testCannotBeRecompiled	same
+20-SpCodePresenterTest.st	add	SpCodePresenter	evaluate:onCompileError:onError:permitUndeclared:	add: class in 15
+20-SpCodePresenterTest.st	fix	SpCodePresenter	evaluate:onCompileError:onError:	same
+20-SpCodePresenterTest.st	fix	SpCodePresenter	doBrowseClass	same
+20-SpCodePresenterTest.st	fix	SpCodePresenterTest	testDoBrowseClassNotFound	same
+20-SpCodePresenterTest.st	fix	SpCodePresenterTest	testDoBrowseMethodReferences	same
+20-SpCodePresenterTest.st	fix	SpCodePresenterTest	testEnvironment	same
+20-SpEasy-skips.st	add	SpAbstractEasyListViewPresenter	whenSortingBlockChangedDo:	add: class in 15
+20-SpEasy-skips.st	add	SpAbstractEasyTreeListViewPresenter	pathIndexOf:	add: class in 15
+20-SpEasy-skips.st	add	SpAbstractEasyTreeListViewPresenter	pathItemOf:	add: class in 15
+20-SpMorphPresenterTest.st	add	SpMorphicMorphAdapter	applyHelpTo:	add: class in 15
+20-SpMorphPresenterTest.st	fix	SpMorphicMorphAdapter	buildWidget	same
+20-SpMorphPresenterTest.st	fix	SpMorphicMorphAdapter	updateMorph:	same
+20-SpRadioButtonInteractionTest.st	fix	SpRadioButtonInteractionTest	testHidePresenterHidesWidget	same
+20-SpRadioButtonInteractionTest.st	fix	SpRadioButtonInteractionTest	testShowPresenterShowsWidget	same
+20-SpTree-selection-skips.st	fix	SpTreeAdapterSingleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	same
+20-SpTree-selection-skips.st	fix	SpTreeAdapterSingleSelectionTest	testUnselectPresenterItemUnselectsIndexInWidget	same
+20-SpTree-selection-skips.st	fix	SpTreeTableAdapterSingleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	same
+20-SpTree-selection-skips.st	fix	SpTreeTableAdapterSingleSelectionTest	testUnselectPresenterItemUnselectsIndexInWidget	same
+20-SpTree-selection-skips.st	fix	SpTreeAdapterMultipleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	same
+20-SpTree-selection-skips.st	fix	SpTreeTableAdapterMultipleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	same
+20-St-evaluate-declare-global.st	fix	StObjectContextPresenterTest	testDoEvaluateDeclareGlobal	same
+20-St-evaluate-declare-global.st	fix	StPlaygroundPagePresenterTest	testDoEvaluateDeclareGlobal	same
+20-St-evaluate-declare-global.st	fix	OCCodeReparator	openMenu	same
+20-StDebugger-skips.st	fix	StDebuggerContextPredicateTest	testPrintDescription	same
+20-StDebugger-skips.st	fix	StDebuggerContextPredicateTest	testPrintPostMortemDescription	same
+20-StDebugger-skips.st	fix	StDebuggerClientModelTest	testComputeInitialTopContext	same
+20-StDebugger-skips.st	fix	StDebuggerTest	testGenerateAndProceed	same
+20-StDebugger-skips.st	fix	StDebuggerTest	testSaveReceiverRawInspectionSelection	same
+20-StDebugger-skips.st	fix	StDebuggerTest	testSaveReceiverRawInspectionSelectionAfterContextChange	same
+20-StDebugger-skips.st	fix	StDebuggerTest	testRestoreReceiverRawInspectionSelection	same
+20-StDebugger-skips.st	fix	StDebuggerTest	testRestoreReceiverRawInspectionSelectionAfterContextChange	same
+20-StDebugger-skips.st	fix	StDebuggerTest	testReturnEnteredValue	same
+20-StObjectTranscriptPresenterTest.st	fix	StObjectTranscriptPresenterTest	testTrueShowInspectorShowsInspector	same
+20-StSettingsBrowserTest.st	fix	StSettingsBrowserTest	testSimulateCategoryPopulation	same
+20-TFFI-disabled-tests.st	fix	FFICallbackParametersTest	testIdentityStruct	same
+20-TFFI-disabled-tests.st	fix	TFCallbacksTest	testCallbackNotRespectingLIFOOrderFailsReturn	same
+20-TFFI-disabled-tests.st	fix	TFUFFIFunctionCallTest	testLongCalloutDoesNotBlockImage	same
+20-WeakAnnouncerTest.st	fix	AnnouncementSubscription	makeWeak	same
+20-WeakAnnouncerTest.st	fix	WeakAnnouncerTest	testNoWeakBlock	same
+20-WriteBarrierTest.st	fix	TFFIBackend	on:float64At:put:	same
+20-WriteBarrierTest.st	fix	TFFIBackend	on:float32At:put:	same
+20-WriteBarrierTest.st	fix	WriteBarrierTest	testMutateByteArrayUsingDoubleAtPut	same
+20-WriteBarrierTest.st	fix	WriteBarrierTest	testMutateByteArrayUsingFloatAtPut	same
+20-network-tests.st	fix	NetNameResolver class	localHostAddress	same
+20-network-tests.st	fix	NetNameResolverTest	testLocalHostAddress	same
+20-network-tests.st	fix	ZnHTTPSTest	testSNIPage	same
+20-network-tests.st	fix	ZnHTTPSTest	testGetPharoVersion	same
+20-network-tests.st	fix	ZnClientTest	testQueryGoogle	same
+20-platform-unix-resolver.st	fix	UnixResolverTest	testGetTempFromTMPDIR	same
+20-platform-unix-resolver.st	fix	UnixResolverTest	testXdgParseUserDirLineDocuments	same
+20-platform-unix-resolver.st	fix	UnixResolverTest	testXdgParseUserDirLineNotRoot	same
+20-presenter-examples.st	add	SpDemo class	example	add: class in 15
+20-presenter-examples.st	add	SpComponentListSelectionExample class	example	add: class in 15
+20-presenter-examples.st	add	SpCodeEditorPresenter class	example	add: class in 15
+20-presenter-examples.st	add	MicTextPresenter class	example	add: class in 15
+20-presenter-examples.st	add	MicrodownPresenter class	example	add: class in 15
+20-presenter-examples.st	add	SpToolbarToggleButtonPresenter class	example	add: class in 15
+20-presenter-examples.st	add	SpMenuItemPresenter class	example	add: class in 15
+20-presenter-examples.st	add	SpMenuPresenter class	example	add: class in 15
+21-write-barrier-integer-stores.st	fix	ByteArray	integerAt:put:size:signed:	same
+21-write-barrier-integer-stores.st	add	WriteBarrierTest	testMutateByteArrayUsingUnsignedLongAtPut	add: class in 15
+21-write-barrier-integer-stores.st	add	WriteBarrierTest	testMutateByteArrayUsingSignedShortAtPut	add: class in 15
+22-interactive-session-tests.st	fix	SpTextPresenterTest	testPropagateNaturalHeightWithMultipleLines	same
+22-interactive-session-tests.st	fix	TaskbarMorph	updateTasks	same
+22-interactive-session-tests.st	fix	SimulateMouseTest	testSimulateRightClick	same
+23-defects-the-standard-runner-shows.st	fix	OutOfMemoryTest	setUp	same
+23-defects-the-standard-runner-shows.st	fix	ManifestCollectionsUnordered class	manuallyResolvedDependencies	same
+24-stale-executable-comment.st	fix	Context class	tallyInstructions:	same
+25-taskit-worker-pool-race.st	add	AtomicSharedQueue	isProcessWaiting:	add: class in 15
+25-taskit-worker-pool-race.st	add	TKTWorkerProcess	isWaitingForTask	add: class in 15
+25-taskit-worker-pool-race.st	add	TKTWorker	isWaitingForTask	add: class in 15
+25-taskit-worker-pool-race.st	add	TKTWorkerProcess	suspendIfWaitingForTask	add: class in 15
+25-taskit-worker-pool-race.st	add	TKTWorker	suspendIfWaitingForTask	add: class in 15
+25-taskit-worker-pool-race.st	fix	TKTCommonQueueWorkerPool	privateRemoveIdleWorkerIfNeeded	same
+26-taskit-first-complete-tests.st	fix	TKTFutureTest	testFutureFirstCompleteOfSuccessIfFirstSuccessFaster	same
+26-taskit-first-complete-tests.st	fix	TKTFutureTest	testFutureFirstCompleteOfSuccessIfSecondSuccessFaster	same
+26-taskit-first-complete-tests.st	fix	TKTFutureTest	testFutureFirstCompleteOfFailsIfFirstFailsFaster	same
+26-taskit-first-complete-tests.st	fix	TKTFutureTest	testFutureFirstCompleteOfFailsIfSecondFailsFaster	same
+27-atomic-shared-queue-wakeups.st	fix	WaitfreeQueue	nextIfNone:	same
+27-atomic-shared-queue-wakeups.st	add	AtomicSharedQueue	nextIfNone:	add: class in 15
+27-atomic-shared-queue-wakeups.st	fix	AtomicSharedQueue	next	same
+27-atomic-shared-queue-wakeups.st	add	AtomicSharedQueueTest	testSecondReaderGetsItemWhenFirstReaderHadTheLock	add: class absent in 15
+27-atomic-shared-queue-wakeups.st	add	AtomicSharedQueueTest	testReaderGetsItemThatCameWhileItResetTheSignals	add: class absent in 15
+27-atomic-shared-queue-wakeups.st	add	AtomicSharedQueueTest	testQueueIsFreeAfterReaderIsTerminatedInARead	add: class absent in 15
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	basicFormatCommentFor:	same
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	format:	same
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	formatStatementCommentsFor:	same
+28-simple-formatter-comments.st	add	OCSimpleFormatter	hoistedCommentsFor:	add: class in 15
+28-simple-formatter-comments.st	add	OCSimpleFormatter	collectHoistedCommentsOf:into:	add: class in 15
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	formatCommentsFor:	same
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	formatBlock:	same
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	formatArray:	same
+28-simple-formatter-comments.st	fix	OCSimpleFormatter	privateFormatMethodPatternMonoLineFor:	same
+28-simple-formatter-comments.st	add	OCCodeSnippet class	simpleFormattedCodes	add: class in 15
+28-simple-formatter-comments.st	add	OCCodeSnippet	simpleFormattedCode	add: class in 15
+28-simple-formatter-comments.st	fix	OCParseCodeSnippetTest	testSimpleFormattedCode	same
+28-simple-formatter-comments.st	fix	OCCodeSnippet class	badComments	same
+29-code-importer-snippets.st	fix	CodeImporterCodeSnippetTest	testCodeImporter	same
+29-code-importer-snippets.st	fix	OCCodeSnippet class	badExpressions	same
+30-ffi-callback-from-other-thread.st	add	TFUFFICallbackTest	sameThreadRunnerTakesCallbackFromOtherThread	add: class in 15
+30-ffi-callback-from-other-thread.st	fix	TFUFFICallbackTest	testCallbacksInOtherThread	differs
+31-rename-class-changes.st	fix	RBNamespace	renameClass:to:around:	differs
+31-rename-class-changes.st	fix	RBTransformationsTest	testRenameClassTransform	differs
+31-rename-class-changes.st	fix	ReRenameClassCommandTest	testRenameClassCommandSuccess	differs
+32-duration-wait-rounds-up.st	fix	Duration	asDelay	same
+32-duration-wait-rounds-up.st	add	DurationTest	testAsDelayDoesNotRoundDown	add: class in 15
+33-metalink-uninstall-order.st	fix	MetaLinkInstaller	uninstallFromAllAnonymousNodes:	same
+33-metalink-uninstall-order.st	fix	MetaLinkNodesMapper	findNodeLike:forObject:	same
+33-metalink-uninstall-order.st	add	LinkInstallerTest	nodeSetHomedAt:	add: class in 15
+33-metalink-uninstall-order.st	add	LinkInstallerTest	testUninstallVisitsEveryNodeWhenTheNodeSetCollides	add: class in 15
+33-metalink-uninstall-order.st	add	LinkInstallerTest	testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode	add: class in 15
+34-znurl-query-order.st	fix	ZnUrl	equals:	same
+34-znurl-query-order.st	add	ZnUrlTest	testEqualsWithQueryFieldsInAnotherOrder	add: class in 15
+35-taskit-andthen-order.st	add	TKTFutureStateWithRegistrationHook	hook:	add: class absent in 15
+35-taskit-andthen-order.st	add	TKTFutureStateWithRegistrationHook	onSuccessDo:inFuture:	add: class absent in 15
+35-taskit-andthen-order.st	add	TKTFuture	criticalLock	add: class in 15
+35-taskit-andthen-order.st	fix	TKTFuture	initialize	same
+35-taskit-andthen-order.st	fix	TKTFuture	deploySuccess:	same
+35-taskit-andthen-order.st	fix	TKTFuture	deployFailure:	same
+35-taskit-andthen-order.st	fix	TKTFuture	onSuccessDo:	same
+35-taskit-andthen-order.st	fix	TKTFuture	onFailureDo:	same
+35-taskit-andthen-order.st	fix	TKTFuture	andThen:	same
+35-taskit-andthen-order.st	add	TKTFutureTest	testFutureAndThenExecutesInOrderWithSlowFirstCallback	add: class in 15
+35-taskit-andthen-order.st	add	TKTFutureTest	testFutureAndThenRunsLaterBlocksWhenABlockEndsItsProcess	add: class in 15
+35-taskit-andthen-order.st	add	TKTFutureTest	testCallbackRegisteredWhileAnotherProcessDeploysIsScheduled	add: class in 15

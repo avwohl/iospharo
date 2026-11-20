@@ -1,0 +1,239 @@
+part	class	selector	group	state_p14	before_p14	p15
+base-A1	BlockClosureTest	testOnForkErrorTakesLessThanOneSecond	BlockClosureTest	repaired	SKIP	PASS
+base-A1	BlockClosureTest	testOnForkSplit	BlockClosureTest	repaired	SKIP	PASS
+base-A1	CavWindowStrategyTest	testExactReplaceStrategyDoesNotChangeExtentAndPosition	CavWindowStrategyTest	repaired	SKIP	PASS
+base-A1	ClapHelloTest	testHelloBothShoutingAndWhispering	ClapHelloTest	repaired	SKIP	PASS
+base-A1	ClyAsyncQueryResultTest	testItemsChangedNotificationShouldResetItems	Cly-async-results	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testHasCompositeScopeFromSubqueries	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyAsyncQueryTest	testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyConstantMethodQueryTest	testIsEmptyFromEmptyMethodScope	Cly-misc-queries	repaired	XFAIL	PASS
+base-A1	ClyExtendingPackagesQueryTest	testFromClassWhichTraitIsExtendedButNotItself	Cly-misc-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testHasCompositeScopeFromSubqueries	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testIsExecutedFromMultipleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testIsExecutedFromSingleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testNotExecutedFromMultipleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testNotExecutedFromMultipleScopeWhenSubqueriesAreFromDifferentScopesOfSameObject	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testNotExecutedFromSingleScopeWhenAllSubqueriesAreFromEmptyScope	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyFilterQueryTest	testNotExecutedFromSingleScopeWhenSubqueriesAreFromScopesOfDifferentObjects	Cly-wrapper-queries	repaired	XFAIL	PASS
+base-A1	ClyRestUntaggedClassesQueryTest	testIsEmptyFromEmptyClassScope	Cly-misc-queries	repaired	XFAIL	PASS
+base-A1	ClySemiAsyncQueryResultTest	testItemsChangedNotificationShouldResetItems	Cly-async-results	repaired	XFAIL	PASS
+base-A1	ClyUnimplementedMethodsQueryTest	testIsEmptyFromEmptyMethodScope	Cly-misc-queries	repaired	XFAIL	PASS
+base-A1	ClyUnknownQueryTest	testIsBoundToEnvironmentWhenScopeIs	Cly-misc-queries	repaired	XFAIL	PASS
+base-A1	DebugInfoTest	testNotStopAtAllButFirstBytecodeOfOptimizedSend	Debugger-kernel-skips	repaired	SKIP	PASS 2x
+base-A1	DebugInfoTest	testNotStopAtConstantBlockCreation	Debugger-kernel-skips	repaired	SKIP	PASS 2x
+base-A1	DebugInfoTest	testNotStopAtFullBlockCreation	Debugger-kernel-skips	repaired	SKIP	PASS 2x
+base-A1	FFICallbackParametersTest	testIdentityStruct	TFFI-disabled-tests	repaired	SKIP	PASS
+base-A1	FLBinaryFileStreamBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLBinaryFileStreamBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLBinaryFileStreamBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLByteArrayBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLByteArrayBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLByteArrayBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFileReferenceStreamBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFileReferenceStreamBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFileReferenceStreamBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFullBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFullBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFullBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLFullHeaderSerializationTest	testPostMaterializationActions	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLFullHeaderSerializationTest	testPreMaterializationActions	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLGZippedBasicSerializationTest	testConsiderCustomWideSymbolGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLGZippedBasicSerializationTest	testWideStringClassName	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLGZippedBasicSerializationTest	testWideStringGlobal	Fuel-widestring-globals	repaired	XFAIL	PASS
+base-A1	FLGlobalEnvironmentTest	testCompiledMethodChanged	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLHeaderSerializationTest	testPostMaterializationActions	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLHeaderSerializationTest	testPreMaterializationActions	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLSortedCollectionSerializationTest	testSortedCollection	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLSortedCollectionSerializationTest	testSortedCollectionWithClassVariableChanges	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLSortedCollectionSerializationTest	testSortedCollectionWithClassVariableReference	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FLUserGuidesTest	testDemo	Fuel-cleanblock	repaired	SKIP	PASS
+base-A1	FloatTest	testNaNCompare	FloatTest	repaired	SKIP	PASS
+base-A1	GArcTest	testIntersectionsWithArc	Geometry-intersections	repaired	XFAIL	PASS
+base-A1	GArcTest	testIntersectionsWithEllipse	Geometry-intersections	repaired	XFAIL	PASS
+base-A1	GEllipseTest	testIntersectionsWithArc	Geometry-intersections	repaired	XFAIL	PASS
+base-A1	MicMetaDataBlockTest	testCreatingAnInstanceInitializeTheMetadatDictionary	MicMetaDataBlockTest	repaired	SKIP	PASS
+base-A1	MicTextPresenterTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	MicrodownPresenterTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	NavigationInteractionTest	testBrowseMethodViaImplementorActuallyBrowseTheClass	NavigationInteractionTest	repaired	SKIP	PASS
+base-A1	NetNameResolverTest	testLocalHostAddress	network-tests	repaired	SKIP	PASS
+base-A1	OCArrayLiteralTest	testLiteralArrayLongHavingAnotherArrayLong	OCArrayLiteralTest	repaired	SKIP	PASS
+base-A1	OCParserTest	testParseExpressionDontFreeze	OCParserTest	repaired	XFAIL	PASS
+base-A1	OCParserTest	testUnclosedTemporariesErrorNodeContainsRightValue	OCParserTest	repaired	SKIP	PASS
+base-A1	OCProgramNodeTest	testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart	OCProgramNodeTest	repaired	XFAIL	PASS
+base-A1	OCRengineTest	testWhichUNodesDefinesBlockArg	OCRengineTest	repaired	SKIP	PASS
+base-A1	RGMCClassTest	testClassesWithTraits	RGMCClassTest	repaired	SKIP	FAIL
+base-A1	ReflectivityOnStackTest	testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually	ReflectivityOnStackTest	repaired	SKIP	PASS
+base-A1	ReleaseTest	testRatioOfCommentedClasses	ReleaseTest	repaired	SKIP	PASS
+base-A1	Ring2ChunkImporterTest	testMultipleMixedChunksInStrangeOrderWithMetaclassTrait	Ring2ChunkImporterTest	repaired	XFAIL	PASS
+base-A1	Ring2ChunkImporterTest	testStandardMethodInNewMetaclassTrait	Ring2ChunkImporterTest	repaired	XFAIL	PASS
+base-A1	RubEditingAreaTest	testEmbeddedAnchorInTextAreDrawn	Rubric-anchors	repaired	SKIP	PASS
+base-A1	RubEditingAreaTest	testEmbeddedAnchorInTextAreDrawnAtRightPosition	Rubric-anchors	repaired	SKIP	PASS
+base-A1	RubScrolledTextMorphTest	testEmbeddedAnchorInTextAreDrawnAtRightPosition	Rubric-anchors	repaired	SKIP	PASS
+base-A1	RunnerLongDurationTest	testRunningFromAClass	RunnerLongDurationTest	repaired	SKIP	PASS
+base-A1	RunnerLongDurationTest	testRunningFromACollectionOfClasses	RunnerLongDurationTest	repaired	SKIP	PASS
+base-A1	SettingsStonReaderTest	testNonExistingStoredSettingVariable	SettingsStonReaderTest	repaired	XFAIL	PASS
+base-A1	SlotErrorsTest	testCannotBeRecompiled	SlotErrorsTest	repaired	XFAIL	PASS
+base-A1	SpCodeEditorPresenterTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	SpCodePresenterTest	testDoBrowseClassNotFound	SpCodePresenterTest	repaired	SKIP	PASS
+base-A1	SpCodePresenterTest	testDoBrowseMethodReferences	SpCodePresenterTest	repaired	SKIP	PASS
+base-A1	SpCodePresenterTest	testEnvironment	SpCodePresenterTest	repaired	SKIP	PASS
+base-A1	SpDemoTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	SpEasyColumnViewPresenterTest	testDisableActivationDuring	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyColumnViewPresenterTest	testSetSortingBlockBeforeItems	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyColumnViewPresenterTest	testSortingBlock	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyListViewPresenterTest	testDisableActivationDuring	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyTreeColumnViewPresenterTest	testDisableActivationDuring	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyTreeColumnViewPresenterTest	testPathIndexOf	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyTreeColumnViewPresenterTest	testPathItemOf	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyTreeListViewPresenterTest	testDisableActivationDuring	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyTreeListViewPresenterTest	testPathIndexOf	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpEasyTreeListViewPresenterTest	testPathItemOf	SpEasy-skips	repaired	SKIP	PASS
+base-A1	SpMenuItemPresenterTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	SpMenuPresenterTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	SpMorphPresenterTest	testChangingHelpAffectTheWidget	SpMorphPresenterTest	repaired	SKIP	PASS 2x
+base-A1	SpRadioButtonInteractionTest	testHidePresenterHidesWidget	SpRadioButtonInteractionTest	repaired	SKIP	PASS 2x
+base-A1	SpRadioButtonInteractionTest	testShowPresenterShowsWidget	SpRadioButtonInteractionTest	repaired	SKIP	PASS 2x
+base-A1	SpToolbarToggleButtonMorphTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	SpTransmissionWithComponentListTest	testExample	presenter-examples	repaired	SKIP	PASS
+base-A1	SpTreeAdapterMultipleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	repaired	SKIP	PASS 2x
+base-A1	SpTreeAdapterSingleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	repaired	SKIP	PASS 2x
+base-A1	SpTreeAdapterSingleSelectionTest	testUnselectPresenterItemUnselectsIndexInWidget	SpTree-selection-skips	repaired	SKIP	PASS 2x
+base-A1	SpTreeTableAdapterMultipleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	repaired	SKIP	PASS 2x
+base-A1	SpTreeTableAdapterSingleSelectionTest	testSelectPresenterItemSetsSelectedIndexInWidget	SpTree-selection-skips	repaired	SKIP	PASS 2x
+base-A1	SpTreeTableAdapterSingleSelectionTest	testUnselectPresenterItemUnselectsIndexInWidget	SpTree-selection-skips	repaired	SKIP	PASS 2x
+base-A1	StDebuggerClientModelTest	testComputeInitialTopContext	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerContextPredicateTest	testPrintDescription	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerContextPredicateTest	testPrintPostMortemDescription	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerTest	testGenerateAndProceed	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerTest	testRestoreReceiverRawInspectionSelection	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerTest	testRestoreReceiverRawInspectionSelectionAfterContextChange	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerTest	testReturnEnteredValue	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerTest	testSaveReceiverRawInspectionSelection	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StDebuggerTest	testSaveReceiverRawInspectionSelectionAfterContextChange	StDebugger-skips	repaired	SKIP	PASS
+base-A1	StObjectContextPresenterTest	testDoEvaluateDeclareGlobal	St-evaluate-declare-global	repaired	SKIP	PASS
+base-A1	StObjectTranscriptPresenterTest	testTrueShowInspectorShowsInspector	StObjectTranscriptPresenterTest	repaired	SKIP	PASS
+base-A1	StPlaygroundPagePresenterTest	testDoEvaluateDeclareGlobal	St-evaluate-declare-global	repaired	SKIP	PASS
+base-A1	StSettingsBrowserTest	testSimulateCategoryPopulation	StSettingsBrowserTest	repaired	SKIP	PASS
+base-A1	TFCallbacksTest	testCallbackNotRespectingLIFOOrderFailsReturn	TFFI-disabled-tests	repaired	SKIP	PASS 2x
+base-A1	TFUFFIFunctionCallTest	testLongCalloutDoesNotBlockImage	TFFI-disabled-tests	repaired	SKIP	PASS 2x
+base-A1	UnixResolverTest	testGetTempFromTMPDIR	platform-unix-resolver	repaired	SKIP	PASS
+base-A1	UnixResolverTest	testXdgParseUserDirLineDocuments	platform-unix-resolver	repaired	SKIP	PASS
+base-A1	UnixResolverTest	testXdgParseUserDirLineNotRoot	platform-unix-resolver	repaired	SKIP	PASS
+base-A1	WeakAnnouncerTest	testNoWeakBlock	WeakAnnouncerTest	repaired	XFAIL	PASS
+base-A1	Win32EnvironmentTest	testExistingEnvironmentVariableLongerThanBufferShouldReturnValue	NA-platform-windows	repaired	SKIP	PASS
+base-A1	Win32EnvironmentTest	testExistingEnvironmentVariableShouldReturnValue	NA-platform-windows	repaired	SKIP	PASS
+base-A1	Win32EnvironmentTest	testNonExistingEnvironmentVariableShouldGenerateException	NA-platform-windows	repaired	SKIP	PASS
+base-A1	ZnClientTest	testQueryGoogle	network-tests	repaired	FAIL	PASS
+base-A1	ZnHTTPSTest	testGetPharoVersion	network-tests	repaired	SKIP	PASS
+base-A1	ZnHTTPSTest	testSNIPage	network-tests	repaired	SKIP	PASS
+base-A2	CodeSimulationTest	testErrorCodeNotFound	Debugger-kernel-skips	needs a VM change	SKIP	FAIL
+base-A2	TFUFFICallbackTest	testCallbacksInOtherThread	TFFI-disabled-tests	needs a VM change	SKIP	PASS, SKIP
+base-A2	WriteBarrierTest	testMutateByteArrayUsingDoubleAtPut	WriteBarrierTest	our VM only	XFAIL	FAIL
+base-A2	WriteBarrierTest	testMutateByteArrayUsingFloatAtPut	WriteBarrierTest	our VM only	XFAIL	FAIL
+base-A3	AllTestFailTest	testFail1	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	AllTestFailTest	testFail2	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	AllTestFailTest	testFail3	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	AllTestFailTest	testFail4	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	ClyTestedClassMockTest	testExpectedFailure	NA-fixture-tests	not applicable	XFAIL	XFAIL
+base-A3	DependencyTest	testDataIs10ThenIncrement	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	DependencyTest	testDataIs11ThenIncrement	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	DependencyTest	testDataIs12ThenIncrement	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	DependencyTest	testDataIs13ThenIncrement	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	DependencyTest	testDataIs14ThenIncrement	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	DependencyTest	testDataIs15ThenIncrement	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	EmptyTest	test1	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	EmptyTest	test2	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	EmptyTest	test3	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	EmptyTest	test4	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	FFIExternalStructurePlatformTest	testStructureHasCorrectOffsets32bits	NA-platform-32bit	not applicable	SKIP	SKIP
+base-A3	FFIExternalStructurePlatformTest	testStructureHasCorrectSize32bits	NA-platform-32bit	not applicable	SKIP	SKIP
+base-A3	FailThenPassTest	testFailAtFirstRunning	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	FailThenPassTest	testPass	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	GreenTest	testPass	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	GreenTest	testPassAgain	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	IntegerTest	testCreationFromBytes1	NA-platform-32bit	not applicable	SKIP	SKIP
+base-A3	IntegerTest	testCreationFromBytes2	NA-platform-32bit	not applicable	SKIP	SKIP
+base-A3	IntegerTest	testCreationFromBytes3	NA-platform-32bit	not applicable	SKIP	SKIP
+base-A3	KMCombinationTest	testWindowsAndUnixMetaShouldBeCtrl	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	LongTest	testIsTakingTooLong	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testCallingSuperHelper	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testFailingButNotConsideredAsRotten	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testHelperHelperAssertHelper	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithAssertionInHelperRun	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithAssertionInSuperHelperRun	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithAssertionRun	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithHelperHelper	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithNoAssertionInHelperRun	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithNoAssertionInSuperHelperRun	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RTFFakeTestClassTest	testWithoutAssertionRun	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RedTest	testFail	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RedTest	testPass	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	RedTest	testWithError	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	TFBasicTypeSizeTest	testSizeSignedLongWindows	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFBasicTypeSizeTest	testSizeUnsignedLongWindows	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFBasicTypeTest	testSignedLongWindows	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFBasicTypeTest	testUnsignedLongWindows	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFFunctionCallTest	testCallingFunctionWithW64CallingConvention	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFUFFIBasicTypeSizeTest	testSizeSignedLongWindows	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFUFFIBasicTypeSizeTest	testSizeUnsignedLongWindows	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	TFUFFIDifferentCallingConventionFunctionCallTest	testCallingFunctionWithW64CallingConvention	NA-platform-windows	not applicable	SKIP	SKIP 2x
+base-A3	Win32WideStringTest	testCharactersAreEncodedInUnicode16Bits	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	Win32WideStringTest	testConvertingInBothDirectionsGaveSameString	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	Win32WideStringTest	testHandleIsAByteArray	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	Win32WideStringTest	testUnderlayingByteArrayEndsInTwoZeros	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	Win32WideStringTest	testUnderlayingByteArrayIsMultipleOf2	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	WinPlatformTest	testGetTempPathFromTMP	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	WindowsResolverTest	testResolveTempPathFromTMP	NA-platform-windows	not applicable	SKIP	SKIP
+base-A3	YellowTest	testFail	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A3	YellowTest	testPass	NA-fixture-tests	not applicable	SKIP	SKIP
+base-A4	MorphicNativeWindowTest	testMaximizeWindow	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicNativeWindowTest	testMinimizeWindow	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicNativeWindowTest	testNewWindowDefaultsIsNotMaximize	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicNativeWindowTest	testNewWindowDefaultsIsNotMinimized	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicNativeWindowTest	testRestoreWindow	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicWindowManagerTest	testDeleteAllWindowToLeftOfAWindow	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicWindowManagerTest	testDeleteAllWindowToRightOfAWindow	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	MorphicWindowManagerTest	testDeleteAWindowAndTaskBarActualized	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testImplementorsOfAt	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testInspectArray	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testInspectClass	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testInspectDictionary	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testInspectInteger	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testInspectTraitClass	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnClass	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnInstalledTraitMethod	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnMethod	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testOpenBrowseOnTraitMethod	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	OpenToolTest	testSendersOfAt	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	SimulateMouseTest	testSimulateClick	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	SimulateMouseTest	testSimulateMiddleClick	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	SimulateMouseTest	testSimulateRightClick	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	SpTextPresenterTest	testPropagateNaturalHeight	interactive session	needs an interactive session	SKIP	PASS
+base-A4	SpTextPresenterTest	testPropagateNaturalHeightWithMultipleLines	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	SpTextPresenterTest	testPropagateNaturalWidth	interactive session	needs an interactive session	SKIP	PASS
+base-A4	SpCodePresenterTest	testPropagateNaturalHeight	interactive session	needs an interactive session	SKIP	PASS
+base-A4	SpCodePresenterTest	testPropagateNaturalHeightWithMultipleLines	interactive session	needs an interactive session	SKIP	SKIP
+base-A4	SpCodePresenterTest	testPropagateNaturalWidth	interactive session	needs an interactive session	SKIP	PASS
+found	TKTCommonQueueWorkerPoolTest	testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel	TaskIt-worker-pool-race (added after the repair run)	repaired		PASS
+found	TKTFutureTest	testFutureFirstCompleteOfSuccessIfFirstSuccessFaster	TaskIt-worker-pool-race (added after the repair run)	repaired		PASS
+found	AtomicSharedQueueTest	testSecondReaderGetsItemWhenFirstReaderHadTheLock	AtomicSharedQueue-wakeups (added after the repair run)	repaired		PASS
+found	AtomicSharedQueueTest	testReaderGetsItemThatCameWhileItResetTheSignals	AtomicSharedQueue-wakeups (added after the repair run)	repaired		PASS
+found	AtomicSharedQueueTest	testQueueIsFreeAfterReaderIsTerminatedInARead	AtomicSharedQueue-wakeups (added after the repair run)	repaired		PASS
+found	OCParseCodeSnippetTest	testSimpleFormattedCode	Simple-formatter-comments (added after the repair run)	repaired		PASS 353x
+found	CodeImporterCodeSnippetTest	testCodeImporter	Code-importer-snippets (added after the repair run)	repaired		PASS 353x
+found	ChanelTestCaseNameCleanerTest	testRenameTestCaseEndingWithTestsUpdateReferences	Rename-class-changes (found by the package run)	repaired		not run
+found	RBTransformationsTest	testRenameClassTransform	Rename-class-changes (found by the package run)	repaired		PASS
+found	ReRenameClassCommandTest	testRenameClassCommandSuccess	Rename-class-changes (found by the package run)	repaired		PASS
+found	DurationTest	testAsDelayDoesNotRoundDown	Duration-wait-rounds-up (found by the package run)	repaired		PASS
+found	TkThreadTest	testPeriodFixedDuration	Duration-wait-rounds-up (found by the package run)	repaired		not run
+found	LinkInstallerTest	testUninstallVisitsEveryNodeWhenTheNodeSetCollides	Metalink-uninstall-order (found in a sweep of our VM)	repaired		PASS
+found	LinkInstallerTest	testUninstallDoesNotRemoveTheMethodTwiceAfterASkippedNode	Metalink-uninstall-order (found in a sweep of our VM)	repaired		PASS
+found	LinkInstallerTest	testLinkOnTempVarForObject	Metalink-uninstall-order (found in a sweep of our VM)	repaired		PASS
+found	ZnUrlTest	testEqualsWithQueryFieldsInAnotherOrder	Znurl-query-order (found by the package run)	repaired		PASS
+found	TKTFutureTest	testFutureAndThenExecutesInOrder	Taskit-andthen-order (found by a sweep)	see text		PASS
+found	TKTNewProcessTaskRunnerTest	testNewProcessTaskRunnerRunsInNewProcessEveryTime	open: draft entry 36, not validated	see text		PASS

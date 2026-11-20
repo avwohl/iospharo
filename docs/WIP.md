@@ -15,6 +15,22 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Pharo 14 and Pharo 15 are the test targets (2026-11-20)
+
+The owner asked for tests on Pharo 14 and Pharo 15, and to check the
+defects of the list on Pharo 15.  Pharo 13 is no test target any more (the
+app still offers a Pharo 13 download; the owner has not decided about it).
+
+- `scripts/vmrun.sh` has the VM name `cog15` (stock VM of Pharo 15,
+  `/tmp/harness15`, a link to `~/pharo-work/harness15`).
+- The check: [pharo15-check.md](pharo15-check.md).  All 220 tests are still
+  defects on Pharo 15; the fix entries repair them, except
+  `RGMCClassTest>>testClassesWithTraits`.
+- Open on Pharo 15: `ZnBufferedReadWriteStreamTest` (a build-number guard),
+  `MCStWriterTest` (test order), `RGMCClassTest` (class variable names).
+- `/tmp/pharo-work` is a link to `~/pharo-work` (a reboot does not clear
+  it).  `/tmp/harness14` came from the saved copy.
+
 ## The list of tests that do not pass (2026-11-18)
 
 [nonpassing-tests.md](nonpassing-tests.md) lists each test that did not pass
