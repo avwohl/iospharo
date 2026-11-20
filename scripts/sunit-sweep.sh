@@ -130,10 +130,25 @@ CHANGES="${IMAGE%.image}.changes"
 # See the .sources note in the header. Take it from beside the image, and fall
 # back to anywhere under the image's directory tree, which is where a
 # `curl get.pharo.org | bash` download leaves it.
+#
+# A directory can hold the images and .sources files of more than one Pharo
+# version.  On 2026-11-20 a Pharo 15 sweep took the Pharo 14 .sources file (the
+# first one that ls listed), and 884 tests failed on source code that read as
+# decompiled text and comments that read nil.  The image names its own .sources
+# file (for example Pharo15.0-64bit-b4d2dfd), so take the file whose base name is
+# in the image, and stop when more than one file or no file matches.
 IMAGE_DIR=$(cd "$(dirname "$IMAGE")" && pwd)
-SOURCES=$(ls "$IMAGE_DIR"/*.sources 2>/dev/null | head -1)
-[ -n "$SOURCES" ] || SOURCES=$(find "$IMAGE_DIR" -maxdepth 3 -name '*.sources' 2>/dev/null | head -1)
-[ -n "$SOURCES" ] || { echo "no .sources file for $IMAGE -- class comments would all read nil; see the header" >&2; exit 1; }
+pick_sources() {                     # $@ = candidate .sources files
+    local f n=0 hit=""
+    [ $# -eq 1 ] && { echo "$1"; return; }
+    for f in "$@"; do
+        if LC_ALL=C grep -a -q -F "$(basename "$f" .sources)" "$IMAGE"; then n=$((n + 1)); hit=$f; fi
+    done
+    [ "$n" -eq 1 ] && echo "$hit"
+}
+SOURCES=$(pick_sources $(ls "$IMAGE_DIR"/*.sources 2>/dev/null))
+[ -n "$SOURCES" ] || SOURCES=$(pick_sources $(find "$IMAGE_DIR" -maxdepth 3 -name '*.sources' 2>/dev/null))
+[ -n "$SOURCES" ] || { echo "no .sources file for $IMAGE that the image names (or more than one) -- class comments would all read nil; see the header" >&2; exit 1; }
 
 # The VM loads its FFI dylibs from beside its own binary.  Running a COPY of
 # the binary out of its build directory therefore silently loses them:

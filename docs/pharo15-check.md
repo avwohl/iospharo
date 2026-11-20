@@ -64,6 +64,35 @@ our VM are the tests that need a Cog change: `CodeSimulationTest>>testErrorCodeN
 the four `WriteBarrierTest` tests of the typed stores, and the same-thread
 variant of `TFUFFICallbackTest>>testCallbacksInOtherThread`.
 
+## With all fixes, after the repairs of 2026-11-20
+
+The image fix entries with the repairs below (`20-RGMCClassTest.st`
+extended, new entries 37 and 38), each image prepared from a pristine image:
+
+| Run | Total | Pass | Fail | Error | Skip | Timeout | Expected failure |
+|---|---|---|---|---|---|---|---|
+| Pharo 15, our VM | 40361 | 40273 | 0 | 0 | 87 | 0 | 1 |
+| Pharo 15, stock Cog | 40361 | 40267 | 5 | 0 | 88 | 0 | 1 |
+| Pharo 14, our VM | 39465 | 39377 | 0 | 0 | 87 | 0 | 1 |
+| Pharo 14, stock Cog | 39465 | 39371 | 5 | 0 | 88 | 0 | 1 |
+| Interactive pass, our VM, Pharo 14 and Pharo 15 each | 135 | 135 | 0 | 0 | 0 | 0 | 0 |
+
+On the two versions, the 87 skips and the expected failure of our VM are
+the tests of parts A3 and A4 of the list (they cannot apply on macOS arm64,
+or need a display; the display tests pass in the interactive pass).  Stock
+Cog has 6 more: the tests that need the Cog changes of
+[upstream/](upstream/) (`CodeSimulationTest>>testErrorCodeNotFound`, four
+`WriteBarrierTest` tests, and the same-thread variant of
+`TFUFFICallbackTest>>testCallbacksInOtherThread`).
+
+A harness defect showed in the first Pharo 15 sweep of our VM: 199 failures
+and 685 errors, on source code that read as decompiled text and comments
+that read nil.  The image directory had the `.sources` files of Pharo 14 and
+Pharo 15, and `scripts/sunit-sweep.sh` took the first one.  The script now
+takes the `.sources` file whose name is in the image, and stops when no file
+or more than one file matches.  The sweep again with the repaired script is
+the row "Pharo 15, our VM" above.
+
 ## New in Pharo 15
 
 The clean image has 8 tests that do not pass and that are not in the list.
@@ -74,21 +103,32 @@ because the sweep images have the entries):
 `OutOfMemoryTest>>testSignalOfTheLowSpaceFromTheVM` (entry 23),
 `TFUFFICallbackTest>>testCallbackWithErrorHanlded` (entry 10, fix 7).
 
-Open, on stock Cog and on our VM:
+Found on Pharo 15, on stock Cog and on our VM, and repaired (2026-11-20):
 
 1. `ZnBufferedReadWriteStreamTest>>testReadThenWrite` and `testWriteThenRead`
    skip.  The guard is `SystemVersion current build < 690`.  The build
    counter starts again for each Pharo version (this image is build 141),
    so the two tests skip in each Pharo 15 build before 690.  A defect of
-   the tests.
+   the tests.  Fix entry `37-znbuffered-build-guard.st`: the 11 tests of
+   the class pass on Pharo 14 and Pharo 15, on stock Cog and on our VM.
 2. `MCStWriterTest>>testClassMethodDefinition` and `testMethodDefinition`
    fail in the sweep (the writer writes `stamp: 'nil'`) and pass when the
-   class runs alone.  A test that runs before them leaves the mock class
-   with no stamp.  The Pharo CI runs the classes in another order and
-   passes them.
+   class runs alone.  `MCPackageTest` runs before them: it unloads the mock
+   package, and its `tearDown` installs the snapshot again.  The methods
+   that the install makes have no stamp.  Pharo 14 has the same defect: the
+   two classes ran in different batches (two images) of the Pharo 14
+   sweeps, and in one batch of the Pharo 15 sweeps.  Two causes in the
+   image: `MCMethodDefinition>>loadWithLoader:` gives the installer the
+   instance variable `timeStamp`, which stays nil for a definition with a
+   lazy stamp.  And the load runs inside `deferFlushDuring:`, where
+   `FilesSourcesManager>>timeStampAt:for:` answers `''`.  Fix entry
+   `38-mc-load-keeps-method-stamp.st`.
 3. `RGMCClassTest>>testClassesWithTraits` fails with the fix entries:
    "Got `#(#'#IsExtentRememberingEnabled')` instead of
    `#(#IsExtentRememberingEnabled)`".  Pharo 15 has a class with traits and
-   a class variable.  The Ring definition keeps the `#` in the name of a
-   class variable.  Fix entry `20-RGMCClassTest.st` repairs the slot names
-   and must repair the class variable names too.
+   a class variable (`SpPresenter`).  The Ring definition keeps the `#` in
+   the name of a class variable.  Fix entry `20-RGMCClassTest.st` repaired
+   the slot names and now repairs the class variable names too: the 50
+   tests of `RGMCClassTest`, `RGMCPackageTest`,
+   `RGMCTraitCompositionVisitorTest` and `Ring2ChunkImporterTest` pass on
+   Pharo 14 and Pharo 15, on stock Cog and on our VM.

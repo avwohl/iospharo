@@ -1867,7 +1867,7 @@ fix value: #RGMCTest value: #testClass: value: [ :s | s includesSubstring: 'equa
 	self compareTraitComposition: aClass traitComposition with: def traitComposition.
 	self compareTraitComposition: aClass class traitComposition with: def metaclass traitComposition'.
 
-"In a class with complex slots Monticello exports a plain variable as #y; the Ring definition kept the # in the slot name, for instance and class-side variables."
+"In a class with complex slots Monticello exports a plain variable as #y; the Ring definition kept the # in the slot name, for instance and class-side variables.  The same holds for a class variable: Pharo 15 has SpPresenter, with complex slots and the class variable IsExtentRememberingEnabled, which Monticello exports as #IsExtentRememberingEnabled (2026-11-20)."
 fix value: #MCClassDefinition value: #ensureRingDefinitionIn: value: [ :s | (s includesSubstring: 'RGInstanceVariableSlot named: each name parent: def layout') ] value: 'ensureRingDefinitionIn: anRGEnvironment
 
 	^ anRGEnvironment backend definitionFor: self ifAbsentRegister: [
@@ -1899,7 +1899,7 @@ fix value: #MCClassDefinition value: #ensureRingDefinitionIn: value: [ :s | (s i
 						unknownSlot expression: (each name copyAfter: $>) trimBoth.
 						def layout addSlot: unknownSlot]].
 			(each class type = #class) ifTrue: [
-				def addClassVariable: (RGClassVariable named: each name parent: def)].
+				def addClassVariable: (RGClassVariable named: ((each name copyUpTo: $=) copyWithout: $#) trimBoth parent: def)].
 			(each class type = #classInstance) ifTrue: [
 				metaclassDef layout addSlot: (RGInstanceVariableSlot named: (each name copyWithout: $#) trimBoth parent: metaclassDef layout)].
 			(each class type = #pool) ifTrue: [
@@ -6073,4 +6073,149 @@ add value: #TKTFutureTest value: #testCallbackRegisteredWhileAnotherProcessDeplo
 
 	self deny: (ranSignal waitTimeoutMilliseconds: 2000).
 	self assert: ran equals: 1'.
+!
+
+"=== 37-znbuffered-build-guard.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"37-znbuffered-build-guard.st -- two Zinc stream tests skip in each Pharo 15 build
+ before build 690 (2026-11-20).
+
+ ZnBufferedReadWriteStreamTest>>testReadThenWrite and >>testWriteThenRead start with
+     ((SystemVersion current major < 7) or: [ SystemVersion current build < 690 ])
+         ifTrue: [ ^ self skip ].
+ The guard means 'older than Pharo 7.0 build 690'.  The build number starts again at
+ 1 for each Pharo version (Pharo 15.0 build 141 on 2026-11-20), so the second test of
+ the guard skips the two tests on Pharo 15 although the code under test is there.
+ Pharo 14 build 791 runs the tests and passes them.  The repair compares the build
+ only for Pharo 7: the tests skip for a major version below 7, and for Pharo 7 before
+ build 690.  The assertions do not change.
+ Measured on Pharo 15 build 141: the two tests skip on stock Cog v12.0.6 and on our VM."
+
+[ :oldGuard :newGuard |
+	#( #testReadThenWrite #testWriteThenRead ) do: [ :sel |
+		fix value: #ZnBufferedReadWriteStreamTest value: sel
+			value: [ :src | src includesSubstring: oldGuard ]
+			value: (((Smalltalk at: #ZnBufferedReadWriteStreamTest) >> sel) sourceCode
+				copyReplaceAll: oldGuard with: newGuard) ] ]
+	value: '((SystemVersion current major < 7) or: [ SystemVersion current build < 690 ])'
+	value: '((SystemVersion current major < 7) or: [ SystemVersion current major = 7 and: [ SystemVersion current build < 690 ] ])'.
+!
+
+"=== 38-mc-load-keeps-method-stamp.st ==="
+"00-header.st -- the helper blocks for the entries files of this directory.
+ scripts/gen-image-fixes.py puts this header in front of each entries file,
+ so an entries file holds entries only.
+
+ fix value: #Class value: #selector value: [ :source | <true when the defect
+     is in the current source> ] value: '<new source of the method>'.
+   Replaces one existing method.  Use #'Foo class' as the class symbol for a
+   class-side method.
+ add value: #Class value: #selector value: '<protocol>' value: '<source>'.
+   Compiles a method that the class does not have yet.
+ Each entry prints one line: FIXED, ADDED or SKIP with the reason."
+| fix add resolve |
+resolve := [ :clsName | | base |
+	(clsName endsWith: ' class')
+		ifTrue: [ base := Smalltalk globals at: (clsName allButLast: 6) asSymbol ifAbsent: [ nil ]. base ifNotNil: [ base class ] ]
+		ifFalse: [ Smalltalk globals at: clsName asSymbol ifAbsent: [ nil ] ] ].
+fix := [ :clsName :sel :guard :src | | cls |
+	cls := resolve value: clsName.
+	(cls notNil and: [ cls includesSelector: sel ])
+		ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (absent)'; lf; flush ]
+		ifTrue: [
+			(guard value: (cls >> sel) sourceCode)
+				ifFalse: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (defect not present)'; lf; flush ]
+				ifTrue: [
+					cls compile: src classified: (cls >> sel) protocolName.
+					Stdio stdout nextPutAll: 'FIXED ', clsName, '>>', sel; lf; flush ] ] ].
+add := [ :clsName :sel :protocol :src | | cls |
+	cls := resolve value: clsName.
+	cls
+		ifNil: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (class absent)'; lf; flush ]
+		ifNotNil: [
+			(cls includesSelector: sel)
+				ifTrue: [ Stdio stdout nextPutAll: 'SKIP ', clsName, '>>', sel, ' (already present)'; lf; flush ]
+				ifFalse: [
+					cls compile: src classified: protocol.
+					Stdio stdout nextPutAll: 'ADDED ', clsName, '>>', sel; lf; flush ] ] ].
+
+"38-mc-load-keeps-method-stamp.st -- Monticello loads a method with no time stamp when
+ the definition came from the image (2026-11-20).
+
+ MCMethodDefinition>>loadWithLoader: gives the method installer
+     changeStamp: timeStamp;
+ the instance variable.  A definition made from a method of the image (a snapshot,
+ CompiledMethod>>asMCMethodDefinition) has a source pointer and computes its stamp
+ lazily in #timeStamp; the instance variable stays nil until a sender asks.  So each
+ method that such a definition installs gets the stamp nil, and its timeStamp answers
+ the string 'nil'.
+
+ Seen in the tests: MCPackageTest unloads the mock package, and its tearDown installs
+ MCSnapshotResource current snapshot again.  After that MCMockClassA>>one and
+ MCMockClassA class>>one have the stamp 'nil', and MCStWriterTest>>testMethodDefinition
+ and >>testClassMethodDefinition fail when they run after MCPackageTest in the same
+ image.  Measured on Pharo 14 build 791 and Pharo 15 build 141, stock Cog v12.0.6
+ and our VM: the same.  The sweeps show it on Pharo 15 only because the two classes
+ fall into one batch (one image) there.
+
+ A second defect is behind the first one: the load runs inside
+ SourcesManager current deferFlushDuring: (MCPackageLoader>>basicLoad), and
+ FilesSourcesManager>>timeStampAt:for: answers '' while the flush is deferred
+ ('flushChanges ifFalse: [ ^ '''' ]').  So a stamp that is computed during the load is
+ empty: with only the first repair the methods get the stamp ''.  Measured 2026-11-20:
+ the lazy stamp of MCMockClassA>>one reads '2026-11-20T15:23:20...' before and after
+ MCSnapshot>>install, and '' during it.
+
+ The repairs: #loadWithLoader: sends #timeStamp, the accessor that computes the stamp;
+ #basicLoad reads the stamps of the method definitions before it defers the flush, so
+ the accessor answers the stamp that the definition cached."
+
+fix value: #MCMethodDefinition value: #loadWithLoader:
+	value: [ :src | src includesSubstring: 'changeStamp: timeStamp;' ]
+	value: (((Smalltalk at: #MCMethodDefinition) >> #loadWithLoader:) sourceCode
+		copyReplaceAll: 'changeStamp: timeStamp;' with: 'changeStamp: self timeStamp;').
+
+fix value: #MCPackageLoader value: #basicLoad
+	value: [ :src | (src includesSubstring: 'deferFlushDuring: [ self basicLoadDefinitions ]') and: [ (src includesSubstring: 'each timeStamp') not ] ]
+	value: 'basicLoad
+
+	"Read the time stamps of the method definitions first: while the flush of the changes file is deferred, FilesSourcesManager>>timeStampAt:for: answers the empty string, and a definition made from a method of the image computes its stamp lazily."
+	additions do: [ :each | each isMethodDefinition ifTrue: [ each timeStamp ] ].
+	SourcesManager current deferFlushDuring: [ self basicLoadDefinitions ]'.
 !

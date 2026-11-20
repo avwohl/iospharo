@@ -26,8 +26,15 @@ app still offers a Pharo 13 download; the owner has not decided about it).
 - The check: [pharo15-check.md](pharo15-check.md).  All 220 tests are still
   defects on Pharo 15; the fix entries repair them, except
   `RGMCClassTest>>testClassesWithTraits`.
-- Open on Pharo 15: `ZnBufferedReadWriteStreamTest` (a build-number guard),
-  `MCStWriterTest` (test order), `RGMCClassTest` (class variable names).
+- Repaired on 2026-11-20: `ZnBufferedReadWriteStreamTest` (a build-number
+  guard, entry 37), `MCStWriterTest` (Monticello loads a snapshot with no
+  method stamps, entry 38; Pharo 14 too), `RGMCClassTest` (class variable
+  names, entry 20).  With all fixes, our VM passes each test that can apply
+  on Pharo 14 and Pharo 15; stock Cog fails only the 6 tests that need the
+  Cog changes.
+- Harness defect repaired: `scripts/sunit-sweep.sh` took the first
+  `.sources` file of the image directory (the Pharo 14 file for a Pharo 15
+  image); it now takes the file that the image names.
 - `/tmp/pharo-work` is a link to `~/pharo-work` (a reboot does not clear
   it).  `/tmp/harness14` came from the saved copy.
 

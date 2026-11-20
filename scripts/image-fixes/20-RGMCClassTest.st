@@ -35,7 +35,7 @@ fix value: #RGMCTest value: #testClass: value: [ :s | s includesSubstring: 'equa
 	self compareTraitComposition: aClass traitComposition with: def traitComposition.
 	self compareTraitComposition: aClass class traitComposition with: def metaclass traitComposition'.
 
-"In a class with complex slots Monticello exports a plain variable as #y; the Ring definition kept the # in the slot name, for instance and class-side variables."
+"In a class with complex slots Monticello exports a plain variable as #y; the Ring definition kept the # in the slot name, for instance and class-side variables.  The same holds for a class variable: Pharo 15 has SpPresenter, with complex slots and the class variable IsExtentRememberingEnabled, which Monticello exports as #IsExtentRememberingEnabled (2026-11-20)."
 fix value: #MCClassDefinition value: #ensureRingDefinitionIn: value: [ :s | (s includesSubstring: 'RGInstanceVariableSlot named: each name parent: def layout') ] value: 'ensureRingDefinitionIn: anRGEnvironment
 
 	^ anRGEnvironment backend definitionFor: self ifAbsentRegister: [
@@ -67,7 +67,7 @@ fix value: #MCClassDefinition value: #ensureRingDefinitionIn: value: [ :s | (s i
 						unknownSlot expression: (each name copyAfter: $>) trimBoth.
 						def layout addSlot: unknownSlot]].
 			(each class type = #class) ifTrue: [
-				def addClassVariable: (RGClassVariable named: each name parent: def)].
+				def addClassVariable: (RGClassVariable named: ((each name copyUpTo: $=) copyWithout: $#) trimBoth parent: def)].
 			(each class type = #classInstance) ifTrue: [
 				metaclassDef layout addSlot: (RGInstanceVariableSlot named: (each name copyWithout: $#) trimBoth parent: metaclassDef layout)].
 			(each class type = #pool) ifTrue: [
