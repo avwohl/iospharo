@@ -15,6 +15,30 @@ before concluding it was never known.
 
 Routing to the durable docs is in the header of `docs/deferred.md`.
 
+## Pull requests for the Pharo group (2026-11-23)
+
+The owner asked for pull requests for 10 defects of the Pharo 15 image or
+of the VM (not of the tests), for review.  The result is
+[upstream/prs/README.md](upstream/prs/README.md): 11 local branches
+(`pr15/*` in `~/src/pharo` and `~/src/pharo-vm`), each with a description,
+a patch file and measured before and after results.  Nothing was pushed.
+
+- Work trees: `~/pharo-work/wt/pharo-*` and `~/pharo-work/wt/vm-*`.  The
+  merge of the 5 VM branches is `pr15/all-five`
+  (`~/pharo-work/wt/vm-pr15-all-five`).
+- New tools: `scripts/upstream-pr/stage-pr.sh` and `load-pr.st` (load the
+  Tonel change of a branch into an image), `vm-pr-build.sh` (build one Cog
+  branch and make an app that `vmrun.sh` starts by its path),
+  `vmrun.sh cogbuild <dir> [target]`.
+- A Cog build tree needs `-DICEBERG_DEFAULT_REMOTE=httpsUrl`.  The stock VM
+  aborts in the libgit2 TLS code in about half of the VMMaker loads;
+  `vm-pr-build.sh` tries again.
+- The triage of 43 candidates is in
+  `results/upstream-triage-2026-11-23.json`.  22 more real defects wait in
+  the list at the end of `upstream/prs/README.md`.
+- After a reboot: `ln -sfn ~/pharo-work /tmp/pharo-work` and
+  `ln -sfn ~/pharo-work/harness15 /tmp/harness15`.
+
 ## Pharo 14 and Pharo 15 are the test targets (2026-11-20)
 
 The owner asked for tests on Pharo 14 and Pharo 15, and to check the

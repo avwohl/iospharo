@@ -1,0 +1,102 @@
+From 6cad97900622b714813b9c93ec307e9438ec04f4 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 07:15:10 -0500
+Subject: [PATCH] SocketPlugin: local address from any interface that is up,
+ not only eth0 and wlan0
+
+The primitive answered 0.0.0.0 on macOS and on Linux with predictable
+interface names, because sqResolverLocalAddress accepted only the
+interface names eth0 and wlan0.
+
+The function now takes the first IPv4 address of an interface that is
+up and is not the loopback.  A running interface with an address
+outside 169.254/16 wins over an interface that is only up.  The
+getnameinfo call and its failure path are gone: the address is read
+directly from sin_addr.  The early returns that skipped freeifaddrs
+are gone too.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../src/common/SocketPluginImpl.c             | 46 +++++++++++--------
+ 1 file changed, 27 insertions(+), 19 deletions(-)
+
+diff --git a/plugins/SocketPlugin/src/common/SocketPluginImpl.c b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+index 34a69938f..83d197fc0 100644
+--- a/plugins/SocketPlugin/src/common/SocketPluginImpl.c
++++ b/plugins/SocketPlugin/src/common/SocketPluginImpl.c
+@@ -107,6 +107,7 @@ struct sockaddr_un
+ # include <arpa/inet.h>
+ # include <netdb.h>
+ #include <ifaddrs.h>
++#include <net/if.h>
+ 
+ #define closesocket(x) close(x)
+ #define SD_SEND 	SHUT_WR
+@@ -1718,12 +1719,17 @@ sqInt sqResolverLocalAddress(void) {
+ #ifndef _WIN32
+ 
+ 	/*
+-	 * TODO: Check all this code, because is does not work if you have more than one network interface.
++	 * Answer the IPv4 address of the first network interface that is up and is
++	 * not the loopback.  An interface that is also running, with an address
++	 * outside the link-local range 169.254/16, wins over one that is only up.
++	 *
++	 * Before, this function accepted only the interface names "eth0" and
++	 * "wlan0".  The answer was 0.0.0.0 on macOS (en0, en1, ...) and on a Linux
++	 * with predictable interface names (enp3s0, wlp2s0, ...).
+ 	 */
+ 
+ 	struct ifaddrs *ifaddr, *ifa;
+-    int s;
+-    char host[NI_MAXHOST];
++	struct ifaddrs *best = NULL, *fallback = NULL, *pick;
+     sqInt localAddr = 0;
+ 
+     if (getifaddrs(&ifaddr) == -1) {
+@@ -1734,25 +1740,27 @@ sqInt sqResolverLocalAddress(void) {
+ 
+     for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) 
+     {
+-        if (ifa->ifa_addr == NULL)
+-            continue;  
++        unsigned char *bytes;
+ 
+-        s=getnameinfo(ifa->ifa_addr,sizeof(struct sockaddr_in),host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
++        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET)
++            continue;
++        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK))
++            continue;
+ 
+-        if(((strcmp(ifa->ifa_name,"eth0")==0)||(strcmp(ifa->ifa_name,"wlan0")==0))&&(ifa->ifa_addr->sa_family==AF_INET))
+-        {
+-            if (s != 0)
+-            {
+-                success(false);
+-                return 0;
+-            }
+-            logTrace( "\tInterface : <%s>\n",ifa->ifa_name );
+-            logTrace( "\t IP       : <%s>\n", inet_ntoa(((struct sockaddr_in *)(ifa->ifa_addr))->sin_addr));
+-            if(localAddr == 0) { /* take the first plausible answer */
+-                localAddr = ((struct sockaddr_in *)(ifa->ifa_addr))->sin_addr.s_addr;
+-            }
+-           
++        bytes = (unsigned char *)&((struct sockaddr_in *)(ifa->ifa_addr))->sin_addr;
++        if ((ifa->ifa_flags & IFF_RUNNING) && !(bytes[0] == 169 && bytes[1] == 254)) {
++            best = ifa; /* take the first plausible answer */
++            break;
+         }
++        if (fallback == NULL)
++            fallback = ifa;
++    }
++
++    pick = (best != NULL) ? best : fallback;
++    if (pick != NULL) {
++        logTrace( "\tInterface : <%s>\n", pick->ifa_name );
++        logTrace( "\t IP       : <%s>\n", inet_ntoa(((struct sockaddr_in *)(pick->ifa_addr))->sin_addr));
++        localAddr = ((struct sockaddr_in *)(pick->ifa_addr))->sin_addr.s_addr;
+     }
+ 
+     freeifaddrs(ifaddr);
+-- 
+2.54.0 (Apple Git-157)
+

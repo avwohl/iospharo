@@ -1,0 +1,492 @@
+From 1b6c6a06056529da2c85a191038ef84faede72ac Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 07:39:09 -0500
+Subject: [PATCH] Typed store primitives respect the write barrier
+
+The primitives that store a typed value into the bytes of an object
+(primitiveStore*IntoBytes) and primitiveFFIIntegerAtPut did not test the
+receiver for immutability.  A store into a read-only ByteArray changed
+the bytes, and the primitive did not fail:
+
+    g := ByteArray new: 8.  g beReadOnlyObject.
+    g float64AtOffset: 0 put: 2.5.   "g is now #[0 0 0 0 0 0 4 64]"
+    g uint32AtOffset: 0 put: 7.      "g is now #[7 0 0 0 ...]"
+
+Each C primitive now fails with PrimErrNoModification for a read-only
+receiver, as primitiveAtPut does.  The image fallback code then decides
+which error the caller sees.  primitiveFFIIntegerAtPut does the test
+only for a store into the bytes of the receiver itself; a store through
+an ExternalAddress goes to outside memory.
+
+The JIT has machine code versions of these primitives
+(genPrimitiveStore:intoBytesWith:needsToTrap:).  The machine code now
+leaves without a store when the receiver is read-only, so the C
+primitive or the fallback code of the method handles the case.  Without
+this part the machine code had no test for a read-only receiver.
+
+Tests: VMPrimitiveTest checks Float64, Int32 and UInt8 stores into a
+read-only and a mutable ByteArray.  VMByteArrayAccessPrimitive checks
+primitiveFFIIntegerAtPut for a read-only ByteArray, a mutable
+ByteArray and an ExternalAddress.  VMJittedByteArrayAccessPrimitiveTest
+checks that the machine code of Int32, UInt64 and Float64 stores leaves
+a read-only receiver unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../CogObjectRepresentationForSpur.class.st   | 11 ++-
+ .../StackInterpreterPrimitives.class.st       | 21 +++++
+ .../VMByteArrayAccessPrimitive.class.st       | 62 ++++++++++++++
+ ...ittedByteArrayAccessPrimitiveTest.class.st | 80 +++++++++++++++++++
+ .../VMMakerTests/VMPrimitiveTest.class.st     | 71 ++++++++++++++++
+ 5 files changed, 244 insertions(+), 1 deletion(-)
+
+diff --git a/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st b/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st
+index 2346db982..8d695193d 100644
+--- a/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st
++++ b/smalltalksrc/VMMaker/CogObjectRepresentationForSpur.class.st
+@@ -1761,7 +1761,8 @@ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize int
+ { #category : 'primitive generators' }
+ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize intoBytesWith: aBlock needsToTrap: needsToTrap [
+ 
+-	| nSlotsOrBytesReg jumpBadIndex formatReg jumpIsPointers jumpOutOfBounds jumpSmaller jumpImmediate destPointerRegister |
++	| nSlotsOrBytesReg jumpBadIndex formatReg jumpIsPointers jumpOutOfBounds jumpSmaller jumpImmediate jumpImmutable destPointerRegister |
++	<var: #jumpImmutable type: #'AbstractInstruction *'>
+ 	nSlotsOrBytesReg := ClassReg.
+ 	destPointerRegister := ClassReg.
+ 
+@@ -1769,6 +1770,11 @@ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize int
+ 	cogit genLoadArgAtDepth: 0 into: Arg1Reg.
+ 	
+ 	jumpImmediate := self genJumpImmediate: ReceiverResultReg.
++	"A read-only receiver leaves the machine code version without a store.  The C primitive (64-bit values)
++	 or the fallback code of the method then handles the read-only case."
++	self
++		cppIf: IMMUTABILITY
++		ifTrue: [jumpImmutable := self genJumpImmutable: ReceiverResultReg scratchReg: TempReg].
+ 	jumpBadIndex := self genJumpNotSmallInteger: Arg0Reg scratchReg: TempReg.
+ 	self genConvertSmallIntegerToIntegerInReg: Arg0Reg.
+ 	
+@@ -1806,6 +1812,9 @@ CogObjectRepresentationForSpur >> genPrimitiveStore: accessedElementByteSize int
+ 	self genConvertIntegerToSmallIntegerInReg: Arg0Reg.
+ 	
+ 	jumpBadIndex jmpTarget: (jumpImmediate jmpTarget: cogit Label).
++	self
++		cppIf: IMMUTABILITY
++		ifTrue: [jumpImmutable jmpTarget: jumpImmediate getJmpTarget].
+ 	^ needsToTrap ifTrue: [0] ifFalse: [CompletePrimitive]
+ ]
+ 
+diff --git a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+index 9df5abda9..1dd19c3a9 100644
+--- a/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
++++ b/smalltalksrc/VMMaker/StackInterpreterPrimitives.class.st
+@@ -1334,6 +1334,12 @@ StackInterpreterPrimitives >> primitiveFFIIntegerAtPut [
+ 		
+ 	addr := self maybeExternalAddressOf: rcvr startingAt: byteOffset size: byteSize.
+ 	addr = 0 ifTrue: [^self primitiveFailFor: PrimErrBadArgument].
++
++	"A store into the bytes of the receiver itself must respect the write barrier.
++	 A store through an ExternalAddress goes to outside memory and is not a store into the receiver."
++	((objectMemory fetchClassOf: rcvr) ~= objectMemory classExternalAddress
++		and: [objectMemory isObjImmutable: rcvr])
++			ifTrue: [^self primitiveFailFor: PrimErrNoModification].
+ 	
+ 	value := isSigned 
+ 		ifTrue:[objectMemory signed64BitValueOf: valueOop]
+@@ -2950,6 +2956,7 @@ StackInterpreterPrimitives >> primitiveStoreBoolean8IntoBytes [
+ 	index := objectMemory integerValueOf: index.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 	
+ 	valueObject = objectMemory trueObject ifTrue: [
+ 		value := 1
+@@ -3012,6 +3019,7 @@ StackInterpreterPrimitives >> primitiveStoreChar16IntoBytes [
+ 	value := objectMemory characterValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 1) or: [byteSize < 2]]) ifTrue:
+@@ -3060,6 +3068,7 @@ StackInterpreterPrimitives >> primitiveStoreChar32IntoBytes [
+ 	value := self characterValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3108,6 +3117,7 @@ StackInterpreterPrimitives >> primitiveStoreChar8IntoBytes [
+ 	value := objectMemory characterValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= byteSize]) ifTrue:
+@@ -3157,6 +3167,7 @@ StackInterpreterPrimitives >> primitiveStoreFloat32IntoBytes [
+ 	value := objectMemory floatValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3207,6 +3218,7 @@ StackInterpreterPrimitives >> primitiveStoreFloat64IntoBytes [
+ 	value := objectMemory floatValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 7) or: [byteSize < 8]]) ifTrue:
+@@ -3256,6 +3268,7 @@ StackInterpreterPrimitives >> primitiveStoreInt16IntoBytes [
+ 	value := objectMemory integerValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 1) or: [byteSize < 2]]) ifTrue:
+@@ -3306,6 +3319,7 @@ StackInterpreterPrimitives >> primitiveStoreInt32IntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3358,6 +3372,7 @@ StackInterpreterPrimitives >> primitiveStoreInt64IntoBytes [
+ 	
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 7) or: [byteSize < 8]]) ifTrue:
+@@ -3408,6 +3423,7 @@ StackInterpreterPrimitives >> primitiveStoreInt8IntoBytes [
+ 	value := objectMemory integerValueOf: valueObject.
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= byteSize]) ifTrue:
+@@ -3458,6 +3474,7 @@ StackInterpreterPrimitives >> primitiveStorePointerIntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - (BytesPerWord  - 1)) or: [byteSize < BytesPerWord]]) ifTrue:
+@@ -3545,6 +3562,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt16IntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 1) or: [byteSize < 2]]) ifTrue:
+@@ -3597,6 +3615,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt32IntoBytes [
+ 	
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 3) or: [byteSize < 4]]) ifTrue:
+@@ -3649,6 +3668,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt64IntoBytes [
+ 	
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= (byteSize - 7) or: [byteSize < 8]]) ifTrue:
+@@ -3701,6 +3721,7 @@ StackInterpreterPrimitives >> primitiveStoreUInt8IntoBytes [
+ 
+ 	bytes := objectMemory firstBytePointerOfDataObject: rcvr.
+ 	bytes == 0 ifTrue: [ ^ self primitiveFailFor: PrimErrBadArgument ].
++	(objectMemory isObjImmutable: rcvr) ifTrue: [ ^ self primitiveFailFor: PrimErrNoModification ].
+ 
+ 	byteSize := objectMemory numBytesOf: rcvr.
+ 	(index < 0 or: [index >= byteSize]) ifTrue:
+diff --git a/smalltalksrc/VMMakerTests/VMByteArrayAccessPrimitive.class.st b/smalltalksrc/VMMakerTests/VMByteArrayAccessPrimitive.class.st
+index fa7eb5060..b3536bd8b 100644
+--- a/smalltalksrc/VMMakerTests/VMByteArrayAccessPrimitive.class.st
++++ b/smalltalksrc/VMMakerTests/VMByteArrayAccessPrimitive.class.st
+@@ -17,6 +17,68 @@ VMByteArrayAccessPrimitive >> setUp [
+ 		buildStack
+ ]
+ 
++{ #category : 'tests' }
++VMByteArrayAccessPrimitive >> testFFIIntegerAtPut64bitFailsIfReceiverIsImmutable [
++
++	| array |
++	array := self new8BitIndexableOfSize: 8.
++	memory setIsImmutableOf: array to: true.
++
++	interpreter push: array.
++	interpreter push: (memory integerObjectOf: 1).
++	interpreter push: (memory integerObjectOf: 7).
++	interpreter push: (memory integerObjectOf: 8).
++	interpreter push: memory falseObject.
++	interpreter primitiveFFIIntegerAtPut.
++
++	self assert: interpreter failed.
++	self assert: interpreter primFailCode equals: PrimErrNoModification.
++	0 to: 7 do: [ :index |
++		self assert: (memory fetchByte: index ofObject: array) equals: 0 ]
++]
++
++{ #category : 'tests' }
++VMByteArrayAccessPrimitive >> testFFIIntegerAtPutFailsIfReceiverIsImmutable [
++
++	| array |
++	array := self new8BitIndexableOfSize: 8.
++	memory setIsImmutableOf: array to: true.
++
++	interpreter push: array.
++	interpreter push: (memory integerObjectOf: 1).
++	interpreter push: (memory integerObjectOf: 7).
++	interpreter push: (memory integerObjectOf: 4).
++	interpreter push: memory falseObject.
++	interpreter primitiveFFIIntegerAtPut.
++
++	self assert: interpreter failed.
++	self assert: interpreter primFailCode equals: PrimErrNoModification.
++	0 to: 7 do: [ :index |
++		self assert: (memory fetchByte: index ofObject: array) equals: 0 ]
++]
++
++{ #category : 'tests' }
++VMByteArrayAccessPrimitive >> testFFIIntegerAtPutThroughExternalAddressStoresEvenIfAddressObjectIsImmutable [
++
++	| array externalAddress |
++	memory classExternalAddress: (self newClassInOldSpaceWithSlots: 0 instSpec: (memory byteFormatForNumBytes: 0)).
++	array := self new8BitIndexableOfSize: 8.
++	"The ExternalAddress points to the data of array.  Its own bytes are not the target of the store."
++	externalAddress := memory instantiateClass: memory classExternalAddress indexableSize: memory wordSize.
++	memory storePointer: 0 ofObject: externalAddress withValue: (memory firstBytePointerOfDataObject: array).
++	memory setIsImmutableOf: externalAddress to: true.
++
++	interpreter push: externalAddress.
++	interpreter push: (memory integerObjectOf: 1).
++	interpreter push: (memory integerObjectOf: 7).
++	interpreter push: (memory integerObjectOf: 4).
++	interpreter push: memory falseObject.
++	interpreter primitiveFFIIntegerAtPut.
++
++	self deny: interpreter failed.
++	self assert: (memory fetchByte: 0 ofObject: array) equals: 7
++]
++
+ { #category : 'tests' }
+ VMByteArrayAccessPrimitive >> testFFIntegerAtPutWithMin64bitLargeNegativeInteger [
+ 
+diff --git a/smalltalksrc/VMMakerTests/VMJittedByteArrayAccessPrimitiveTest.class.st b/smalltalksrc/VMMakerTests/VMJittedByteArrayAccessPrimitiveTest.class.st
+index 5058e75a4..5caecc2fc 100644
+--- a/smalltalksrc/VMMakerTests/VMJittedByteArrayAccessPrimitiveTest.class.st
++++ b/smalltalksrc/VMMakerTests/VMJittedByteArrayAccessPrimitiveTest.class.st
+@@ -65,6 +65,14 @@ VMJittedByteArrayAccessPrimitiveTest >> jitCompilerClass [
+ 	^ StackToRegisterMappingCogit
+ ]
+ 
++{ #category : 'tests - store integers' }
++VMJittedByteArrayAccessPrimitiveTest >> jitOptions [
++
++	^ super jitOptions
++		  at: #IMMUTABILITY put: true;
++		  yourself
++]
++
+ { #category : 'utils' }
+ VMJittedByteArrayAccessPrimitiveTest >> newReceiver [
+ 	"In this case the target receiver is the same receiver"
+@@ -757,6 +765,30 @@ VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreFloat32StoresValueDoNo
+ 		self assert: (memory fetchByte: i ofObject: targetReceiver) equals: 16r90 + i + 1. ].
+ ]
+ 
++{ #category : 'tests - store floats' }
++VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreFloat64DoesNotStoreIfReceiverIsImmutable [
++
++	| target |
++	self genPrimitive: #StoreFloat64.
++	self newReceiver.
++	memory setIsImmutableOf: receiver to: true.
++
++	"A read-only receiver leaves the machine code without a store, and
++	 execution falls through to the stop address.  The caller address is the
++	 stop address too, so that machine code which completes the store and
++	 returns also ends the run there.  The test then fails on the bytes, and
++	 does not run into unmapped memory."
++	target := stop address.
++	callerAddress := target.
++	self prepareStackForSendReceiver: receiver arguments: {
++			(self memory integerObjectOf: 0).
++			(self memory floatObjectOf: 42.0) }.
++	self runFrom: cogInitialAddress until: target.
++
++	0 to: 9 do: [ :i |
++		self assert: (memory fetchByte: i ofObject: targetReceiver) equals: 16r90 + i + 1 ]
++]
++
+ { #category : 'tests - store floats' }
+ VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreFloat64StoresBoxedFloatValue [
+ 
+@@ -857,6 +889,30 @@ VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreInt16StoresPositiveVal
+ 		self assert: (memory fetchByte: i ofObject: targetReceiver) equals: 16r90 + i + 1. ].
+ ]
+ 
++{ #category : 'tests - store integers' }
++VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreInt32DoesNotStoreIfReceiverIsImmutable [
++
++	| target |
++	self genPrimitive: #StoreInt32.
++	self newReceiver.
++	memory setIsImmutableOf: receiver to: true.
++
++	"A read-only receiver leaves the machine code without a store, and
++	 execution falls through to the stop address.  The caller address is the
++	 stop address too, so that machine code which completes the store and
++	 returns also ends the run there.  The test then fails on the bytes, and
++	 does not run into unmapped memory."
++	target := stop address.
++	callerAddress := target.
++	self prepareStackForSendReceiver: receiver arguments: {
++			(self memory integerObjectOf: 0).
++			(self memory integerObjectOf: 7) }.
++	self runFrom: cogInitialAddress until: target.
++
++	0 to: 9 do: [ :i |
++		self assert: (memory fetchByte: i ofObject: targetReceiver) equals: 16r90 + i + 1 ]
++]
++
+ { #category : 'tests - store integers' }
+ VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreInt32StoresNegativeValue [
+ 
+@@ -1128,6 +1184,30 @@ VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreUInt32StoresValue [
+ 
+ ]
+ 
++{ #category : 'tests - store integers' }
++VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreUInt64DoesNotStoreIfReceiverIsImmutable [
++
++	| target |
++	self genPrimitive: #StoreUInt64.
++	self newReceiver.
++	memory setIsImmutableOf: receiver to: true.
++
++	"A read-only receiver leaves the machine code without a store, and
++	 execution falls through to the stop address.  The caller address is the
++	 stop address too, so that machine code which completes the store and
++	 returns also ends the run there.  The test then fails on the bytes, and
++	 does not run into unmapped memory."
++	target := stop address.
++	callerAddress := target.
++	self prepareStackForSendReceiver: receiver arguments: {
++			(self memory integerObjectOf: 0).
++			(self memory integerObjectOf: 7) }.
++	self runFrom: cogInitialAddress until: target.
++
++	0 to: 9 do: [ :i |
++		self assert: (memory fetchByte: i ofObject: targetReceiver) equals: 16r90 + i + 1 ]
++]
++
+ { #category : 'tests - store integers' }
+ VMJittedByteArrayAccessPrimitiveTest >> testPrimitiveStoreUInt64StoresValue [
+ 
+diff --git a/smalltalksrc/VMMakerTests/VMPrimitiveTest.class.st b/smalltalksrc/VMMakerTests/VMPrimitiveTest.class.st
+index 15a77e1ce..b6c73eb09 100644
+--- a/smalltalksrc/VMMakerTests/VMPrimitiveTest.class.st
++++ b/smalltalksrc/VMMakerTests/VMPrimitiveTest.class.st
+@@ -5064,6 +5064,25 @@ VMPrimitiveTest >> testPrimitiveStoreFloat64FromBytesOverflowIndex [
+ 	self assert: interpreter stackTop equals: 42
+ ]
+ 
++{ #category : 'tests - primitiveFloat64' }
++VMPrimitiveTest >> testPrimitiveStoreFloat64IntoBytesFailsIfObjectIsImmutable [
++
++	| array |
++	self installFloatClass.
++	array := self new8BitIndexableOfSize: 8.
++	memory setIsImmutableOf: array to: true.
++
++	interpreter push: array.
++	interpreter push: (memory integerObjectOf: 0).
++	interpreter push: (memory floatObjectOf: 42.0).
++	interpreter primitiveStoreFloat64IntoBytes.
++
++	self assert: interpreter failed.
++	self assert: interpreter primFailCode equals: PrimErrNoModification.
++	0 to: 7 do: [ :index |
++		self assert: (memory fetchByte: index ofObject: array) equals: 0 ]
++]
++
+ { #category : 'tests - primitiveFloat64' }
+ VMPrimitiveTest >> testPrimitiveStoreFloat64IntoBytesFor64BitArrays [
+ 
+@@ -5159,6 +5178,58 @@ VMPrimitiveTest >> testPrimitiveStoreFloat64IntoBytesForSecondSlotArrays [
+ 
+ ]
+ 
++{ #category : 'tests - primitiveFloat64' }
++VMPrimitiveTest >> testPrimitiveStoreFloat64IntoBytesStoresIfObjectIsMutable [
++
++	| array |
++	self installFloatClass.
++	array := self new8BitIndexableOfSize: 8.
++
++	interpreter push: array.
++	interpreter push: (memory integerObjectOf: 0).
++	interpreter push: (memory floatObjectOf: 42.0).
++	interpreter primitiveStoreFloat64IntoBytes.
++
++	self deny: interpreter failed.
++	self assert: (memory fetchFloat64: 0 ofObject: array) equals: 42.0
++]
++
++{ #category : 'tests - primitiveImmutability' }
++VMPrimitiveTest >> testPrimitiveStoreInt32IntoBytesFailsIfObjectIsImmutable [
++
++	| array |
++	array := self new8BitIndexableOfSize: 8.
++	memory setIsImmutableOf: array to: true.
++
++	interpreter push: array.
++	interpreter push: (memory integerObjectOf: 0).
++	interpreter push: (memory integerObjectOf: 7).
++	interpreter primitiveStoreInt32IntoBytes.
++
++	self assert: interpreter failed.
++	self assert: interpreter primFailCode equals: PrimErrNoModification.
++	0 to: 7 do: [ :index |
++		self assert: (memory fetchByte: index ofObject: array) equals: 0 ]
++]
++
++{ #category : 'tests - primitiveImmutability' }
++VMPrimitiveTest >> testPrimitiveStoreUInt8IntoBytesFailsIfObjectIsImmutable [
++
++	| array |
++	array := self new8BitIndexableOfSize: 8.
++	memory setIsImmutableOf: array to: true.
++
++	interpreter push: array.
++	interpreter push: (memory integerObjectOf: 0).
++	interpreter push: (memory integerObjectOf: 7).
++	interpreter primitiveStoreUInt8IntoBytes.
++
++	self assert: interpreter failed.
++	self assert: interpreter primFailCode equals: PrimErrNoModification.
++	0 to: 7 do: [ :index |
++		self assert: (memory fetchByte: index ofObject: array) equals: 0 ]
++]
++
+ { #category : 'tests - primitiveAtPut' }
+ VMPrimitiveTest >> testPrimitiveStringAtPutShouldFailForNonCharacterArgument [
+ 	"Every other test is common with at:put:"
+-- 
+2.54.0 (Apple Git-157)
+

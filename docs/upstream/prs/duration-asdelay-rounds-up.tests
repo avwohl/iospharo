@@ -1,0 +1,4 @@
+proof DurationTest testAsDelayDoesNotRoundDown
+regress DurationTest
+regress DelayTest
+regress TKTServiceTest

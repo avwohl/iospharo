@@ -1,0 +1,7 @@
+proof MCMethodDefinitionTest testLoadKeepsTimeStampOfMethodFromImage testLoadWithPackageLoaderKeepsTimeStampOfMethodFromImage testLoadTimeStampIsNotCachedWhileFlushIsDeferred
+regress MCMethodDefinitionTest
+regress MCStWriterTest
+regress MCPackageTest
+regress MCPackageLoaderTest
+regress MCSnapshotTest
+regress MCWorkingCopyTest

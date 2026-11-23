@@ -1,0 +1,7 @@
+proof ZnUrlTest testEqualsWithQueryFieldsInAnotherOrder
+regress ZnUrlTest
+regress ZnMultiValueDictionaryTest
+regress OrderedDictionaryTest
+proof ZnUrlTest testEqualsWithRepeatedQueryField
+regress ZnClientTest
+regress ZnFileUrlTest

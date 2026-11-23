@@ -1,0 +1,208 @@
+From 4b5ef48e941e8080fc82bde8d206658705f2aa31 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:26:53 -0500
+Subject: [PATCH 1/2] Collections-Atomic: fix lost wake-ups and lock leak in
+ AtomicSharedQueue
+
+With two or more readers, an item can stay in an AtomicSharedQueue
+without a signal. A reader that finds the queue locked by another reader
+waits again and uses up the signal of its item, and the reader that has
+the lock gives no signal. A reader that resets the signals in
+signalNoMoreItems can reset the signal of an item that a writer put in
+meanwhile, and then waits with a non-empty queue. A reader that is
+terminated in WaitfreeQueue>>nextIfNone: leaves the queue locked.
+
+WaitfreeQueue>>nextIfNone: now runs the unlink step in a block with
+ifCurtailed: that gives the queue back, as flush: and
+nextOrNilSuchThat: do. The new AtomicSharedQueue>>nextIfNone: gives a
+signal after a read when items are left. AtomicSharedQueue>>next looks
+at isEmpty before it waits.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../AtomicSharedQueue.class.st                  | 16 +++++++++++++++-
+ src/Collections-Atomic/WaitfreeQueue.class.st   | 17 ++++++++++-------
+ 2 files changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/src/Collections-Atomic/AtomicSharedQueue.class.st b/src/Collections-Atomic/AtomicSharedQueue.class.st
+index 80f5f99e5e..93bf8d79da 100644
+--- a/src/Collections-Atomic/AtomicSharedQueue.class.st
++++ b/src/Collections-Atomic/AtomicSharedQueue.class.st
+@@ -31,11 +31,25 @@ AtomicSharedQueue >> next [
+ 	[ | keepWaiting |
+ 		keepWaiting := false.
+ 		result := self nextIfNone: [ keepWaiting := true ].
+-		keepWaiting ] whileTrue: [ self waitForNewItems ].
++		"Look again before the wait: a writer can have put an item in after this reader reset the signals. #isEmpty answers true for a locked queue, and the reader that has the lock gives a signal after its read."
++		keepWaiting ] whileTrue: [ self isEmpty ifTrue: [ self waitForNewItems ] ].
+ 
+ 	^ result
+ ]
+ 
++{ #category : 'accessing' }
++AtomicSharedQueue >> nextIfNone: aBlock [
++	"A reader that woke for a later item can have found the queue locked by this reader. That reader waits again, and the signal for its item is used. Give a signal when items are left."
++
++	| failed result |
++
++	failed := false.
++	result := super nextIfNone: [ failed := true ].
++	failed ifTrue: [ ^ aBlock value ].
++	self isEmpty ifFalse: [ self signalAddedNewItem ].
++	^ result
++]
++
+ { #category : 'signaling' }
+ AtomicSharedQueue >> signalAddedNewItem [
+ 	availSema signal
+diff --git a/src/Collections-Atomic/WaitfreeQueue.class.st b/src/Collections-Atomic/WaitfreeQueue.class.st
+index 67a8a1e5f4..fa20ac6152 100644
+--- a/src/Collections-Atomic/WaitfreeQueue.class.st
++++ b/src/Collections-Atomic/WaitfreeQueue.class.st
+@@ -216,15 +216,18 @@ WaitfreeQueue >> nextIfNone: aBlock [
+ 		just give a quick answer that item not found"
+ 		 ^ aBlock value  ].
+ 
+-	[ (result := item object) == dummy ] whileTrue: [
+-		item isCircular ifTrue: [
+-			self signalNoMoreItems.
+-			dummy next: item. ^ aBlock value ].
+-		item := item next.
+-	].
++	"The queue is locked from here. A process that is terminated in the block below gives the queue back: the chain from item has all the items that are left. The unlink and the unlock are after the block, so the curtail block never runs on a queue that another reader has changed."
++	[
++		[ (result := item object) == dummy and: [ item isCircular not ] ] whileTrue: [ item := item next ].
++		"only removed items are left"
++		result == dummy ifTrue: [ self signalNoMoreItems ] ]
++		ifCurtailed: [ dummy next: item ].
+ 
+-	item object: dummy.
++	result == dummy ifTrue: [
++		dummy next: item.
++		^ aBlock value ].
+ 
++	item object: dummy.
+ 	dummy next: item next.
+ 	^ result
+ ]
+-- 
+2.54.0 (Apple Git-157)
+
+
+From feeee8dc9d7d33238bb1427183d7f1eba142da27 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:26:53 -0500
+Subject: [PATCH 2/2] Collections-Atomic-Tests: add AtomicSharedQueueTest
+
+Three deterministic tests for AtomicSharedQueue. Each test steps a
+reader process by hand to the point of the interleaving: a second reader
+that finds the queue locked, a writer that puts an item in while a
+reader is in signalNoMoreItems, and a reader that is terminated while
+it has the lock.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../AtomicSharedQueueTest.class.st            | 91 +++++++++++++++++++
+ 1 file changed, 91 insertions(+)
+ create mode 100644 src/Collections-Atomic-Tests/AtomicSharedQueueTest.class.st
+
+diff --git a/src/Collections-Atomic-Tests/AtomicSharedQueueTest.class.st b/src/Collections-Atomic-Tests/AtomicSharedQueueTest.class.st
+new file mode 100644
+index 0000000000..a1dcf07b42
+--- /dev/null
++++ b/src/Collections-Atomic-Tests/AtomicSharedQueueTest.class.st
+@@ -0,0 +1,91 @@
++"
++SUnit tests for the wake-up and lock handling of AtomicSharedQueue. Each test steps reader processes by hand to force one interleaving.
++"
++Class {
++	#name : 'AtomicSharedQueueTest',
++	#superclass : 'TestCase',
++	#category : 'Collections-Atomic-Tests-Base',
++	#package : 'Collections-Atomic-Tests',
++	#tag : 'Base'
++}
++
++{ #category : 'tests' }
++AtomicSharedQueueTest >> testNextOrNilAnswersTheItemAndNilWhenEmpty [
++	"nextOrNil goes through AtomicSharedQueue>>nextIfNone:. It must still answer the item, and nil when the queue is empty."
++
++	| queue |
++
++	queue := AtomicSharedQueue new.
++	self assert: queue nextOrNil isNil.
++	queue nextPut: 1; nextPut: 2.
++	self assert: queue nextOrNil equals: 1.
++	self assert: queue nextOrNil equals: 2.
++	self assert: queue nextOrNil isNil
++]
++
++{ #category : 'tests' }
++AtomicSharedQueueTest >> testQueueIsFreeAfterReaderIsTerminatedInARead [
++	"A reader is terminated while it has the lock of the queue. The queue must be free after that, and a new item must be there for the next reader."
++
++	| queue reader steps |
++
++	queue := AtomicSharedQueue new.
++	queue nextPut: 1.
++	self assert: queue next equals: 1.
++	reader := [ queue next ] newProcess.
++	steps := 0.
++	[ reader suspendedContext selector == #signalNoMoreItems or: [ steps > 5000 ] ]
++		whileFalse: [ reader step. steps := steps + 1 ].
++	self assert: reader suspendedContext selector equals: #signalNoMoreItems.
++	self assert: queue dummy isCircular.
++	reader terminate.
++	self deny: queue dummy isCircular.
++	queue nextPut: 2.
++	self assert: queue nextOrNil equals: 2
++]
++
++{ #category : 'tests' }
++AtomicSharedQueueTest >> testReaderGetsItemThatCameWhileItResetTheSignals [
++	"A reader finds only a removed item and is about to reset the signals. A writer puts an item in at that moment. The reader must get the item."
++
++	| queue reader result steps deadline |
++
++	queue := AtomicSharedQueue new.
++	queue nextPut: 1.
++	self assert: queue next equals: 1.
++	reader := [ result := queue next ] newProcess.
++	steps := 0.
++	[ reader suspendedContext selector == #signalNoMoreItems or: [ steps > 5000 ] ]
++		whileFalse: [ reader step. steps := steps + 1 ].
++	self assert: reader suspendedContext selector equals: #signalNoMoreItems.
++	queue nextPut: 2.
++	[
++		reader resume.
++		deadline := Time millisecondClockValue + 2000.
++		[ result isNil and: [ Time millisecondClockValue < deadline ] ] whileTrue: [ (Delay forMilliseconds: 5) wait ].
++		self assert: result equals: 2 ]
++		ensure: [ reader terminate ]
++]
++
++{ #category : 'tests' }
++AtomicSharedQueueTest >> testSecondReaderGetsItemWhenFirstReaderHadTheLock [
++	"Reader A has the lock of the queue. Reader B wakes for the second item, finds the queue locked and waits again. When reader A is done, reader B must get the second item."
++
++	| queue readerA readerB gotA gotB steps deadline |
++
++	queue := AtomicSharedQueue new.
++	queue nextPut: 1; nextPut: 2.
++	readerA := [ gotA := queue next ] newProcess.
++	steps := 0.
++	[ queue dummy isCircular or: [ steps > 5000 ] ] whileFalse: [ readerA step. steps := steps + 1 ].
++	self assert: queue dummy isCircular.
++	readerB := [ gotB := queue next ] forkAt: Processor activePriority + 1.
++	[
++		self assert: gotB isNil.
++		readerA resume.
++		deadline := Time millisecondClockValue + 2000.
++		[ gotB isNil and: [ Time millisecondClockValue < deadline ] ] whileTrue: [ (Delay forMilliseconds: 5) wait ].
++		self assert: gotA equals: 1.
++		self assert: gotB equals: 2 ]
++		ensure: [ readerA terminate. readerB terminate ]
++]
+-- 
+2.54.0 (Apple Git-157)
+

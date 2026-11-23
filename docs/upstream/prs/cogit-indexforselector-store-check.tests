@@ -1,0 +1,5 @@
+vmtest VMCogitIndexForSelectorTest testFollowedYoungLiteralOfOldMethodRemembersTheMethod
+vmregress VMCogitIndexForSelectorTest
+vmregress VMSelectorIndexDereferenceRoutineTest
+vmregress VMCodeCompactionTest
+vmregress VMForwardLiteralInMachineMethodTest

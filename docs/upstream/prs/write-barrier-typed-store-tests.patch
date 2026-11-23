@@ -1,0 +1,210 @@
+From f1a146233eda2f2d472aa16248656fb933a1a33c Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:27:19 -0500
+Subject: [PATCH] Typed stores into a read-only ByteArray signal
+ ModificationForbidden
+
+The float stores of TFFIBackend (on:float32At:put: and
+on:float64At:put:) tested the backend (self) for read-only, not the
+object that receives the store (anObject), so the test was never true.
+ByteArray>>integerAt:put:size:signed:, the fallback of the typed
+integer store primitives, had no read-only check and ended in
+PrimitiveFailed for a read-only receiver.
+
+Test the object in the two float stores and signal
+ModificationForbidden with the index-based accessor as retry selector.
+Do the same in integerAt:put:size:signed:.  Remove the expectedFailure
+marks of WriteBarrierTest>>testMutateByteArrayUsingDoubleAtPut and
+testMutateByteArrayUsingFloatAtPut, and correct the final assertions
+of the two tests (they read the first byte, not the stored value).  Add
+tests for an unsigned 32-bit, an unsigned 64-bit and a signed 16-bit
+store, and for a Float store of an Integer.
+
+The tests need a VM whose typed store primitives fail for a read-only
+receiver (pharo-vm change typed-stores-write-barrier).
+
+Related: #10053
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/FFI-Kernel/ByteArray.extension.st         | 13 +++
+ .../WriteBarrierTest.class.st                 | 90 ++++++++++++++++++-
+ src/ThreadedFFI/TFFIBackend.class.st          | 12 +--
+ 3 files changed, 105 insertions(+), 10 deletions(-)
+
+diff --git a/src/FFI-Kernel/ByteArray.extension.st b/src/FFI-Kernel/ByteArray.extension.st
+index 85be8c9974..24821f7696 100644
+--- a/src/FFI-Kernel/ByteArray.extension.st
++++ b/src/FFI-Kernel/ByteArray.extension.st
+@@ -171,6 +171,19 @@ ByteArray >> int8AtOffset: zeroBasedOffset put: value [
+ { #category : '*FFI-Kernel' }
+ ByteArray >> integerAt: byteOffset put: value size: nBytes signed: aBoolean [
+ 
++	| sizeIndex |
++	self isReadOnlyObject ifTrue: [
++		"The retry selector is the index-based accessor of the same size and sign.
++		Other sizes keep the old failure."
++		sizeIndex := #( 1 2 4 8 ) indexOf: nBytes.
++		sizeIndex = 0 ifTrue: [ ^ self primitiveFailed ].
++		^ self
++			  modificationForbiddenFor: ((aBoolean
++					   ifTrue: [ #( #signedByteAt:put: #signedShortAt:put: #signedLongAt:put: #signedLongLongAt:put: ) ]
++					   ifFalse: [ #( #unsignedByteAt:put: #unsignedShortAt:put: #unsignedLongAt:put: #unsignedLongLongAt:put: ) ]) at: sizeIndex)
++			  index: byteOffset
++			  value: value ].
++
+ 	^ FFIBackend current
+ 		  integerOfObject: self
+ 		  at: byteOffset
+diff --git a/src/Kernel-Extended-Tests/WriteBarrierTest.class.st b/src/Kernel-Extended-Tests/WriteBarrierTest.class.st
+index e73a96dec0..b63403bb61 100644
+--- a/src/Kernel-Extended-Tests/WriteBarrierTest.class.st
++++ b/src/Kernel-Extended-Tests/WriteBarrierTest.class.st
+@@ -94,7 +94,6 @@ WriteBarrierTest >> testMutateByteArrayUsingByteAtPut [
+ { #category : 'tests - object' }
+ WriteBarrierTest >> testMutateByteArrayUsingDoubleAtPut [
+ 	| guineaPig |
+-	<expectedFailure>
+ 	guineaPig := ByteArray new: 8.
+ 	guineaPig beReadOnlyObject.
+ 
+@@ -109,12 +108,32 @@ WriteBarrierTest >> testMutateByteArrayUsingDoubleAtPut [
+ 			modification object beWritableObject.
+ 			modification retryModification ].
+ 
+-	self assert: guineaPig first equals: (2 raisedTo: 65) asFloat
++	self assert: (guineaPig doubleAt: 1) equals: (2 raisedTo: 65) asFloat
++]
++
++{ #category : 'tests - object' }
++WriteBarrierTest >> testMutateByteArrayUsingDoubleAtPutInteger [
++	| guineaPig |
++	guineaPig := ByteArray new: 8.
++	guineaPig beReadOnlyObject.
++
++	self
++		should: [ guineaPig doubleAt: 1 put: 2 ]
++		raise: ModificationForbidden.
++	self assert: guineaPig equals: (ByteArray new: 8).
++
++	[ guineaPig doubleAt: 1 put: 2 ]
++		on: ModificationForbidden
++		do: [:modification |
++			self assert: modification fieldIndex equals: 1.
++			modification object beWritableObject.
++			modification retryModification ].
++
++	self assert: (guineaPig doubleAt: 1) equals: 2.0
+ ]
+ 
+ { #category : 'tests - object' }
+ WriteBarrierTest >> testMutateByteArrayUsingFloatAtPut [
+-	<expectedFailure>
+ 	| guineaPig |
+ 	guineaPig := ByteArray new: 5.
+ 	guineaPig beReadOnlyObject.
+@@ -130,7 +149,70 @@ WriteBarrierTest >> testMutateByteArrayUsingFloatAtPut [
+ 			modification object beWritableObject.
+ 			modification retryModification ].
+ 
+-	self assert: guineaPig first equals: 1.0
++	self assert: (guineaPig floatAt: 1) equals: 1.0
++]
++
++{ #category : 'tests - object' }
++WriteBarrierTest >> testMutateByteArrayUsingSignedShortAtPut [
++	| guineaPig |
++	guineaPig := ByteArray new: 8.
++	guineaPig beReadOnlyObject.
++
++	self
++		should: [ guineaPig signedShortAt: 3 put: -2 ]
++		raise: ModificationForbidden.
++	self assert: guineaPig equals: (ByteArray new: 8).
++
++	[ guineaPig signedShortAt: 3 put: -2 ]
++		on: ModificationForbidden
++		do: [:modification |
++			self assert: modification fieldIndex equals: 3.
++			modification object beWritableObject.
++			modification retryModification ].
++
++	self assert: (guineaPig signedShortAt: 3) equals: -2
++]
++
++{ #category : 'tests - object' }
++WriteBarrierTest >> testMutateByteArrayUsingUnsignedLongAtPut [
++	| guineaPig |
++	guineaPig := ByteArray new: 8.
++	guineaPig beReadOnlyObject.
++
++	self
++		should: [ guineaPig unsignedLongAt: 1 put: 16r01020304 ]
++		raise: ModificationForbidden.
++	self assert: guineaPig equals: (ByteArray new: 8).
++
++	[ guineaPig unsignedLongAt: 1 put: 16r01020304 ]
++		on: ModificationForbidden
++		do: [:modification |
++			self assert: modification fieldIndex equals: 1.
++			modification object beWritableObject.
++			modification retryModification ].
++
++	self assert: (guineaPig unsignedLongAt: 1) equals: 16r01020304
++]
++
++{ #category : 'tests - object' }
++WriteBarrierTest >> testMutateByteArrayUsingUnsignedLongLongAtPut [
++	| guineaPig |
++	guineaPig := ByteArray new: 8.
++	guineaPig beReadOnlyObject.
++
++	self
++		should: [ guineaPig unsignedLongLongAt: 1 put: 16r0102030405060708 ]
++		raise: ModificationForbidden.
++	self assert: guineaPig equals: (ByteArray new: 8).
++
++	[ guineaPig unsignedLongLongAt: 1 put: 16r0102030405060708 ]
++		on: ModificationForbidden
++		do: [:modification |
++			self assert: modification fieldIndex equals: 1.
++			modification object beWritableObject.
++			modification retryModification ].
++
++	self assert: (guineaPig unsignedLongLongAt: 1) equals: 16r0102030405060708
+ ]
+ 
+ { #category : 'tests - object' }
+diff --git a/src/ThreadedFFI/TFFIBackend.class.st b/src/ThreadedFFI/TFFIBackend.class.st
+index 3f7a5ab69f..b55910b4ff 100644
+--- a/src/ThreadedFFI/TFFIBackend.class.st
++++ b/src/ThreadedFFI/TFFIBackend.class.st
+@@ -96,9 +96,9 @@ TFFIBackend >> on: anObject float32At: offset put: value [
+ 	value isFloat ifFalse: [
+ 		^ anObject float32AtOffset: offset - 1 put: value asFloat ].
+ 
+-	self isReadOnlyObject ifTrue: [
+-		^ self
+-			  modificationForbiddenFor: #on:float32At:put:
++	anObject isReadOnlyObject ifTrue: [
++		^ anObject
++			  modificationForbiddenFor: #floatAt:put:
+ 			  index: offset
+ 			  value: value ].
+ 
+@@ -117,9 +117,9 @@ TFFIBackend >> on: anObject float64At: offset put: value [
+ 	value isFloat ifFalse: [
+ 		^ anObject float64AtOffset: offset - 1 put: value asFloat ].
+ 
+-	self isReadOnlyObject ifTrue: [
+-		^ self
+-			  modificationForbiddenFor: #on:float64At:put:
++	anObject isReadOnlyObject ifTrue: [
++		^ anObject
++			  modificationForbiddenFor: #doubleAt:put:
+ 			  index: offset
+ 			  value: value ].
+ 
+-- 
+2.54.0 (Apple Git-157)
+

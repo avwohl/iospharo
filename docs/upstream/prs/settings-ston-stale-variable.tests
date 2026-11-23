@@ -1,0 +1,5 @@
+proof SettingsStonReaderTest testNonExistingStoredSettingVariable testSecureLoadNonExistingStoredSettingVariable
+regress SettingsStonReaderTest
+regress SettingsManagerTest
+regress SettingsStonWriterTest
+regress StoredSettingsMergerTest

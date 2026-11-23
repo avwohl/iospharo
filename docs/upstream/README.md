@@ -10,6 +10,14 @@ Each Cog change is also a local branch in `~/src/pharo-vm`, made from
 `origin/pharo-12`.  A patch file here is the copy that stays if that clone
 is lost.
 
+## Pull requests for Pharo 15 (2026-11-23)
+
+[prs/README.md](prs/README.md) has 11 pull requests for 10 defects of the
+Pharo 15 image and of Cog, each with a local branch, a patch file and the
+measured before and after results.  The Cog pull requests in `prs/` are
+made from the current `origin/pharo-12` head.  They replace the Cog
+branches of the table below for 5 of the defects.
+
 ## How to build stock Cog on this Mac
 
 The pinned code-generation VM of the Cog build does not start on macOS 27
@@ -51,3 +59,7 @@ The defect, the change and the test of each row are in
   port).  The cause is not known.
 - A segmentation fault of `MorphicWindowManagerTest` in an interactive
   session (1 of 3 runs).
+- A heap-corruption abort (`nanov2_guard_corruption_detected`) in the TLS
+  handshake of a libgit2 clone or fetch, in the stock VM v12.0.6-beta: 6
+  of 11 loads of the VMMaker dependencies in a Cog build (2026-11-23).
+  The cause is not known.

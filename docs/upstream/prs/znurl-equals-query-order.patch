@@ -1,0 +1,96 @@
+From 2c3e2dbaf9469cd905d304b3309ad9f4a811ca52 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:27:11 -0500
+Subject: [PATCH] Zinc: ZnUrl>>equals: ignores the order of the query fields
+
+Two URLs with the same query fields in another order were not equal
+since Pharo 14: ZnUrl>>equals: compared the queries with
+OrderedDictionary>>=, and commit d0cc9e250a (fix of issue 11065) made
+that method compare the position of each key. In Pharo 13 the two URLs
+were equal.
+
+ZnUrl>>equals: now compares the size of the queries and the value of
+each key (with #keysDo:, because #keysAndValuesDo: of
+ZnMultiValueDictionary gives one call for each single value of a
+repeated field), with no regard to the order of the fields. The values
+of a repeated field are one collection and keep their order.
+ZnUrl>>hash does not use the query, so equal URLs still have equal
+hashes. OrderedDictionary>>= is not changed.
+
+Add ZnUrlTest>>testEqualsWithQueryFieldsInAnotherOrder and
+ZnUrlTest>>testEqualsWithRepeatedQueryField.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/Zinc-Resource-Meta-Core/ZnUrl.class.st    | 10 +++++-
+ .../ZnUrlTest.class.st                        | 33 +++++++++++++++++++
+ 2 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/src/Zinc-Resource-Meta-Core/ZnUrl.class.st b/src/Zinc-Resource-Meta-Core/ZnUrl.class.st
+index 9bd9eb5736..117be39496 100644
+--- a/src/Zinc-Resource-Meta-Core/ZnUrl.class.st
++++ b/src/Zinc-Resource-Meta-Core/ZnUrl.class.st
+@@ -327,7 +327,15 @@ ZnUrl >> equals: url [
+ 	self portOrDefault = url portOrDefault ifFalse: [ ^ false ].
+ 	((self isSlash and: [ url isSlash ]) or: [ self segments = url segments ]) ifFalse: [ ^ false ].
+ 	(self hasQuery or: [ url hasQuery ])
+-		ifTrue: [ self query = url query ifFalse: [ ^ false ] ].
++		ifTrue: [
++			"The query fields must be the same, but their order is not significant.
++			The query is an OrderedDictionary, whose #= also compares the position of each key.
++			The values of one repeated field are one collection under one key, so #keysDo: is used:
++			#keysAndValuesDo: of ZnMultiValueDictionary gives one call for each single value."
++			(self hasQuery and: [ url hasQuery ]) ifFalse: [ ^ false ].
++			self query size = url query size ifFalse: [ ^ false ].
++			self query keysDo: [ :key |
++				(url query at: key ifAbsent: [ ^ false ]) = (self query at: key) ifFalse: [ ^ false ] ] ].
+ 	self fragment = url fragment ifFalse: [ ^ false ].
+ 	^ true
+ ]
+diff --git a/src/Zinc-Resource-Meta-Tests/ZnUrlTest.class.st b/src/Zinc-Resource-Meta-Tests/ZnUrlTest.class.st
+index 1b5df99fe1..90bd79d504 100644
+--- a/src/Zinc-Resource-Meta-Tests/ZnUrlTest.class.st
++++ b/src/Zinc-Resource-Meta-Tests/ZnUrlTest.class.st
+@@ -179,6 +179,39 @@ ZnUrlTest >> testEncodedSlash [
+ 	self assert: 'http://example.com/foo/%2Ffoo.txt' asZnUrl pathPrintString equals: '/foo/%2Ffoo.txt'
+ ]
+ 
++{ #category : 'testing' }
++ZnUrlTest >> testEqualsWithQueryFieldsInAnotherOrder [
++	"Two URLs with the same query fields are equal, in each order of the fields."
++
++	| url |
++	url := 'https://example.com/pets?start=3&limit=2' asZnUrl.
++	self assert: url equals: 'https://example.com/pets?limit=2&start=3' asZnUrl.
++	self assert: url hash equals: 'https://example.com/pets?limit=2&start=3' asZnUrl hash.
++	self deny: url equals: 'https://example.com/pets?start=3&limit=5' asZnUrl.
++	self deny: url equals: 'https://example.com/pets?start=3' asZnUrl.
++	self deny: url equals: 'https://example.com/pets?start=3&limit=2&sort=name' asZnUrl.
++	self deny: url equals: 'https://example.com/pets' asZnUrl.
++	self deny: 'https://example.com/pets' asZnUrl equals: url
++]
++
++{ #category : 'testing' }
++ZnUrlTest >> testEqualsWithRepeatedQueryField [
++	"The values of a repeated field keep their order."
++
++	self
++		assert: 'https://example.com/pets?tag=a&tag=b' asZnUrl
++		equals: 'https://example.com/pets?tag=a&tag=b' asZnUrl.
++	self
++		assert: 'https://example.com/pets?tag=a&tag=b&limit=2' asZnUrl
++		equals: 'https://example.com/pets?limit=2&tag=a&tag=b' asZnUrl.
++	self
++		deny: 'https://example.com/pets?tag=a&tag=b' asZnUrl
++		equals: 'https://example.com/pets?tag=b&tag=a' asZnUrl.
++	self
++		deny: 'https://example.com/pets?tag=a&tag=b' asZnUrl
++		equals: 'https://example.com/pets?tag=a' asZnUrl
++]
++
+ { #category : 'testing' }
+ ZnUrlTest >> testFileUrl [
+ 	| url |
+-- 
+2.54.0 (Apple Git-157)
+

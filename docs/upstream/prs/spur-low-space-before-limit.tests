@@ -1,0 +1,6 @@
+probe scripts/cogdiff/lowspace_recursion.st
+vmtest VMSpurScavengerTest testLowSpaceIsSignalledBeforeOldSpaceReachesItsLimit
+vmregress VMSpurScavengerTest
+vmregress VMSpurOldSpaceGarbageCollectorTest
+vmregress VMSpurOldSpaceTest
+oldspace 1024

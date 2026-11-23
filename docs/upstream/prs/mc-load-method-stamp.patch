@@ -1,0 +1,174 @@
+From ee4085baca2ad0f8ee03c60f979bd74dea3c69c7 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:27:37 -0500
+Subject: [PATCH] Monticello: keep the method stamp when loading image methods
+
+A method definition made from a method of the image
+(CompiledMethod>>asMCMethodDefinition) has a source pointer and
+computes its stamp lazily in #timeStamp. MCMethodDefinition>>
+loadWithLoader: gave the method installer the instance variable
+timeStamp, which is nil for such a definition. The installed method got
+the stamp 'nil'.
+
+A second cause: MCPackageLoader>>basicLoad runs in SourcesManager
+deferFlushDuring:. In that time FilesSourcesManager>>timeStampAt:for:
+answers the empty string, so the lazy stamp was empty, and
+MCMethodDefinition>>timeStamp kept that empty answer.
+
+Change: loadWithLoader: sends #timeStamp. #timeStamp does not keep an
+empty answer. basicLoad reads the stamps first (#readMethodTimeStamps),
+before the flush is deferred. A load nested in an outer deferred section
+is not covered by the read. Three tests in MCMethodDefinitionTest check
+the stamp of a method loaded from an image definition, directly and with
+MCPackageLoader, and that the empty answer is not kept.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../MCMethodDefinition.class.st               | 11 +++-
+ .../MCMethodDefinitionTest.class.st           | 60 +++++++++++++++++++
+ src/Monticello/MCPackageLoader.class.st       |  8 +++
+ 3 files changed, 77 insertions(+), 2 deletions(-)
+
+diff --git a/src/Monticello-Model/MCMethodDefinition.class.st b/src/Monticello-Model/MCMethodDefinition.class.st
+index 00e421d4ac..9ff3112ed2 100644
+--- a/src/Monticello-Model/MCMethodDefinition.class.st
++++ b/src/Monticello-Model/MCMethodDefinition.class.st
+@@ -233,7 +233,7 @@ MCMethodDefinition >> loadWithLoader: aLoader [
+ 	method := compiler compileOrFail.
+ 	methodInstaller := (actualClass methodInstaller
+ 			   logged: true;
+-			   changeStamp: timeStamp;
++			   changeStamp: self timeStamp;
+ 			   protocol: category).
+ 	methodInstaller install: method into: actualClass compiler: compiler.
+ 
+@@ -341,7 +341,14 @@ MCMethodDefinition >> summary [
+ MCMethodDefinition >> timeStamp [
+ 	"My computation is lazy because it takes time to compute and is not always necessary."
+ 
+-	^ timeStamp ifNil: [ sourcePointer ifNotNil: [ :pointer | timeStamp := SourcesManager current timeStampAt: pointer ] ]
++	"An empty answer is not kept: the sources manager answers an empty string while it defers the flush of the changes file, and a later call can then answer the real stamp."
++
++	^ timeStamp ifNil: [
++		  sourcePointer ifNotNil: [ :pointer |
++			  | stamp |
++			  stamp := SourcesManager current timeStampAt: pointer.
++			  stamp isEmpty ifFalse: [ timeStamp := stamp ].
++			  stamp ] ]
+ ]
+ 
+ { #category : 'serializing' }
+diff --git a/src/Monticello-Tests/MCMethodDefinitionTest.class.st b/src/Monticello-Tests/MCMethodDefinitionTest.class.st
+index e11ad804af..af8a0dbf24 100644
+--- a/src/Monticello-Tests/MCMethodDefinitionTest.class.st
++++ b/src/Monticello-Tests/MCMethodDefinitionTest.class.st
+@@ -15,6 +15,19 @@ MCMethodDefinitionTest >> extensionPackageName [
+ 	^ 'MonticelloTestsFirstExtensionMockPackage'
+ ]
+ 
++{ #category : 'running' }
++MCMethodDefinitionTest >> installMockMethodWithStamp: aStamp in: mockClass [
++	"Install the method #one in mockClass with a known change stamp"
++
++	| compiler |
++	compiler := mockClass compiler source: 'one ^ 1'.
++	mockClass methodInstaller
++		logged: true;
++		changeStamp: aStamp;
++		protocol: 'tests';
++		install: compiler compileOrFail into: mockClass compiler: compiler
++]
++
+ { #category : 'accessing' }
+ MCMethodDefinitionTest >> mockClass [
+ 
+@@ -192,6 +205,36 @@ MCMethodDefinitionTest >> testLoadInvalidCodeInLegacyMode [
+ 				equals: 'Variable or expression expected' ]
+ ]
+ 
++{ #category : 'testing' }
++MCMethodDefinitionTest >> testLoadKeepsTimeStampOfMethodFromImage [
++
++	| mockClass definition stamp |
++	stamp := '1/2/2020 10:20'.
++	mockClass := self mockClass.
++	testingEnvironment at: mockClass name put: mockClass.
++	self installMockMethodWithStamp: stamp in: mockClass.
++	definition := (mockClass >> #one) asMCMethodDefinition.
++
++	definition loadWithLoader: loader.
++
++	self assert: (mockClass >> #one) timeStamp equals: stamp
++]
++
++{ #category : 'testing' }
++MCMethodDefinitionTest >> testLoadTimeStampIsNotCachedWhileFlushIsDeferred [
++
++	| mockClass definition stamp |
++	stamp := '1/2/2020 10:20'.
++	mockClass := self mockClass.
++	self installMockMethodWithStamp: stamp in: mockClass.
++	definition := (mockClass >> #one) asMCMethodDefinition.
++
++	"While the flush is deferred, the sources manager answers an empty stamp. The definition must not keep that answer."
++	SourcesManager current deferFlushDuring: [ definition timeStamp ].
++
++	self assert: definition timeStamp equals: stamp
++]
++
+ { #category : 'testing' }
+ MCMethodDefinitionTest >> testLoadUndeclaredInLegacyMode [
+ 
+@@ -212,6 +255,23 @@ MCMethodDefinitionTest >> testLoadUndeclaredInLegacyMode [
+ 		(mockClass >> #kjahs87) literals first isUndeclaredVariable
+ ]
+ 
++{ #category : 'testing' }
++MCMethodDefinitionTest >> testLoadWithPackageLoaderKeepsTimeStampOfMethodFromImage [
++
++	| mockClass definition stamp |
++	stamp := '1/2/2020 10:20'.
++	mockClass := self mockClass.
++	testingEnvironment at: mockClass name put: mockClass.
++	self installMockMethodWithStamp: stamp in: mockClass.
++	definition := (mockClass >> #one) asMCMethodDefinition.
++	loader addDefinition: definition.
++
++	"basicLoad skips the dependency check of #load, which is not the subject of this test"
++	loader basicLoad.
++
++	self assert: (mockClass >> #one) timeStamp equals: stamp
++]
++
+ { #category : 'testing' }
+ MCMethodDefinitionTest >> testMethodDefinitionWithEmptyProtocolIsClassifiedAsAsYetUnclassified [
+ 
+diff --git a/src/Monticello/MCPackageLoader.class.st b/src/Monticello/MCPackageLoader.class.st
+index b90945770f..15d6243888 100644
+--- a/src/Monticello/MCPackageLoader.class.st
++++ b/src/Monticello/MCPackageLoader.class.st
+@@ -77,6 +77,7 @@ MCPackageLoader >> analyze [
+ { #category : 'private' }
+ MCPackageLoader >> basicLoad [
+ 
++	self readMethodTimeStamps.
+ 	SourcesManager current deferFlushDuring: [ self basicLoadDefinitions ]
+ ]
+ 
+@@ -209,6 +210,13 @@ MCPackageLoader >> provisions [
+ 	^ provisions ifNil: [provisions := Set withAll: Smalltalk globals keys]
+ ]
+ 
++{ #category : 'private' }
++MCPackageLoader >> readMethodTimeStamps [
++	"A method definition made from a method of the image computes its time stamp lazily, by a read of the sources or the changes file. Read the stamps before the load defers the flush of the changes file: while the flush is deferred, the sources manager answers an empty stamp."
++
++	(additions select: [ :each | each isMethodDefinition ]) do: [ :each | each timeStamp ]
++]
++
+ { #category : 'patch ops' }
+ MCPackageLoader >> removeDefinition: aDefinition [
+ 
+-- 
+2.54.0 (Apple Git-157)
+

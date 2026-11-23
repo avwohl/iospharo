@@ -1,0 +1,6 @@
+probe scripts/upstream-pr/probes/socket-local-address-any-interface.st
+regress NetNameResolverTest
+regress TCPSocketTest
+regress UDPSocketTest
+regress SocketStreamTest
+regress SocketAddressTest

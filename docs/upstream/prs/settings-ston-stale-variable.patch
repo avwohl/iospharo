@@ -1,0 +1,76 @@
+From c6d642c27f6c445cda2c6345cbfbd5a933648403 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:27:23 -0500
+Subject: [PATCH] SettingsStonReader: ignore a stored setting whose instance
+ variable is gone
+
+SettingsStonReader>>load let InstanceVariableNotFound escape when a
+settings file names an instance variable that the class no longer has.
+SettingsStonReader>>secureLoad catches only STONReaderError, so the
+error also escaped the safe loader that SettingsManager uses, and the
+saved settings were not applied.
+
+load now handles InstanceVariableNotFound, stores nothing and answers
+an empty collection. The test testNonExistingStoredSettingVariable is
+no longer an expected failure, and its last assertion now checks the
+reader that did the load. A new test covers secureLoad.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/System-Settings-Core/SettingsStonReader.class.st  | 11 ++++++++---
+ .../SettingsStonReaderTest.class.st                   | 11 ++++++++---
+ 2 files changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/src/System-Settings-Core/SettingsStonReader.class.st b/src/System-Settings-Core/SettingsStonReader.class.st
+index 4fa71745b3..f8e0bb8a36 100644
+--- a/src/System-Settings-Core/SettingsStonReader.class.st
++++ b/src/System-Settings-Core/SettingsStonReader.class.st
+@@ -30,14 +30,19 @@ Class {
+ 
+ { #category : 'loading' }
+ SettingsStonReader >> load [
+-	"It loads all instances of StoredSetting from a stream."
++	"It loads all instances of StoredSetting from a stream.
++	 A stored setting can name an instance variable that its class no longer has
++	 (the class changed after the file was written). The file cannot be read then:
++	 nothing is stored and an empty collection is answered."
+ 	stream ifNil: [ ^ #() ].
+ 	stream atEnd ifTrue: [ ^ #() ].
+ 	[ | reader |
+ 		reader := STON reader on: stream; yourself.
+-		storedSettings := reader next.
++		[ storedSettings := reader next ]
++			on: InstanceVariableNotFound
++			do: [ :ex | storedSettings := nil ]
+ 	] ensure: [ stream close ].
+-	^ storedSettings
++	^ storedSettings ifNil: [ #() ]
+ ]
+ 
+ { #category : 'loading' }
+diff --git a/src/System-Settings-Tests/SettingsStonReaderTest.class.st b/src/System-Settings-Tests/SettingsStonReaderTest.class.st
+index bf97839031..5bbff63808 100644
+--- a/src/System-Settings-Tests/SettingsStonReaderTest.class.st
++++ b/src/System-Settings-Tests/SettingsStonReaderTest.class.st
+@@ -64,10 +64,15 @@ SettingsStonReaderTest >> testLoadTwoObjects [
+ 
+ { #category : 'tests' }
+ SettingsStonReaderTest >> testNonExistingStoredSettingVariable [
+-	<expectedFailure>
+ 	reader stream: MockSettings changedClassStoredSettingVariable readStream.
+-	reader load.
+-	self assert: SettingsStonReader new storedSettings isNil
++	self shouldnt: [ reader load ] raise: InstanceVariableNotFound.
++	self assert: reader storedSettings isNil
++]
++
++{ #category : 'tests' }
++SettingsStonReaderTest >> testSecureLoadNonExistingStoredSettingVariable [
++	reader stream: MockSettings changedClassStoredSettingVariable readStream.
++	self assertEmpty: reader secureLoad
+ ]
+ 
+ { #category : 'tests' }
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,130 @@
+From ff9603c17efd28a28531e4fe4d2ebedb45e838e2 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 17:07:40 -0500
+Subject: [PATCH 1/2] Cogit: store the followed literal with the store check
+
+Cogit>>indexForSelector:in:at: scans the literal frame of a sending
+method.  A literal that is a forwarder (left by become:) is followed,
+and the followed object is written back into the method with
+objectMemory longAt:put:.  This store skips the store check.
+
+The sending method is usually old.  When become: made an old literal
+into a forwarder to a young object, the old method now refers to a
+young object but is not in the remembered set.  The next scavenge
+neither updates nor traces the literal.  The young object moves or
+dies, and the literal keeps a stale address.  A later full GC can then
+stop with a segmentation fault in markAndTrace or in
+fixFollowedField:ofObject:withInitialValue:.
+
+The method is reached from relocateIfCallOrMethodReference:mcpc:delta:
+during compactCogCompiledCode.
+
+Write the followed literal with storePointer:ofObject:withValue:.  This
+remembers the method when the method is old and the value is young.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ smalltalksrc/VMMaker/Cogit.class.st | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/Cogit.class.st b/smalltalksrc/VMMaker/Cogit.class.st
+index f6e70810e..5722ccba0 100644
+--- a/smalltalksrc/VMMaker/Cogit.class.st
++++ b/smalltalksrc/VMMaker/Cogit.class.st
+@@ -8092,8 +8092,11 @@ Cogit >> indexForSelector: selector in: cogMethod at: mcpc [
+ 				                 + objectMemory baseHeaderSize + methodOop.
+ 			(objectMemory isOopForwarded: methodLiteral) ifTrue: [ 
+ 				methodLiteral := objectMemory followForwarded: methodLiteral.
+-				objectMemory longAt: (i * objectMemory bytesPerOop
+-				                 + objectMemory baseHeaderSize + methodOop) put: methodLiteral].
++				"The method is usually old and the followed literal can be young (a become
++				 of an old object into a young one).  Only storePointer:ofObject:withValue:
++				 adds the method to the remembered set; a plain longAt:put: leaves the method
++				 pointing at a young object that the next scavenge moves."
++				objectMemory storePointer: i ofObject: methodOop withValue: methodLiteral].
+ 
+ 			methodLiteral = selector ifTrue: [ 
+ 				self assert:
+-- 
+2.54.0 (Apple Git-157)
+
+
+From e20109222e2621602bd247ac270a034830301ffe Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:27:38 -0500
+Subject: [PATCH 2/2] VMMakerTests: a followed young literal makes an old
+ method remembered
+
+Cogit>>indexForSelector:in:at: follows a forwarded literal of the
+method and writes the followed object back into the method.  The new
+test builds an old method whose literal is a forwarder to a young
+object, calls indexForSelector:in:at: and checks that the literal is
+the young object and that the method is in the remembered set.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../VMCogitIndexForSelectorTest.class.st      | 52 +++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+ create mode 100644 smalltalksrc/VMMakerTests/VMCogitIndexForSelectorTest.class.st
+
+diff --git a/smalltalksrc/VMMakerTests/VMCogitIndexForSelectorTest.class.st b/smalltalksrc/VMMakerTests/VMCogitIndexForSelectorTest.class.st
+new file mode 100644
+index 000000000..00999bf3e
+--- /dev/null
++++ b/smalltalksrc/VMMakerTests/VMCogitIndexForSelectorTest.class.st
+@@ -0,0 +1,52 @@
++Class {
++	#name : 'VMCogitIndexForSelectorTest',
++	#superclass : 'VMSimpleStackBasedCogitAbstractTest',
++	#category : 'VMMakerTests-JitTests',
++	#package : 'VMMakerTests',
++	#tag : 'JitTests'
++}
++
++{ #category : 'tests' }
++VMCogitIndexForSelectorTest >> testFollowedYoungLiteralOfOldMethodRemembersTheMethod [
++
++	"A literal of an old method is a forwarder (left by a become:) to a young object.
++	 indexForSelector:in:at: follows the forwarder and writes the followed literal back
++	 into the method.  The write must go through the store check: else the old method
++	 refers to a young object without being in the remembered set."
++
++	| method forwarder selector cogMethod index |
++	self setUpCogMethodEntry.
++
++	"The special selectors are searched first: give them an array of nil."
++	memory coInterpreter specialSelectorArray:
++		(self newOldSpaceObjectWithSlots: 64 "two slots for each of the 32 special selectors").
++
++	selector := self newObjectWithSlots: 0.
++	forwarder := self newOldSpaceObjectWithSlots: 1.
++	memory forward: forwarder to: selector.
++
++	method := methodBuilder
++		          literalAt: 1 put: forwarder;
++		          buildMethod.
++	cogMethod := self
++		             generateCogMethod: [ cogit RetN: 0 ]
++		             selector: memory nilObject.
++	cogMethod methodHeader: (cogit coInterpreter rawHeaderOf: method).
++	cogit coInterpreter rawHeaderOf: method put: cogMethod asInteger.
++	cogMethod methodObject: method.
++
++	self assert: (memory isOld: method).
++	self assert: (memory isYoung: selector).
++	self assert: (memory isForwarded: forwarder).
++	self deny: (memory isRemembered: method).
++
++	index := cogit
++		         indexForSelector: selector
++		         in: cogMethod
++		         at: cogMethod address + (cogit sizeof: CogMethod).
++
++	self
++		assert: (memory fetchPointer: index + 1 ofObject: method)
++		equals: selector.
++	self assert: (memory isRemembered: method)
++]
+-- 
+2.54.0 (Apple Git-157)
+

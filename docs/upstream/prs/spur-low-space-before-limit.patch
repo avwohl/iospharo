@@ -1,0 +1,158 @@
+From 3efdc417d2305236d5d801f33feb4c1dee9bead8 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Tue, 17 Nov 2026 12:56:27 -0500
+Subject: [PATCH 1/2] Spur: signal low space before old space reaches its limit
+
+With --maxOldSpaceSize (or when the OS refuses a new segment), a
+process that allocates with no end stops the VM with 'Could not
+allocate new object in the old space', and the image gets no low
+space signal.
+
+sufficientSpaceAfterGC: reported low space only when the free old
+space was below the threshold of the image (lowSpaceThreshold,
+400000 bytes in Pharo). One scavenge can tenure more than that, and
+copyToOldSpace:bytes:format: then stops the VM.
+
+Now, when old space cannot grow, space is low as soon as the free
+old space is less than two new spaces: one for the next scavenge,
+and one for the low space watcher of the image and the unwind of the
+process that the watcher stops. Before that answer the method runs
+one full GC if the used old space is more than one new space above
+the size at the last GC, so that garbage does not count as use.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../VMMaker/SpurMemoryManager.class.st        | 32 +++++++++++++++----
+ 1 file changed, 25 insertions(+), 7 deletions(-)
+
+diff --git a/smalltalksrc/VMMaker/SpurMemoryManager.class.st b/smalltalksrc/VMMaker/SpurMemoryManager.class.st
+index 2179e8acf..eca62a617 100644
+--- a/smalltalksrc/VMMaker/SpurMemoryManager.class.st
++++ b/smalltalksrc/VMMaker/SpurMemoryManager.class.st
+@@ -13091,7 +13091,8 @@ SpurMemoryManager >> sufficientSpaceAfterGC: numBytes [
+ 	 which is a stop-the-world a young generation reclaimer.  In Spur
+ 	 we run the scavenger.  Answer if space is not low."
+ 
+-	| heapSizePostGC |
++	| heapSizePostGC cannotGrow lowMark grown spaceIsLow |
++	<var: #grown type: #'size_t'>
+ 	self assert: numBytes = 0.
+ 	self scavengingGCTenuringIf: TenureByAge.
+ 	heapSizePostGC := segmentManager totalOldSpaceCapacity
+@@ -13099,12 +13100,29 @@ SpurMemoryManager >> sufficientSpaceAfterGC: numBytes [
+ 	(heapSizePostGC - heapSizeAtPreviousGC) asFloat
+ 	/ heapSizeAtPreviousGC >= heapGrowthToSizeGCRatio ifTrue: [
+ 		self fullGC ].
+-	[
+-	totalFreeOldSpace < growHeadroom and: [
+-		(self growOldSpaceByAtLeast: 0 callingOperation: 'ensuring sufficient space after GC')
+-			notNil ] ] whileTrue: [
+-		totalFreeOldSpace >= growHeadroom ifTrue: [ ^ true ] ].
+-	lowSpaceThreshold > totalFreeOldSpace ifTrue: [ "space is low"
++	"When old space cannot grow (maxOldSpaceSize, or the OS refuses a segment), the
++	 scavenger stops the VM (copyToOldSpace:bytes:format:) as soon as one scavenge
++	 tenures more than the free old space.  So space is low when old space cannot
++	 take two new spaces: one for the next scavenge, and one for the low space
++	 watcher and the unwind of the process that the watcher stops."
++	lowMark := scavenger newSpaceCapacity * 2.
++	cannotGrow := false.
++	[ totalFreeOldSpace < (growHeadroom max: lowMark) and: [ cannotGrow not ] ] whileTrue: [
++		"growOldSpaceByAtLeast:callingOperation: answers nil at maxOldSpaceSize
++		 and 0 when the OS refuses a segment.  In the generated C code the
++		 answer is a size_t, and both cases are 0."
++		grown := self growOldSpaceByAtLeast: 0 callingOperation: 'ensuring sufficient space after GC'.
++		(grown isNil or: [ grown = 0 ]) ifTrue: [ cannotGrow := true ] ].
++	(cannotGrow and: [ lowSpaceThreshold > 0 and: [ totalFreeOldSpace < lowMark ] ]) ifTrue: [
++		"Old space can hold garbage that no full GC has seen: the test of the ratio
++		 above is relative to the last GC.  Collect one time before the answer that
++		 space is low."
++		(segmentManager totalOldSpaceCapacity - totalFreeOldSpace)
++			> (heapSizeAtPreviousGC + scavenger newSpaceCapacity) ifTrue: [
++			self fullGC ] ].
++	spaceIsLow := lowSpaceThreshold > totalFreeOldSpace or: [
++		              cannotGrow and: [ lowSpaceThreshold > 0 and: [ totalFreeOldSpace < lowMark ] ] ].
++	spaceIsLow ifTrue: [
+ 		lowSpaceThreshold := 0. "avoid signalling low space twice"
+ 		^ false ].
+ 	^ true
+-- 
+2.54.0 (Apple Git-157)
+
+
+From a126b25e05bf12068559dc6e667adc27e838d680 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:27:23 -0500
+Subject: [PATCH 2/2] VMMakerTests: low space is signalled before old space
+ reaches its limit
+
+Add testLowSpaceIsSignalledBeforeOldSpaceReachesItsLimit to
+VMSpurScavengerTest.  The test makes the memory map refuse each new
+segment, so old space cannot grow.  The test then leaves a fixed
+amount of free old space that is above lowSpaceThreshold and below two
+new spaces.  sufficientSpaceAfterGC: must answer false, so that the
+image gets the low space signal before a scavenge tenures more than
+the free old space.
+
+The memory map of the test counts the requests for a segment.  Without
+the change, sufficientSpaceAfterGC: asks again without end when a
+segment is refused (in the simulation the answer 0 is not nil), so
+the test signals TestFailure after 20 requests, and does not hang.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../VMMakerTests/VMSpurScavengerTest.class.st | 39 +++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/smalltalksrc/VMMakerTests/VMSpurScavengerTest.class.st b/smalltalksrc/VMMakerTests/VMSpurScavengerTest.class.st
+index 232367cae..1e61c587e 100644
+--- a/smalltalksrc/VMMakerTests/VMSpurScavengerTest.class.st
++++ b/smalltalksrc/VMMakerTests/VMSpurScavengerTest.class.st
+@@ -338,6 +338,45 @@ VMSpurScavengerTest >> testMethodInStackShouldSurviveScanvenge [
+ 	self assert: (memory hashBitsOf: newObjectAddress) equals: newObjectHash
+ ]
+ 
++{ #category : 'tests-3-scavenge-basic' }
++VMSpurScavengerTest >> testLowSpaceIsSignalledBeforeOldSpaceReachesItsLimit [
++
++	"The system refuses each new segment, so old space cannot grow.  The free old
++	 space is above lowSpaceThreshold, but less than two new spaces, so one
++	 scavenge can tenure more than old space can take.  Space must be low."
++
++	| refusals refuser freeNow slots answer |
++	"A memory manager that refuses each request, and counts the requests.  Without
++	 the count, a VM that asks again without end would hang the test."
++	refusals := OrderedCollection new.
++	refuser := Object newAnonymousSubclass.
++	refuser addInstVarNamed: 'refusals'.
++	refuser
++		compile: 'refusals: aCollection  refusals := aCollection'
++		classified: 'accessing'.
++	refuser
++		compile: 'allocate: size desiredPosition: position  refusals add: size. refusals size > 20 ifTrue: [ TestFailure signal: ''old space growth is requested again and again'' ]. ^ nil'
++		classified: 'allocating'.
++	memory getMemoryMap memoryManager: (refuser new refusals: refusals; yourself).
++
++	"No limit: the limit path of growOldSpaceByAtLeast:callingOperation: signals an Error in the simulation."
++	memory setMaxOldSpaceSize: 0.
++	memory setHeapGrowthToSizeGCRatio: 2.0.
++	memory lowSpaceThreshold: 1.
++	"Leave a fixed small amount of free old space: above the threshold, below two new spaces."
++	freeNow := memory totalFreeOldSpace.
++	slots := (freeNow - 100000) // memory wordSize - 4.
++	self newOldSpaceObjectWithSlots: slots.
++	memory setHeapSizeAtPreviousGC.
++	self assert: memory totalFreeOldSpace > 1.
++	self assert: memory totalFreeOldSpace < (memory scavenger newSpaceCapacity * 2).
++
++	answer := memory sufficientSpaceAfterGC: 0.
++
++	self assert: refusals notEmpty.
++	self deny: answer
++]
++
+ { #category : 'tests-3-scavenge-basic' }
+ VMSpurScavengerTest >> testMovingReferencedObjectShouldUpdateReference [
+ 
+-- 
+2.54.0 (Apple Git-157)
+

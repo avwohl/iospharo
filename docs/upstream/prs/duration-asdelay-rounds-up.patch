@@ -1,0 +1,66 @@
+From b223409d93f696b40332c3a88660f914f81bf6a9 Mon Sep 17 00:00:00 2001
+From: Aaron Wohl <wohl@awohl.com>
+Date: Mon, 23 Nov 2026 08:26:44 -0500
+Subject: [PATCH] System-Time: Duration>>asDelay rounds up to the next
+ millisecond
+
+Duration>>asDelay made a Delay for "self asMilliSeconds"
+milliseconds, and asMilliSeconds rounds down.  A wait for 99.98
+milliseconds made a Delay of 99 milliseconds, so Duration>>wait
+could return before the Duration had passed.
+
+asDelay now counts a part of a millisecond as one more millisecond.
+A negative Duration gives the same Delay as before.
+
+The new test DurationTest>>testAsDelayDoesNotRoundDown checks the
+length of the Delay for fractional-millisecond Durations.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/System-Time-Tests/DurationTest.class.st | 10 ++++++++++
+ src/System-Time/Duration.class.st           |  7 ++++++-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/System-Time-Tests/DurationTest.class.st b/src/System-Time-Tests/DurationTest.class.st
+index aa651e1dca..158bb41b1c 100644
+--- a/src/System-Time-Tests/DurationTest.class.st
++++ b/src/System-Time-Tests/DurationTest.class.st
+@@ -67,6 +67,16 @@ DurationTest >> testAsDelay [
+ 	"want to come up with a more meaningful test"
+ ]
+ 
++{ #category : 'tests' }
++DurationTest >> testAsDelayDoesNotRoundDown [
++
++	self assert: (Duration nanoSeconds: 99980000) asDelay millisecondDelayDuration equals: 100.
++	self assert: (Duration nanoSeconds: 100000000) asDelay millisecondDelayDuration equals: 100.
++	self assert: (Duration nanoSeconds: 100000001) asDelay millisecondDelayDuration equals: 101.
++	self assert: (Duration nanoSeconds: 1) asDelay millisecondDelayDuration equals: 1.
++	self assert: Duration zero asDelay millisecondDelayDuration equals: 0
++]
++
+ { #category : 'tests' }
+ DurationTest >> testAsDuration [
+ 	self assert: aDuration asDuration equals: aDuration
+diff --git a/src/System-Time/Duration.class.st b/src/System-Time/Duration.class.st
+index c46254c555..6916e1a8f3 100644
+--- a/src/System-Time/Duration.class.st
++++ b/src/System-Time/Duration.class.st
+@@ -231,8 +231,13 @@ Duration >> asDays [
+ 
+ { #category : 'converting' }
+ Duration >> asDelay [
++	"Answer a Delay that does not end before I have passed. A Delay counts whole milliseconds, so a part of a millisecond counts as one more millisecond. (asMilliSeconds rounds down.)"
+ 
+- 	^ Delay forMilliseconds: self asMilliSeconds
++	| nanoseconds |
++	nanoseconds := self asNanoSeconds.
++	^ Delay forMilliseconds: (nanoseconds negative
++			   ifTrue: [ nanoseconds // 1000000 ]
++			   ifFalse: [ nanoseconds + 999999 // 1000000 ])
+ ]
+ 
+ { #category : 'converting' }
+-- 
+2.54.0 (Apple Git-157)
+
