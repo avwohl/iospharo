@@ -31,6 +31,9 @@
 #   vmrun.sh cogbuild                      build the Cog tree with the changes of
 #                                          docs/upstream and put its libraries
 #                                          into the app of the VM name cogp
+#   vmrun.sh cogbuild <build-dir> [target] build another Cog build tree (or one
+#                                          target of it, e.g. vmmaker) under the
+#                                          lock; no copy into the app of cogp
 #
 # <vm> is a name or a path of a VM binary:
 #   ours     build-rel/test_load_image           nojit  build-nojit/test_load_image
@@ -556,6 +559,24 @@ cogbuild)
     # (NewFilePlugin) into the app of the VM name cogp.  The other libraries
     # of that app are the stock ones: a local Cog build has no freetype, cairo
     # and libgit2.
+    # With a build directory: build that tree (or one target of it) and copy
+    # nothing.  The code generation of a Cog build starts a Pharo VM, so each
+    # Cog build goes through this lock.
+    if [ $# -gt 0 ]; then
+        bdir=$1; target=${2:-}
+        [ -f "$bdir/CMakeCache.txt" ] || { say "no Cog build tree $bdir"; exit 2; }
+        acquire_lock "cogbuild $(basename "$bdir") ${target:-all}"
+        check_memory_before_start
+        if [ -n "$target" ]; then
+            cmake --build "$bdir" -j4 --target "$target" > "$bdir/build-last.log" 2>&1
+        else
+            cmake --build "$bdir" -j4 > "$bdir/build-last.log" 2>&1
+        fi
+        rc=$?
+        grep -E ' error |Error [0-9]|FAILED' "$bdir/build-last.log" | head -20
+        echo "cogbuild rc=$rc (log: $bdir/build-last.log)"
+        exit $rc
+    fi
     acquire_lock "cogbuild"
     check_memory_before_start
     [ -d "$WORK/cogbuild-all" ] || { say "no build tree $WORK/cogbuild-all"; exit 2; }
